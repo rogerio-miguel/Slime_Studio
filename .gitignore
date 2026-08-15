@@ -20,3 +20,9 @@ media/**
 
 # Segredos
 .env
+.env.local
+.env.*.local
+
+# Sandbox de teste do harness Anime4K (teste/) — mídia local e log de telemetria
+teste/*.mp4
+teste/*.ndjson

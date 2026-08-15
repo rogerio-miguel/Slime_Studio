@@ -2,12 +2,14 @@
 
 Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga estas regras rigorosamente para otimizar o consumo de tokens e manter a consistência do código.
 
-> **Nome do projeto**: Slime Studio (repositório `Slime_Studio`, decidido em 2026-08-10 — antes referenciado como "novo-projeto-anime4k", nome de trabalho do documento de especificação).
+> **Nome do projeto**: Slime Studio (repositório `Slime_Studio`, decidido em 2026-08-10). O nome de trabalho "novo-projeto-anime4k" foi aposentado junto com os dois documentos de spec antigos, consolidados em `ESPECIFICACAO.md`.
 >
-> **Estado do projeto**: scaffold inicial criado (`backend/` com `pyproject.toml` via `uv init`, `frontend/`, `media/`, `scripts/`, `.env.example`) — ainda sem código de aplicação. As seções abaixo descrevem a arquitetura já fechada no documento de especificação (`novo-projeto-anime4k.md`, seção 2.1). Consulte o documento para o racional completo de cada decisão antes de implementar.
+> **Estado do projeto**: scaffold inicial criado (`backend/` com `pyproject.toml` via `uv init`, `frontend/`, `media/`, `scripts/`, `.env.example`) — ainda sem código de aplicação. O que existe de código rodando é o protótipo do player WebGPU em `teste/` (sandbox, sem lint/teste configurado), que validou o modo em tempo real — ver seção 11 do documento de especificação. As seções abaixo descrevem a arquitetura já fechada em `ESPECIFICACAO.md` (seção 2.1). Consulte o documento para o racional completo de cada decisão antes de implementar.
+>
+> **Gatilho de hardware**: a GPU atual é uma Radeon RX 580 (8GB) e várias decisões do projeto existem só por causa dela (ramo GAN excluído, presets mais leves, pipeline em lote adiado, chunks pequenos por VRAM). Se o usuário mencionar em qualquer conversa que trocou de GPU — RTX 5060 Ti ou qualquer RTX 50xx/superior —, **pare e trate isso como gatilho de replanejamento de arquitetura**: leia a seção 12 de `ESPECIFICACAO.md` e siga o procedimento de lá antes de seguir com a tarefa em curso.
 
 ## 1. Arquitetura do Sistema
-- **Estrutura:** Monorepo com dois escopos principais: `backend/` (Python + FastAPI para a API, worker `asyncio` nativo como **processo separado**, SQLAlchemy + SQLite em modo WAL, `uv` como gerenciador de pacotes) e `frontend/` (React + Vite + Tailwind). Estrutura de pastas completa proposta na seção 10.1 do documento de especificação.
+- **Estrutura:** Monorepo com dois escopos principais: `backend/` (Python + FastAPI para a API, worker `asyncio` nativo como **processo separado**, SQLAlchemy + SQLite em modo WAL, `uv` como gerenciador de pacotes) e `frontend/` (React + Vite + Tailwind). Estrutura de pastas completa proposta na seção 10.1 do documento de especificação. **Onde mora a qualidade de imagem hoje:** no frontend (Anime4K/WebGPU por frame, seção 3E) — o backend é baixador, empacotador HLS e catálogo. O upscaling em lote no worker só entra depois do gatilho de hardware (seção 12).
 - **Escopo Base:** Ao receber uma tarefa, opere estritamente dentro do escopo correspondente (backend, frontend). Não misture contextos ou faça buscas globais desnecessárias.
 - **Clean Architecture (regra de dependência):** código de domínio/regras de negócio não importa nada de framework, banco de dados, UI ou I/O externo — esses detalhes dependem do domínio, nunca o contrário. Antes de adicionar um import ou acoplar uma camada a outra, confirme de que lado da fronteira cada uma está.
 
@@ -19,12 +21,12 @@ Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga
 - **Scripts (planejados, ainda não existem):** `uv run pytest` (testes), `uv run ruff check` (lint), `uv run alembic upgrade head` (migrations).
 - **Convenções de nomenclatura:** snake_case tanto no banco (SQLAlchemy) quanto no código Python — o schema do documento (seção 4) já usa nomes em português nesse padrão (`anime_id`, `titulo`, `criado_em`); manter consistência com isso, não inventar tradução para inglês/camelCase.
 - **Extratores por site:** seguem Strategy Pattern (`extractors/base.py` + uma classe por site, ex. `animefire.py`). Cada adapter ganha a camada de cache de sessão/retry/circuit breaker (seção 3A do documento) — não reimplementar isso por site.
-- **Pipeline de vídeo (`worker/pipeline/`):** roda `ffmpeg`/`realesrgan-ncnn-vulkan` como subprocessos. **Processar sempre em chunks** (500–1000 frames) — nunca extrair/manter o episódio inteiro em disco de uma vez (seção 3C do documento: risco real e documentado de estourar disco/VRAM).
+- **Pipeline de vídeo (`worker/pipeline/`):** roda `ffmpeg`/`realesrgan-ncnn-vulkan` como subprocessos. **Processar sempre em chunks** (500–1000 frames) — nunca extrair/manter o episódio inteiro em disco de uma vez (seção 3C do documento: risco real e documentado de estourar disco/VRAM). Este pipeline está **condicionado à troca de GPU** (seção 12 do documento) — não implementar antes disso.
 
 ---
 
 ## 3. Padrões do Frontend (`/frontend`)
-- **Stack:** React + Vite + Tailwind. Player via `hls.js` (obrigatório — só Safari toca HLS nativo) com controles nativos do `<video>`.
+- **Stack:** React + Vite + Tailwind. Player via `hls.js` (obrigatório — só Safari toca HLS nativo) alimentando um `<video>` **oculto**; o elemento visível é um `<canvas>` WebGPU rodando o pipeline Anime4K por frame (seção 3E do documento). Controles nativos do `<video>` não se aplicam — o canvas os cobre: a barra de controles é própria, com navegação por teclado e ARIA obrigatórios.
 - **Scripts (planejados, ainda não existem):** `npm run lint`, `npm run build`.
 - **Reaproveitamento:** componentes visuais do projeto `Slime_Shell_Web` (ex: `AnimeCard`) devem ser portados, não recriados do zero — validar compatibilidade com o novo modelo de dados (seção 4 do documento) antes de portar direto.
 

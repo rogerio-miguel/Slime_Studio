@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slime Studio</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: #000;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 48px 24px;
+    font: 16px/1.5 system-ui, sans-serif;
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 500;
+    color: #fff;
+    text-align: center;
+  }
+  p.subtitle {
+    margin: 0;
+    color: #999;
+    font-size: 0.9rem;
+    text-align: center;
+    max-width: 640px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    width: 100%;
+    max-width: 980px;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 20px;
+    border-radius: 8px;
+    background: #111;
+    border: 1px solid #222;
+    color: #fff;
+    text-decoration: none;
+  }
+  .card:hover { background: #1c1c1c; border-color: #333; }
+  .card:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .card .label { font-weight: 600; font-size: 1rem; }
+  .card .desc { color: #aaa; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+  <h1>Slime Studio — Bench Anime4K</h1>
+  <p class="subtitle">Fase 0(b)/(c)/(d)/(e) do pipeline em tempo real: mesmo clipe local, mesmo recorte 2.20:1, um preset WebGPU diferente por card.</p>
+  <div class="grid">
+    <a class="card" href="bench.html?preset=original">
+      <span class="label">Original (controle)</span>
+      <span class="desc">Sem shader — 1080p puro, só recortado pra 2.20:1. Referência obrigatória: "prefiro isso ao original?"</span>
+    </a>
+    <a class="card" href="bench.html?preset=a-m">
+      <span class="label">Anime4K A · M</span>
+      <span class="desc">Modo A, variante leve — menor custo de GPU</span>
+    </a>
+    <a class="card" href="bench.html?preset=a-vl">
+      <span class="label">Anime4K A · VL</span>
+      <span class="desc">Modo A, variante VL — equivalente ao preset que o Slime Shell Web já usa hoje no MPV (baseline a superar)</span>
+    </a>
+    <a class="card" href="bench.html?preset=a-ul">
+      <span class="label">Anime4K A · UL</span>
+      <span class="desc">Modo A, variante UL — máxima qualidade dentro do Modo A, candidata a usar a folga de GPU que sobra sem concorrência de rede/CDN</span>
+    </a>
+    <a class="card" href="bench.html?preset=aa-vl">
+      <span class="label">Anime4K A+A · VL (oficial)</span>
+      <span class="desc">Passe duplo — é o ModeAA oficial e canônico da lib, não um controle improvisado. A doc previa over-sharpening em 1080p→1080p, mas o resultado agradou nos testes. Base do candidato 1 atual (aa-vl-deblur, abaixo)</span>
+    </a>
+    <a class="card" href="bench.html?preset=b-vl">
+      <span class="label">Anime4K B · VL</span>
+      <span class="desc">Característica alternativa — restauração mais suave (CNNSoftVL), pra fontes com detalhe fino</span>
+    </a>
+    <a class="card" href="bench.html?preset=c-vl">
+      <span class="label">Anime4K C · VL (denoise)</span>
+      <span class="desc">Característica alternativa — sem restore, upscale com denoise embutido, pra fontes com grão/ruído</span>
+    </a>
+    <a class="card" href="bench.html?preset=aa-ul">
+      <span class="label">Anime4K A+A · UL</span>
+      <span class="desc">Passe duplo com tiers UL (mais pesado que o A+A · VL) — testa se o ganho de qualidade do UL compensa o custo extra do segundo passe</span>
+    </a>
+    <a class="card" href="bench.html?preset=gan-a-ul">
+      <span class="label">Anime4K GAN A · UL</span>
+      <span class="desc">Restauração generativa (GANUUL) + upscale CNN UL — troca o restore CNN padrão do Modo A por um restore GAN, mantendo o upscale conhecido</span>
+    </a>
+    <a class="card" href="bench.html?preset=gan-x3-cnn">
+      <span class="label">Anime4K GAN x3 · CNN</span>
+      <span class="desc">Restauração CNN UL + upscale generativo 3x (GANx3L) — isola o upscale GAN maior, com restore barato</span>
+    </a>
+    <a class="card" href="bench.html?preset=gan-x3">
+      <span class="label">Anime4K GAN x3 · GAN</span>
+      <span class="desc">Pipeline GAN completo: restore GANUUL + upscale 3x GANx3L — o mais pesado do Tier 1, candidato de qualidade máxima se a GPU aguentar</span>
+    </a>
+    <a class="card" href="bench.html?preset=aa-ul-vl">
+      <span class="label">Anime4K A+A · UL→VL</span>
+      <span class="desc">Passe duplo misto — restore/upscale em UL seguido de um segundo restore em VL, buscando o meio-termo entre nitidez (UL) e suavidade (VL)</span>
+    </a>
+    <a class="card" href="bench.html?preset=aa-vl-vl">
+      <span class="label">Anime4K A+A · VL→VL (descartado)</span>
+      <span class="desc">Testado e descartado: reforçar o segundo restore de M pra VL trava mesmo em velocidade normal — esse estágio roda em 4x mais pixels (pós-upscale), então o custo não escala como o dos dois primeiros estágios</span>
+    </a>
+    <a class="card" href="bench.html?preset=aa-vl-denoise">
+      <span class="label">Anime4K A+A · VL + Denoise</span>
+      <span class="desc">aa-vl com um passe de BilateralMean antes do restore — filtro de passe único (não rede), valores calibrados do README oficial da lib, ataca ruído/grain da fonte</span>
+    </a>
+    <a class="card" href="bench.html?preset=aa-vl-deblur">
+      <span class="label" style="color: green;">Anime4K A+A · VL + Deblur</span>
+      <span class="desc">aa-vl com um passe de DoG antes do downscale final — filtro de passe único (não rede), valor calibrado do README oficial da lib, afia contornos do resultado já restaurado. Escolhido como melhor qualidade percebida até agora</span>
+    </a>
+  </div>
+</body>
+</html>
