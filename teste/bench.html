@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slime Studio — Bench</title>
+<style>
+  :root { color-scheme: dark; --frame-ar: 1.777778; --page-chrome: 7rem; --fullscreen-margin: 6vmin; --ambient-bleed: 10%; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+  }
+  /* Preto só no html (vira o "canvas background" do navegador, propagado
+     automaticamente — não pinta de novo na própria caixa do html). Se body
+     também tivesse background opaco aqui, ele pintaria por cima do
+     #ambient-glow: body não cria stacking context próprio (só display:flex
+     sem z-index não conta), então tudo dentro dele — inclusive o glow, que é
+     position:fixed com z-index negativo — cai no MESMO stacking context do
+     html, e a ordem de pintura da spec é: fundo do html → descendentes com
+     z-index negativo (o glow) → caixas normais em ordem de árvore (body e
+     filhos). Um body preto opaco pintaria depois do glow e o esconderia. */
+  html { background: #000; }
+  body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    font: 16px/1.5 system-ui, sans-serif;
+    color: #fff;
+  }
+  /* Ambient glow — bleed de cor da cena pro resto da página, estilo YouTube
+     Ambient Mode. Canvas minúsculo (ver AMBIENT_CANVAS_WIDTH em bench.js)
+     esticado + blur pesado: os poucos pixels viram manchas suaves, sem
+     calcular "cor dominante" na mão.
+
+     Ancorado na caixa do .frame (absolute dentro dele), NÃO no viewport — é
+     o que faz o halo ser continuação do vídeo. Com position:fixed o
+     containing block era o viewport inteiro: a caixa virava uma ampliação
+     ANISOTRÓPICA do vídeo (~1,56x em x, ~1,84x em y a 1920x1080) centrada no
+     viewport, enquanto o .frame se centra só no espaço abaixo do header —
+     o mesmo pixel aparecia até ~450px fora do lugar, e o erro mudava a cada
+     resize (dependia de vmax).
+
+     Bleed em %: top/height resolvem contra a ALTURA do .frame e left/width
+     contra a LARGURA, então uma variável só dá escala uniforme em torno do
+     centro — nada distorce, cada cor sai radialmente de onde ela está no
+     vídeo. Botão de ajuste é o --ambient-bleed: mais halo = mais bleed, que
+     preserva o alinhamento; subir opacity/brightness estraga o contraste que
+     os fundos rgba do header/.note/.hud assumem. */
+  #ambient-glow {
+    position: absolute;
+    /* width/height explícitos, não `inset`: canvas é replaced element — com
+       width/height auto renderiza no tamanho intrínseco (32x18px de
+       bench.js). right/bottom ficam auto de propósito, senão a caixa fica
+       over-constrained. Também não pode receber object-fit:contain (ver
+       regra do #output-canvas): letterboxaria o bitmap 32x18 dentro da caixa
+       16:9 e criaria barras pretas nas laterais do halo. */
+    top: calc(-1 * var(--ambient-bleed));
+    left: calc(-1 * var(--ambient-bleed));
+    width: calc(100% + 2 * var(--ambient-bleed));
+    height: calc(100% + 2 * var(--ambient-bleed));
+    z-index: -1;
+    filter: blur(60px) saturate(1.6) brightness(1.2);
+    opacity: 0.9;
+    pointer-events: none;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 20px;
+    flex-wrap: wrap;
+    /* Fundo próprio pro header: sem ele, o texto (#aaa/#ddd) fica exposto
+       direto ao #ambient-glow atrás — em cena clara (branco/neve/flashback,
+       comuns em anime) o glow sobe perto de cinza médio e o contraste cai
+       abaixo do mínimo WCAG AA (4.5:1). rgba, não opaco: mantém um resquício
+       do glow visível no topo, só garante piso de legibilidade. */
+    background: rgba(0, 0, 0, 0.8);
+  }
+  header a.back {
+    color: #aaa;
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+  header a.back:hover { color: #fff; }
+  header a.back:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  h1 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 500;
+    color: #ddd;
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 0 16px 16px;
+  }
+
+  /* Alvo do fullscreen é este wrapper, não o .frame — o navegador força esse
+     elemento a 100vw/100vh do jeito que quiser (não brigamos com isso). O
+     .frame fica dentro, como item de flex, e mantém 16:9 via aspect-ratio +
+     width calculado explicitamente (ver regra .frame): como ele nunca é o
+     próprio alvo do :fullscreen, nenhuma regra nativa do navegador
+     sobrescreve o tamanho dele. */
+  .fullscreen-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+  /* padding cria a moldura nos 4 lados (em vez de 0 margem no eixo que
+     .frame estica até tocar) — também é o que deixa o #ambient-glow (agora
+     dentro deste elemento, ver abaixo) visível ao redor do vídeo em
+     fullscreen, não só nos 2 lados que sobravam antes. box-sizing:border-box
+     pra 100vw/100vh já incluir o padding, senão o .frame calcularia o espaço
+     disponível errado (ver regra abaixo). */
+  .fullscreen-stage:fullscreen,
+  .fullscreen-stage:-webkit-full-screen {
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    padding: var(--fullscreen-margin);
+    box-sizing: border-box;
+  }
+  .frame {
+    /* Largura calculada explicitamente (não max-height + aspect-ratio) de
+       propósito: .frame é item de um container flex (.fullscreen-stage) com
+       align-items:center, e o tamanho no eixo principal (largura) de um item
+       flex é resolvido pelo algoritmo de flex-basis ANTES do eixo cruzado —
+       "transferred size" (CSS Sizing 4) não alimenta de volta uma largura já
+       fixada por esse passo anterior. Convertendo o teto de altura em um
+       termo de largura equivalente (`* var(--frame-ar)`) dentro do próprio
+       min(), a largura já nasce correta e o aspect-ratio só precisa resolver
+       a altura (auto) a partir dela — sem depender de nenhum feedback entre
+       eixos. --page-chrome cobre header + padding de main + folga, é o que
+       evita que o vídeo em 16:9 estoure a viewport típica (sem teto fixo de
+       largura: o vídeo cresce até esbarrar no container ou nessa altura).
+       Mesma técnica já usada nas fórmulas de :fullscreen abaixo. */
+    width: min(100%, calc((100dvh - var(--page-chrome)) * var(--frame-ar, 1.777778)));
+    aspect-ratio: var(--frame-ar, 1.777778);
+    background: #000;
+    position: relative;
+    margin-inline: auto;
+  }
+  /* width/height:auto colapsava pra 0×0 aqui: o único conteúdo do .frame
+     é position:absolute (fora do fluxo), então não há base de conteúdo pro
+     "auto" — tela cheia ficava toda preta. Tamanho vem só de viewport units
+     (min() escolhe o eixo que limita, preservando 16:9), sem depender do
+     conteúdo interno. */
+  /* Sem overflow:hidden: o #ambient-glow é filho e PRECISA vazar pra fora
+     da caixa. Nada mais transborda — o #output-canvas usa object-fit:
+     contain (o hidden era vestígio da era do crop 2.2:1 "cover"). Se um dia
+     entrar border-radius aqui, revisar: aí o clip volta a fazer falta e o
+     glow precisa de um wrapper posicionado por fora. */
+  /* 100% já é o content-box de .fullscreen-stage (pós-padding, .frame é
+     flex item) — só o outro termo do min()/max() precisa descontar
+     --fullscreen-margin manualmente, porque vem direto de vw/vh (unidade
+     de viewport, não afetada por padding do pai). */
+  .fullscreen-stage:fullscreen .frame,
+  .fullscreen-stage:-webkit-full-screen .frame {
+    width: min(100%, calc((100vh - 2 * var(--fullscreen-margin)) * var(--frame-ar)));
+    height: min(100%, calc((100vw - 2 * var(--fullscreen-margin)) / var(--frame-ar)));
+    max-width: none;
+    max-height: none;
+    margin: 0;
+  }
+  .frame video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* "Contain", igual dentro e fora de tela cheia: o canvas de saída do
+     WebGPU (#output-canvas) ocupa a caixa toda do .frame, mas object-fit
+     preserva a proporção do bitmap e nunca corta — o que sobrar em qualquer
+     eixo vira faixa preta invisível (.frame e html já são #000). Antes isto
+     era um "cover"/crop 2.2:1 ancorado por --anchor, criado pra fugir de
+     hardsub sobre barra baked-in; cropdetect nos três mp4 da pasta dá
+     1280:720:0:0 (nenhum tem barra), então o crop só comia imagem real e
+     exigia recalibrar o anchor a cada episódio. Seletor por id, não mais
+     `.frame canvas`: o #ambient-glow também é um <canvas> filho de .frame
+     agora, e inset:0 + object-fit:contain aqui sobrescreveria o
+     posicionamento do glow (passo 3) e criaria barras pretas no halo. */
+  #output-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .hud {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    color: #9f9;
+    line-height: 1.7;
+    pointer-events: none;
+  }
+  .hud[hidden] { display: none; }
+  .hud div { white-space: nowrap; }
+  .hud .hud-key { color: #6a6; margin-right: 6px; }
+  .hud .hud-val { color: #fff; }
+
+  /* Overlay dentro de .frame (mesmo tratamento do .hud), não mais barra fixa
+     abaixo do vídeo — libera altura em main pra centralizar melhor o vídeo
+     na tela (main já centraliza por flex; menos conteúdo empilhado = frame
+     mais centrado). Escondido por padrão, revelado em :hover/:focus-within
+     do .frame — puro CSS, sem JS: :focus-within garante que dar Tab até um
+     botão também revela (senão ficaria focável mas invisível, quebraria
+     navegação por teclado). Gradiente em vez de fundo sólido: agora fica
+     sobre a imagem do vídeo, não sobre o preto da página — fundo opaco
+     pareceria uma tarja colada; gradiente é o tratamento padrão de player. */
+  .controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 24px 14px 12px;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
+    flex-wrap: wrap;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    pointer-events: none;
+  }
+  .frame:hover .controls,
+  .frame:focus-within .controls {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .controls[hidden] { display: none; }
+  .controls button {
+    background: #222;
+    color: #fff;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+  .controls button:hover { background: #2a2a2a; }
+  .controls button[aria-pressed="true"] {
+    background: #1d4b2b;
+    border-color: #3ea05f;
+    color: #d9ffe6;
+  }
+  .controls button:focus-visible,
+  .controls input:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .controls input[type="range"] { accent-color: #fff; }
+  #seek { flex: 1; min-width: 120px; }
+  #volume { width: 80px; }
+  #time-display {
+    font-variant-numeric: tabular-nums;
+    color: #ccc;
+    font-size: 0.85rem;
+    min-width: 92px;
+    text-align: center;
+    /* Único elemento de texto em .controls sem fundo sólido próprio — os
+       botões têm o #222 deles, mas isso ficaria exposto direto ao gradiente
+       do overlay, que vai a 0% de opacidade perto do topo da barra. Mesmo
+       tratamento do .hud (mesmo rgba), pelo mesmo motivo de contraste. */
+    background: rgba(0, 0, 0, 0.7);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .note {
+    color: #888;
+    font-size: 0.8rem;
+    max-width: 1600px;
+    text-align: center;
+    /* Mesmo motivo do fundo no header: #888 sobre #ambient-glow em cena
+       clara cai perto de 1:1 de contraste. Padding+radius pra não parecer
+       uma barra crua — mesmo tom de rgba do .hud, abaixo. */
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.8);
+  }
+  .note code { color: #ccc; }
+
+  .fatal-error {
+    margin: 40px auto;
+    padding: 20px 24px;
+    max-width: 560px;
+    background: #2a0000;
+    border: 1px solid #600;
+    border-radius: 8px;
+    color: #fdd;
+    text-align: center;
+  }
+  .fatal-error[hidden] { display: none; }
+  .fatal-error a { color: #fff; }
+</style>
+</head>
+<body>
+  <header>
+    <a class="back" href="index.html">← Hub</a>
+    <h1 id="page-title">Anime4K Bench</h1>
+    <span></span>
+  </header>
+  <main>
+    <div id="fatal-error" class="fatal-error" role="alert" hidden></div>
+
+    <div class="fullscreen-stage" id="fullscreen-stage">
+      <div class="frame" id="frame">
+        <canvas id="ambient-glow" aria-hidden="true"></canvas>
+        <video id="source-video" playsinline preload="auto"></video>
+        <canvas id="output-canvas"></canvas>
+        <div class="hud" id="hud" hidden>
+          <div><span class="hud-key">preset</span><span class="hud-val" id="hud-preset">—</span></div>
+          <div><span class="hud-key">canvas</span><span class="hud-val" id="hud-resolution">—</span></div>
+          <div><span class="hud-key">frame a cada</span><span class="hud-val" id="hud-msframe">—</span></div>
+          <div><span class="hud-key">dropped/total</span><span class="hud-val" id="hud-dropped">—</span></div>
+          <div><span class="hud-key">rate</span><span class="hud-val" id="hud-rate">—</span></div>
+          <div><span class="hud-key">gpu</span><span class="hud-val" id="hud-gpu">—</span></div>
+        </div>
+        <div class="controls" id="controls" role="group" aria-label="Controles de reprodução">
+          <button id="btn-play" type="button" aria-label="Reproduzir">▶</button>
+          <input id="seek" type="range" min="0" max="100" step="0.01" value="0" aria-label="Posição no vídeo">
+          <span id="time-display" aria-hidden="true">0:00 / 0:00</span>
+          <button id="btn-mute" type="button" aria-label="Mudo">🔊</button>
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+          <button id="btn-cinema" type="button" aria-pressed="false" aria-label="Áudio cinema (graves + crossfeed para fone)">🎧</button>
+          <button id="btn-fullscreen" type="button" aria-label="Tela cheia">⛶</button>
+          <button id="btn-hud" type="button" aria-label="Alternar HUD">HUD</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- <p class="note">
+      Atalhos: Espaço play/pause · ←/→ seek ±5s · ↑/↓ volume · F tela cheia · M mudo · H HUD · C áudio cinema.
+    </p> -->
+  </main>
+  <script type="module" src="bench.js"></script>
+</body>
+</html>
