@@ -221,9 +221,16 @@ Isso resolve diretamente a questão de "não querer saber se conseguiu ou se pre
 
 Deliberadamente fora de escopo: serviços de resolução automática de captcha (2captcha, anti-captcha etc.) — não são necessários aqui, porque o fluxo acima já trata o caso raro de captcha como notificação assíncrona, não como algo a vencer algoritmicamente.
 
-- Entrada: você insere URL do site + nome do anime em área administrativa autenticada.
+- **Entrada: clique, não URL colada.** O ponto de entrada é a galeria de capas do próprio Slime Studio (dados do `Anime`, já cadastrado via busca-e-confirma no AniList — 3F) → página do anime, que lista `total_episodios_anilist` posições (prontas ou não) → clicar numa posição ainda não capturada dispara a resolução automática de fonte (abaixo) e cria o `Job`. Colar uma URL manualmente continua existindo, mas como caminho de depuração/fallback (mesmo modo "arquivo local" da Fase 1, roadmap 10) — não é mais o fluxo normal.
 - Extração: localiza a página do episódio, intercepta tráfego de rede, captura link direto do vídeo original (idealmente a maior resolução disponível na fonte, tipicamente 1080p).
-- Adapters por site seguem Strategy Pattern (`backend/extractors/base.py` + uma classe por site, ex. `animefire.py`, `animesdrive.py`), portados/adaptados do projeto original — mas aqui o extrator **baixa** o arquivo em vez de servir a URL direta para o player, e cada adapter ganha a camada de cache/retry/circuit breaker acima em vez de reimplementar isso por site.
+- Adapters por site seguem Strategy Pattern (`backend/extractors/base.py` + uma classe por site, ex. `animefire.py`, `animesdrive.py`), portados/adaptados do projeto original — mas aqui o extrator **baixa** o arquivo em vez de servir a URL direta para o player, cada adapter ganha a camada de cache/retry/circuit breaker acima em vez de reimplementar isso por site, e o contrato de `base.py` ganha busca por título (`search`) e listagem de episódios (`get_episodes`) — não só "extrai dado uma URL de episódio já conhecida". É o mesmo contrato que o `AnimeProvider`/`orchestrator.py` do Slime Shell Web já implementa; a mudança aqui é só onde o resultado da busca é usado (abaixo).
+
+**Resolução automática de fonte, com fallback entre sites.** Reaproveita o padrão do Slime Shell Web (`orchestrator.py`: busca em paralelo nos providers, cada um retorna candidatos, você clica no certo) com uma diferença que fecha a lacuna que lá não existia: aqui o resultado fica **cacheado por anime**, não repetido a cada sessão.
+
+1. **Primeira captura de um anime**: o backend busca `Anime.titulo` no site padrão (AnimeFire). Busca com exatamente um candidato plausível resolve direto, sem perguntar nada. Mais de um candidato (nome ambíguo, remake, etc.) mostra a lista curta pra você confirmar uma vez — mesmo padrão de UI do busca-e-confirma do AniList (3F), mesmo motivo: errar aqui contamina os episódios seguintes do mesmo anime.
+2. **Site padrão sem o anime, ou em cooldown**: se a busca não achar nada, ou o site já estiver degradado (`EstadoSite`, circuit breaker do item 2 acima — pulado direto, sem gastar tentativa nele), tenta o próximo site da lista de prioridade (ex.: AnimeFire → AnimesDrive → ...), com a mesma lógica de busca-e-confirma se necessário.
+3. **Cache do mapeamento**: resolvido uma vez (automático ou confirmado por você), o par `(anime_id, site)` fica salvo em `FonteAnime` (seção 4), junto com o identificador do anime naquele site. Todo episódio seguinte do mesmo anime resolve direto dali, sem nova busca. É a melhoria concreta sobre o Slime Shell Web: lá a busca por nome rodava sempre em tempo real, sem cache algum (nem de sessão de busca); aqui roda uma vez por anime.
+4. **Falha depois de resolvido**: se um episódio falhar de extração (`falhou_extracao`) num site já mapeado — página mudou, vídeo saiu do ar, etc. — o sistema tenta automaticamente o próximo site da lista de prioridade pra aquele anime, repetindo a resolução ali (confirmação só se ambígua), antes de desistir. Só cai em `aguardando_intervencao` depois de esgotar todos os sites da lista.
 
 ### B. Fila de Processamento Assíncrono (Worker Nativo)
 - Worker roda como **processo separado** da API (decisão em 2.1), em background com `asyncio`, concorrência estrita de **um vídeo por vez**.
@@ -387,7 +394,7 @@ Banco relacional (SQLite via SQLAlchemy — arquivo único, zero-config, adequad
 | numero_fonte | int, nullable | número original como o site mostrou, mantido pra auditoria/debug |
 | tipo | enum | `regular / ova / especial / filme` (3F) |
 | versao | enum, NOT NULL, default `legendado` | `legendado / dublado` (3F) — NOT NULL porque múltiplos NULL são valores distintos no SQLite e quebrariam a unique constraint abaixo |
-| url_fonte | str | URL de origem do episódio — sem ela, retry/retomada de job é impossível |
+| url_fonte | str | URL de origem do episódio — preenchida pela resolução automática (`FonteAnime` + listagem de episódios do site, 3A), não digitada; sem ela, retry/retomada de job é impossível |
 | site_origem | str | qual scraper foi usado (movido de `Anime` — circuit breaker e falha são por site, e isso é por episódio: o caso comum, não a exceção) |
 | status | enum | `pendente / pronto / falhou / somente_720p` — `somente_720p` após redução de retenção (seção 3G). Era `somente_1080p` quando o ladder tinha 4K; com o teto em 1080p, o nome antigo passaria a descrever o estado **normal** de um episódio pronto, não o reduzido — trocar não é cosmético, é evitar um enum que mente |
 | hls_path | str | caminho do master `.m3u8` |
@@ -435,6 +442,15 @@ A tabela `Job` é o que falta hoje no rascunho e é o que permite: (a) sobrevive
 | ultima_falha_em | datetime, nullable | depuração |
 | ultimo_erro | str, nullable | depuração |
 
+**FonteAnime** (cache do mapeamento anime↔site — suporta a resolução automática de fonte da seção 3A, evita repetir busca por nome a cada episódio)
+| campo | tipo | nota |
+|---|---|---|
+| anime_id | FK, parte da PK composta | `ON DELETE CASCADE` |
+| site_dominio | str, parte da PK composta | mesma chave de `EstadoSite`, ex. `animefire.plus` |
+| identificador_no_site | str | slug/URL do anime naquele site — o que a listagem de episódios do adapter (`get_episodes`, 3A) precisa pra não buscar por nome de novo |
+| prioridade | int | ordem de tentativa entre sites pra este anime; herda a ordem global (AnimeFire = 0) no momento da resolução, mas fica por anime — se o padrão falhar e um fallback resolver, é o fallback que deve ser tentado primeiro no próximo episódio, não o padrão de novo |
+| resolvido_em | datetime | quando esta entrada foi criada/confirmada |
+
 ---
 
 ## 5. API (rascunho de endpoints)
@@ -442,7 +458,8 @@ A tabela `Job` é o que falta hoje no rascunho e é o que permite: (a) sobrevive
 ```
 GET    /api/admin/animes/buscar?q=...           busca candidatos no AniList (fallback Kitsu) — busca-e-confirma da seção 3F
 POST   /api/admin/animes                        confirma um candidato e cria o Anime (grava anilist_id/kitsu_id)
-POST   /api/admin/jobs                        cria job (url, anime_id, número do episódio, tipo, versão)
+POST   /api/admin/jobs                        cria job — entrada normal é (anime_id, número, tipo, versão); resolve a fonte sozinho (`FonteAnime` + busca-e-fallback, 3A) e devolve o Job já em fila. Se a busca no site padrão for ambígua, devolve candidatos em vez de criar o job (ver /fontes/confirmar abaixo). `url` continua aceito como override manual — caminho de depuração da Fase 1 (roadmap 10), não o fluxo normal
+POST   /api/admin/animes/{id}/fontes/confirmar  confirma qual candidato de site é o anime certo quando a resolução automática (3A) retornou mais de um resultado — grava em `FonteAnime` e completa a criação do job que ficou pendente dessa confirmação
 GET    /api/admin/jobs                         lista fila com status
 GET    /api/admin/jobs/{id}                    detalhe/progresso de um job
 POST   /api/admin/jobs/{id}/cancelar            cancelamento cooperativo (seção 3B/9, B7) — 202, não 204: é assíncrono; DELETE sugeria que a linha some, perdendo erro_msg/histórico
@@ -601,9 +618,9 @@ Uma trilha só. Fases 0–5 são o modo em tempo real. Fase 6 é o modo em lote 
   - (e) critério de qualidade = estabilidade temporal em movimento + "prefiro isso ao 1080p original" — avaliado informalmente (11.2, item 5), sem protocolo formal lado a lado registrado (11.5, item c);
   - (f) go/no-go: preset coube em 41ms/frame com margem folgada (0,0–0,6% de drop) — **go** confirmado; o projeto segue para as Fases 1–5.
 - **Fase 1 — Backend mínimo.** Job com **caminho de arquivo local** como fonte → `ffprobe` (`validando_fonte`, 3B) → empacotamento HLS `-c copy` com master manifest de 1 variante (3D) → catálogo. Sem GPU, sem chunks, sem scratch. Esse modo "arquivo local" **permanece no sistema depois**, como caminho de debug/fallback pra quando um site estiver quebrado — não é só um atalho de bootstrap.
-- **Fase 2 — Extrator.** Portar/adaptar os scrapers do Slime Shell Web (Strategy Pattern) para baixar o arquivo em vez de servir URL direta ao player, já com cache de sessão/cookies, retry+backoff e circuit breaker por site (3A) desde o início — mais fácil nascer com isso do que remendar depois. Passa a alimentar a Fase 1 com URLs reais, complementando (não substituindo) o modo de arquivo local.
+- **Fase 2 — Extrator.** Portar/adaptar os scrapers do Slime Shell Web (Strategy Pattern) para baixar o arquivo em vez de servir URL direta ao player, já com cache de sessão/cookies, retry+backoff e circuit breaker por site (3A) desde o início — mais fácil nascer com isso do que remendar depois. Adapters ganham busca por título e listagem de episódios (`search`/`get_episodes`, mesmo contrato do `AnimeProvider` do Slime Shell Web), não só extração dada uma URL — é o que a resolução automática de fonte (3A) precisa pra existir. Passa a alimentar a Fase 1 com fontes reais resolvidas automaticamente, complementando (não substituindo) o modo de arquivo local.
 - **Fase 3 — API (REST + WS) e Autenticação.** Endpoints REST + `WS /ws/admin`/`WS /ws/jobs/{id}` de notificação/progresso sobre os jobs da Fase 1, e o gate de autenticação (token fixo, cookie — 5/8.1) desde os primeiros endpoints reais — a escolha do transporte de auth determina como HLS e WS são servidos, é decisão de arquitetura, não hardening tardio; o `.env.example` já tem o placeholder do token.
-- **Fase 4 — Player WebGPU + Frontend.** Canvas + `requestVideoFrameCallback` + barra de controles acessível + seletor de preset + HUD de frame time (3E) — a implementação de referência já existe em `teste/` e informa esta fase diretamente (11.4). Painel admin (fila, busca-e-confirma de anime no AniList/Kitsu — 3F, indicador persistente de "precisa de atenção", toast em tempo real), reaproveitando componentes visuais do Slime Shell Web.
+- **Fase 4 — Player WebGPU + Frontend.** Canvas + `requestVideoFrameCallback` + barra de controles acessível + seletor de preset + HUD de frame time (3E) — a implementação de referência já existe em `teste/` e informa esta fase diretamente (11.4). Galeria de capas → página do anime com posições prontas/não capturadas → clique dispara a resolução automática de fonte (entrada normal, 3A), sem formulário de URL separado; busca-e-confirma de anime no AniList/Kitsu (3F) e da fonte quando ambígua (3A) reaproveitam o mesmo padrão de UI (lista curta de candidatos), indicador persistente de "precisa de atenção", toast em tempo real — reaproveitando componentes visuais do Slime Shell Web.
 - **Fase 5 — Hardening e refinamento.** Degradação automática por `droppedVideoFrames`; passe opcional de `RCAS`; investigar porte de ArtCNN para WGSL (opção I, 2.3); smoke tests dos scrapers; logging estruturado.
 - **Fase 6 — Gatilho de hardware (pós-gatilho, condicionada à seção 12).** Liga o worker em lote como **produtor da rendition `1080p_ia`** do catálogo já existente. Nada do que foi construído nas Fases 1–5 é descartado. Internamente, repete a estrutura PoC → pipeline → refinamento que as Fases 0–5 já percorreram para o modo em tempo real:
   - **6.0 — PoC do modo em lote.** Validar upscaling com clipe de 5s na GPU planejada (RTX 5060 Ti ou superior); medir fps real, VRAM e tempo por frame com `realesr-animevideov3` e comparar com `realcugan` (2.3); comparar 4x+downscale vs. 2x nativo para 1920×1080 (3C); decidir formato intermediário (PNG vs WebP/JPG) com dados reais, não estimativa. Critério de go/no-go:
