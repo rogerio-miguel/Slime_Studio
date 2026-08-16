@@ -7,7 +7,10 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 export default [
   // test/ é o harness de benchmark do protótipo Anime4K (sandbox, sem
   // lint/teste configurado — ver CLAUDE.md), não código de produção.
-  { ignores: ['dist', 'test'] },
+  // .vite/ é cache de pre-bundling do Vite (deps de terceiros já
+  // empacotadas) — já ignorado no .gitignore, mas o flat config do ESLint
+  // não lê .gitignore sozinho.
+  { ignores: ['dist', 'test', '.vite'] },
   {
     files: ['**/*.{js,jsx}'],
     languageOptions: {
