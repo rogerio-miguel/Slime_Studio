@@ -10,11 +10,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
-from api.esquemas import AnimeSaida, ConfirmarFonteRequest, CriarAnimeRequest, EpisodioSaida
+from api.esquemas import (
+    AnimeSaida,
+    ConfirmarFonteRequest,
+    CriarAnimeRequest,
+    EpisodioRemotoSaida,
+    EpisodioSaida,
+)
 from api.servicos import catalogo as servico_catalogo
+from api.servicos import fontes as servico_fontes
 from core.config import Config
 from db.catalogo import obter_ou_criar_anime_id
-from extractors.base import ResultadoBusca
+from extractors.base import EpisodioRemoto, ResultadoBusca
 from extractors.resolucao import confirmar_fonte
 from models.anime import Anime
 from models.episodio import Episodio
@@ -55,6 +62,21 @@ async def confirmar_fonte_do_anime(
     )
     await confirmar_fonte(sessionmaker, anime, corpo.dominio, candidato)
     return {"status": "ok"}
+
+
+@router.get("/{anime_id}/episodios-remotos", response_model=list[EpisodioRemotoSaida])
+async def listar_episodios_remotos_do_anime(
+    anime_id: int,
+    sessao: AsyncSession = Depends(obter_sessao),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[EpisodioRemoto]:
+    """Posições de episódio na fonte remota (site) do anime — o frontend cruza
+    isto com `GET /api/animes/{id}/episodios` (já capturados) para montar a
+    grade prontos/não capturados na página do anime."""
+    anime = await sessao.get(Anime, anime_id)
+    if anime is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    return await servico_fontes.listar_episodios_remotos(sessionmaker, anime)
 
 
 @router.delete("/{anime_id}", status_code=status.HTTP_204_NO_CONTENT)
