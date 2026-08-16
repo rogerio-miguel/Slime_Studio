@@ -31,8 +31,9 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 _TETO_ESPERA_S = 45
 
 # TTL da sessão cacheada após sucesso via cliente leve. Estimativa conservadora
-# até termos dados reais de expiração do `cf_clearance` (só o navegador da
-# etapa 2B resolve desafio de verdade; hoje é sessão sem cookie de desafio).
+# até termos dados reais de expiração do `cf_clearance` (só o cliente de
+# navegador — adiado até um site real exigir — resolve desafio de verdade;
+# hoje é sessão sem cookie de desafio).
 _TTL_SESSAO_S = 6 * 3600
 
 

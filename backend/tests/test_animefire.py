@@ -5,41 +5,13 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import ClienteFalso
 
 from core.erros import EstruturaDoSiteMudou
 from extractors.animefire import AnimeFireProvider
 from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "animefire"
-
-
-class ClienteFalso:
-    """Implementação de `ClienteDeSite` que devolve respostas pré-programadas por
-    URL, em vez de tocar rede. URL não mapeada é erro de teste (`AssertionError`),
-    não `None` silencioso."""
-
-    def __init__(
-        self,
-        *,
-        html_por_url: dict[str, str] | None = None,
-        json_por_url: dict[str, object] | None = None,
-    ) -> None:
-        self._html_por_url = html_por_url or {}
-        self._json_por_url = json_por_url or {}
-
-    def obter_html(self, url: str, *, timeout_s: int) -> str:
-        assert url in self._html_por_url, f"URL não mapeada no ClienteFalso: {url}"
-        return self._html_por_url[url]
-
-    def obter_json(self, url: str, *, timeout_s: int) -> dict | list:
-        assert url in self._json_por_url, f"URL não mapeada no ClienteFalso: {url}"
-        return self._json_por_url[url]
-
-    def cookies(self) -> dict[str, str]:
-        return {}
-
-    def user_agent(self) -> str:
-        return "ClienteFalso/1.0"
 
 
 def _ler_fixture(nome: str) -> str:

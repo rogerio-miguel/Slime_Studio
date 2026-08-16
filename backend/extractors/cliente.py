@@ -89,14 +89,15 @@ class ClienteLeve:
 
 
 class ClienteNavegador:
-    """Stub — a implementação via navegador completo (DrissionPage) chega na etapa 2B.
+    """Stub — a implementação via navegador completo (DrissionPage) fica adiada
+    até um site real exigir navegador.
 
     A interface nasce completa para que `resiliencia.chamar` já saiba escalar
     para cá quando `SessaoRejeitada` acontece; hoje qualquer chamada falha de
     propósito, sem retentativa.
     """
 
-    _MENSAGEM = "cliente de navegador indisponível até a etapa 2B"
+    _MENSAGEM = "cliente de navegador indisponível (adiado até um site real exigir navegador)"
 
     def obter_html(self, url: str, *, timeout_s: int) -> str:
         raise FalhaDeExtracao(self._MENSAGEM, permite_retentativa=False)
