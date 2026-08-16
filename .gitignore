@@ -27,3 +27,6 @@ media/**
 # Sandbox de teste do harness Anime4K (teste/) — mídia local e log de telemetria
 frontend/test/*.mp4
 frontend/test/*.ndjson
+
+# Backup do vídeo de entrada original, pré-reencode (hero da Inicio.jsx)
+frontend/src/assets/video_entrada.original.mp4

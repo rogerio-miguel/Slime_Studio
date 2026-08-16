@@ -23,7 +23,7 @@ async def _criar_anime(sessionmaker: _SessionMaker, titulo: str) -> int:
 
 
 async def test_listar_episodios_remotos_caminho_feliz(
-    cliente_autenticado: AsyncClient,
+    cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -41,14 +41,14 @@ async def test_listar_episodios_remotos_caminho_feliz(
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
-    resposta = await cliente_autenticado.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
+    resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
 
     assert resposta.status_code == 200
     assert resposta.json() == [{"numero": 1}, {"numero": 2}]
 
 
 async def test_listar_episodios_remotos_fonte_ambigua_409(
-    cliente_autenticado: AsyncClient,
+    cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -65,23 +65,13 @@ async def test_listar_episodios_remotos_fonte_ambigua_409(
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
 
-    resposta = await cliente_autenticado.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
+    resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
 
     assert resposta.status_code == 409
     assert resposta.json()["detail"]["motivo"] == "fonte_ambigua"
 
 
-async def test_listar_episodios_remotos_anime_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.get("/api/admin/animes/999999/episodios-remotos")
+async def test_listar_episodios_remotos_anime_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.get("/api/admin/animes/999999/episodios-remotos")
 
     assert resposta.status_code == 404
-
-
-async def test_listar_episodios_remotos_sem_cookie_401(
-    cliente: AsyncClient, sessionmaker_api: _SessionMaker
-):
-    anime_id = await _criar_anime(sessionmaker_api, "Anime Remoto Sem Auth")
-
-    resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
-
-    assert resposta.status_code == 401

@@ -67,7 +67,7 @@ async def _anime_existe(sessionmaker: _SessionMaker, anime_id: int) -> bool:
 
 
 async def test_remover_episodio_sem_job_apaga_linha_e_arquivos(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
 ):
     anime_id, slug = await _criar_anime(sessionmaker_api, "Anime Remover Episodio")
     diretorio = diretorio_do_episodio(
@@ -78,7 +78,7 @@ async def test_remover_episodio_sem_job_apaga_linha_e_arquivos(
     hls_path = str((diretorio / "master.m3u8").relative_to(config_api.media_root))
     episodio_id = await _criar_episodio(sessionmaker_api, anime_id, hls_path=hls_path)
 
-    resposta = await cliente_autenticado.delete(f"/api/admin/episodios/{episodio_id}")
+    resposta = await cliente.delete(f"/api/admin/episodios/{episodio_id}")
 
     assert resposta.status_code == 204
     assert not await _episodio_existe(sessionmaker_api, episodio_id)
@@ -86,61 +86,49 @@ async def test_remover_episodio_sem_job_apaga_linha_e_arquivos(
 
 
 async def test_remover_episodio_com_job_finalizado_remove(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id, _ = await _criar_anime(sessionmaker_api, "Anime Episodio Job Pronto")
     episodio_id = await _criar_episodio(sessionmaker_api, anime_id)
     await _criar_job(sessionmaker_api, episodio_id, StatusJob.PRONTO)
 
-    resposta = await cliente_autenticado.delete(f"/api/admin/episodios/{episodio_id}")
+    resposta = await cliente.delete(f"/api/admin/episodios/{episodio_id}")
 
     assert resposta.status_code == 204
     assert not await _episodio_existe(sessionmaker_api, episodio_id)
 
 
 async def test_remover_episodio_com_job_em_execucao_409(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id, _ = await _criar_anime(sessionmaker_api, "Anime Episodio Job Ativo")
     episodio_id = await _criar_episodio(sessionmaker_api, anime_id)
     job_id = await _criar_job(sessionmaker_api, episodio_id, StatusJob.TRANSCODIFICANDO)
 
-    resposta = await cliente_autenticado.delete(f"/api/admin/episodios/{episodio_id}")
+    resposta = await cliente.delete(f"/api/admin/episodios/{episodio_id}")
 
     assert resposta.status_code == 409
     assert resposta.json() == {"detail": {"motivo": "job_em_execucao", "job_id": job_id}}
     assert await _episodio_existe(sessionmaker_api, episodio_id)
 
 
-async def test_remover_episodio_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.delete("/api/admin/episodios/999999")
+async def test_remover_episodio_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.delete("/api/admin/episodios/999999")
 
     assert resposta.status_code == 404
-
-
-async def test_remover_episodio_sem_cookie_401(
-    cliente: AsyncClient, sessionmaker_api: _SessionMaker
-):
-    anime_id, _ = await _criar_anime(sessionmaker_api, "Anime Episodio Sem Auth")
-    episodio_id = await _criar_episodio(sessionmaker_api, anime_id)
-
-    resposta = await cliente.delete(f"/api/admin/episodios/{episodio_id}")
-
-    assert resposta.status_code == 401
-    assert await _episodio_existe(sessionmaker_api, episodio_id)
 
 
 # --- DELETE /api/admin/animes/{id} ---
 
 
 async def test_remover_anime_sem_jobs_remove_cascata(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id, _ = await _criar_anime(sessionmaker_api, "Anime Remover Cascata")
     await _criar_episodio(sessionmaker_api, anime_id, numero=1)
     await _criar_episodio(sessionmaker_api, anime_id, numero=2)
 
-    resposta = await cliente_autenticado.delete(f"/api/admin/animes/{anime_id}")
+    resposta = await cliente.delete(f"/api/admin/animes/{anime_id}")
 
     assert resposta.status_code == 204
     assert not await _anime_existe(sessionmaker_api, anime_id)
@@ -153,30 +141,21 @@ async def test_remover_anime_sem_jobs_remove_cascata(
 
 
 async def test_remover_anime_com_episodio_com_job_ativo_409(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id, _ = await _criar_anime(sessionmaker_api, "Anime Multi Episodio Ativo")
     await _criar_episodio(sessionmaker_api, anime_id, numero=1)
     episodio_ativo_id = await _criar_episodio(sessionmaker_api, anime_id, numero=2)
     job_id = await _criar_job(sessionmaker_api, episodio_ativo_id, StatusJob.BAIXANDO)
 
-    resposta = await cliente_autenticado.delete(f"/api/admin/animes/{anime_id}")
+    resposta = await cliente.delete(f"/api/admin/animes/{anime_id}")
 
     assert resposta.status_code == 409
     assert resposta.json() == {"detail": {"motivo": "job_em_execucao", "job_id": job_id}}
     assert await _anime_existe(sessionmaker_api, anime_id)
 
 
-async def test_remover_anime_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.delete("/api/admin/animes/999999")
+async def test_remover_anime_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.delete("/api/admin/animes/999999")
 
     assert resposta.status_code == 404
-
-
-async def test_remover_anime_sem_cookie_401(cliente: AsyncClient, sessionmaker_api: _SessionMaker):
-    anime_id, _ = await _criar_anime(sessionmaker_api, "Anime Sem Auth Delete")
-
-    resposta = await cliente.delete(f"/api/admin/animes/{anime_id}")
-
-    assert resposta.status_code == 401
-    assert await _anime_existe(sessionmaker_api, anime_id)

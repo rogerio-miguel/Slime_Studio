@@ -1,22 +1,35 @@
-import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
 import { criarAnime, listarAnimes } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
-import { useSessao } from '../sessao/SessaoContexto.jsx';
 
-// Rota "/" — catálogo. Cadastro de anime é um formulário mínimo (título +
-// ano) direto pra `POST /api/admin/animes`: sem busca-e-confirma no
-// AniList/Kitsu (integrations/ ainda não existe, fora de escopo desta
-// fase — ver `backend/api/rotas/animes.py`), então este é o único jeito de
-// popular o catálogo pela UI.
+// Rota "/animes" — catálogo completo. Cadastro de anime é um formulário
+// mínimo (título + ano) direto pra `POST /api/admin/animes`: sem
+// busca-e-confirma no AniList/Kitsu (integrations/ ainda não existe, fora de
+// escopo desta fase — ver `backend/api/rotas/animes.py`), então este é o
+// único jeito de popular o catálogo pela UI.
+//
+// Busca (`?q=`, disparada pela navbar em BarraDeNavegacao.jsx) é filtrada
+// aqui no client: `GET /api/animes` não aceita query param de busca
+// (backend/api/rotas/animes.py::listar_animes só ordena por título) e a
+// lista é pequena o bastante (uso pessoal) pra não justificar um endpoint
+// novo.
 export default function Galeria() {
   const navigate = useNavigate();
-  const { sair } = useSessao();
+  const [searchParams] = useSearchParams();
+  const termoBusca = (searchParams.get('q') ?? '').trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
   const { dados: animes, carregando, erro, recarregar } = useRecurso(listarAnimes, []);
+  const animesFiltrados = useMemo(
+    () =>
+      termoBusca
+        ? (animes ?? []).filter((anime) => anime.titulo.toLowerCase().includes(termoBusca))
+        : animes,
+    [animes, termoBusca]
+  );
 
   const [tituloNovo, setTituloNovo] = useState('');
   const [anoNovo, setAnoNovo] = useState('');
@@ -61,15 +74,8 @@ export default function Galeria() {
     <main className="mx-auto max-w-5xl px-6 py-10">
       <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <h1 ref={focoTitulo} tabIndex={-1} className="text-2xl font-semibold text-white outline-none">
-          Slime Studio
+          Animes
         </h1>
-        <button
-          type="button"
-          onClick={() => sair()}
-          className="text-sm text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
-        >
-          Sair
-        </button>
       </header>
 
       <form onSubmit={aoCriarAnime} className="mb-8 flex flex-wrap items-end gap-3">
@@ -130,9 +136,12 @@ export default function Galeria() {
       {!carregando && !erro && animes?.length === 0 && (
         <p className="text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
       )}
+      {!carregando && !erro && animes?.length > 0 && animesFiltrados.length === 0 && (
+        <p className="text-sm text-ink-muted">Nenhum anime encontrado para “{searchParams.get('q')}”.</p>
+      )}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-        {animes?.map((anime) => (
+        {animesFiltrados?.map((anime) => (
           <AnimeCard key={anime.id} anime={anime} />
         ))}
       </div>

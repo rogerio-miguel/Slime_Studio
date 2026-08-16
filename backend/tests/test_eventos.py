@@ -14,11 +14,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from api.eventos import _TAMANHO_FILA_POR_CONEXAO, Assinantes, MonitorDeFila
 from api.main import criar_app
-from api.seguranca import NOME_COOKIE
 from core.config import Config
 from core.enums import StatusJob, TipoEpisodio, VersaoEpisodio
 from db.engine import criar_engine, criar_sessionmaker
@@ -27,7 +25,6 @@ from models.anime import Anime
 from models.base import Base
 from models.episodio import Episodio
 from models.job import Job
-from tests.conftest import TOKEN_ADMIN_TESTE
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -184,7 +181,6 @@ def _preparar_config(tmp_path: Path) -> Config:
         ffmpeg=Path("/usr/bin/ffmpeg"),
         ffprobe=Path("/usr/bin/ffprobe"),
         caminho_lock=tmp_path / "worker.lock",
-        admin_access_token=TOKEN_ADMIN_TESTE,
     )
 
     async def _criar_schema() -> None:
@@ -197,20 +193,10 @@ def _preparar_config(tmp_path: Path) -> Config:
     return config
 
 
-def test_ws_admin_sem_cookie_e_rejeitado_com_1008(tmp_path: Path):
+def test_ws_admin_recebe_snapshot(tmp_path: Path):
     app = criar_app(_preparar_config(tmp_path))
 
-    with TestClient(app) as client, pytest.raises(WebSocketDisconnect) as excinfo:
-        with client.websocket_connect("/ws/admin"):
-            pass
-
-    assert excinfo.value.code == 1008
-
-
-def test_ws_admin_com_cookie_valido_recebe_snapshot(tmp_path: Path):
-    app = criar_app(_preparar_config(tmp_path))
-
-    with TestClient(app, cookies={NOME_COOKIE: TOKEN_ADMIN_TESTE}) as client:
+    with TestClient(app) as client:
         with client.websocket_connect("/ws/admin") as websocket:
             mensagem = websocket.receive_json()
 

@@ -10,17 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.enums import StatusEpisodio, StatusJob, TipoEpisodio, VersaoEpisodio
 
-# --- auth (api/rotas/auth.py) ---
-
-
-class DesbloquearRequest(BaseModel):
-    token: str
-
-
-class EstadoAutenticacaoSaida(BaseModel):
-    autenticado: bool
-
-
 # --- jobs (api/rotas/jobs.py) ---
 
 
@@ -33,8 +22,8 @@ class CriarJobLocalRequest(BaseModel):
     # Sem validação de existência/formato aqui (mesmo comportamento de
     # `scripts/enfileirar_local.py` hoje) — o worker é quem valida o arquivo de
     # fato (`worker/pipeline/validacao.py::sondar`, levanta `FonteInvalida`).
-    # Aceitável porque este endpoint é admin-only (atrás do gate de
-    # autenticação), não input de usuário final.
+    # Aceitável porque o app é local-only por natureza (uso pessoal, sem
+    # múltiplos usuários), não input de usuário final não confiável.
     caminho_local: str
     titulo_episodio: str | None = None
     ano: int | None = None

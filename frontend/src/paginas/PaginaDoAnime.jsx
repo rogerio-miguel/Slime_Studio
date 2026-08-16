@@ -128,7 +128,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
       <Link
-        to="/"
+        to="/animes"
         className="mb-4 inline-block text-sm text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
       >
         ← catálogo

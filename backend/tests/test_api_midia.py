@@ -107,7 +107,7 @@ async def test_resolver_caminho_sem_hls_path(config_api: Config):
 
 
 async def test_playlist_m3u8_servida_com_sucesso(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
 ):
     diretorio = config_api.media_root / "anime" / "ep1"
     diretorio.mkdir(parents=True)
@@ -117,32 +117,32 @@ async def test_playlist_m3u8_servida_com_sucesso(
         sessionmaker_api, titulo_anime="Anime Midia", hls_path="anime/ep1/master.m3u8"
     )
 
-    resposta = await cliente_autenticado.get(f"/api/episodios/{episodio_id}/playlist.m3u8")
+    resposta = await cliente.get(f"/api/episodios/{episodio_id}/playlist.m3u8")
 
     assert resposta.status_code == 200
     assert resposta.headers["content-type"].startswith("application/vnd.apple.mpegurl")
 
 
 async def test_playlist_m3u8_sem_hls_devolve_404(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     episodio_id = await _inserir_episodio_com_hls(
         sessionmaker_api, titulo_anime="Anime Sem HLS", hls_path=None
     )
 
-    resposta = await cliente_autenticado.get(f"/api/episodios/{episodio_id}/playlist.m3u8")
+    resposta = await cliente.get(f"/api/episodios/{episodio_id}/playlist.m3u8")
 
     assert resposta.status_code == 404
 
 
-async def test_playlist_m3u8_episodio_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.get("/api/episodios/999999/playlist.m3u8")
+async def test_playlist_m3u8_episodio_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.get("/api/episodios/999999/playlist.m3u8")
 
     assert resposta.status_code == 404
 
 
 async def test_segmento_servido_com_sucesso(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
 ):
     diretorio = config_api.media_root / "anime" / "ep2"
     diretorio.mkdir(parents=True)
@@ -153,24 +153,8 @@ async def test_segmento_servido_com_sucesso(
         sessionmaker_api, titulo_anime="Anime Segmento", hls_path="anime/ep2/master.m3u8"
     )
 
-    resposta = await cliente_autenticado.get(f"/api/episodios/{episodio_id}/seg_00001.ts")
+    resposta = await cliente.get(f"/api/episodios/{episodio_id}/seg_00001.ts")
 
     assert resposta.status_code == 200
     assert resposta.content == b"dados-fake-do-segmento"
     assert resposta.headers["cache-control"] == "private, max-age=31536000, immutable"
-
-
-async def test_media_sem_cookie_devolve_401(
-    cliente: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
-):
-    diretorio = config_api.media_root / "anime" / "ep4"
-    diretorio.mkdir(parents=True)
-    (diretorio / "master.m3u8").write_text("#EXTM3U\n")
-
-    episodio_id = await _inserir_episodio_com_hls(
-        sessionmaker_api, titulo_anime="Anime Sem Auth", hls_path="anime/ep4/master.m3u8"
-    )
-
-    resposta = await cliente.get(f"/api/episodios/{episodio_id}/playlist.m3u8")
-
-    assert resposta.status_code == 401

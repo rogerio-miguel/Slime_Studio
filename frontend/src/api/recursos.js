@@ -3,18 +3,6 @@
 // HTTP) fica só aqui, nunca espalhada pelas páginas/componentes.
 import { requisitar } from './cliente.js';
 
-export function obterEstadoSessao() {
-  return requisitar('/api/auth/estado');
-}
-
-export function desbloquear(token) {
-  return requisitar('/api/auth/desbloquear', { metodo: 'POST', corpo: { token } });
-}
-
-export function sair() {
-  return requisitar('/api/auth/sair', { metodo: 'POST' });
-}
-
 export function listarAnimes() {
   return requisitar('/api/animes');
 }
