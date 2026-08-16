@@ -115,7 +115,8 @@ class AnimeFireProvider(ExtratorDeSite):
                 dominio=self.dominio,
             )
 
-        episodios.reverse()  # mais antigo primeiro
+        # AnimeFire já lista os episódios do mais antigo pro mais novo na página
+        # (confirmado contra o site real) — sem reverter aqui.
         return episodios
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:

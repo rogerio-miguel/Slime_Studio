@@ -4,18 +4,33 @@ job falhar em produção pra descobrir que o site mudou.
 
 `@pytest.mark.rede`: toca rede real de propósito — desselecionado por padrão
 (`addopts = ["-m", "not rede"]`, `pyproject.toml`). É diagnóstico manual, não gate
-de CI. Esqueleto nesta etapa (2A): implementar de fato fica para quando houver um
-título real estável o bastante para servir de fixture de smoke test sem quebrar a
-cada mudança de catálogo do site.
+de CI.
+
+Título de referência do AnimeFire: "One Piece" (`one-piece`) — série longa em
+exibição, baixo risco de sumir do catálogo e virar fixture instável.
 """
 
 import pytest
 
+from extractors.animefire import AnimeFireProvider
+from extractors.cliente import ClienteLeve
+
 pytestmark = pytest.mark.rede
 
+_IDENTIFICADOR_REFERENCIA = "one-piece"
 
-@pytest.mark.skip(
-    reason="esqueleto (2A) — implementar quando houver um título de referência estável"
-)
+
 def test_animefire_localiza_link_de_um_episodio_real():
-    pass
+    provider = AnimeFireProvider()
+    cliente = ClienteLeve()
+
+    resultados = provider.buscar(cliente, "One Piece")
+    assert any(r.identificador == _IDENTIFICADOR_REFERENCIA for r in resultados)
+
+    episodios = provider.listar_episodios(cliente, _IDENTIFICADOR_REFERENCIA)
+    assert len(episodios) > 1000
+    assert episodios[0].numero == 1  # mais antigo primeiro
+
+    midia = provider.resolver_midia(cliente, episodios[0].url)
+    assert midia.url
+    assert "Referer" in midia.cabecalhos
