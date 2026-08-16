@@ -83,3 +83,40 @@ class EstruturaDoSiteMudou(FalhaDeExtracao):
 
 class FonteNaoEncontrada(FalhaDeExtracao):
     """Anime/episódio não existe neste site (HTTP 404 ou equivalente)."""
+
+
+class FonteAmbigua(ErroSlimeStudio):
+    """`extractors.resolucao.resolver_fonte_do_anime` devolveu `ConfirmacaoNecessaria`
+    (mais de um candidato, sem match exato de título) — a API mapeia isto para 409
+    com `{"motivo": "fonte_ambigua", "dominio": ..., "candidatos": [...]}`.
+
+    `candidatos` já vem serializado (lista de `dict`), não como `ResultadoBusca` —
+    este módulo é domínio puro e não importa `extractors` (regra de dependência da
+    Clean Architecture, CLAUDE.md §1).
+    """
+
+    def __init__(self, dominio: str, candidatos: list[dict[str, str]]) -> None:
+        super().__init__(f"fonte ambígua em {dominio}: {len(candidatos)} candidato(s)")
+        self.dominio = dominio
+        self.candidatos = candidatos
+
+
+class EpisodioJaExiste(ErroSlimeStudio):
+    """Episódio já cadastrado com a mesma identidade (`anime_id`, `numero`, `tipo`,
+    `versao` — `uq_episodio_identidade`). A API mapeia isto para 409."""
+
+    def __init__(self, episodio_id: int | None = None) -> None:
+        super().__init__(f"episódio já cadastrado, id={episodio_id}")
+        self.episodio_id = episodio_id
+
+
+class JobEmExecucao(ErroSlimeStudio):
+    """Existe um `Job` em `ESTADOS_EM_EXECUCAO` associado ao anime/episódio que se
+    tentou remover — remover agora deixaria o worker escrevendo num diretório/
+    registro que acabou de sumir (`ondelete="CASCADE"` apaga o `Job` por baixo,
+    sem o worker perceber). A API mapeia isto para 409; o cliente precisa
+    cancelar o job antes de remover."""
+
+    def __init__(self, job_id: int) -> None:
+        super().__init__(f"job {job_id} em execução — cancele antes de remover")
+        self.job_id = job_id

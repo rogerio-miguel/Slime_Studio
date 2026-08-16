@@ -1,6 +1,6 @@
 """CRUD de `SessaoBypass` — cache de sessão/cookies por site (ESPECIFICACAO.md §3A item 1).
 
-Sessões curtas por operação, mesmo idioma de `worker/fila.py`.
+Sessões curtas por operação, mesmo idioma de `db/fila.py`.
 """
 
 import json

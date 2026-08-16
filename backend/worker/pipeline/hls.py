@@ -10,7 +10,6 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.enums import TipoEpisodio, VersaoEpisodio
 from core.erros import FalhaDeFerramenta
 from worker.pipeline.ferramentas import executar
 from worker.pipeline.validacao import EstrategiaFluxo, PlanoDeEmpacotamento
@@ -24,17 +23,6 @@ class ResultadoEmpacotamento:
     master_relativo: Path  # relativo a media_root — é o que vai para Episodio.hls_path
     renditions: list[str]
     tamanho_bytes: int
-
-
-def diretorio_do_episodio(
-    media_root: Path,
-    anime_slug: str,
-    numero: int,
-    tipo: TipoEpisodio,
-    versao: VersaoEpisodio,
-) -> Path:
-    nome_pasta = f"{numero:03d}-{tipo.value}-{versao.value}"
-    return media_root / "hls" / anime_slug / nome_pasta
 
 
 async def empacotar(

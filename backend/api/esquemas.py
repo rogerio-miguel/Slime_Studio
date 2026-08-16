@@ -1,0 +1,165 @@
+"""Modelos Pydantic (I/O HTTP) — só `api/rotas/` importa este módulo;
+`api/servicos/` não conhece Pydantic nem `fastapi` (regra de dependência da
+Clean Architecture, CLAUDE.md §1).
+"""
+
+from datetime import datetime
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from core.enums import StatusEpisodio, StatusJob, TipoEpisodio, VersaoEpisodio
+
+# --- auth (api/rotas/auth.py) ---
+
+
+class DesbloquearRequest(BaseModel):
+    token: str
+
+
+class EstadoAutenticacaoSaida(BaseModel):
+    autenticado: bool
+
+
+# --- jobs (api/rotas/jobs.py) ---
+
+
+class CriarJobLocalRequest(BaseModel):
+    modo: Literal["local"]
+    anime: str
+    numero: int
+    tipo: TipoEpisodio
+    versao: VersaoEpisodio = VersaoEpisodio.LEGENDADO
+    # Sem validação de existência/formato aqui (mesmo comportamento de
+    # `scripts/enfileirar_local.py` hoje) — o worker é quem valida o arquivo de
+    # fato (`worker/pipeline/validacao.py::sondar`, levanta `FonteInvalida`).
+    # Aceitável porque este endpoint é admin-only (atrás do gate de
+    # autenticação), não input de usuário final.
+    caminho_local: str
+    titulo_episodio: str | None = None
+    ano: int | None = None
+    duracao_esperada_s: int | None = None
+
+
+class CriarJobSiteRequest(BaseModel):
+    modo: Literal["site"]
+    anime_id: int
+    numero: int
+    tipo: TipoEpisodio
+    versao: VersaoEpisodio = VersaoEpisodio.LEGENDADO
+    duracao_esperada_s: int | None = None
+
+
+CriarJobRequest = Annotated[
+    CriarJobLocalRequest | CriarJobSiteRequest, Field(discriminator="modo")
+]
+
+
+class JobCriadoSaida(BaseModel):
+    job_id: int
+
+
+class JobSaida(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    episodio_id: int
+    status: StatusJob
+    etapa_atual: str | None
+    progresso_pct: int
+    erro_msg: str | None
+    tentativas: int
+    duracao_esperada_s: int | None
+    criado_em: datetime
+    iniciado_em: datetime | None
+    finalizado_em: datetime | None
+    heartbeat_em: datetime | None
+
+
+class CancelarJobSaida(BaseModel):
+    status: Literal["cancelado", "cancelando"]
+
+
+class RetryJobSaida(BaseModel):
+    job_id: int
+
+
+# --- animes (api/rotas/animes.py) ---
+
+
+class CriarAnimeRequest(BaseModel):
+    titulo: str
+    ano: int | None = None
+
+
+class AnimeSaida(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    titulo: str
+    slug: str
+    ano: int | None
+    capa_path: str | None
+    criado_em: datetime
+
+
+class ConfirmarFonteRequest(BaseModel):
+    dominio: str
+    identificador: str
+    titulo_exibicao: str
+    url: str
+
+
+# --- episódios (api/rotas/episodios.py) ---
+
+
+class AtualizarEpisodioRequest(BaseModel):
+    numero: int | None = None
+    tipo: TipoEpisodio | None = None
+    versao: VersaoEpisodio | None = None
+
+
+class EpisodioSaida(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    anime_id: int
+    numero: int
+    titulo: str | None
+    tipo: TipoEpisodio
+    versao: VersaoEpisodio
+    status: StatusEpisodio
+    hls_path: str | None
+    renditions_disponiveis: list[str] | None
+    duracao_s: int | None
+    assistido_em: datetime | None
+    criado_em: datetime
+
+
+# --- sites (api/rotas/sites.py) ---
+
+
+class SiteSaida(BaseModel):
+    dominio: str
+    falhas_consecutivas: int
+    degradado: bool
+    cooldown_ate: datetime
+    ultima_falha_em: datetime | None
+    ultimo_erro: str | None
+
+
+# --- saúde/operação (api/rotas/saude.py) ---
+
+
+class SaudeSaida(BaseModel):
+    status: Literal["ok"]
+
+
+class DiscoSaida(BaseModel):
+    total_bytes: int
+    livre_bytes: int
+    usado_por_midia_bytes: int
+
+
+class WorkerSaida(BaseModel):
+    vivo: bool
