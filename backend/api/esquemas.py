@@ -110,6 +110,16 @@ class ConfirmarFonteRequest(BaseModel):
     url: str
 
 
+class EpisodioRemotoSaida(BaseModel):
+    """Posição na fonte remota (site) — `extractors.base.EpisodioRemoto` só carrega
+    `numero`/`url`, sem título; a grade prontos/não capturados do frontend cruza
+    isto com `EpisodioSaida.numero` de `GET /api/animes/{id}/episodios`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    numero: int
+
+
 # --- episódios (api/rotas/episodios.py) ---
 
 
