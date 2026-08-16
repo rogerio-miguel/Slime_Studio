@@ -1,4 +1,4 @@
-"""Testes de `worker/fila.py` contra um arquivo SQLite real — WAL exige
+"""Testes de `db/fila.py` contra um arquivo SQLite real — WAL exige
 arquivo, `:memory:` não serve para exercitar o claim atômico."""
 
 import asyncio
@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Config
 from core.enums import StatusJob, TipoEpisodio, VersaoEpisodio
 from db.engine import criar_engine, criar_sessionmaker
+from db.fila import reciclar_jobs_orfaos, reivindicar_proximo
 from models.anime import Anime
 from models.base import Base
 from models.episodio import Episodio
 from models.job import Job
-from worker.fila import reciclar_jobs_orfaos, reivindicar_proximo
 
 
 @pytest.fixture

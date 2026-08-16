@@ -29,18 +29,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Config
 from core.enums import StatusEpisodio, StatusJob
 from core.erros import ErroSlimeStudio, FalhaDeExtracao, FalhaDeFerramenta, FonteInvalida
-from models.anime import Anime
-from models.episodio import Episodio
-from models.job import Job
-from worker.fila import (
+from core.midia import diretorio_do_episodio
+from db.fila import (
     atualizar_status,
     concluir,
     falhar,
     falhar_extracao,
     marcar_aguardando_intervencao,
 )
+from models.anime import Anime
+from models.episodio import Episodio
+from models.job import Job
 from worker.pipeline.fonte import resolver_fonte
-from worker.pipeline.hls import diretorio_do_episodio, empacotar
+from worker.pipeline.hls import empacotar
 from worker.pipeline.validacao import conferir_decodificacao, decidir_plano, sondar
 
 logger = logging.getLogger(__name__)

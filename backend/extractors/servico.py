@@ -87,7 +87,7 @@ async def baixar_com_fallback_de_site(
     """Laço "site mapeado falhou -> tenta o próximo" (D7 do plano).
 
     Falha **retentável** (rede, sessão expirada) propaga sem trocar de site — o
-    job será reagendado (`worker/fila.py::falhar_extracao`) e tenta de novo no
+    job será reagendado (`db/fila.py::falhar_extracao`) e tenta de novo no
     mesmo site, comportamento certo pra uma falha transitória. Só uma falha
     **não-retentável** (`EstruturaDoSiteMudou`, site em `SiteEmCooldown`) aciona
     a busca pelo próximo site (`resolucao.proximo_site_para`), que por sua vez

@@ -1,5 +1,9 @@
 """Produtor de jobs a partir de um arquivo de vídeo local (Fase 1 — sem API ainda).
 
+Wrapper fino de CLI sobre `db/catalogo.py` — a criação de anime/episódio/job é
+compartilhada com a API (`api/servicos/jobs.py`), evitando drift entre os dois
+produtores de job (ESPECIFICACAO.md §5, Passo 1.3 do plano da Fase 3).
+
 Uso:
     uv run python -m scripts.enfileirar_local --arquivo /caminho/ep01.mkv \\
         --anime "Slime Datta Ken" --numero 1
@@ -13,20 +17,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from core.config import Config, carregar_config
-from core.enums import SITE_LOCAL, StatusEpisodio, StatusJob, TipoEpisodio, VersaoEpisodio
-from core.erros import ErroSlimeStudio
-from core.texto import slugificar
+from core.enums import SITE_LOCAL, TipoEpisodio, VersaoEpisodio
+from db import catalogo
 from db.engine import criar_engine, criar_sessionmaker
-from models.anime import Anime
-from models.episodio import Episodio
-from models.job import Job
-
-_SessionMaker = async_sessionmaker[AsyncSession]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,86 +86,20 @@ async def enfileirar(args: Argumentos, config: Config) -> int:
     engine = criar_engine(config)
     sessionmaker = criar_sessionmaker(engine)
     try:
-        anime_id = await _obter_ou_criar_anime_id(sessionmaker, args.anime, args.ano)
-        return await _criar_episodio_e_job(sessionmaker, anime_id, args)
-    finally:
-        await engine.dispose()
-
-
-async def _obter_ou_criar_anime_id(
-    sessionmaker: _SessionMaker, titulo: str, ano: int | None
-) -> int:
-    slug = slugificar(titulo)
-    async with sessionmaker() as sessao:
-        resultado = await sessao.execute(select(Anime.id).where(Anime.slug == slug))
-        anime_id = resultado.scalar_one_or_none()
-        if anime_id is not None:
-            return anime_id
-
-        anime = Anime(titulo=titulo, slug=slug, ano=ano)
-        sessao.add(anime)
-        try:
-            await sessao.commit()
-        except IntegrityError as excecao:
-            await sessao.rollback()
-            anime_id = await _localizar_anime_existente(sessao, slug)
-            if anime_id is None:
-                raise ErroSlimeStudio(
-                    f"conflito ao criar anime (slug={slug!r}) mas nenhum registro foi encontrado"
-                ) from excecao
-            return anime_id
-        return anime.id
-
-
-async def _localizar_anime_existente(sessao: AsyncSession, slug: str) -> int | None:
-    resultado = await sessao.execute(select(Anime.id).where(Anime.slug == slug))
-    return resultado.scalar_one_or_none()
-
-
-async def _criar_episodio_e_job(
-    sessionmaker: _SessionMaker, anime_id: int, args: Argumentos
-) -> int:
-    async with sessionmaker() as sessao:
-        episodio = Episodio(
-            anime_id=anime_id,
+        anime_id = await catalogo.obter_ou_criar_anime_id(sessionmaker, args.anime, args.ano)
+        return await catalogo.criar_episodio_e_job(
+            sessionmaker,
+            anime_id,
             numero=args.numero,
-            titulo=args.titulo_episodio,
             tipo=args.tipo,
             versao=args.versao,
             url_fonte=str(args.arquivo.resolve()),
             site_origem=SITE_LOCAL,
-            status=StatusEpisodio.PENDENTE,
-        )
-        sessao.add(episodio)
-        try:
-            await sessao.flush()
-        except IntegrityError as excecao:
-            await sessao.rollback()
-            episodio_id = await _localizar_episodio_existente(sessao, anime_id, args)
-            raise ErroSlimeStudio(f"episódio já cadastrado, id={episodio_id}") from excecao
-
-        job = Job(
-            episodio_id=episodio.id,
-            status=StatusJob.NA_FILA,
+            titulo_episodio=args.titulo_episodio,
             duracao_esperada_s=args.duracao_esperada_s,
         )
-        sessao.add(job)
-        await sessao.commit()
-        return job.id
-
-
-async def _localizar_episodio_existente(
-    sessao: AsyncSession, anime_id: int, args: Argumentos
-) -> int | None:
-    resultado = await sessao.execute(
-        select(Episodio.id).where(
-            Episodio.anime_id == anime_id,
-            Episodio.numero == args.numero,
-            Episodio.tipo == args.tipo,
-            Episodio.versao == args.versao,
-        )
-    )
-    return resultado.scalar_one_or_none()
+    finally:
+        await engine.dispose()
 
 
 def main() -> None:

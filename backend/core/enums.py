@@ -59,7 +59,7 @@ class StatusEpisodio(StrEnum):
 
 
 # Estados que contam como "em andamento" para fins de reclaim por heartbeat
-# (worker/fila.py: reciclar_jobs_orfaos). Um job travado em qualquer um destes
+# (db/fila.py: reciclar_jobs_orfaos). Um job travado em qualquer um destes
 # estados, com heartbeat velho, volta para `na_fila`.
 ESTADOS_EM_EXECUCAO: frozenset[StatusJob] = frozenset(
     {

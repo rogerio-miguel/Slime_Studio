@@ -9,8 +9,9 @@ from pathlib import Path
 import pytest
 
 from core.enums import TipoEpisodio, VersaoEpisodio
+from core.midia import diretorio_do_episodio
 from worker.pipeline.ferramentas import executar
-from worker.pipeline.hls import diretorio_do_episodio, empacotar
+from worker.pipeline.hls import empacotar
 from worker.pipeline.validacao import conferir_decodificacao, decidir_plano, sondar
 
 pytestmark = pytest.mark.integracao
