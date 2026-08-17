@@ -23,6 +23,12 @@ export function listarEpisodiosRemotos(animeId) {
   return requisitar(`/api/admin/animes/${animeId}/episodios-remotos`);
 }
 
+// Busca ao vivo em todos os sites de extração (ainda não catalogado
+// localmente) — subseção "Resultados em outras fontes" da Home.
+export function buscarEmFontes(titulo) {
+  return requisitar(`/api/animes/buscar-fontes?titulo=${encodeURIComponent(titulo)}`);
+}
+
 export function marcarAssistido(episodioId) {
   return requisitar(`/api/episodios/${episodioId}/assistido`, { metodo: 'POST' });
 }

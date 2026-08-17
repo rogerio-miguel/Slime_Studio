@@ -131,6 +131,18 @@ class ConfirmarFonteRequest(BaseModel):
     url: str
 
 
+class ResultadoBuscaFonteSaida(BaseModel):
+    """Item de `GET /api/animes/buscar-fontes` — candidato ainda não catalogado
+    localmente, encontrado ao vivo em um site de extração (`extractors.base.
+    ResultadoBusca`); `dominio` identifica de qual site veio, necessário pra
+    depois confirmar a fonte (`POST /api/admin/animes/{id}/fontes/confirmar`)."""
+
+    titulo_exibicao: str
+    identificador: str
+    url: str
+    dominio: str
+
+
 class EpisodioRemotoSaida(BaseModel):
     """Posição na fonte remota (site) — `extractors.base.EpisodioRemoto` só carrega
     `numero`/`url`, sem título; a grade prontos/não capturados do frontend cruza

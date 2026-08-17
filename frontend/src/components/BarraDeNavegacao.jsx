@@ -12,10 +12,11 @@ import { Link } from 'react-router-dom';
 // (`disabled` + `aria-disabled` + `title`), nunca escondidos.
 //
 // Busca: `termoBusca`/`aoMudarBusca` controlados pelo pai (`paginas/Inicio.jsx`
-// — único lugar que hoje renderiza esta navbar). Filtro ao vivo, sem submit:
-// digitar já dispara `aoMudarBusca` via `onChange`; Enter só evita reload de
-// página (`preventDefault`), não navega mais pra `/animes`.
-export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca }) {
+// — único lugar que hoje renderiza esta navbar). Filtro local ao vivo, sem
+// submit: digitar já dispara `aoMudarBusca` via `onChange`. Enter
+// (`onSubmit`, `preventDefault` evita reload de página) dispara
+// `aoSubmeterBusca`, opcional — hoje aciona a busca em fontes externas.
+export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSubmeterBusca }) {
   const idBusca = useId();
   const visivel = fase === 'revelado';
 
@@ -75,7 +76,14 @@ export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca }) {
           </li>
         </ul>
       </div>
-      <form onSubmit={(event) => event.preventDefault()} role="search" className="flex items-center gap-2">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          aoSubmeterBusca?.();
+        }}
+        role="search"
+        className="flex items-center gap-2"
+      >
         <label htmlFor={idBusca} className="sr-only">
           Buscar animes
         </label>
