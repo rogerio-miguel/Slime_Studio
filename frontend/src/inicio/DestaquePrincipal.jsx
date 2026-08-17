@@ -1,33 +1,20 @@
 import { Link } from 'react-router-dom';
-import { listarEpisodios } from '../api/recursos.js';
-import { useRecurso } from '../api/useRecurso.js';
 
-// Destaque principal da Inicio — decisão do usuário sobre dados faltantes
-// (não existe sinopse/gêneros no modelo hoje): mostra uma linha derivada
-// ("{ano} · {N} episódios disponíveis") no lugar de descrição, em vez de
-// placeholder. "Assistir agora" aponta pro primeiro episódio com
-// status "pronto" (mesmo padrão de components/LinhaDeEpisodio.jsx); sem
-// nenhum pronto, vira link secundário pra página do anime (não um botão
-// morto).
-export default function DestaquePrincipal({ anime }) {
-  const animeId = anime?.id ?? null;
-  const { dados: episodios } = useRecurso(
-    () => (animeId != null ? listarEpisodios(animeId) : Promise.resolve([])),
-    [animeId]
-  );
-
-  if (!anime) return null;
-
-  const episodiosProntos = (episodios ?? []).filter((episodio) => episodio.status === 'pronto');
-  const primeiroPronto = [...episodiosProntos].sort((a, b) => a.numero - b.numero)[0] ?? null;
-  const linhaDerivada = [
-    anime.ano ?? null,
-    `${episodiosProntos.length} episódio${episodiosProntos.length === 1 ? '' : 's'} disponíve${
-      episodiosProntos.length === 1 ? 'l' : 'is'
-    }`,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+// Destaque principal da Inicio — desde a Fase 4 recebe o primeiro item do
+// feed "em alta" (`GET /api/animes/em-alta`, provedor externo) em vez de uma
+// linha do catálogo local: fetch derivado de episódios (pra montar "N
+// episódios disponíveis") foi removido, sem substituto — o feed hoje não
+// traz sinopse (`AnimeEmAltaSaida` em `backend/api/esquemas.py` não tem esse
+// campo), então a linha de descrição só aparece se algum dia vier
+// preenchida.
+//
+// CTA depende de o item já estar catalogado localmente (`anime_id`
+// preenchido pelo servidor, cruzado por `anilist_id`): se sim, leva pra
+// página do anime; se não, dispara `aoMaterializar` (função injetada pelo
+// caller — `POST /api/admin/animes` + navegação — compartilhada com os
+// cards da faixa "No ar nesta temporada", mesma ação em dois lugares).
+export default function DestaquePrincipal({ item, aoMaterializar, materializando }) {
+  if (!item) return null;
 
   return (
     <section aria-labelledby="titulo-destaque" className="mx-auto max-w-6xl px-6 pb-16 pt-10">
@@ -38,31 +25,27 @@ export default function DestaquePrincipal({ anime }) {
         id="titulo-destaque"
         className="mb-3 max-w-2xl text-4xl font-bold leading-tight text-white sm:text-5xl"
       >
-        {anime.titulo}
+        {item.titulo_romaji}
       </h1>
-      <p className="mb-6 text-sm text-ink-muted">{linhaDerivada}</p>
-      {primeiroPronto ? (
+      {item.sinopse && (
+        <p className="mb-6 max-w-2xl text-sm text-ink-muted">{item.sinopse}</p>
+      )}
+      {item.anime_id != null ? (
         <Link
-          to={`/assistir/${primeiroPronto.id}`}
-          state={{
-            episodio: {
-              numero: primeiroPronto.numero,
-              animeId: anime.id,
-              animeTitulo: anime.titulo,
-              titulo: primeiroPronto.titulo,
-            },
-          }}
+          to={`/anime/${item.anime_id}`}
           className="inline-block rounded-md bg-neon px-6 py-3 text-sm font-semibold text-black outline-none transition-colors hover:bg-neon/90 focus-visible:ring-2 focus-visible:ring-neon focus-visible:ring-offset-2 focus-visible:ring-offset-black"
         >
-          Assistir agora
+          Ver episódios
         </Link>
       ) : (
-        <Link
-          to={`/anime/${anime.id}`}
-          className="inline-block rounded-md border border-border-chrome px-6 py-3 text-sm font-semibold text-ink-muted outline-none transition-colors hover:border-neon-soft hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+        <button
+          type="button"
+          onClick={() => aoMaterializar(item)}
+          disabled={materializando}
+          className="inline-block rounded-md bg-neon px-6 py-3 text-sm font-semibold text-black outline-none transition-colors hover:bg-neon/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-neon focus-visible:ring-offset-2 focus-visible:ring-offset-black"
         >
-          Ver detalhes
-        </Link>
+          {materializando ? 'Adicionando…' : 'Adicionar e assistir'}
+        </button>
       )}
     </section>
   );
