@@ -12,9 +12,14 @@ from pathlib import Path
 
 from core.erros import FalhaDeFerramenta
 from worker.pipeline.ferramentas import executar
-from worker.pipeline.validacao import EstrategiaFluxo, PlanoDeEmpacotamento
+from worker.pipeline.validacao import EstrategiaFluxo, PlanoDeEmpacotamento, SondagemMidia
 
 _NOME_MASTER = "master.m3u8"
+_MARCADOR_STREAM_INF = "#EXT-X-STREAM-INF"
+# Reserva fixa pro hint de áudio (AAC estéreo padrão) quando `plano.tem_audio` —
+# ver `_hints_de_bitrate`.
+_BITRATE_AUDIO_HINT_BPS = 128_000
+_BITRATE_VIDEO_HINT_MINIMO_BPS = 100_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +34,7 @@ async def empacotar(
     fonte: Path,
     destino: Path,
     plano: PlanoDeEmpacotamento,
+    sondagem: SondagemMidia,
     ffmpeg: Path,
     media_root: Path,
     duracao_segmento_s: int = 8,
@@ -47,13 +53,27 @@ async def empacotar(
             shutil.rmtree(destino_tmp)
         destino_tmp.mkdir(parents=True, exist_ok=True)
 
-        argumentos = _montar_comando_ffmpeg(ffmpeg, fonte, destino_tmp, plano, duracao_segmento_s)
+        argumentos = _montar_comando_ffmpeg(
+            ffmpeg, fonte, destino_tmp, plano, sondagem, duracao_segmento_s
+        )
         await executar(argumentos, timeout_s=None)
 
         master_tmp = destino_tmp / _NOME_MASTER
         if not master_tmp.exists():
             raise FalhaDeFerramenta(
                 f"ffmpeg concluiu sem erro mas não gerou {_NOME_MASTER} em {destino_tmp}"
+            )
+        # Sem hint de bitrate (`-b:v`/`-b:a`, ver `_hints_de_bitrate`), o ffmpeg em
+        # modo `copy` já foi observado gerando um master.m3u8 truncado — só
+        # `#EXTM3U`/`#EXT-X-VERSION`, sem `#EXT-X-STREAM-INF` apontando pra
+        # variante. O arquivo existe mas o hls.js não tem o que tocar. Confirma
+        # o conteúdo, não só a existência, pra pegar isso aqui em vez de deixar
+        # o job ser marcado `pronto` com um vídeo quebrado.
+        conteudo_master = master_tmp.read_text(encoding="utf-8")
+        if _MARCADOR_STREAM_INF not in conteudo_master:
+            raise FalhaDeFerramenta(
+                f"master manifest sem {_MARCADOR_STREAM_INF} (sem variante referenciada) "
+                f"em {master_tmp}"
             )
 
         _promover(destino_tmp, destino)
@@ -110,6 +130,7 @@ def _montar_comando_ffmpeg(
     fonte: Path,
     destino_tmp: Path,
     plano: PlanoDeEmpacotamento,
+    sondagem: SondagemMidia,
     duracao_segmento_s: int,
 ) -> list[str]:
     mapas = ["-map", "0:v:0"]
@@ -117,6 +138,8 @@ def _montar_comando_ffmpeg(
     if plano.tem_audio:
         mapas += ["-map", "0:a:0?"]
         grupo_stream_map = f"v:0,a:0,name:{plano.rendition}"
+
+    hint_video_bps, hint_audio_bps = _hints_de_bitrate(sondagem, plano)
 
     return [
         str(ffmpeg),
@@ -130,8 +153,8 @@ def _montar_comando_ffmpeg(
         "-dn",
         "-map_metadata",
         "-1",
-        *_flags_codec_video(plano.video),
-        *(_flags_codec_audio(plano.audio) if plano.tem_audio else []),
+        *_flags_codec_video(plano.video, hint_video_bps),
+        *(_flags_codec_audio(plano.audio, hint_audio_bps) if plano.tem_audio else []),
         "-f",
         "hls",
         "-hls_time",
@@ -150,13 +173,70 @@ def _montar_comando_ffmpeg(
     ]
 
 
-def _flags_codec_video(estrategia: EstrategiaFluxo) -> list[str]:
+def _flags_codec_video(estrategia: EstrategiaFluxo, hint_bps: int | None) -> list[str]:
     if estrategia is EstrategiaFluxo.COPIA:
-        return ["-c:v", "copy"]
+        # `-b:v` aqui não recodifica nada (stream copiado byte a byte) — é só o
+        # hint de bitrate que o muxer HLS usa pra calcular o `BANDWIDTH` do
+        # master manifest. Sem ele, ffmpeg loga "Bandwidth info not available,
+        # set audio and video bitrates" e o master sai sem `#EXT-X-STREAM-INF`
+        # (bug reproduzido manualmente, ver checagem de conteúdo em `empacotar`).
+        flags = ["-c:v", "copy"]
+        if hint_bps is not None:
+            flags += ["-b:v", str(hint_bps)]
+        return flags
+    # RECODIFICA usa `-crf` (qualidade variável) — combinar com `-b:v` mudaria
+    # pro modo restringido por bitrate do encoder, uma mudança de comportamento
+    # não confirmada como necessária (o bug só foi reproduzido em modo COPIA).
+    # Se `-crf` também deixar o muxer sem bitrate pra calcular o master, a
+    # checagem de conteúdo em `empacotar` já pega isso como falha explícita.
     return ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
 
 
-def _flags_codec_audio(estrategia: EstrategiaFluxo) -> list[str]:
+def _flags_codec_audio(estrategia: EstrategiaFluxo, hint_bps: int | None) -> list[str]:
     if estrategia is EstrategiaFluxo.COPIA:
-        return ["-c:a", "copy"]
+        flags = ["-c:a", "copy"]
+        if hint_bps is not None:
+            flags += ["-b:a", str(hint_bps)]
+        return flags
     return ["-c:a", "aac", "-b:a", "192k"]
+
+
+def _hints_de_bitrate(
+    sondagem: SondagemMidia, plano: PlanoDeEmpacotamento
+) -> tuple[int | None, int | None]:
+    """Bitrate hint (bps) pro muxer HLS calcular `BANDWIDTH` em modo `copy`.
+
+    Só relevante quando o fluxo correspondente está em `EstrategiaFluxo.COPIA`
+    (RECODIFICA já define bitrate próprio via seus próprios flags de codec).
+    Estimado a partir do bitrate médio do container-fonte
+    (`tamanho_bytes * 8 / duracao_s`), reservando um valor fixo de áudio quando
+    há áudio e atribuindo o restante ao vídeo (com piso mínimo pra nunca gerar
+    um hint absurdo/negativo em fontes muito pequenas ou de bitrate atípico).
+    """
+    if plano.video is not EstrategiaFluxo.COPIA and (
+        not plano.tem_audio or plano.audio is not EstrategiaFluxo.COPIA
+    ):
+        return None, None
+
+    # `sondar()`/`decidir_plano()` não garantem `duracao_s > 0` (só validam
+    # tolerância quando `duracao_esperada_s` é informado) — sem essa guarda,
+    # uma sondagem com duração zerada estoura `ZeroDivisionError` não tratado
+    # em vez de uma falha de domínio clara.
+    if sondagem.duracao_s <= 0:
+        raise FalhaDeFerramenta(
+            f"duração sondada inválida ({sondagem.duracao_s}s) — não é possível "
+            "estimar bitrate pro master manifest"
+        )
+
+    bitrate_total_bps = int(sondagem.tamanho_bytes * 8 / sondagem.duracao_s)
+    reserva_audio_bps = _BITRATE_AUDIO_HINT_BPS if plano.tem_audio else 0
+
+    hint_video_bps = None
+    if plano.video is EstrategiaFluxo.COPIA:
+        hint_video_bps = max(bitrate_total_bps - reserva_audio_bps, _BITRATE_VIDEO_HINT_MINIMO_BPS)
+
+    hint_audio_bps = None
+    if plano.tem_audio and plano.audio is EstrategiaFluxo.COPIA:
+        hint_audio_bps = _BITRATE_AUDIO_HINT_BPS
+
+    return hint_video_bps, hint_audio_bps
