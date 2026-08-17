@@ -1,6 +1,12 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { criarAnime, listarAnimes, listarAnimesEmAlta } from '../api/recursos.js';
+import {
+  buscarEmFontes,
+  confirmarFonte,
+  criarAnime,
+  listarAnimes,
+  listarAnimesEmAlta,
+} from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
@@ -8,6 +14,7 @@ import CenarioDeEntrada from '../inicio/CenarioDeEntrada.jsx';
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
 // só não é renderizado por enquanto.
+import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeDeCards.jsx';
 import GradeRotativa from '../inicio/GradeRotativa.jsx';
 import { ALTURA_INTRO_VH, useScrubDeVideo } from '../inicio/useScrubDeVideo.js';
 
@@ -38,6 +45,7 @@ import { ALTURA_INTRO_VH, useScrubDeVideo } from '../inicio/useScrubDeVideo.js';
 // "/assistir/:episodioId", string, não import).
 export default function Inicio() {
   const navigate = useNavigate();
+  const idResultadosFontes = useId();
   const videoRef = useRef(null);
   const logoRef = useRef(null);
   const { fase, movimentoReduzido, pularIntroducao } = useScrubDeVideo(videoRef, logoRef);
@@ -60,24 +68,44 @@ export default function Inicio() {
     [catalogo.dados, termoBuscaNormalizado]
   );
 
-  // Ação disparada pelos cards da grade "Destaques da temporada": materializa
-  // o item do feed no catálogo local (`POST /api/admin/animes`, get-or-create
-  // por slug no servidor — reenvio acidental não duplica) e navega pro anime
-  // criado. Sem sinopse no payload: o feed "em alta" não a fornece (ver
-  // DestaquePrincipal.jsx); ela é preenchida no primeiro carregamento de
-  // `PaginaDoAnime`.
-  const materializarEIrPara = useCallback(
-    async (item) => {
+  // Busca em outras fontes (sites de extração, ainda não catalogados): ao
+  // contrário do filtro local acima (ao vivo, a cada tecla), só dispara no
+  // submit (Enter na navbar) — evita martelar sites externos a cada tecla.
+  // Limpa junto com o campo pra não deixar resultado de busca antiga visível
+  // depois que o usuário apaga tudo.
+  const [termoBuscaSubmetido, setTermoBuscaSubmetido] = useState('');
+  useEffect(() => {
+    if (termoBuscaNormalizado === '') setTermoBuscaSubmetido('');
+  }, [termoBuscaNormalizado]);
+
+  const submeterBuscaEmFontes = useCallback(() => {
+    setTermoBuscaSubmetido(termoBusca.trim());
+  }, [termoBusca]);
+
+  const buscaEmFontes = useRecurso(
+    () => (termoBuscaSubmetido ? buscarEmFontes(termoBuscaSubmetido) : Promise.resolve([])),
+    [termoBuscaSubmetido]
+  );
+
+  // Guarda contra o campo ter sido editado depois do último Enter: enquanto
+  // `termoBusca` diverge de `termoBuscaSubmetido`, os cards de
+  // `buscaEmFontes.dados` são de uma busca antiga e não devem ser renderizados
+  // (risco de materializar o anime errado) — a seção mostra um aviso de
+  // "desatualizado" no lugar até o usuário apertar Enter de novo.
+  const resultadosDeFonteDesatualizados =
+    termoBuscaSubmetido !== '' && termoBusca.trim() !== termoBuscaSubmetido;
+
+  // Helper compartilhado por materializarEIrPara/materializarFonteEIrPara: os
+  // dois fluxos só diferem na chave usada e na chamada que de fato cria/
+  // confirma o anime — guard de concorrência, estado de erro e navegação pro
+  // anime criado são idênticos.
+  const materializar = useCallback(
+    async (chave, criarEConfirmar) => {
       if (chaveEmMaterializacao != null) return;
-      const chave = item.anilist_id ?? item.titulo_romaji;
       setChaveEmMaterializacao(chave);
       setErroMaterializacao(null);
       try {
-        const criado = await criarAnime({
-          titulo: item.titulo_romaji,
-          anilistId: item.anilist_id ?? undefined,
-          capaUrl: item.capa_url ?? item.banner_url ?? undefined,
-        });
+        const criado = await criarEConfirmar();
         navigate(`/anime/${criado.id}`);
       } catch (erroCapturado) {
         console.error('falha ao adicionar anime ao catálogo', erroCapturado);
@@ -87,6 +115,43 @@ export default function Inicio() {
       }
     },
     [chaveEmMaterializacao, navigate]
+  );
+
+  // Ação disparada pelos cards da grade "Destaques da temporada": materializa
+  // o item do feed no catálogo local (`POST /api/admin/animes`, get-or-create
+  // por slug no servidor — reenvio acidental não duplica) e navega pro anime
+  // criado. Sem sinopse no payload: o feed "em alta" não a fornece (ver
+  // DestaquePrincipal.jsx); ela é preenchida no primeiro carregamento de
+  // `PaginaDoAnime`.
+  const materializarEIrPara = useCallback(
+    (item) =>
+      materializar(item.anilist_id ?? item.titulo_romaji, () =>
+        criarAnime({
+          titulo: item.titulo_romaji,
+          anilistId: item.anilist_id ?? undefined,
+          capaUrl: item.capa_url ?? item.banner_url ?? undefined,
+        })
+      ),
+    [materializar]
+  );
+
+  // Mesma lógica de materialização acima, mas para um candidato de site de
+  // extração (subseção "Resultados em outras fontes"): cria o anime e já
+  // confirma a fonte (`POST .../fontes/confirmar`) — sem isso, o job de
+  // captura pediria confirmação de novo na página do anime.
+  const materializarFonteEIrPara = useCallback(
+    (resultado) =>
+      materializar(`${resultado.dominio}:${resultado.identificador}`, async () => {
+        const criado = await criarAnime({ titulo: resultado.titulo_exibicao });
+        await confirmarFonte(criado.id, {
+          dominio: resultado.dominio,
+          identificador: resultado.identificador,
+          tituloExibicao: resultado.titulo_exibicao,
+          url: resultado.url,
+        });
+        return criado;
+      }),
+    [materializar]
   );
 
   return (
@@ -105,16 +170,34 @@ export default function Inicio() {
 
       <div aria-hidden="true" style={{ height: movimentoReduzido ? 0 : `${ALTURA_INTRO_VH}vh` }} />
 
-      <BarraDeNavegacao fase={fase} termoBusca={termoBusca} aoMudarBusca={setTermoBusca} />
+      <BarraDeNavegacao
+        fase={fase}
+        termoBusca={termoBusca}
+        aoMudarBusca={setTermoBusca}
+        aoSubmeterBusca={submeterBuscaEmFontes}
+      />
 
       <main
         inert={fase !== 'revelado'}
-        className={`relative z-10 pb-20 pt-24 transition-opacity duration-700 ease-out ${
+        // `min-h-screen`: sem isto, trocar a grade "Destaques da temporada"
+        // (alta) pela seção de resultados de busca (curta, às vezes só uma
+        // linha de "nenhum anime encontrado") encolhe a altura total do
+        // documento. Se encolher abaixo do limiar de scroll que
+        // useScrubDeVideo.js usa pra decidir a fase ("revelado" a partir de
+        // 300vh, ver ALTURA_INTRO_VH), o navegador força um clamp de
+        // `scrollY` pra caber no novo max — o que dispara um evento de
+        // `scroll` sintético e derruba `fase` de volta pra "chegando", que
+        // esconde <main> e reexibe o hero/logo por trás. Documento curto
+        // demais também torna esse estado irrecuperável por scroll manual
+        // (não dá pra rolar além do que existe), daí só reload resolvia.
+        // `min-h-screen` garante que a altura de <main> nunca cai abaixo de
+        // 1 viewport, então o limiar de 300vh continua sempre alcançável.
+        className={`relative z-10 min-h-screen pb-20 pt-24 transition-opacity duration-700 ease-out ${
           fase === 'revelado' ? 'opacity-100' : 'opacity-0'
         }`}
       >
         {buscando ? (
-          <section aria-label="Resultados da busca" className="px-4 sm:px-6 lg:px-8">
+          <section aria-label="Resultados da busca" className="px-6 md:px-10">
             <h2 className="mb-4 mt-20 text-2xl font-semibold text-white">
               Resultados para “{termoBusca.trim()}”
             </h2>
@@ -138,12 +221,77 @@ export default function Inicio() {
               </p>
             )}
             {!catalogo.carregando && !catalogo.erro && animesFiltrados.length > 0 && (
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-                {animesFiltrados.map((anime) => (
-                  <AnimeCard key={anime.id} anime={anime} />
+              <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
+                {animesFiltrados.map((anime, indice) => (
+                  <SlotDeCard key={anime.id} indice={indice}>
+                    <AnimeCard anime={anime} />
+                  </SlotDeCard>
                 ))}
               </div>
             )}
+
+            <section aria-labelledby={idResultadosFontes}>
+              <h2 id={idResultadosFontes} className="mb-4 mt-12 text-2xl font-semibold text-white">
+                Resultados em outras fontes
+              </h2>
+              {erroMaterializacao && (
+                <div role="alert" className="mb-4">
+                  <p className="text-sm text-red-400">{erroMaterializacao}</p>
+                </div>
+              )}
+              {termoBuscaSubmetido === '' && (
+                <p className="text-sm text-ink-muted">Aperte Enter para buscar em outras fontes.</p>
+              )}
+              {termoBuscaSubmetido !== '' && resultadosDeFonteDesatualizados && (
+                <p className="text-sm text-ink-muted">
+                  Aperte Enter para atualizar os resultados em outras fontes.
+                </p>
+              )}
+              {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.carregando && (
+                <p className="text-sm text-ink-muted">Buscando em outras fontes…</p>
+              )}
+              {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.erro && (
+                <div
+                  role="alert"
+                  className="mb-6 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+                >
+                  Não foi possível buscar em outras fontes.{' '}
+                  <button type="button" onClick={buscaEmFontes.recarregar} className="underline">
+                    Tentar novamente
+                  </button>
+                </div>
+              )}
+              {termoBuscaSubmetido !== '' &&
+                !resultadosDeFonteDesatualizados &&
+                !buscaEmFontes.carregando &&
+                !buscaEmFontes.erro &&
+                (buscaEmFontes.dados ?? []).length === 0 && (
+                  <p className="text-sm text-ink-muted">
+                    Nenhum anime encontrado em outras fontes para “{termoBuscaSubmetido}”.
+                  </p>
+                )}
+              {termoBuscaSubmetido !== '' &&
+                !resultadosDeFonteDesatualizados &&
+                !buscaEmFontes.carregando &&
+                !buscaEmFontes.erro &&
+                (buscaEmFontes.dados ?? []).length > 0 && (
+                  <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
+                    {buscaEmFontes.dados.map((resultado, indice) => {
+                      const chave = `${resultado.dominio}:${resultado.identificador}`;
+                      return (
+                        <SlotDeCard key={chave} indice={indice}>
+                          <AnimeCard
+                            anime={{ titulo: resultado.titulo_exibicao }}
+                            aoAtivar={() => materializarFonteEIrPara(resultado)}
+                            desabilitado={chaveEmMaterializacao === chave}
+                          />
+                          <p className="mt-1 text-xs text-ink-muted">{resultado.dominio}</p>
+                        </SlotDeCard>
+                      );
+                    })}
+                  </div>
+                )}
+            </section>
           </section>
         ) : (
           <>

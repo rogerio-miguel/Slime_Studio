@@ -3,7 +3,7 @@ remoção) e `/api/animes*` (catálogo público, leitura pelo player, feed "em
 alta" de metadados externos via `integrations/`).
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,12 +16,14 @@ from api.esquemas import (
     CriarAnimeRequest,
     EpisodioRemotoSaida,
     EpisodioSaida,
+    ResultadoBuscaFonteSaida,
 )
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
 from core.config import Config
 from db.catalogo import obter_ou_criar_anime_id
+from extractors import servico as servico_extractors
 from extractors.base import EpisodioRemoto, ResultadoBusca
 from extractors.resolucao import confirmar_fonte
 from models.anime import Anime
@@ -127,6 +129,30 @@ async def listar_animes_em_alta(
             anime_id=anime_id,
         )
         for item, anime_id in pares
+    ]
+
+
+# `/buscar-fontes` precisa vir ANTES de `/{anime_id}` — mesma armadilha de
+# `/em-alta` acima: um `{anime_id}` declarado primeiro casaria com
+# `anime_id="buscar-fontes"`.
+@router_publico.get("/buscar-fontes", response_model=list[ResultadoBuscaFonteSaida])
+async def buscar_animes_em_fontes(
+    titulo: str = Query(..., max_length=200),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[ResultadoBuscaFonteSaida]:
+    """Busca ao vivo em todos os sites de extração (ainda não catalogado
+    localmente) — alimenta a subseção "Resultados em outras fontes" da Home."""
+    if not titulo.strip():
+        return []
+    pares = await servico_extractors.buscar_em_todas_as_fontes(sessionmaker, titulo)
+    return [
+        ResultadoBuscaFonteSaida(
+            titulo_exibicao=resultado.titulo_exibicao,
+            identificador=resultado.identificador,
+            url=resultado.url,
+            dominio=dominio,
+        )
+        for dominio, resultado in pares
     ]
 
 

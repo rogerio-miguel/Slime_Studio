@@ -4,19 +4,22 @@ breaker por trás.
 """
 
 import asyncio
+import logging
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
 from core.erros import FalhaDeExtracao
-from extractors import download, resiliencia, resolucao
+from extractors import circuit_breaker, download, resiliencia, resolucao
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
-from extractors.registro import obter_extrator
+from extractors.registro import EXTRATORES, obter_extrator
 from models.anime import Anime
 from models.episodio import Episodio
 
 _SessionMaker = async_sessionmaker[AsyncSession]
+
+logger = logging.getLogger(__name__)
 
 # Teto de `wait_for` para `_conferir_link_de_midia`: acima do timeout de 15s que
 # `download.conferir_link_de_midia` passa para a checagem HTTP curta
@@ -33,6 +36,45 @@ async def buscar_em(
     return await resiliencia.chamar(
         sessionmaker, extrator, lambda cliente: extrator.buscar(cliente, titulo)
     )
+
+
+async def buscar_em_todas_as_fontes(
+    sessionmaker: _SessionMaker, titulo: str
+) -> list[tuple[str, ResultadoBusca]]:
+    """Busca em paralelo em todos os EXTRATORES (Strategy Pattern) — usado pela
+    busca ao vivo da Home (ainda não catalogado localmente). Falha ou cooldown de
+    um site não derruba os demais: cada extrator é isolado, erro vira lista vazia
+    + log de aviso (nunca silencioso, CLAUDE.md §4)."""
+    # Pré-filtro redundante de propósito: `resiliencia.chamar` (dentro de
+    # `buscar_em`) já faz essa mesma checagem de cooldown internamente e
+    # levantaria `SiteEmCooldown` de qualquer forma — cairia no branch de
+    # exceção abaixo e seria logado como warning. Filtrar aqui evita esse log
+    # de warning pra extratores já sabidamente em cooldown (log spam), não é
+    # redundância acidental.
+    extratores_disponiveis = [
+        extrator
+        for extrator in EXTRATORES
+        if not await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio)
+    ]
+
+    resultados_por_extrator = await asyncio.gather(
+        *(buscar_em(sessionmaker, extrator.dominio, titulo) for extrator in extratores_disponiveis),
+        return_exceptions=True,
+    )
+
+    pares: list[tuple[str, ResultadoBusca]] = []
+    for extrator, resultado in zip(extratores_disponiveis, resultados_por_extrator, strict=True):
+        if isinstance(resultado, BaseException):
+            logger.warning(
+                "extrator %r falhou na busca por título %r: %s",
+                extrator.dominio,
+                titulo,
+                resultado,
+            )
+            continue
+        pares.extend((extrator.dominio, candidato) for candidato in resultado)
+
+    return pares
 
 
 async def listar_episodios_em(
