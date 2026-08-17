@@ -35,9 +35,14 @@ import { Link } from 'react-router-dom';
 // `aoRemover` (opcional, sem argumentos — quem chama já sabe qual anime via
 // closure): quando presente, renderiza um botão de remover como IRMÃO do
 // Link/button (nunca aninhado — button dentro de <a>/<button> é inválido) via
-// wrapper `relative`, posicionado absoluto sobre a capa. `stopPropagation`
-// evita ativar o Link/button por baixo; opacidade sempre visível (sem
-// esconder só em hover — cards em touch não têm hover).
+// wrapper `group relative` — o `group` mora no wrapper, não no `classes` do
+// Link/button, justamente pra cobrir os dois como descendentes (o botão de
+// remover é irmão do Link/button, não filho dele; se `group` ficasse só no
+// `classes`, `group-hover` nunca casaria com o botão) — botão posicionado
+// absoluto sobre a capa. `stopPropagation` evita ativar o Link/button por
+// baixo; opacidade some por padrão e só aparece no hover do card
+// (`group-hover`) ou no foco do próprio botão (`focus-visible`) — nunca com
+// `hidden`/DOM removido, senão ficaria inacessível por Tab.
 export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = false }) {
   const idCatalogado = anime.id ?? anime.anime_id ?? null;
   const capa = anime.capa_path ?? anime.capa_url ?? null;
@@ -49,7 +54,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
   // padrão — sem isto, o card de item ainda não catalogado (variante
   // `<button>`) encolhia pro tamanho do título em vez do slot do grid.
   const classes =
-    'group relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl border border-neon-soft bg-surface p-4 text-left outline-none transition-all duration-200 hover:-translate-y-1 hover:border-neon hover:bg-surface-hover focus-visible:-translate-y-1 focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon';
+    'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl border border-neon-soft bg-surface p-4 text-left outline-none transition-all duration-200 hover:-translate-y-1 hover:border-neon hover:bg-surface-hover focus-visible:-translate-y-1 focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon';
 
   const conteudo = (
     <>
@@ -78,7 +83,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
         aoRemover();
       }}
       aria-label={`Remover ${titulo} do catálogo`}
-      className="absolute right-2 top-2 z-10 rounded-full bg-black/70 p-1.5 text-white outline-none transition-colors hover:bg-red-950/80 hover:text-red-400 focus-visible:ring-2 focus-visible:ring-neon"
+      className="absolute right-2 top-2 z-10 rounded-full bg-black/70 p-1.5 text-white opacity-0 outline-none transition-all duration-200 hover:bg-red-950/80 hover:text-red-400 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-neon group-hover:opacity-100"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -88,7 +93,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
 
   if (idCatalogado != null) {
     return (
-      <div className="relative">
+      <div className="group relative">
         <Link to={`/anime/${idCatalogado}`} className={classes}>
           {conteudo}
         </Link>
@@ -98,7 +103,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
   }
 
   return (
-    <div className="relative">
+    <div className="group relative">
       <button
         type="button"
         onClick={aoAtivar}
