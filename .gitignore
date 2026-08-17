@@ -11,6 +11,7 @@ backend/db/*.db-*
 # Node (frontend)
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 
 # Mídia processada em runtime (seção 10.1 do documento: fora do git) —
 # ignora todo o conteúdo mas preserva a estrutura de pastas via .gitkeep
@@ -24,5 +25,8 @@ media/**
 .env.*.local
 
 # Sandbox de teste do harness Anime4K (teste/) — mídia local e log de telemetria
-teste/*.mp4
-teste/*.ndjson
+frontend/test/*.mp4
+frontend/test/*.ndjson
+
+# Backup do vídeo de entrada original, pré-reencode (hero da Inicio.jsx)
+frontend/src/assets/video_entrada.original.mp4

@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+@theme {
+  --color-hud-bright: #9f9;
+  --color-hud-dim: #6a6;
+  --color-border-chrome: #333;
+
+  /* Tokens da Fase 4 (galeria/página do anime) — linguagem visual portada
+     de Slime_Shell_Web/AnimeCard.jsx (ver comentário em
+     components/AnimeCard.jsx), valores próprios pra combinar com a paleta
+     verde do HUD acima. */
+  --color-surface: #14161b;
+  --color-surface-hover: #1b1e25;
+  --color-neon: #6ee7c7;
+  --color-neon-soft: #2a5c4c;
+  --color-ink-muted: #9aa0a6;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  color: #fff;
+}
+/* Preto só no html, não no body: html vira o "canvas background" do
+   navegador (propagado pro viewport inteiro), então body não precisa
+   repetir. Se body também tivesse background opaco aqui, ele pintaria por
+   cima do #ambient-glow (player.css) — body não cria stacking context
+   próprio, então o glow (z-index negativo) cai no mesmo stacking context do
+   html, cuja ordem de pintura é: fundo do html → descendentes com z-index
+   negativo (o glow) → caixas normais em ordem de árvore (body e filhos). Um
+   body preto opaco pintaria depois do glow e o esconderia. Mesmo raciocínio
+   já provado em teste/bench.html. */
+html {
+  background: #000;
+}

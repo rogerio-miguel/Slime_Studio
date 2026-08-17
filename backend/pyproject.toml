@@ -2,4 +2,47 @@
 name = "slime-studio"
 version = "0.2.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "alembic>=1.19.1",
+    "beautifulsoup4>=4.15.0",
+    "cloudscraper>=1.2.71",
+    "fastapi>=0.120",
+    "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
+    "sqlalchemy[asyncio]>=2.0.52",
+    "uvicorn[standard]>=0.40",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+addopts = ["-m", "not rede"]
+markers = [
+    "integracao: testes que exercitam subprocessos reais (ffmpeg/ffprobe) ou I/O pesado",
+    "rede: testes que tocam rede real (smoke test por scraper) — desselecionados por padrão",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Autogerado pelo Alembic (`alembic revision --autogenerate`) — não reformatar à mão;
+# regenerar sempre produz o mesmo estilo, então excluir do lint em vez de brigar com ele.
+extend-exclude = ["db/migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# B008 (function-call-in-default-argument) marca falso-positivo em `api/`: `Depends(...)`
+# como default de parâmetro é o padrão de injeção de dependência do próprio FastAPI, não
+# uma chamada acidental — ver https://fastapi.tiangolo.com/tutorial/dependencies/.
+"api/**/*.py" = ["B008"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.3",
+]

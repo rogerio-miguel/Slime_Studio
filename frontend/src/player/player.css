@@ -1,0 +1,180 @@
+/* Regras load-bearing do player (D5) — o resto (botões, espaçamento, cores
+   genéricas) é Tailwind, direto nos componentes. Comentários de racional do
+   protótipo (teste/bench.html) preservados. */
+
+/* --frame-ar é setado inline por Player.jsx a partir de
+   videoWidth/videoHeight (o protótipo fixava 1.7778) — aqui só o fallback e
+   as constantes que não dependem do vídeo. */
+:root {
+  --page-chrome: 5rem;
+  --fullscreen-margin: 5vmin;
+  --ambient-bleed: 10%;
+}
+
+/* `height:100%`+`overflow:hidden` só faz sentido na rota do player (tela
+   cheia, sem scroll) — index.css não aplica isso mais globalmente (quebrava
+   o scroll da galeria/página do anime, bug corrigido na Fase 4). A classe é
+   ligada/desligada em `<html>`/`<body>` por quem monta o player fora deste
+   módulo (paginas/PaginaDoPlayer.jsx, App.jsx::RotaDebugFonte) — não pelo
+   player em si, que não sabe se está dentro de uma rota de página cheia ou
+   embutido em outro contexto no futuro. */
+html.pagina-player,
+body.pagina-player {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Ambient glow — bleed de cor da cena pro resto da página, estilo YouTube
+   Ambient Mode. Canvas minúsculo (ver AMBIENT_CANVAS_WIDTH em
+   glowAmbiente.js) esticado + blur pesado: os poucos pixels viram manchas
+   suaves, sem calcular "cor dominante" na mão.
+
+   Ancorado na caixa do .frame (absolute dentro dele), NÃO no viewport — é
+   o que faz o halo ser continuação do vídeo. Com position:fixed o
+   containing block era o viewport inteiro: a caixa virava uma ampliação
+   ANISOTRÓPICA do vídeo centrada no viewport, enquanto o .frame se centra
+   só no espaço abaixo do header — o mesmo pixel aparecia longe do lugar, e
+   o erro mudava a cada resize (dependia de vmax).
+
+   Bleed em %: top/height resolvem contra a ALTURA do .frame e left/width
+   contra a LARGURA, então uma variável só dá escala uniforme em torno do
+   centro — nada distorce, cada cor sai radialmente de onde ela está no
+   vídeo. */
+#ambient-glow {
+  position: absolute;
+  /* width/height explícitos, não `inset`: canvas é replaced element — com
+     width/height auto renderiza no tamanho intrínseco. right/bottom ficam
+     auto de propósito, senão a caixa fica over-constrained. Também não pode
+     receber object-fit:contain (ver regra do #output-canvas): letterboxaria
+     o bitmap dentro da caixa 16:9 e criaria barras pretas nas laterais do
+     halo. */
+  top: calc(-1 * var(--ambient-bleed));
+  left: calc(-1 * var(--ambient-bleed));
+  width: calc(100% + 2 * var(--ambient-bleed));
+  height: calc(100% + 2 * var(--ambient-bleed));
+  z-index: -1;
+  filter: blur(60px) saturate(1.6) brightness(1.2);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+/* Alvo do fullscreen é este wrapper, não o .frame — o navegador força esse
+   elemento a 100vw/100vh do jeito que quiser (não brigamos com isso). O
+   .frame fica dentro, como item de flex, e mantém proporção via
+   aspect-ratio + width calculado explicitamente (ver regra .frame): como
+   ele nunca é o próprio alvo do :fullscreen, nenhuma regra nativa do
+   navegador sobrescreve o tamanho dele. */
+.fullscreen-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  /* Fora de tela cheia este wrapper não tem altura própria — só width:100%
+     — e colapsa pra altura do .frame, então align-items:center não tem
+     espaço sobrando pra centralizar contra. Em :fullscreen isso é mascarado
+     porque a regra .fullscreen-stage:fullscreen abaixo já define
+     height:100vh explícito, que vence este min-height sem conflito. */
+  min-height: 100dvh;
+}
+/* padding cria a moldura nos 4 lados — também é o que deixa o
+   #ambient-glow (filho deste elemento) visível ao redor do vídeo em
+   fullscreen, não só nos 2 lados que sobrariam com margin.
+   box-sizing:border-box pra 100vw/100vh já incluir o padding, senão o
+   .frame calcularia o espaço disponível errado (ver regra abaixo). */
+.fullscreen-stage:fullscreen,
+.fullscreen-stage:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+  padding: var(--fullscreen-margin);
+  box-sizing: border-box;
+}
+.frame {
+  /* Largura calculada explicitamente (não max-height + aspect-ratio) de
+     propósito: .frame é item de um container flex (.fullscreen-stage) com
+     align-items:center, e o tamanho no eixo principal (largura) de um item
+     flex é resolvido pelo algoritmo de flex-basis ANTES do eixo cruzado —
+     "transferred size" (CSS Sizing 4) não alimenta de volta uma largura já
+     fixada por esse passo anterior. Convertendo o teto de altura em um
+     termo de largura equivalente (`* var(--frame-ar)`) dentro do próprio
+     min(), a largura já nasce correta e o aspect-ratio só precisa resolver
+     a altura (auto) a partir dela — sem depender de nenhum feedback entre
+     eixos. --page-chrome cobre chrome ao redor (header/padding/folga), é o
+     que evita que o vídeo estoure a viewport típica (sem teto fixo de
+     largura: o vídeo cresce até esbarrar no container ou nessa altura).
+     Mesma técnica já usada nas fórmulas de :fullscreen abaixo. */
+  width: min(100%, calc((100dvh - var(--page-chrome)) * var(--frame-ar, 1.777778)));
+  aspect-ratio: var(--frame-ar, 1.777778);
+  background: #000;
+  position: relative;
+  /* Sem isso, .frame não forma stacking context próprio (position:relative
+     sozinho não basta) e o z-index:-1 do #ambient-glow (filho) escapa pro
+     stacking context do ancestral mais próximo que tiver um — aí o
+     background:#000 deste .frame pinta por cima do glow, enterrando o halo
+     atrás do fundo preto. Com isolation:isolate o .frame vira seu próprio
+     stacking context: background pinta primeiro, #ambient-glow (z-index -1)
+     pinta acima dele, video/canvas/controles (z-index auto) pintam por cima
+     de tudo — a ordem pretendida pelo design (ver comentários da regra
+     #ambient-glow acima). */
+  isolation: isolate;
+  margin-inline: auto;
+}
+/* width/height:auto colapsava pra 0×0 aqui: o único conteúdo do .frame é
+   position:absolute (fora do fluxo), então não há base de conteúdo pro
+   "auto" — tela cheia ficava toda preta. Tamanho vem só de viewport units
+   (min() escolhe o eixo que limita, preservando a proporção), sem depender
+   do conteúdo interno.
+   Sem overflow:hidden: o #ambient-glow é filho e PRECISA vazar pra fora da
+   caixa. Nada mais transborda — o #output-canvas usa object-fit: contain.
+   100% já é o content-box de .fullscreen-stage (pós-padding, .frame é flex
+   item) — só o outro termo do min()/max() precisa descontar
+   --fullscreen-margin manualmente, porque vem direto de vw/vh (unidade de
+   viewport, não afetada por padding do pai). */
+.fullscreen-stage:fullscreen .frame,
+.fullscreen-stage:-webkit-full-screen .frame {
+  width: min(100%, calc((100vh - 2 * var(--fullscreen-margin)) * var(--frame-ar)));
+  height: min(100%, calc((100vw - 2 * var(--fullscreen-margin)) / var(--frame-ar)));
+  max-width: none;
+  max-height: none;
+  margin: 0;
+}
+.frame video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+/* "Contain", igual dentro e fora de tela cheia: o canvas de saída do WebGPU
+   (#output-canvas) ocupa a caixa toda do .frame, mas object-fit preserva a
+   proporção do bitmap e nunca corta — o que sobrar em qualquer eixo vira
+   faixa preta invisível (.frame e html já são #000). Seletor por id, não
+   `.frame canvas`: o #ambient-glow também é um <canvas> filho de .frame, e
+   inset:0 + object-fit:contain aqui sobrescreveria o posicionamento do glow
+   e criaria barras pretas no halo. */
+#output-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Overlay dentro de .frame, escondido por padrão, revelado em
+   :hover/:focus-within do .frame — puro CSS, sem JS: :focus-within garante
+   que dar Tab até um botão também revela (senão ficaria focável mas
+   invisível, quebraria navegação por teclado). Regra de acessibilidade, não
+   estética — por isso fica aqui e não em Tailwind utilitário. */
+.controls {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+}
+.frame:hover .controls,
+.frame:focus-within .controls {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}

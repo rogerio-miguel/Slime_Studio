@@ -1,0 +1,195 @@
+import { useCallback, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ErroDeApi } from '../api/cliente.js';
+import { criarAnime, listarAnimes, removerAnime } from '../api/recursos.js';
+import { useRecurso } from '../api/useRecurso.js';
+import AnimeCard from '../components/AnimeCard.jsx';
+import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
+import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+
+// Rota "/animes" — catálogo completo. Cadastro de anime é um formulário
+// mínimo (título + ano) direto pra `POST /api/admin/animes`: sem
+// busca-e-confirma no AniList/Kitsu (integrations/ ainda não existe, fora de
+// escopo desta fase — ver `backend/api/rotas/animes.py`), então este é o
+// único jeito de popular o catálogo pela UI.
+//
+// Busca (`?q=`) é filtrada aqui no client: `GET /api/animes` não aceita
+// query param de busca (backend/api/rotas/animes.py::listar_animes só
+// ordena por título) e a lista é pequena o bastante (uso pessoal) pra não
+// justificar um endpoint novo. Nenhum ponto da UI monta essa URL hoje — a
+// busca da navbar (BarraDeNavegacao.jsx) passou a filtrar in-place dentro
+// de `paginas/Inicio.jsx`, sem navegar pra cá — mas o parâmetro continua
+// funcionando se alguém acessar `/animes?q=termo` diretamente.
+export default function Galeria() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const termoBusca = (searchParams.get('q') ?? '').trim().toLowerCase();
+  const focoTitulo = useFocoAoMontar();
+  const { dados: animes, carregando, erro, recarregar } = useRecurso(listarAnimes, []);
+  const animesFiltrados = useMemo(
+    () =>
+      termoBusca
+        ? (animes ?? []).filter((anime) => anime.titulo.toLowerCase().includes(termoBusca))
+        : animes,
+    [animes, termoBusca]
+  );
+
+  const [tituloNovo, setTituloNovo] = useState('');
+  const [anoNovo, setAnoNovo] = useState('');
+  const [criando, setCriando] = useState(false);
+  const [erroCriacao, setErroCriacao] = useState(null);
+
+  const [animeParaRemover, setAnimeParaRemover] = useState(null);
+  const [removendo, setRemovendo] = useState(false);
+  const [erroRemocao, setErroRemocao] = useState(null);
+
+  const aoCriarAnime = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (!tituloNovo.trim() || criando) return;
+      setCriando(true);
+      setErroCriacao(null);
+      try {
+        const anime = await criarAnime({
+          titulo: tituloNovo.trim(),
+          ano: anoNovo ? Number(anoNovo) : undefined,
+        });
+        setTituloNovo('');
+        setAnoNovo('');
+        recarregar();
+        navigate(`/anime/${anime.id}`);
+      } catch (erroCapturado) {
+        console.error('falha ao criar anime', erroCapturado);
+        if (erroCapturado instanceof ErroDeApi && Array.isArray(erroCapturado.detail)) {
+          const referenteAoAno = erroCapturado.detail.some((item) => item.loc?.includes('ano'));
+          setErroCriacao(
+            referenteAoAno
+              ? 'Ano inválido — informe um número inteiro.'
+              : 'Dados inválidos — verifique o formulário.'
+          );
+        } else {
+          setErroCriacao('Não foi possível adicionar o anime — tente novamente.');
+        }
+      } finally {
+        setCriando(false);
+      }
+    },
+    [tituloNovo, anoNovo, criando, recarregar, navigate]
+  );
+
+  const confirmarRemocao = useCallback(async () => {
+    if (!animeParaRemover) return;
+    setRemovendo(true);
+    setErroRemocao(null);
+    try {
+      await removerAnime(animeParaRemover.id);
+      setAnimeParaRemover(null);
+      recarregar();
+    } catch (erroCapturado) {
+      if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
+        setErroRemocao('Este anime tem uma captura em andamento — aguarde terminar antes de remover.');
+      } else {
+        console.error('falha ao remover anime do catálogo', erroCapturado);
+        setErroRemocao('Não foi possível remover este anime — tente novamente.');
+      }
+    } finally {
+      setRemovendo(false);
+    }
+  }, [animeParaRemover, recarregar]);
+
+  // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
+  // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior
+  // "vazaria" pra próxima abertura do dialog.
+  const fecharDialogoRemocao = useCallback(() => {
+    setAnimeParaRemover(null);
+    setErroRemocao(null);
+  }, []);
+
+  return (
+    <main className="mx-auto max-w-5xl px-6 py-10">
+      <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <h1 ref={focoTitulo} tabIndex={-1} className="text-2xl font-semibold text-white outline-none">
+          Animes
+        </h1>
+      </header>
+
+      <form onSubmit={aoCriarAnime} className="mb-8 flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <label htmlFor="titulo-novo-anime" className="text-xs text-ink-muted">
+            Novo anime
+          </label>
+          <input
+            id="titulo-novo-anime"
+            value={tituloNovo}
+            onChange={(event) => setTituloNovo(event.target.value)}
+            placeholder="Título"
+            className="rounded-md border border-border-chrome bg-surface px-3 py-2 text-sm text-white outline-none focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="ano-novo-anime" className="text-xs text-ink-muted">
+            Ano
+          </label>
+          <input
+            id="ano-novo-anime"
+            type="number"
+            min="1900"
+            max={new Date().getFullYear() + 1}
+            step="1"
+            value={anoNovo}
+            onChange={(event) => setAnoNovo(event.target.value)}
+            placeholder="opcional"
+            className="w-24 rounded-md border border-border-chrome bg-surface px-3 py-2 text-sm text-white outline-none focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={criando}
+          className="rounded-md border border-neon-soft bg-surface px-4 py-2 text-sm font-semibold text-neon outline-none transition-colors hover:border-neon disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-neon"
+        >
+          {criando ? 'Adicionando…' : 'Adicionar'}
+        </button>
+        {erroCriacao && (
+          <p role="alert" className="w-full text-sm text-red-400">
+            {erroCriacao}
+          </p>
+        )}
+      </form>
+
+      {carregando && <p className="text-sm text-ink-muted">Carregando catálogo…</p>}
+      {erro && (
+        <div
+          role="alert"
+          className="mb-6 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+        >
+          Não foi possível carregar o catálogo.{' '}
+          <button type="button" onClick={recarregar} className="underline">
+            Tentar novamente
+          </button>
+        </div>
+      )}
+      {!carregando && !erro && animes?.length === 0 && (
+        <p className="text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
+      )}
+      {!carregando && !erro && animes?.length > 0 && animesFiltrados.length === 0 && (
+        <p className="text-sm text-ink-muted">Nenhum anime encontrado para “{searchParams.get('q')}”.</p>
+      )}
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+        {animesFiltrados?.map((anime) => (
+          <AnimeCard key={anime.id} anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
+        ))}
+      </div>
+
+      <DialogoDeConfirmacao
+        aberto={animeParaRemover != null}
+        titulo="Remover do catálogo"
+        mensagem={`Remover "${animeParaRemover?.titulo}" do catálogo? Episódios e capturas associados serão apagados.`}
+        erro={erroRemocao}
+        aoConfirmar={confirmarRemocao}
+        aoFechar={fecharDialogoRemocao}
+        confirmando={removendo}
+      />
+    </main>
+  );
+}
