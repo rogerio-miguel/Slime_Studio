@@ -18,6 +18,10 @@ class ResultadoBusca:
     titulo_exibicao: str
     identificador: str  # id do anime naquele site -> FonteAnime.identificador_no_site
     url: str
+    # `None` quando o site não expõe capa na busca (ex. AnimeFire) ou a tag de
+    # imagem está ausente no card — enriquecimento best-effort por metadado de
+    # provedor externo mora em `api/servicos/busca.py::enriquecer_capas`.
+    capa_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

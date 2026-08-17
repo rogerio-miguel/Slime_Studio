@@ -5,6 +5,8 @@ breaker por trás.
 
 import asyncio
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -38,31 +40,54 @@ async def buscar_em(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ResultadoDeFonte:
+    """Resultado da busca em um site específico, dentro de
+    `buscar_em_todas_as_fontes`. Distingue "busquei e não achei nada"
+    (`indisponivel=False`, `candidatos=[]`) de "não consegui nem tentar"
+    (`indisponivel=True`, cooldown ou exceção não tratada) — os dois colapsavam
+    para o mesmo `[]` antes desta mudança, violando a regra de erro nunca
+    silencioso (CLAUDE.md §4)."""
+
+    dominio: str
+    candidatos: list[ResultadoBusca]
+    indisponivel: bool
+    motivo: str | None
+
+
 async def buscar_em_todas_as_fontes(
     sessionmaker: _SessionMaker, titulo: str
-) -> list[tuple[str, ResultadoBusca]]:
+) -> list[ResultadoDeFonte]:
     """Busca em paralelo em todos os EXTRATORES (Strategy Pattern) — usado pela
     busca ao vivo da Home (ainda não catalogado localmente). Falha ou cooldown de
-    um site não derruba os demais: cada extrator é isolado, erro vira lista vazia
-    + log de aviso (nunca silencioso, CLAUDE.md §4)."""
+    um site não derruba os demais: cada extrator é isolado, e o resultado
+    (disponível ou não, com motivo) vem estruturado em `ResultadoDeFonte`, nunca
+    apenas omitido da lista (nunca silencioso, CLAUDE.md §4)."""
+    extratores_disponiveis: list[ExtratorDeSite] = []
+    por_dominio: dict[str, ResultadoDeFonte] = {}
+
     # Pré-filtro redundante de propósito: `resiliencia.chamar` (dentro de
     # `buscar_em`) já faz essa mesma checagem de cooldown internamente e
     # levantaria `SiteEmCooldown` de qualquer forma — cairia no branch de
-    # exceção abaixo e seria logado como warning. Filtrar aqui evita esse log
-    # de warning pra extratores já sabidamente em cooldown (log spam), não é
-    # redundância acidental.
-    extratores_disponiveis = [
-        extrator
-        for extrator in EXTRATORES
-        if not await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio)
-    ]
+    # exceção abaixo. Filtrar aqui evita essa chamada redundante pra extratores
+    # já sabidamente em cooldown, não é redundância acidental.
+    for extrator in EXTRATORES:
+        if await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio):
+            cooldown_ate = await circuit_breaker.obter_cooldown_ate(sessionmaker, extrator.dominio)
+            por_dominio[extrator.dominio] = ResultadoDeFonte(
+                dominio=extrator.dominio,
+                candidatos=[],
+                indisponivel=True,
+                motivo=_formatar_motivo_cooldown(cooldown_ate),
+            )
+        else:
+            extratores_disponiveis.append(extrator)
 
     resultados_por_extrator = await asyncio.gather(
         *(buscar_em(sessionmaker, extrator.dominio, titulo) for extrator in extratores_disponiveis),
         return_exceptions=True,
     )
 
-    pares: list[tuple[str, ResultadoBusca]] = []
     for extrator, resultado in zip(extratores_disponiveis, resultados_por_extrator, strict=True):
         if isinstance(resultado, BaseException):
             logger.warning(
@@ -71,10 +96,21 @@ async def buscar_em_todas_as_fontes(
                 titulo,
                 resultado,
             )
-            continue
-        pares.extend((extrator.dominio, candidato) for candidato in resultado)
+            por_dominio[extrator.dominio] = ResultadoDeFonte(
+                dominio=extrator.dominio, candidatos=[], indisponivel=True, motivo=str(resultado)
+            )
+        else:
+            por_dominio[extrator.dominio] = ResultadoDeFonte(
+                dominio=extrator.dominio, candidatos=resultado, indisponivel=False, motivo=None
+            )
 
-    return pares
+    return [por_dominio[extrator.dominio] for extrator in EXTRATORES]
+
+
+def _formatar_motivo_cooldown(cooldown_ate: datetime | None) -> str:
+    if cooldown_ate is None:
+        return "em cooldown"
+    return f"em cooldown até {cooldown_ate.strftime('%Y-%m-%d %H:%M:%S UTC')}"
 
 
 async def listar_episodios_em(

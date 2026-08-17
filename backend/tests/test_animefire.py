@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import ClienteFalso
 
-from core.erros import EstruturaDoSiteMudou
+from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from extractors.animefire import AnimeFireProvider
 from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
 
@@ -21,6 +21,24 @@ def _ler_fixture(nome: str) -> str:
 @pytest.fixture
 def extrator() -> AnimeFireProvider:
     return AnimeFireProvider()
+
+
+class _ClienteQueDevolve404:
+    """Fake mínimo de `ClienteDeSite` que simula HTTP 404 (`FonteNaoEncontrada`)
+    — `ClienteFalso` (conftest.py) só devolve HTML pré-programado, nunca
+    levanta exceção, então não serve pra este caso."""
+
+    def obter_html(self, url: str, *, timeout_s: int) -> str:
+        raise FonteNaoEncontrada(f"não encontrado: {url}")
+
+    def obter_json(self, url: str, *, timeout_s: int) -> dict | list:
+        raise AssertionError("não deveria ser chamado")
+
+    def cookies(self) -> dict[str, str]:
+        return {}
+
+    def user_agent(self) -> str:
+        return "ClienteFalso/1.0"
 
 
 def test_buscar_com_resultado_devolve_candidatos(extrator):
@@ -43,11 +61,32 @@ def test_buscar_com_resultado_devolve_candidatos(extrator):
     ]
 
 
+def test_buscar_resultados_nao_tem_capa_url(extrator):
+    """AnimeFire não expõe imagem nenhuma na página de busca (confirmado ao
+    vivo e no código de referência Slime_Shell_Web) — documenta que
+    `capa_url` sai `None` de propósito, não por parsing esquecido.
+    Enriquecimento por metadado de provedor externo mora em
+    `api/servicos/busca.py::enriquecer_capas`."""
+    url_busca = f"{extrator.BASE_URL}/pesquisar/tensei-shitara-slime-datta-ken"
+    cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca.html")})
+
+    resultados = extrator.buscar(cliente, "Tensei Shitara Slime Datta Ken")
+
+    assert resultados
+    assert all(resultado.capa_url is None for resultado in resultados)
+
+
 def test_buscar_sem_resultado_devolve_lista_vazia(extrator):
     url_busca = f"{extrator.BASE_URL}/pesquisar/anime-inexistente"
     cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca_vazia.html")})
 
     assert extrator.buscar(cliente, "Anime Inexistente") == []
+
+
+def test_buscar_404_devolve_lista_vazia_sem_levantar_excecao(extrator):
+    resultados = extrator.buscar(_ClienteQueDevolve404(), "Anime Inexistente")
+
+    assert resultados == []
 
 
 def test_listar_episodios_deduplica_ordena_e_ignora_nao_numerico(extrator):

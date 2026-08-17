@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from core.erros import EstruturaDoSiteMudou
+from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from extractors.animesdrive import AnimesDriveProvider
 from extractors.base import EpisodioRemoto, ResultadoBusca
 
@@ -22,6 +22,24 @@ def extrator() -> AnimesDriveProvider:
     return AnimesDriveProvider()
 
 
+class _ClienteQueDevolve404:
+    """Fake mínimo de `ClienteDeSite` que simula HTTP 404 (`FonteNaoEncontrada`)
+    — a fixture `cliente_falso` (conftest.py) só devolve HTML pré-programado,
+    nunca levanta exceção, então não serve pra este caso."""
+
+    def obter_html(self, url: str, *, timeout_s: int) -> str:
+        raise FonteNaoEncontrada(f"não encontrado: {url}")
+
+    def obter_json(self, url: str, *, timeout_s: int) -> dict | list:
+        raise AssertionError("não deveria ser chamado")
+
+    def cookies(self) -> dict[str, str]:
+        return {}
+
+    def user_agent(self) -> str:
+        return "ClienteFalso/1.0"
+
+
 def test_buscar_com_resultado_devolve_candidatos(extrator, cliente_falso):
     url_busca = f"{extrator.BASE_URL}/?s=Tensei+Shitara+Slime+Datta+Ken"
     cliente = cliente_falso(html_por_url={url_busca: _ler_fixture("busca.html")})
@@ -33,13 +51,58 @@ def test_buscar_com_resultado_devolve_candidatos(extrator, cliente_falso):
             titulo_exibicao="Tensei Shitara Slime Datta Ken",
             identificador="tensei-shitara-slime-datta-ken",
             url="https://animesdrive.online/anime/tensei-shitara-slime-datta-ken",
+            capa_url="https://animesdrive.online/capa1.jpg",
         ),
         ResultadoBusca(
             titulo_exibicao="Tensei Shitara Slime Datta Ken Dublado",
             identificador="tensei-shitara-slime-datta-ken-dublado",
             url="https://animesdrive.online/anime/tensei-shitara-slime-datta-ken-dublado",
+            capa_url="https://animesdrive.online/capa2.jpg",
         ),
     ]
+
+
+def test_buscar_absolutiza_capa_nas_3_formas_de_src(extrator, cliente_falso):
+    """`busca.html` só cobre path relativo (`/capa1.jpg`) — protocolo-relativo
+    (`//host/...`) e URL já absoluta também precisam sair intactos/absolutizados
+    de `urljoin`, e `src` só-espaço deve virar `capa_url=None` (não a
+    homepage)."""
+    html = """
+    <div class="result-item"><article>
+      <a href="https://animesdrive.online/anime/relativo">
+        <div class="thumb"><img src="/relativo.jpg"></div>
+        <div class="title">Relativo</div>
+      </a>
+    </article></div>
+    <div class="result-item"><article>
+      <a href="https://animesdrive.online/anime/protocolo-relativo">
+        <div class="thumb"><img src="//cdn.animesdrive.online/protocolo.jpg"></div>
+        <div class="title">Protocolo Relativo</div>
+      </a>
+    </article></div>
+    <div class="result-item"><article>
+      <a href="https://animesdrive.online/anime/absoluto">
+        <div class="thumb"><img src="https://cdn.outra.com/absoluta.jpg"></div>
+        <div class="title">Absoluto</div>
+      </a>
+    </article></div>
+    <div class="result-item"><article>
+      <a href="https://animesdrive.online/anime/src-vazio">
+        <div class="thumb"><img src="   "></div>
+        <div class="title">Src Vazio</div>
+      </a>
+    </article></div>
+    """
+    url_busca = f"{extrator.BASE_URL}/?s=teste"
+    cliente = cliente_falso(html_por_url={url_busca: html})
+
+    resultados = extrator.buscar(cliente, "teste")
+
+    capas = {resultado.identificador: resultado.capa_url for resultado in resultados}
+    assert capas["relativo"] == "https://animesdrive.online/relativo.jpg"
+    assert capas["protocolo-relativo"] == "https://cdn.animesdrive.online/protocolo.jpg"
+    assert capas["absoluto"] == "https://cdn.outra.com/absoluta.jpg"
+    assert capas["src-vazio"] is None
 
 
 def test_buscar_sem_resultado_devolve_lista_vazia_mesmo_com_widget(extrator, cliente_falso):
@@ -49,6 +112,12 @@ def test_buscar_sem_resultado_devolve_lista_vazia_mesmo_com_widget(extrator, cli
     cliente = cliente_falso(html_por_url={url_busca: _ler_fixture("busca_vazia.html")})
 
     assert extrator.buscar(cliente, "Anime Inexistente") == []
+
+
+def test_buscar_404_devolve_lista_vazia_sem_levantar_excecao(extrator):
+    resultados = extrator.buscar(_ClienteQueDevolve404(), "Anime Inexistente")
+
+    assert resultados == []
 
 
 def test_listar_episodios_deduplica_ordena_e_ignora_invalidos(extrator, cliente_falso):

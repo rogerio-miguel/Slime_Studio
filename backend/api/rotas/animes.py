@@ -12,12 +12,15 @@ from api.esquemas import (
     AnimeDetalheSaida,
     AnimeEmAltaSaida,
     AnimeSaida,
+    BuscaEmFontesSaida,
     ConfirmarFonteRequest,
     CriarAnimeRequest,
     EpisodioRemotoSaida,
     EpisodioSaida,
+    FonteConsultadaSaida,
     ResultadoBuscaFonteSaida,
 )
+from api.servicos import busca as servico_busca
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
@@ -135,25 +138,40 @@ async def listar_animes_em_alta(
 # `/buscar-fontes` precisa vir ANTES de `/{anime_id}` — mesma armadilha de
 # `/em-alta` acima: um `{anime_id}` declarado primeiro casaria com
 # `anime_id="buscar-fontes"`.
-@router_publico.get("/buscar-fontes", response_model=list[ResultadoBuscaFonteSaida])
+@router_publico.get("/buscar-fontes", response_model=BuscaEmFontesSaida)
 async def buscar_animes_em_fontes(
     titulo: str = Query(..., max_length=200),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
-) -> list[ResultadoBuscaFonteSaida]:
+) -> BuscaEmFontesSaida:
     """Busca ao vivo em todos os sites de extração (ainda não catalogado
-    localmente) — alimenta a subseção "Resultados em outras fontes" da Home."""
+    localmente) — alimenta a subseção "Resultados em outras fontes" da Home.
+    `fontes` traz o status de cada site consultado (disponível ou não, com
+    motivo) — a UI usa isso pra distinguir "não achei nada" de "não consegui
+    nem tentar" (CLAUDE.md §4, erro nunca silencioso)."""
     if not titulo.strip():
-        return []
-    pares = await servico_extractors.buscar_em_todas_as_fontes(sessionmaker, titulo)
-    return [
-        ResultadoBuscaFonteSaida(
-            titulo_exibicao=resultado.titulo_exibicao,
-            identificador=resultado.identificador,
-            url=resultado.url,
-            dominio=dominio,
-        )
-        for dominio, resultado in pares
-    ]
+        return BuscaEmFontesSaida(resultados=[], fontes=[])
+
+    fontes = await servico_extractors.buscar_em_todas_as_fontes(sessionmaker, titulo)
+    fontes = await servico_busca.enriquecer_capas(sessionmaker, fontes)
+    return BuscaEmFontesSaida(
+        resultados=[
+            ResultadoBuscaFonteSaida(
+                titulo_exibicao=candidato.titulo_exibicao,
+                identificador=candidato.identificador,
+                url=candidato.url,
+                dominio=fonte.dominio,
+                capa_url=candidato.capa_url,
+            )
+            for fonte in fontes
+            for candidato in fonte.candidatos
+        ],
+        fontes=[
+            FonteConsultadaSaida(
+                dominio=fonte.dominio, indisponivel=fonte.indisponivel, motivo=fonte.motivo
+            )
+            for fonte in fontes
+        ],
+    )
 
 
 @router_publico.get("/{anime_id}", response_model=AnimeDetalheSaida)

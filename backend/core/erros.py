@@ -82,7 +82,25 @@ class EstruturaDoSiteMudou(FalhaDeExtracao):
 
 
 class FonteNaoEncontrada(FalhaDeExtracao):
-    """Anime/episódio não existe neste site (HTTP 404 ou equivalente)."""
+    """Anime/episódio não existe neste site (HTTP 404 ou equivalente).
+
+    Não retentável por padrão (`permite_retentativa=False`, mesmo padrão de
+    `SiteEmCooldown`/`EstruturaDoSiteMudou` acima): repetir a mesma URL que
+    respondeu 404 não muda o resultado.
+
+    Efeito colateral consciente dessa mudança (era `True`, herdado de
+    `FalhaDeExtracao`, antes desta revisão): em
+    `extractors/servico.py::baixar_com_fallback_de_site`, um 404 num episódio
+    específico agora aciona fallback para o próximo site da lista de
+    prioridade em vez de reagendar o job 3x; em `worker/executor.py`, sem mais
+    site na lista, o job vai direto para `aguardando_intervencao` em vez de
+    ser retentado. Intencional — não reverter.
+    """
+
+    def __init__(
+        self, mensagem: str, *, dominio: str = "", permite_retentativa: bool = False
+    ) -> None:
+        super().__init__(mensagem, dominio=dominio, permite_retentativa=permite_retentativa)
 
 
 class FonteAmbigua(ErroSlimeStudio):
