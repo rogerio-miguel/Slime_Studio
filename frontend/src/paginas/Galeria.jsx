@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
-import { criarAnime, listarAnimes } from '../api/recursos.js';
+import { criarAnime, listarAnimes, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
+import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 
 // Rota "/animes" — catálogo completo. Cadastro de anime é um formulário
@@ -12,11 +13,13 @@ import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 // escopo desta fase — ver `backend/api/rotas/animes.py`), então este é o
 // único jeito de popular o catálogo pela UI.
 //
-// Busca (`?q=`, disparada pela navbar em BarraDeNavegacao.jsx) é filtrada
-// aqui no client: `GET /api/animes` não aceita query param de busca
-// (backend/api/rotas/animes.py::listar_animes só ordena por título) e a
-// lista é pequena o bastante (uso pessoal) pra não justificar um endpoint
-// novo.
+// Busca (`?q=`) é filtrada aqui no client: `GET /api/animes` não aceita
+// query param de busca (backend/api/rotas/animes.py::listar_animes só
+// ordena por título) e a lista é pequena o bastante (uso pessoal) pra não
+// justificar um endpoint novo. Nenhum ponto da UI monta essa URL hoje — a
+// busca da navbar (BarraDeNavegacao.jsx) passou a filtrar in-place dentro
+// de `paginas/Inicio.jsx`, sem navegar pra cá — mas o parâmetro continua
+// funcionando se alguém acessar `/animes?q=termo` diretamente.
 export default function Galeria() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -35,6 +38,10 @@ export default function Galeria() {
   const [anoNovo, setAnoNovo] = useState('');
   const [criando, setCriando] = useState(false);
   const [erroCriacao, setErroCriacao] = useState(null);
+
+  const [animeParaRemover, setAnimeParaRemover] = useState(null);
+  const [removendo, setRemovendo] = useState(false);
+  const [erroRemocao, setErroRemocao] = useState(null);
 
   const aoCriarAnime = useCallback(
     async (event) => {
@@ -69,6 +76,34 @@ export default function Galeria() {
     },
     [tituloNovo, anoNovo, criando, recarregar, navigate]
   );
+
+  const confirmarRemocao = useCallback(async () => {
+    if (!animeParaRemover) return;
+    setRemovendo(true);
+    setErroRemocao(null);
+    try {
+      await removerAnime(animeParaRemover.id);
+      setAnimeParaRemover(null);
+      recarregar();
+    } catch (erroCapturado) {
+      if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
+        setErroRemocao('Este anime tem uma captura em andamento — aguarde terminar antes de remover.');
+      } else {
+        console.error('falha ao remover anime do catálogo', erroCapturado);
+        setErroRemocao('Não foi possível remover este anime — tente novamente.');
+      }
+    } finally {
+      setRemovendo(false);
+    }
+  }, [animeParaRemover, recarregar]);
+
+  // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
+  // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior
+  // "vazaria" pra próxima abertura do dialog.
+  const fecharDialogoRemocao = useCallback(() => {
+    setAnimeParaRemover(null);
+    setErroRemocao(null);
+  }, []);
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -142,9 +177,19 @@ export default function Galeria() {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {animesFiltrados?.map((anime) => (
-          <AnimeCard key={anime.id} anime={anime} />
+          <AnimeCard key={anime.id} anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
         ))}
       </div>
+
+      <DialogoDeConfirmacao
+        aberto={animeParaRemover != null}
+        titulo="Remover do catálogo"
+        mensagem={`Remover "${animeParaRemover?.titulo}" do catálogo? Episódios e capturas associados serão apagados.`}
+        erro={erroRemocao}
+        aoConfirmar={confirmarRemocao}
+        aoFechar={fecharDialogoRemocao}
+        confirmando={removendo}
+      />
     </main>
   );
 }
