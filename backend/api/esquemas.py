@@ -79,6 +79,13 @@ class RetryJobSaida(BaseModel):
 class CriarAnimeRequest(BaseModel):
     titulo: str
     ano: int | None = None
+    # Metadados de provedor externo (AniList/Kitsu) — opcionais: se vierem
+    # preenchidos, persistem direto; se ausentes, `api/servicos/descoberta.py`
+    # tenta enriquecer por título em best-effort (ver `api/rotas/animes.py`).
+    anilist_id: int | None = None
+    kitsu_id: int | None = None
+    capa_url: str | None = None
+    sinopse: str | None = None
 
 
 class AnimeSaida(BaseModel):
@@ -89,6 +96,31 @@ class AnimeSaida(BaseModel):
     slug: str
     ano: int | None
     capa_path: str | None
+    criado_em: datetime
+
+
+class AnimeEmAltaSaida(BaseModel):
+    """Item do feed `GET /api/animes/em-alta` (`integrations.base.AnimeEmAlta`)
+    já cruzado com o catálogo local — `anime_id` vem preenchido pelo servidor
+    quando o anime já está catalogado, `None` caso contrário."""
+
+    titulo_romaji: str
+    titulo_ingles: str | None
+    capa_url: str | None
+    banner_url: str | None
+    anilist_id: int | None
+    anime_id: int | None
+
+
+class AnimeDetalheSaida(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    titulo: str
+    slug: str
+    ano: int | None
+    capa_path: str | None
+    sinopse: str | None
     criado_em: datetime
 
 
