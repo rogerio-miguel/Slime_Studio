@@ -36,7 +36,7 @@ import urllib.parse
 
 from bs4 import BeautifulSoup
 
-from core.erros import EstruturaDoSiteMudou
+from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from extractors.cliente import ClienteDeSite
 
@@ -66,7 +66,18 @@ class AnimesDriveProvider(ExtratorDeSite):
     def buscar(self, cliente: ClienteDeSite, titulo: str) -> list[ResultadoBusca]:
         consulta = " ".join(re.sub(r"[-_]+", " ", titulo).split())
         url = f"{self.BASE_URL}/?{urllib.parse.urlencode({'s': consulta})}"
-        html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)
+        try:
+            html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)
+        except FonteNaoEncontrada:
+            # Mesmo tratamento do AnimeFire (`extractors/animefire.py::buscar`),
+            # por simetria — não confirmado ao vivo se o AnimesDrive também
+            # responde 404 numa busca sem resultado, mas tratar aqui é seguro
+            # (404 vira lista vazia, não erro) e evita divergência entre os dois
+            # adapters caso o site se comporte assim.
+            logger.warning(
+                "AnimesDrive: busca por %r não encontrou nada (404) em %s", titulo, url
+            )
+            return []
 
         try:
             soup = BeautifulSoup(html, "html.parser")
@@ -82,13 +93,36 @@ class AnimesDriveProvider(ExtratorDeSite):
                     continue
 
                 url_anime = tag_link["href"]
+                # Ausência da tag/atributo não é erro (imagem faltando num card
+                # isolado não invalida o resultado) — `urljoin` absolutiza tanto
+                # caminho relativo (`/capa.jpg`) quanto URL já absoluta, sem
+                # precisar duplicar o tratamento manual de `//host/...` que
+                # `resolver_midia` faz para iframes.
+                tag_capa = artigo.select_one(".thumb img")
+                src_capa = tag_capa.get("src") if tag_capa else None
+                capa_url = (
+                    urllib.parse.urljoin(self.BASE_URL, src_capa.strip())
+                    if src_capa and src_capa.strip()
+                    else None
+                )
+
                 resultados.append(
                     ResultadoBusca(
                         titulo_exibicao=" ".join(tag_titulo.get_text().split()),
                         identificador=_extrair_identificador(url_anime),
                         url=url_anime,
+                        capa_url=capa_url,
                     )
                 )
+            if not resultados:
+                # info, não warning: com a busca em paralelo em todos os sites
+                # (extractors/servico.py::buscar_em_todas_as_fontes), um título
+                # existir só num dos dois é o caso comum, não uma falha — não
+                # dá pra distinguir "não achei mesmo" de "estrutura mudou" só
+                # por contagem zero, então não escala pra warning (isso viraria
+                # ruído em toda busca parcial). Falha de parsing de verdade
+                # ainda sobe como `EstruturaDoSiteMudou` via `except AttributeError`.
+                logger.info("AnimesDrive: nenhum resultado de busca encontrado em %s", url)
             return resultados
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(

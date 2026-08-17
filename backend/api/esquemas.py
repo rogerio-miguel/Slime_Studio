@@ -141,6 +141,31 @@ class ResultadoBuscaFonteSaida(BaseModel):
     identificador: str
     url: str
     dominio: str
+    # Preenchida direto do parsing (AnimesDrive) ou por enriquecimento
+    # best-effort via metadado de provedor externo (AnimeFire, que não expõe
+    # imagem na busca — `api/servicos/busca.py::enriquecer_capas`). `None`
+    # quando nenhuma das duas fontes achou capa.
+    capa_url: str | None = None
+
+
+class FonteConsultadaSaida(BaseModel):
+    """Status de uma fonte consultada em `GET /api/animes/buscar-fontes` — inclui
+    fontes indisponíveis (cooldown ou erro), não só as que responderam
+    candidatos, pra UI distinguir "não achei nada" de "não consegui nem
+    tentar" (CLAUDE.md §4, erro nunca silencioso)."""
+
+    dominio: str
+    indisponivel: bool
+    motivo: str | None = None
+
+
+class BuscaEmFontesSaida(BaseModel):
+    """Corpo de `GET /api/animes/buscar-fontes`: candidatos achatados de todas as
+    fontes disponíveis (`resultados`) + status de cada fonte consultada,
+    disponível ou não (`fontes`)."""
+
+    resultados: list[ResultadoBuscaFonteSaida]
+    fontes: list[FonteConsultadaSaida]
 
 
 class EpisodioRemotoSaida(BaseModel):

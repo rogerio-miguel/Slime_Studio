@@ -83,9 +83,21 @@ export default function Inicio() {
   }, [termoBusca]);
 
   const buscaEmFontes = useRecurso(
-    () => (termoBuscaSubmetido ? buscarEmFontes(termoBuscaSubmetido) : Promise.resolve([])),
+    () =>
+      termoBuscaSubmetido
+        ? buscarEmFontes(termoBuscaSubmetido)
+        : Promise.resolve({ resultados: [], fontes: [] }),
     [termoBuscaSubmetido]
   );
+  const resultadosFontes = buscaEmFontes.dados?.resultados ?? [];
+  const fontesConsultadas = buscaEmFontes.dados?.fontes ?? [];
+  const fontesIndisponiveis = fontesConsultadas.filter((fonte) => fonte.indisponivel);
+  // Toda fonte consultada falhou/está em cooldown — "não consegui nem
+  // tentar", diferente de "busquei e não achei nada" (pelo menos uma fonte
+  // respondeu de fato). `fontesConsultadas.length > 0` evita marcar como
+  // "nenhuma fonte disponível" antes da resposta chegar (array vazio inicial).
+  const todasFontesIndisponiveis =
+    fontesConsultadas.length > 0 && fontesIndisponiveis.length === fontesConsultadas.length;
 
   // Guarda contra o campo ter sido editado depois do último Enter: enquanto
   // `termoBusca` diverge de `termoBuscaSubmetido`, os cards de
@@ -265,7 +277,34 @@ export default function Inicio() {
                 !resultadosDeFonteDesatualizados &&
                 !buscaEmFontes.carregando &&
                 !buscaEmFontes.erro &&
-                (buscaEmFontes.dados ?? []).length === 0 && (
+                resultadosFontes.length === 0 &&
+                todasFontesIndisponiveis && (
+                  <div
+                    role="alert"
+                    className="mb-6 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+                  >
+                    <p>
+                      Nenhuma fonte está disponível agora
+                      {fontesIndisponiveis.some((fonte) => fonte.motivo)
+                        ? ': ' +
+                          fontesIndisponiveis
+                            .map((fonte) =>
+                              fonte.motivo ? `${fonte.dominio} (${fonte.motivo})` : fonte.dominio
+                            )
+                            .join('; ')
+                        : '.'}
+                    </p>
+                    <button type="button" onClick={buscaEmFontes.recarregar} className="underline">
+                      Tentar novamente
+                    </button>
+                  </div>
+                )}
+              {termoBuscaSubmetido !== '' &&
+                !resultadosDeFonteDesatualizados &&
+                !buscaEmFontes.carregando &&
+                !buscaEmFontes.erro &&
+                resultadosFontes.length === 0 &&
+                !todasFontesIndisponiveis && (
                   <p className="text-sm text-ink-muted">
                     Nenhum anime encontrado em outras fontes para “{termoBuscaSubmetido}”.
                   </p>
@@ -274,22 +313,30 @@ export default function Inicio() {
                 !resultadosDeFonteDesatualizados &&
                 !buscaEmFontes.carregando &&
                 !buscaEmFontes.erro &&
-                (buscaEmFontes.dados ?? []).length > 0 && (
-                  <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
-                    {buscaEmFontes.dados.map((resultado, indice) => {
-                      const chave = `${resultado.dominio}:${resultado.identificador}`;
-                      return (
-                        <SlotDeCard key={chave} indice={indice}>
-                          <AnimeCard
-                            anime={{ titulo: resultado.titulo_exibicao }}
-                            aoAtivar={() => materializarFonteEIrPara(resultado)}
-                            desabilitado={chaveEmMaterializacao === chave}
-                          />
-                          <p className="mt-1 text-xs text-ink-muted">{resultado.dominio}</p>
-                        </SlotDeCard>
-                      );
-                    })}
-                  </div>
+                resultadosFontes.length > 0 && (
+                  <>
+                    <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
+                      {resultadosFontes.map((resultado, indice) => {
+                        const chave = `${resultado.dominio}:${resultado.identificador}`;
+                        return (
+                          <SlotDeCard key={chave} indice={indice}>
+                            <AnimeCard
+                              anime={{ titulo: resultado.titulo_exibicao, capa_url: resultado.capa_url }}
+                              aoAtivar={() => materializarFonteEIrPara(resultado)}
+                              desabilitado={chaveEmMaterializacao === chave}
+                            />
+                            <p className="mt-1 text-xs text-ink-muted">{resultado.dominio}</p>
+                          </SlotDeCard>
+                        );
+                      })}
+                    </div>
+                    {fontesIndisponiveis.length > 0 && (
+                      <p className="mt-4 text-xs text-ink-muted">
+                        Não foi possível consultar:{' '}
+                        {fontesIndisponiveis.map((fonte) => fonte.dominio).join(', ')}.
+                      </p>
+                    )}
+                  </>
                 )}
             </section>
           </section>

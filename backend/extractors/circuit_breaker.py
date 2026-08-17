@@ -28,6 +28,15 @@ async def esta_em_cooldown(sessionmaker: _SessionMaker, dominio: str) -> bool:
         return estado.cooldown_ate > datetime.now(UTC)
 
 
+async def obter_cooldown_ate(sessionmaker: _SessionMaker, dominio: str) -> datetime | None:
+    """Timestamp até quando `dominio` está em cooldown — usado para compor
+    mensagens legíveis (`extractors/servico.py::buscar_em_todas_as_fontes`).
+    `None` sem registro prévio, mesmo contrato de ausência de `esta_em_cooldown`."""
+    async with sessionmaker() as sessao:
+        estado = await sessao.get(EstadoSite, dominio)
+        return estado.cooldown_ate if estado is not None else None
+
+
 async def registrar_sucesso(sessionmaker: _SessionMaker, dominio: str) -> None:
     """Zera `falhas_consecutivas` e limpa o cooldown. Sem registro prévio, não há o
     que zerar — nada a fazer."""

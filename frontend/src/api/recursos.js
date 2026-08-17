@@ -24,7 +24,11 @@ export function listarEpisodiosRemotos(animeId) {
 }
 
 // Busca ao vivo em todos os sites de extração (ainda não catalogado
-// localmente) — subseção "Resultados em outras fontes" da Home.
+// localmente) — subseção "Resultados em outras fontes" da Home. Resolve para
+// `{ resultados, fontes }` (não mais um array direto): `resultados` são os
+// candidatos achatados de todas as fontes disponíveis, `fontes` é o status de
+// cada site consultado (`{ dominio, indisponivel, motivo }`) — distingue
+// "busquei e não achei nada" de "não consegui nem tentar" (cooldown/erro).
 export function buscarEmFontes(titulo) {
   return requisitar(`/api/animes/buscar-fontes?titulo=${encodeURIComponent(titulo)}`);
 }

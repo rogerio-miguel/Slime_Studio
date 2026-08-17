@@ -17,7 +17,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from core.erros import EstruturaDoSiteMudou
+from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from extractors.cliente import ClienteDeSite
 
@@ -42,7 +42,19 @@ class AnimeFireProvider(ExtratorDeSite):
     def buscar(self, cliente: ClienteDeSite, titulo: str) -> list[ResultadoBusca]:
         busca_formatada = titulo.strip().replace(" ", "-").lower()
         url = f"{self.BASE_URL}/pesquisar/{busca_formatada}"
-        html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)
+        try:
+            html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)
+        except FonteNaoEncontrada:
+            # `/pesquisar/<termo>` do AnimeFire responde HTTP 404 quando a busca
+            # não encontra nada (comportamento herdado do Slime_Shell_Web, que já
+            # tratava isso explicitamente) — não é falha, é "zero resultados".
+            # Cinto e suspensório: `FonteNaoEncontrada` já não conta como falha
+            # no circuit breaker (`core/erros.py`), mas capturar aqui deixa
+            # explícito por que esse 404 específico é normal.
+            logger.warning(
+                "AnimeFire: busca por %r não encontrou nada (404) em %s", titulo, url
+            )
+            return []
 
         try:
             soup = BeautifulSoup(html, "html.parser")
@@ -65,8 +77,23 @@ class AnimeFireProvider(ExtratorDeSite):
                         titulo_exibicao=titulo_limpo,
                         identificador=self._extrair_slug(url_anime),
                         url=url_anime,
+                        # AnimeFire não expõe imagem nenhuma na página de busca
+                        # (confirmado ao vivo e no código de referência
+                        # Slime_Shell_Web) — `capa_url=None` via default do
+                        # dataclass, não falta de parsing. Enriquecimento por
+                        # metadado de provedor externo mora em
+                        # `api/servicos/busca.py::enriquecer_capas`.
                     )
                 )
+            if not resultados:
+                # info, não warning: com a busca em paralelo em todos os sites
+                # (extractors/servico.py::buscar_em_todas_as_fontes), um título
+                # existir só num dos dois é o caso comum, não uma falha — não dá
+                # pra distinguir "não achei mesmo" de "estrutura mudou" só por
+                # contagem zero, então não escala pra warning (isso viraria
+                # ruído em toda busca parcial). Falha de parsing de verdade
+                # ainda sobe como `EstruturaDoSiteMudou` via `except AttributeError`.
+                logger.info("AnimeFire: nenhum card de resultado encontrado em %s", url)
             return resultados
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(
