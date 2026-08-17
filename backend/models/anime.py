@@ -20,6 +20,10 @@ class Anime(Base):
     ano: Mapped[int | None] = mapped_column(Integer, nullable=True)
     anilist_id: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
     kitsu_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Nome enganoso (herdado do schema original) — guarda uma URL do
+    # provedor de metadados (AniList/Kitsu), não um caminho em disco local.
+    # `Episodio.capa_path` segue a mesma convenção; renomear os dois
+    # expandiria o escopo desta leva, então só documentado aqui.
     capa_path: Mapped[str | None] = mapped_column(String, nullable=True)
     sinopse: Mapped[str | None] = mapped_column(String, nullable=True)
     total_episodios_anilist: Mapped[int | None] = mapped_column(Integer, nullable=True)
