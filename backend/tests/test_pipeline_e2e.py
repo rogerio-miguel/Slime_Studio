@@ -36,7 +36,9 @@ async def test_pipeline_ponta_a_ponta_gera_master_e_segmentos(tmp_path: Path):
     destino = diretorio_do_episodio(
         media_root, "anime-teste", 1, TipoEpisodio.REGULAR, VersaoEpisodio.LEGENDADO
     )
-    resultado = await empacotar(fonte, destino, plano, ffmpeg, media_root, duracao_segmento_s=2)
+    resultado = await empacotar(
+        fonte, destino, plano, sondagem, ffmpeg, media_root, duracao_segmento_s=2
+    )
 
     assert resultado.master_absoluto.exists()
     assert resultado.master_absoluto.name == "master.m3u8"

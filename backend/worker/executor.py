@@ -101,7 +101,7 @@ async def processar(job_id: int, sessionmaker: _SessionMaker, config: Config) ->
         )
         inicio = time.monotonic()
         resultado = await empacotar(
-            caminho_fonte, destino, plano, config.ffmpeg, config.media_root
+            caminho_fonte, destino, plano, sondagem, config.ffmpeg, config.media_root
         )
         if not resultado.master_absoluto.exists():
             raise FalhaDeFerramenta(
