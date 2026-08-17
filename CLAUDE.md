@@ -90,6 +90,8 @@ Qualquer coisa que não passe no teste acima. Sequência:
 2. **`architect`** — só se ao menos um critério objetivo do agente for atendido (mais de uma
    camada afetada, ausência de padrão estabelecido, ou bug sem causa óbvia **após** uma tentativa
    direta do `implementer`). Não escalar "por segurança": escopo já claro vai direto ao passo 3.
+   É o agente mais caro do kit (Opus, ~2,05x o custo por turno de Sonnet) — na dúvida entre
+   `architect` e pular direto ao `implementer`, o critério objetivo decide, não a cautela.
 3. **`implementer`** — sempre. Recebe o plano do `architect` quando houve um, ou a instrução
    direta quando não houve. Repasse o contexto que você já tem em vez de deixá-lo redescobrir.
 4. **`reviewer`** — sempre neste caminho, sobre o diff.
