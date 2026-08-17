@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { COLUNAS_GRID, estiloLarguraMaxCard, RESERVA_TOPO, SlotDeCard } from './GradeDeCards.jsx';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 
 // Pontos de quebra espelhando exatamente as classes Tailwind do grid abaixo
@@ -13,31 +14,6 @@ const _PONTOS_DE_QUEBRA = [
   { consulta: '(min-width: 640px)', colunas: 4 },
 ];
 const _COLUNAS_BASE = 2;
-
-// A grade (2 linhas fixas) precisa caber inteira entre a navbar fixa e o fim
-// da viewport, sem rolar, com respiro visível abaixo da navbar (mt-20 do h2
-// da própria seção, somado ao pt-24 de <main>).
-const _RESERVA_TOPO = '6rem'; // pt-24 de <main> (paginas/Inicio.jsx)
-// mt-20 do h2 (5rem, respiro visível abaixo da navbar) + h2 text-2xl
-// line-height (1.75rem) + mb-4 (1rem) + gap-6 entre as 2 linhas do grid
-// (0.5rem, espelha o gap-6 do grid abaixo) + folga de respiro (0.25rem) +
-// reserva de topo (6rem).
-const _RESERVA_TOTAL = '14.5rem';
-
-// Track não pode ser `1fr` (padrão do grid em fluxo normal) — se a coluna
-// ficar mais larga que o teto do card (--largura-max-card), o card sobra
-// menor que ela e centralizado dentro (`mx-auto` em SlotDeCard), abrindo um
-// respiro DENTRO de cada coluna que se soma ao `gap` e aparece como
-// distância extra entre os cards de uma mesma linha — não só entre colunas.
-// Track do tamanho do próprio teto colapsa essa folga nas bordas do bloco
-// inteiro (`justify-center`) em vez de espalhar entre cada par de cards.
-// Contagem de colunas por breakpoint espelha `_PONTOS_DE_QUEBRA`.
-const _COLUNAS_GRID =
-  'grid-cols-[repeat(2,minmax(0,var(--largura-max-card)))] justify-center ' +
-  'sm:grid-cols-[repeat(4,minmax(0,var(--largura-max-card)))] ' +
-  'md:grid-cols-[repeat(5,minmax(0,var(--largura-max-card)))] ' +
-  'lg:grid-cols-[repeat(6,minmax(0,var(--largura-max-card)))] ' +
-  'xl:grid-cols-[repeat(7,minmax(0,var(--largura-max-card)))]';
 
 function _colunasAtuais() {
   const ponto = _PONTOS_DE_QUEBRA.find((p) => window.matchMedia(p.consulta).matches);
@@ -59,40 +35,6 @@ function useColunasResponsivas() {
   }, []);
 
   return colunas;
-}
-
-// Slot de um card do grid — dono da transição de entrada (opacity-0
-// scale-95 → opacity-100 scale-100, "surge do meio", linguagem visual já
-// validada com o usuário na rodada anterior). Monta escondido e no próximo
-// frame revela: é o mesmo truque de duas fases que antes vinha de
-// `useEntradaNaViewport` (visível vira `true` depois do mount), só que agora
-// local a cada slot em vez de global à seção — GradeRotativa força um
-// componente novo por posição a cada troca de lote (key inclui a geração),
-// então o mount por si só já dispara a transição de novo, sem orquestração
-// extra no componente pai.
-function SlotDeCard({ indice, children }) {
-  const [visivel, setVisivel] = useState(false);
-
-  useEffect(() => {
-    const quadro = requestAnimationFrame(() => setVisivel(true));
-    return () => cancelAnimationFrame(quadro);
-  }, []);
-
-  return (
-    <div
-      // maxWidth (não maxHeight): o card usa aspect-[2/3], que resolve a
-      // largura primeiro — um teto de altura entraria em conflito com o
-      // aspect-ratio e quebraria a proporção 2:3. `--largura-max-card` vem
-      // do estilo inline de GradeRotativa (herdado via custom property CSS),
-      // sempre presente enquanto este componente só existir dentro dela.
-      style={{ transitionDelay: `${Math.min(indice, 7) * 60}ms`, maxWidth: 'var(--largura-max-card)' }}
-      className={`mx-auto w-full transition-[opacity,transform] duration-500 ease-out motion-reduce:opacity-100 motion-reduce:scale-100 motion-reduce:transition-none ${
-        visivel ? 'scale-100 opacity-100' : 'scale-95 opacity-0'
-      }`}
-    >
-      {children}
-    </div>
-  );
 }
 
 // Grade full-bleed de 2 linhas fixas, encaixada entre a navbar e o fim da
@@ -120,12 +62,9 @@ export default function GradeRotativa({
   const tamanhoLote = colunas * 2;
   const rotaciona = itens.length > tamanhoLote;
 
-  // Teto de largura do card (--largura-max-card, consumido em SlotDeCard)
-  // vem de altura_max_card = (100vh - RESERVA_TOTAL) / 2 linhas; como o card
-  // usa aspect-[2/3], largura = altura * 2/3 — daí a divisão final por 3.
   const estilo = {
-    minHeight: `calc(100vh - ${_RESERVA_TOPO})`,
-    '--largura-max-card': `calc((100vh - ${_RESERVA_TOTAL}) / 3)`,
+    minHeight: `calc(100vh - ${RESERVA_TOPO})`,
+    ...estiloLarguraMaxCard,
   };
 
   const [indiceInicio, setIndiceInicio] = useState(0);
@@ -170,7 +109,13 @@ export default function GradeRotativa({
     <section
       aria-labelledby={idTitulo}
       style={estilo}
-      className="flex flex-col justify-center-safe px-4 sm:px-6 lg:px-8"
+      // `px-6 md:px-10`: mesmo padding horizontal da navbar
+      // (components/BarraDeNavegacao.jsx) — sem isto, o início do título
+      // "Destaques da temporada" (e a borda esquerda da grade, agora
+      // alinhada a ele via `justify-start` em GradeDeCards.jsx) não batia
+      // com o início de "Slime Studio" na navbar, nem a borda direita da
+      // grade batia com o fim do campo de busca.
+      className="flex flex-col justify-center-safe px-6 md:px-10"
     >
       <h2 id={idTitulo} className="mb-4 mt-20 text-2xl font-semibold text-white">
         {titulo}
@@ -180,16 +125,19 @@ export default function GradeRotativa({
           um card podia sumir debaixo do cursor/foco no meio de uma
           interação. `onFocus`/`onBlur` do React usam focusin/focusout por
           baixo (bubbla), então se comportam como `:focus-within` mas
-          conseguem pausar o timer em JS (CSS puro não alcança o `setInterval`). */}
+          conseguem pausar o timer em JS (CSS puro não alcança o `setInterval`).
+
+          Ver GradeDeCards.jsx pro racional de COLUNAS_GRID (por que a track
+          não é `1fr` e por que `justify-start`, não `justify-center`). */}
       <div
         onMouseEnter={pausar}
         onMouseLeave={retomar}
         onFocus={pausar}
         onBlur={retomar}
-        className={`grid gap-6 ${_COLUNAS_GRID}`}
+        className={`grid gap-6 ${COLUNAS_GRID}`}
       >
         {lote.map((item, posicao) => (
-          <SlotDeCard key={`${geracao}-${posicao}`} indice={posicao}>
+          <SlotDeCard key={`${geracao}-${posicao}`} indice={posicao} ativa={ativa}>
             {renderItem(item)}
           </SlotDeCard>
         ))}
