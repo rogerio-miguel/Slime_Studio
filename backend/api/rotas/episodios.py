@@ -1,6 +1,6 @@
 """Rotas de episódio: mídia HLS (sem `StaticFiles` — D1 do plano; servida via
-`FileResponse` atrás do mesmo gate de autenticação das demais rotas) e
-CRUD parcial de catálogo (`PATCH`/`DELETE`) + marcação de assistido.
+`FileResponse`) e CRUD parcial de catálogo (`PATCH`/`DELETE`) + marcação de
+assistido.
 
 **Ordem de declaração importa**: `playlist.m3u8` precisa vir antes do catch-all
 `{recurso:path}` — um catch-all declarado primeiro engolia o próprio manifesto.

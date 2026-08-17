@@ -1,15 +1,11 @@
-"""`/api/health` (liveness, sem gate de autenticação — D7 do plano) +
-`/api/admin/disco`/`/api/admin/worker` (com gate — operação do painel admin).
+"""`/api/health` (liveness) + `/api/admin/disco`/`/api/admin/worker` (operação
+do painel admin).
 
-Dois routers porque `/api/health` precisa ficar fora do `Depends(exigir_autenticacao)`
-que `api/main.py` aplica aos demais; um único `APIRouter` aplicaria o gate a
-todas as rotas que carrega.
-
-Desvio documentado (D7): `/api/health` é o único endpoint da API sem cookie —
-usado por infraestrutura local (systemd/supervisor, checagem manual) que não tem
-como carregar um token. O corpo é deliberadamente mínimo (`{"status": "ok"}`,
-sem versão nem estado do banco) para não vazar detalhe de implementação a quem
-quer que consiga alcançar a porta.
+Dois routers só pela diferença de prefixo de URL (`/api` vs. `/api/admin`) —
+sem gate de autenticação, a API é de uso local/pessoal (CLAUDE.md). O corpo de
+`/api/health` é deliberadamente mínimo (`{"status": "ok"}`, sem versão nem
+estado do banco) para não vazar detalhe de implementação a quem quer que
+consiga alcançar a porta.
 """
 
 import fcntl

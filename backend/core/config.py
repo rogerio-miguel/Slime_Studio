@@ -29,11 +29,6 @@ class Config:
     ffmpeg: Path
     ffprobe: Path
     caminho_lock: Path
-    # Último campo, com default: `tests/test_fila.py` (e outros) constroem `Config`
-    # posicionalmente/por kwargs sem este campo — um novo campo obrigatório ou
-    # fora do fim quebraria essas construções. O worker não lê nem exige este
-    # valor (só a API, no boot — `api/main.py::_validar_token_admin`).
-    admin_access_token: str | None = None
 
 
 def carregar_config(env_path: Path | None = None) -> Config:
@@ -60,7 +55,6 @@ def carregar_config(env_path: Path | None = None) -> Config:
         ffmpeg=ffmpeg,
         ffprobe=ffprobe,
         caminho_lock=caminho_lock,
-        admin_access_token=valores.get("ADMIN_ACCESS_TOKEN") or None,
     )
 
 

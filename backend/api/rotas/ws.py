@@ -1,7 +1,4 @@
-"""Rotas WebSocket (`/ws/admin`, `/ws/jobs/{id}`) — gate de autenticação via
-`exigir_autenticacao_ws` (`WebSocketException(1008)`, nunca `HTTPException`: uma
-rota WS que levantasse `HTTPException` daria um erro de handshake obscuro no
-cliente — ver armadilha conhecida do plano).
+"""Rotas WebSocket (`/ws/admin`, `/ws/jobs/{id}`).
 
 Por conexão: duas tasks — uma em `websocket.receive()` (detecta desconexão) e
 outra drenando a fila de mensagens do assinante. A primeira a terminar cancela a
@@ -12,11 +9,10 @@ saiu, mesmo em desconexão abrupta.
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, WebSocket
+from fastapi import APIRouter, WebSocket
 from fastapi.encoders import jsonable_encoder
 from starlette.websockets import WebSocketDisconnect
 
-from api.dependencias import exigir_autenticacao_ws
 from api.eventos import Assinantes, MonitorDeFila, buscar_job, buscar_jobs_ativos
 
 logger = logging.getLogger(__name__)
@@ -24,13 +20,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["websocket"])
 
 
-@router.websocket("/ws/admin", dependencies=[Depends(exigir_autenticacao_ws)])
+@router.websocket("/ws/admin")
 async def ws_admin(websocket: WebSocket) -> None:
     jobs = await buscar_jobs_ativos(websocket.app.state.sessionmaker)
     await _atender(websocket, canal="admin", snapshot={"tipo": "snapshot", "jobs": jobs})
 
 
-@router.websocket("/ws/jobs/{job_id}", dependencies=[Depends(exigir_autenticacao_ws)])
+@router.websocket("/ws/jobs/{job_id}")
 async def ws_job(websocket: WebSocket, job_id: int) -> None:
     job = await buscar_job(websocket.app.state.sessionmaker, job_id)
     snapshot = {"tipo": "snapshot", "jobs": [job] if job is not None else []}

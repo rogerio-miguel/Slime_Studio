@@ -5,54 +5,38 @@ import IndicadorDeAtencao from './components/IndicadorDeAtencao.jsx';
 import Toasts from './components/Toasts.jsx';
 import { useEventosDeJobs } from './eventos/useEventosDeJobs.js';
 import Player from './player/Player.jsx';
+import Inicio from './paginas/Inicio.jsx';
 import Galeria from './paginas/Galeria.jsx';
 import PaginaDoAnime from './paginas/PaginaDoAnime.jsx';
 import PaginaDoPlayer from './paginas/PaginaDoPlayer.jsx';
-import { SessaoProvider, useSessao } from './sessao/SessaoContexto.jsx';
-import TelaDeDesbloqueio from './sessao/TelaDeDesbloqueio.jsx';
 
 export default function App() {
   return (
-    <SessaoProvider>
-      <BrowserRouter>
-        <Shell />
-      </BrowserRouter>
-    </SessaoProvider>
+    <BrowserRouter>
+      <Shell />
+    </BrowserRouter>
   );
 }
 
-// SessaoProvider no topo, guard de rota pra tela de desbloqueio quando não
-// autenticado — nenhuma rota (nem `/debug/fonte`) é alcançável sem token,
-// mesmo modelo de uso pessoal/local do resto da API (CLAUDE.md/ESPECIFICACAO
-// §8.2). WS único (`useEventosDeJobs`) sobe aqui, no nível do app, viva
-// enquanto autenticado — o Map resultante desce por prop pra quem precisa
-// (grade de episódios, indicador de atenção, toasts).
+// Sem gate de autenticação (D5 do plano de remoção — API é de uso
+// pessoal/local, CLAUDE.md): todas as rotas são alcançáveis direto. WS único
+// (`useEventosDeJobs`) sobe aqui, no nível do app, sempre conectado — o Map
+// resultante desce por prop pra quem precisa (grade de episódios, indicador
+// de atenção, toasts).
 function Shell() {
-  const { autenticado, carregando } = useSessao();
-  const jobsPorEpisodio = useEventosDeJobs(autenticado);
+  const jobsPorEpisodio = useEventosDeJobs();
   const jobsPrecisandoAtencao = useMemo(
     () => [...jobsPorEpisodio.values()].filter((job) => job.status === 'aguardando_intervencao'),
     [jobsPorEpisodio]
   );
-
-  if (carregando) {
-    return (
-      <p role="status" className="px-6 py-20 text-center text-sm text-ink-muted">
-        Carregando…
-      </p>
-    );
-  }
-
-  if (!autenticado) {
-    return <TelaDeDesbloqueio />;
-  }
 
   return (
     <>
       <IndicadorDeAtencao jobs={jobsPrecisandoAtencao} />
       <Toasts jobsPorEpisodio={jobsPorEpisodio} />
       <Routes>
-        <Route path="/" element={<Galeria />} />
+        <Route path="/" element={<Inicio />} />
+        <Route path="/animes" element={<Galeria />} />
         <Route path="/anime/:id" element={<PaginaDoAnime jobsPorEpisodio={jobsPorEpisodio} />} />
         <Route path="/assistir/:episodioId" element={<PaginaDoPlayer />} />
         <Route path="/debug/fonte" element={<RotaDebugFonte />} />

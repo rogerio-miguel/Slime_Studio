@@ -50,8 +50,8 @@ async def _criar_episodio_e_job(
         return episodio.id, job.id
 
 
-async def test_criar_job_modo_local(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.post(
+async def test_criar_job_modo_local(cliente: AsyncClient):
+    resposta = await cliente.post(
         "/api/admin/jobs",
         json={
             "modo": "local",
@@ -66,7 +66,7 @@ async def test_criar_job_modo_local(cliente_autenticado: AsyncClient):
     assert isinstance(resposta.json()["job_id"], int)
 
 
-async def test_criar_job_modo_local_episodio_duplicado_409(cliente_autenticado: AsyncClient):
+async def test_criar_job_modo_local_episodio_duplicado_409(cliente: AsyncClient):
     corpo = {
         "modo": "local",
         "anime": "Anime Duplicado",
@@ -74,16 +74,16 @@ async def test_criar_job_modo_local_episodio_duplicado_409(cliente_autenticado: 
         "tipo": "regular",
         "caminho_local": "/caminho/qualquer.mkv",
     }
-    primeira = await cliente_autenticado.post("/api/admin/jobs", json=corpo)
+    primeira = await cliente.post("/api/admin/jobs", json=corpo)
     assert primeira.status_code == 201
 
-    segunda = await cliente_autenticado.post("/api/admin/jobs", json=corpo)
+    segunda = await cliente.post("/api/admin/jobs", json=corpo)
     assert segunda.status_code == 409
     assert segunda.json()["detail"]["motivo"] == "episodio_ja_existe"
 
 
-async def test_criar_job_modo_site_anime_id_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.post(
+async def test_criar_job_modo_site_anime_id_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.post(
         "/api/admin/jobs",
         json={"modo": "site", "anime_id": 999999, "numero": 1, "tipo": "regular"},
     )
@@ -92,7 +92,7 @@ async def test_criar_job_modo_site_anime_id_inexistente_404(cliente_autenticado:
 
 
 async def test_criar_job_modo_site_ambiguo_409(
-    cliente_autenticado: AsyncClient,
+    cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -113,7 +113,7 @@ async def test_criar_job_modo_site_ambiguo_409(
 
     monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
 
-    resposta = await cliente_autenticado.post(
+    resposta = await cliente.post(
         "/api/admin/jobs",
         json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
     )
@@ -123,7 +123,7 @@ async def test_criar_job_modo_site_ambiguo_409(
 
 
 async def test_criar_job_modo_site_episodio_nao_encontrado_404(
-    cliente_autenticado: AsyncClient,
+    cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -138,7 +138,7 @@ async def test_criar_job_modo_site_episodio_nao_encontrado_404(
     monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
 
-    resposta = await cliente_autenticado.post(
+    resposta = await cliente.post(
         "/api/admin/jobs",
         json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
     )
@@ -147,13 +147,13 @@ async def test_criar_job_modo_site_episodio_nao_encontrado_404(
 
 
 async def test_listar_jobs_com_filtro_de_status(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Listagem")
     await _criar_episodio_e_job(sessionmaker_api, anime_id, numero=1, status=StatusJob.NA_FILA)
     await _criar_episodio_e_job(sessionmaker_api, anime_id, numero=2, status=StatusJob.PRONTO)
 
-    resposta = await cliente_autenticado.get("/api/admin/jobs", params={"status": "pronto"})
+    resposta = await cliente.get("/api/admin/jobs", params={"status": "pronto"})
 
     assert resposta.status_code == 200
     corpo = resposta.json()
@@ -161,79 +161,79 @@ async def test_listar_jobs_com_filtro_de_status(
     assert corpo[0]["status"] == "pronto"
 
 
-async def test_obter_job_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.get("/api/admin/jobs/999999")
+async def test_obter_job_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.get("/api/admin/jobs/999999")
 
     assert resposta.status_code == 404
 
 
 async def test_cancelar_job_na_fila_cancela_direto(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Cancelar Fila")
     _, job_id = await _criar_episodio_e_job(sessionmaker_api, anime_id, status=StatusJob.NA_FILA)
 
-    resposta = await cliente_autenticado.post(f"/api/admin/jobs/{job_id}/cancelar")
+    resposta = await cliente.post(f"/api/admin/jobs/{job_id}/cancelar")
 
     assert resposta.status_code == 202
     assert resposta.json()["status"] == "cancelado"
 
 
 async def test_cancelar_job_em_execucao_marca_cancelando(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Cancelar Execucao")
     _, job_id = await _criar_episodio_e_job(
         sessionmaker_api, anime_id, status=StatusJob.TRANSCODIFICANDO
     )
 
-    resposta = await cliente_autenticado.post(f"/api/admin/jobs/{job_id}/cancelar")
+    resposta = await cliente.post(f"/api/admin/jobs/{job_id}/cancelar")
 
     assert resposta.status_code == 202
     assert resposta.json()["status"] == "cancelando"
 
 
 async def test_cancelar_job_ja_finalizado_409(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Cancelar Pronto")
     _, job_id = await _criar_episodio_e_job(sessionmaker_api, anime_id, status=StatusJob.PRONTO)
 
-    resposta = await cliente_autenticado.post(f"/api/admin/jobs/{job_id}/cancelar")
+    resposta = await cliente.post(f"/api/admin/jobs/{job_id}/cancelar")
 
     assert resposta.status_code == 409
 
 
-async def test_cancelar_job_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.post("/api/admin/jobs/999999/cancelar")
+async def test_cancelar_job_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.post("/api/admin/jobs/999999/cancelar")
 
     assert resposta.status_code == 404
 
 
 async def test_retry_job_falhou_volta_para_fila(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Retry")
     _, job_id = await _criar_episodio_e_job(sessionmaker_api, anime_id, status=StatusJob.FALHOU)
 
-    resposta = await cliente_autenticado.post(f"/api/admin/jobs/{job_id}/retry")
+    resposta = await cliente.post(f"/api/admin/jobs/{job_id}/retry")
 
     assert resposta.status_code == 200
     assert resposta.json()["job_id"] == job_id
 
 
 async def test_retry_job_nao_retentavel_409(
-    cliente_autenticado: AsyncClient, sessionmaker_api: _SessionMaker
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Retry Invalido")
     _, job_id = await _criar_episodio_e_job(sessionmaker_api, anime_id, status=StatusJob.NA_FILA)
 
-    resposta = await cliente_autenticado.post(f"/api/admin/jobs/{job_id}/retry")
+    resposta = await cliente.post(f"/api/admin/jobs/{job_id}/retry")
 
     assert resposta.status_code == 409
 
 
-async def test_retry_job_inexistente_404(cliente_autenticado: AsyncClient):
-    resposta = await cliente_autenticado.post("/api/admin/jobs/999999/retry")
+async def test_retry_job_inexistente_404(cliente: AsyncClient):
+    resposta = await cliente.post("/api/admin/jobs/999999/retry")
 
     assert resposta.status_code == 404

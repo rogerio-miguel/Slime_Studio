@@ -9,17 +9,15 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.dependencias import exigir_autenticacao
 from api.eventos import Assinantes, MonitorDeFila
-from api.rotas import animes, auth, episodios, jobs, saude, sites, ws
+from api.rotas import animes, episodios, jobs, saude, sites, ws
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
-    ErroDeConfiguracao,
     ErroSlimeStudio,
     FalhaDeExtracao,
     FonteAmbigua,
@@ -32,17 +30,14 @@ from db.engine import criar_engine, criar_sessionmaker
 
 logger = logging.getLogger(__name__)
 
-_TAMANHO_MINIMO_TOKEN = 16
 # Caminho recomendado para o frontend (Fase 4) é o proxy de dev do Vite
-# (same-origin, dispensa CORS por completo); sem proxy, `hls.js` precisa de
-# `xhrSetup` configurando `withCredentials` para o browser anexar o cookie de
-# sessão em requisições cross-origin.
+# (same-origin, dispensa CORS por completo); sem proxy, `hls.js` com
+# `crossOrigin='anonymous'` (D1 de sessão anterior) exige que a origem esteja
+# na allowlist de CORS para o browser completar o request cross-origin.
 _ORIGENS_PERMITIDAS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
 def criar_app(config: Config) -> FastAPI:
-    _validar_token_admin(config)
-
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = criar_engine(config)
@@ -71,36 +66,18 @@ def criar_app(config: Config) -> FastAPI:
         allow_headers=["*"],
     )
 
-    gate = [Depends(exigir_autenticacao)]
-    # Sem `FastAPI(dependencies=[...])` global: isso cairia em cima das rotas WS
-    # também, com o gate HTTP errado (`HTTPException` em vez de
-    # `WebSocketException`) — cada router recebe o gate certo explicitamente.
-    app.include_router(auth.router)
     app.include_router(saude.router_publico)
-    app.include_router(saude.router_admin, dependencies=gate)
-    app.include_router(jobs.router, dependencies=gate)
-    app.include_router(animes.router, dependencies=gate)
-    app.include_router(animes.router_publico, dependencies=gate)
-    app.include_router(episodios.router, dependencies=gate)
-    app.include_router(episodios.router_admin, dependencies=gate)
-    app.include_router(sites.router, dependencies=gate)
+    app.include_router(saude.router_admin)
+    app.include_router(jobs.router)
+    app.include_router(animes.router)
+    app.include_router(animes.router_publico)
+    app.include_router(episodios.router)
+    app.include_router(episodios.router_admin)
+    app.include_router(sites.router)
     app.include_router(ws.router)
 
     _registrar_handlers_de_excecao(app)
     return app
-
-
-def _validar_token_admin(config: Config) -> None:
-    """`ErroDeConfiguracao` (não uma exceção própria): a validação mora aqui, não
-    em `core/config.py::carregar_config`, porque o worker não usa este token e
-    não deve morrer por causa dele — só o boot da API exige."""
-    token = config.admin_access_token
-    if token is None or len(token) < _TAMANHO_MINIMO_TOKEN:
-        raise ErroDeConfiguracao(
-            "ADMIN_ACCESS_TOKEN ausente ou curto demais (mínimo "
-            f"{_TAMANHO_MINIMO_TOKEN} caracteres). Gere um com: "
-            'python -c "import secrets; print(secrets.token_urlsafe(32))"'
-        )
 
 
 def _registrar_handlers_de_excecao(app: FastAPI) -> None:

@@ -3,9 +3,9 @@ parsing de extrator (`test_animefire.py`, `test_animesdrive.py`), sem tocar
 rede — auto-carregado pelo pytest, `tests/` não é pacote então zero atrito de
 import.
 
-`config_api`/`app_pronto`/`cliente`/`cliente_autenticado` são para os testes de
-`api/` (`test_api_*.py`) — mesmo padrão de `Config` com `tmp_path` + arquivo
-SQLite real de `tests/test_fila.py` (WAL não funciona em `:memory:`), schema via
+`config_api`/`app_pronto`/`cliente` são para os testes de `api/` (`test_api_*.py`)
+— mesmo padrão de `Config` com `tmp_path` + arquivo SQLite real de
+`tests/test_fila.py` (WAL não funciona em `:memory:`), schema via
 `Base.metadata.create_all` (não Alembic)."""
 
 from pathlib import Path
@@ -15,13 +15,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.main import criar_app
-from api.seguranca import NOME_COOKIE
 from core.config import Config
 from db.engine import criar_engine
 from models.base import Base
-
-# >=16 caracteres — mesmo mínimo exigido por `api/main.py::_validar_token_admin`.
-TOKEN_ADMIN_TESTE = "token-de-teste-fixo-nao-usar-em-producao"
 
 
 class ClienteFalso:
@@ -76,7 +72,6 @@ async def config_api(tmp_path: Path) -> Config:
         ffmpeg=Path("/usr/bin/ffmpeg"),
         ffprobe=Path("/usr/bin/ffprobe"),
         caminho_lock=tmp_path / "worker.lock",
-        admin_access_token=TOKEN_ADMIN_TESTE,
     )
 
 
@@ -100,12 +95,6 @@ async def cliente(app_pronto):
     transporte = ASGITransport(app=app_pronto)
     async with AsyncClient(transport=transporte, base_url="http://test") as client:
         yield client
-
-
-@pytest.fixture
-async def cliente_autenticado(cliente: AsyncClient) -> AsyncClient:
-    cliente.cookies.set(NOME_COOKIE, TOKEN_ADMIN_TESTE)
-    return cliente
 
 
 @pytest.fixture

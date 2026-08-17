@@ -1,27 +1,47 @@
-import { useCallback, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
-import { criarAnime, listarAnimes } from '../api/recursos.js';
+import { criarAnime, listarAnimes, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
+import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
-import { useSessao } from '../sessao/SessaoContexto.jsx';
 
-// Rota "/" — catálogo. Cadastro de anime é um formulário mínimo (título +
-// ano) direto pra `POST /api/admin/animes`: sem busca-e-confirma no
-// AniList/Kitsu (integrations/ ainda não existe, fora de escopo desta
-// fase — ver `backend/api/rotas/animes.py`), então este é o único jeito de
-// popular o catálogo pela UI.
+// Rota "/animes" — catálogo completo. Cadastro de anime é um formulário
+// mínimo (título + ano) direto pra `POST /api/admin/animes`: sem
+// busca-e-confirma no AniList/Kitsu (integrations/ ainda não existe, fora de
+// escopo desta fase — ver `backend/api/rotas/animes.py`), então este é o
+// único jeito de popular o catálogo pela UI.
+//
+// Busca (`?q=`) é filtrada aqui no client: `GET /api/animes` não aceita
+// query param de busca (backend/api/rotas/animes.py::listar_animes só
+// ordena por título) e a lista é pequena o bastante (uso pessoal) pra não
+// justificar um endpoint novo. Nenhum ponto da UI monta essa URL hoje — a
+// busca da navbar (BarraDeNavegacao.jsx) passou a filtrar in-place dentro
+// de `paginas/Inicio.jsx`, sem navegar pra cá — mas o parâmetro continua
+// funcionando se alguém acessar `/animes?q=termo` diretamente.
 export default function Galeria() {
   const navigate = useNavigate();
-  const { sair } = useSessao();
+  const [searchParams] = useSearchParams();
+  const termoBusca = (searchParams.get('q') ?? '').trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
   const { dados: animes, carregando, erro, recarregar } = useRecurso(listarAnimes, []);
+  const animesFiltrados = useMemo(
+    () =>
+      termoBusca
+        ? (animes ?? []).filter((anime) => anime.titulo.toLowerCase().includes(termoBusca))
+        : animes,
+    [animes, termoBusca]
+  );
 
   const [tituloNovo, setTituloNovo] = useState('');
   const [anoNovo, setAnoNovo] = useState('');
   const [criando, setCriando] = useState(false);
   const [erroCriacao, setErroCriacao] = useState(null);
+
+  const [animeParaRemover, setAnimeParaRemover] = useState(null);
+  const [removendo, setRemovendo] = useState(false);
+  const [erroRemocao, setErroRemocao] = useState(null);
 
   const aoCriarAnime = useCallback(
     async (event) => {
@@ -57,19 +77,40 @@ export default function Galeria() {
     [tituloNovo, anoNovo, criando, recarregar, navigate]
   );
 
+  const confirmarRemocao = useCallback(async () => {
+    if (!animeParaRemover) return;
+    setRemovendo(true);
+    setErroRemocao(null);
+    try {
+      await removerAnime(animeParaRemover.id);
+      setAnimeParaRemover(null);
+      recarregar();
+    } catch (erroCapturado) {
+      if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
+        setErroRemocao('Este anime tem uma captura em andamento — aguarde terminar antes de remover.');
+      } else {
+        console.error('falha ao remover anime do catálogo', erroCapturado);
+        setErroRemocao('Não foi possível remover este anime — tente novamente.');
+      }
+    } finally {
+      setRemovendo(false);
+    }
+  }, [animeParaRemover, recarregar]);
+
+  // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
+  // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior
+  // "vazaria" pra próxima abertura do dialog.
+  const fecharDialogoRemocao = useCallback(() => {
+    setAnimeParaRemover(null);
+    setErroRemocao(null);
+  }, []);
+
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
       <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <h1 ref={focoTitulo} tabIndex={-1} className="text-2xl font-semibold text-white outline-none">
-          Slime Studio
+          Animes
         </h1>
-        <button
-          type="button"
-          onClick={() => sair()}
-          className="text-sm text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
-        >
-          Sair
-        </button>
       </header>
 
       <form onSubmit={aoCriarAnime} className="mb-8 flex flex-wrap items-end gap-3">
@@ -130,12 +171,25 @@ export default function Galeria() {
       {!carregando && !erro && animes?.length === 0 && (
         <p className="text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
       )}
+      {!carregando && !erro && animes?.length > 0 && animesFiltrados.length === 0 && (
+        <p className="text-sm text-ink-muted">Nenhum anime encontrado para “{searchParams.get('q')}”.</p>
+      )}
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-        {animes?.map((anime) => (
-          <AnimeCard key={anime.id} anime={anime} />
+        {animesFiltrados?.map((anime) => (
+          <AnimeCard key={anime.id} anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
         ))}
       </div>
+
+      <DialogoDeConfirmacao
+        aberto={animeParaRemover != null}
+        titulo="Remover do catálogo"
+        mensagem={`Remover "${animeParaRemover?.titulo}" do catálogo? Episódios e capturas associados serão apagados.`}
+        erro={erroRemocao}
+        aoConfirmar={confirmarRemocao}
+        aoFechar={fecharDialogoRemocao}
+        confirmando={removendo}
+      />
     </main>
   );
 }

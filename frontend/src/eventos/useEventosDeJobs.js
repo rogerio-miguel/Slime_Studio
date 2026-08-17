@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { notificarSessaoExpirada } from '../api/cliente.js';
 
 const _BACKOFF_INICIAL_MS = 1000;
 const _BACKOFF_MAXIMO_MS = 30000;
@@ -10,27 +9,22 @@ function urlWebSocket() {
 }
 
 // Conexão única a `/ws/admin` no nível do app (chamado uma vez em
-// App.jsx::Shell) — viva só enquanto `autenticado`. Constrói
-// `Map(episodio_id -> job)` a partir do snapshot inicial + updates
-// subsequentes, pra cruzar com a grade de episódios de PaginaDoAnime.jsx.
+// App.jsx::Shell), sempre ativa — sem gate de autenticação (D5 do plano de
+// remoção). Constrói `Map(episodio_id -> job)` a partir do snapshot inicial +
+// updates subsequentes, pra cruzar com a grade de episódios de
+// PaginaDoAnime.jsx.
 //
 // Shape do job aqui != `JobSaida` do REST (backend/api/eventos.py:31-44):
 // tem `episodio_id`/`anime_titulo`/`episodio_numero`, não tem
 // `duracao_esperada_s`/`iniciado_em`.
 //
-// Fecha 1008 (não autenticado) -> não reconecta, aciona o mesmo fluxo de
-// sessão expirada do 401 REST. Qualquer outro close (1013 fila estourada,
-// queda de rede) -> reconecta com backoff exponencial simples.
-export function useEventosDeJobs(autenticado) {
+// Qualquer close (1013 fila estourada, queda de rede) -> reconecta com
+// backoff exponencial simples.
+export function useEventosDeJobs() {
   const [jobsPorEpisodio, setJobsPorEpisodio] = useState(() => new Map());
   const tentativaRef = useRef(0);
 
   useEffect(() => {
-    if (!autenticado) {
-      setJobsPorEpisodio(new Map());
-      return;
-    }
-
     let socket;
     let timeoutReconexao;
     let cancelado = false;
@@ -59,12 +53,8 @@ export function useEventosDeJobs(autenticado) {
         }
       };
 
-      socket.onclose = (evento) => {
+      socket.onclose = () => {
         if (cancelado) return;
-        if (evento.code === 1008) {
-          notificarSessaoExpirada();
-          return;
-        }
         const atraso = Math.min(
           _BACKOFF_INICIAL_MS * 2 ** tentativaRef.current,
           _BACKOFF_MAXIMO_MS
@@ -85,7 +75,7 @@ export function useEventosDeJobs(autenticado) {
       clearTimeout(timeoutReconexao);
       socket?.close();
     };
-  }, [autenticado]);
+  }, []);
 
   return jobsPorEpisodio;
 }

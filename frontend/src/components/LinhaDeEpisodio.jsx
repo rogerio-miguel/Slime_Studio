@@ -61,10 +61,7 @@ export default function LinhaDeEpisodio({
     return (
       <div className="flex items-center justify-between rounded-lg border border-border-chrome bg-surface px-4 py-2 text-sm text-ink-muted">
         <span>Episódio {numero}</span>
-        <span aria-live="polite">
-          {rotulo}
-          {job?.progresso_pct != null ? ` — ${job.progresso_pct}%` : ''}
-        </span>
+        <span aria-live="polite">{rotulo}</span>
       </div>
     );
   }

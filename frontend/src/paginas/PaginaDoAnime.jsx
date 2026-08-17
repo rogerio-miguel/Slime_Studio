@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
 import {
   confirmarFonte,
   criarJobSite,
-  listarAnimes,
   listarEpisodios,
   listarEpisodiosRemotos,
+  obterAnime,
+  removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
+import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
@@ -21,13 +23,15 @@ import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const { id } = useParams();
   const animeId = Number(id);
+  const navigate = useNavigate();
   const focoTitulo = useFocoAoMontar(id);
 
-  // Sem `GET /api/animes/{id}`: o contrato confirmado só lista todos os
-  // animes de uma vez — busca o título aqui na lista já pequena (uso
-  // pessoal, não catálogo público em escala).
-  const { dados: animes } = useRecurso(listarAnimes, []);
-  const anime = animes?.find((item) => item.id === animeId);
+  const {
+    dados: anime,
+    erro: erroAnime,
+    recarregar: recarregarAnime,
+  } = useRecurso(() => obterAnime(animeId), [animeId]);
+  const animeNaoEncontrado = erroAnime instanceof ErroDeApi && erroAnime.status === 404;
 
   const episodios = useRecurso(() => listarEpisodios(animeId), [animeId]);
   const remotos = useRecurso(() => listarEpisodiosRemotos(animeId), [animeId]);
@@ -35,6 +39,10 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const [numeroCapturando, setNumeroCapturando] = useState(null);
   const [erroCaptura, setErroCaptura] = useState(null);
   const [fonteAmbigua, setFonteAmbigua] = useState(null); // { dominio, candidatos, numero }
+
+  const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
+  const [removendo, setRemovendo] = useState(false);
+  const [erroRemocao, setErroRemocao] = useState(null);
 
   // A própria listagem remota (não só a captura) pode bater em ambiguidade
   // na primeira visita a um anime recém-criado (`episodios-remotos` também
@@ -125,24 +133,90 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     [fonteAmbigua, animeId, capturar, remotos.recarregar]
   );
 
+  const confirmarRemocao = useCallback(async () => {
+    setRemovendo(true);
+    setErroRemocao(null);
+    try {
+      await removerAnime(animeId);
+      navigate('/animes');
+    } catch (erroCapturado) {
+      if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
+        setErroRemocao('Este anime tem uma captura em andamento — aguarde terminar antes de remover.');
+      } else {
+        console.error('falha ao remover anime do catálogo', erroCapturado);
+        setErroRemocao('Não foi possível remover este anime — tente novamente.');
+      }
+    } finally {
+      setRemovendo(false);
+    }
+  }, [animeId, navigate]);
+
+  // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
+  // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior
+  // "vazaria" pra próxima abertura do dialog.
+  const fecharDialogoRemocao = useCallback(() => {
+    setConfirmandoRemocao(false);
+    setErroRemocao(null);
+  }, []);
+
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
       <Link
-        to="/"
+        to="/animes"
         className="mb-4 inline-block text-sm text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
       >
         ← catálogo
       </Link>
-      <h1
-        ref={focoTitulo}
-        tabIndex={-1}
-        className="mb-6 text-2xl font-semibold text-white outline-none"
-      >
-        {anime?.titulo ?? `Anime #${animeId}`}
-        {anime?.ano ? ` (${anime.ano})` : ''}
-      </h1>
+      <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+          {anime?.capa_path && (
+            <img
+              src={anime.capa_path}
+              alt=""
+              className="h-40 w-28 flex-none rounded-lg border border-neon-soft object-cover"
+            />
+          )}
+          <div>
+            <h1
+              ref={focoTitulo}
+              tabIndex={-1}
+              className="mb-2 text-2xl font-semibold text-white outline-none"
+            >
+              {anime?.titulo ?? `Anime #${animeId}`}
+              {anime?.ano ? ` (${anime.ano})` : ''}
+            </h1>
+            {anime?.sinopse && <p className="max-w-2xl text-sm text-ink-muted">{anime.sinopse}</p>}
+          </div>
+        </div>
+        {!animeNaoEncontrado && (
+          <button
+            type="button"
+            onClick={() => setConfirmandoRemocao(true)}
+            className="flex-none rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 focus-visible:ring-2 focus-visible:ring-neon"
+          >
+            Remover do catálogo
+          </button>
+        )}
+      </header>
 
-      {remotos.erro && (
+      {erroAnime && (
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+        >
+          {animeNaoEncontrado ? (
+            'Este anime não foi encontrado — pode ter sido removido do catálogo.'
+          ) : (
+            <>
+              Não foi possível carregar os dados do anime.{' '}
+              <button type="button" onClick={recarregarAnime} className="underline">
+                Tentar novamente
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {remotos.erro && !animeNaoEncontrado && (
         <div
           role="alert"
           className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
@@ -164,8 +238,12 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           {erroCaptura}
         </p>
       )}
-
       {episodios.carregando && <p className="text-sm text-ink-muted">Carregando episódios…</p>}
+      {remotos.carregando && (
+        <p className="text-sm text-ink-muted">
+          Consultando a fonte remota — isso pode levar até um minuto…
+        </p>
+      )}
 
       <div className="flex flex-col gap-2">
         {numeros.map((numero) => {
@@ -196,6 +274,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         candidatos={fonteAmbigua?.candidatos}
         aoEscolher={aoConfirmarFonte}
         aoFechar={() => setFonteAmbigua(null)}
+      />
+
+      <DialogoDeConfirmacao
+        aberto={confirmandoRemocao}
+        titulo="Remover do catálogo"
+        mensagem={`Remover "${anime?.titulo ?? `Anime #${animeId}`}" do catálogo? Episódios e capturas associados serão apagados.`}
+        erro={erroRemocao}
+        aoConfirmar={confirmarRemocao}
+        aoFechar={fecharDialogoRemocao}
+        confirmando={removendo}
       />
     </main>
   );
