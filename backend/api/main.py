@@ -20,6 +20,7 @@ from core.erros import (
     EpisodioJaExiste,
     ErroSlimeStudio,
     FalhaDeExtracao,
+    FalhaDeMetadados,
     FonteAmbigua,
     FonteInvalida,
     FonteNaoEncontrada,
@@ -130,6 +131,10 @@ def _registrar_handlers_de_excecao(app: FastAPI) -> None:
 
     @app.exception_handler(FalhaDeExtracao)
     async def _falha_de_extracao(request: Request, excecao: FalhaDeExtracao) -> JSONResponse:
+        return JSONResponse(status_code=502, content={"detail": str(excecao)})
+
+    @app.exception_handler(FalhaDeMetadados)
+    async def _falha_de_metadados(request: Request, excecao: FalhaDeMetadados) -> JSONResponse:
         return JSONResponse(status_code=502, content={"detail": str(excecao)})
 
     @app.exception_handler(ErroSlimeStudio)

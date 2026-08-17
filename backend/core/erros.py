@@ -110,6 +110,13 @@ class EpisodioJaExiste(ErroSlimeStudio):
         self.episodio_id = episodio_id
 
 
+class FalhaDeMetadados(ErroSlimeStudio):
+    """Todos os provedores de metadados externos (AniList, Kitsu) falharam
+    para uma operação (`integrations/servico.py`). A API mapeia isto para
+    HTTP 502 — mesmo tratamento de `FalhaDeExtracao` para o pipeline de
+    vídeo, mas hierarquia própria: metadados não são extração de site."""
+
+
 class JobEmExecucao(ErroSlimeStudio):
     """Existe um `Job` em `ESTADOS_EM_EXECUCAO` associado ao anime/episódio que se
     tentou remover — remover agora deixaria o worker escrevendo num diretório/
