@@ -18,6 +18,7 @@ import re
 from bs4 import BeautifulSoup
 
 from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
+from core.texto import slugificar
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from extractors.cliente import ClienteDeSite
 
@@ -69,7 +70,14 @@ class AnimeFireProvider(ExtratorDeSite):
     def _buscar_termo(
         self, cliente: ClienteDeSite, termo: str, *, e_ultimo: bool
     ) -> list[ResultadoBusca]:
-        busca_formatada = termo.strip().replace(" ", "-").lower()
+        # `slugificar` (não um `.replace(" ", "-")` manual): o slug real do
+        # AnimeFire colapsa qualquer sequência de caracteres não-alfanuméricos
+        # (vírgula, apostrofo, etc.) num único hífen, não só espaço — uma
+        # busca com vírgula no título (ex. "... Kimi to, Me ni...") virava
+        # `.../kimi-to,-me-ni...` (vírgula preservada) e nunca casava com o
+        # card real `.../kimi-to-me-ni...`. Mesma convenção já usada em
+        # `extractors/resolucao.py` pra casar candidato com slug local.
+        busca_formatada = slugificar(termo)
         url = f"{self.BASE_URL}/pesquisar/{busca_formatada}"
         try:
             html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)
