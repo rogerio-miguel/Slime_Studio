@@ -101,7 +101,7 @@ def test_buscar_titulo_com_subtitulo_cai_para_principal_quando_completo_vazio(ex
     (confirmado ao vivo contra animefire.io). `buscar` cai pro título truncado
     antes do separador como 2º candidato."""
     titulo = "Anime Principal: Subtitulo Aqui"
-    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal:-subtitulo-aqui"
+    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal-subtitulo-aqui"
     url_truncado = f"{extrator.BASE_URL}/pesquisar/anime-principal"
     cliente = ClienteFalso(
         html_por_url={
@@ -135,7 +135,7 @@ def test_buscar_titulo_com_subtitulo_nao_tenta_truncado_quando_completo_ja_acha(
     requisição — `ClienteFalso` levanta `AssertionError` numa URL não mapeada,
     então isso também prova que o candidato truncado não chegou a ser chamado."""
     titulo = "Anime Principal: Subtitulo Aqui"
-    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal:-subtitulo-aqui"
+    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal-subtitulo-aqui"
     cliente = ClienteFalso(html_por_url={url_completo: _ler_fixture("busca.html")})
 
     resultados = extrator.buscar(cliente, titulo)
@@ -152,10 +152,27 @@ def test_buscar_dois_pontos_colado_ao_texto_nao_e_tratado_como_subtitulo(extrato
     "encontrei o errado". Só 1 candidato tentado — `ClienteFalso` levantaria
     `AssertionError` numa 2ª URL não mapeada se o código tentasse truncar."""
     titulo = "Re:Zero kara Hajimeru Isekai Seikatsu"
-    url_busca = f"{extrator.BASE_URL}/pesquisar/re:zero-kara-hajimeru-isekai-seikatsu"
+    url_busca = f"{extrator.BASE_URL}/pesquisar/re-zero-kara-hajimeru-isekai-seikatsu"
     cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca_vazia.html")})
 
     assert extrator.buscar(cliente, titulo) == []
+
+
+def test_buscar_titulo_com_virgula_formata_termo_via_slugificar(extrator):
+    """Regressão: `.replace(" ", "-")` sozinho preservava vírgula literal na
+    URL de busca (`.../kimi-to,-me-ni-...`), que nunca casava com o slug real
+    do card (`.../kimi-to-me-ni-...`, vírgula colapsada junto do espaço num
+    único hífen — confirmado ao vivo contra animefire.io)."""
+    titulo = "Toumei na Yoru ni Kakeru Kimi to, Me ni Mienai Koi wo Shita"
+    url_busca = (
+        f"{extrator.BASE_URL}/pesquisar/"
+        "toumei-na-yoru-ni-kakeru-kimi-to-me-ni-mienai-koi-wo-shita"
+    )
+    cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca.html")})
+
+    resultados = extrator.buscar(cliente, titulo)
+
+    assert resultados
 
 
 def test_listar_episodios_deduplica_e_inclui_rotulo_nao_numerico_sem_numero(extrator):
