@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Config
 from core.erros import FonteNaoEncontrada, SiteEmCooldown
 from db.engine import criar_engine, criar_sessionmaker
-from extractors import circuit_breaker, resiliencia
+from extractors import circuit_breaker, resiliencia, sessao_cache
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from extractors.cliente import ClienteDeSite
 from models.base import Base
@@ -97,3 +97,86 @@ async def test_chamar_com_falha_nao_retentavel_nao_conta_no_circuit_breaker(sess
         estado = await sessao.get(EstadoSite, _DOMINIO)
     assert estado is None
     assert await circuit_breaker.esta_em_cooldown(sessionmaker, _DOMINIO) is False
+
+
+class _NavegadorFalso:
+    """Fake de `ClienteNavegador` — `resiliencia.chamar` é quem instancia o
+    cliente, então o único jeito de exercitar o caminho de navegador sem subir
+    Chromium é trocar a classe no módulo."""
+
+    instancias: list["_NavegadorFalso"] = []
+
+    def __init__(self) -> None:
+        self.fechado = False
+        _NavegadorFalso.instancias.append(self)
+
+    def cookies(self) -> dict[str, str]:
+        return {"cf_clearance": "do-navegador"}
+
+    def user_agent(self) -> str:
+        return "NavegadorFalso/1.0"
+
+    def fechar(self) -> None:
+        self.fechado = True
+
+
+@pytest.fixture
+def navegador_falso(monkeypatch):
+    _NavegadorFalso.instancias = []
+    monkeypatch.setattr(resiliencia, "ClienteNavegador", _NavegadorFalso)
+    return _NavegadorFalso
+
+
+async def test_chamar_com_exigir_navegador_entrega_o_navegador_e_o_fecha(
+    sessionmaker, navegador_falso
+):
+    recebidos = []
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        recebidos.append(cliente)
+        return "ok"
+
+    resultado = await resiliencia.chamar(
+        sessionmaker, _ExtratorFalso(), operacao, exigir_navegador=True
+    )
+
+    assert resultado == "ok"
+    assert isinstance(recebidos[0], navegador_falso)
+    assert [instancia.fechado for instancia in navegador_falso.instancias] == [True]
+
+
+async def test_chamar_fecha_o_cliente_mesmo_quando_a_operacao_falha(
+    sessionmaker, navegador_falso
+):
+    """Sem isso, uma falha de extração deixaria um processo Chromium órfão por job."""
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        raise FonteNaoEncontrada("não encontrado: http://exemplo/x", dominio=_DOMINIO)
+
+    with pytest.raises(FonteNaoEncontrada):
+        await resiliencia.chamar(
+            sessionmaker, _ExtratorFalso(), operacao, exigir_navegador=True
+        )
+
+    assert [instancia.fechado for instancia in navegador_falso.instancias] == [True]
+
+
+async def test_chamar_com_navegador_guarda_a_sessao_que_o_navegador_produziu(
+    sessionmaker, navegador_falso
+):
+    """Cookie resolvido pelo navegador realimenta `SessaoBypass` — é justamente o
+    material que o cliente leve não consegue produzir sozinho."""
+    await resiliencia.chamar(
+        sessionmaker, _ExtratorFalso(), lambda cliente: "ok", exigir_navegador=True
+    )
+
+    contexto = await sessao_cache.carregar(sessionmaker, _DOMINIO)
+    assert contexto is not None
+    assert contexto.cookies == {"cf_clearance": "do-navegador"}
+    assert contexto.user_agent == "NavegadorFalso/1.0"
+
+
+async def test_chamar_sem_exigir_navegador_nao_sobe_navegador(sessionmaker, navegador_falso):
+    await resiliencia.chamar(sessionmaker, _ExtratorFalso(), lambda cliente: "ok")
+
+    assert navegador_falso.instancias == []
