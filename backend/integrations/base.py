@@ -24,6 +24,16 @@ class MetadadosDeAnime:
 
 
 @dataclass(frozen=True, slots=True)
+class TitulosDeAnime:
+    """Títulos conhecidos do anime em um provedor — usados só para expandir o
+    termo de busca nos sites de extração (`api/servicos/busca.py`), nunca
+    persistidos: `Anime.titulo` é o título local, não o do provedor."""
+
+    titulo_romaji: str | None
+    titulo_ingles: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class AnimeEmAlta:
     """Item do feed "lançamentos em alta" (`status: RELEASING, sort:
     TRENDING_DESC` no AniList — decisão de produto, não "temporada estrita").
@@ -59,3 +69,8 @@ class ProvedorDeMetadados(ABC):
     @abstractmethod
     def listar_em_alta(self) -> list[AnimeEmAlta]:
         """Lista animes em lançamento (`RELEASING`) ordenados por trending."""
+
+    @abstractmethod
+    def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
+        """Títulos do melhor casamento para `titulo`; `None` quando o provedor
+        não encontrou nada (mesma convenção de `buscar_por_titulo`)."""

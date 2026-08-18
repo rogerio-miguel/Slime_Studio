@@ -34,8 +34,9 @@ async def test_listar_episodios_remotos_caminho_feliz(
 
     async def _listar_fake(sessionmaker, dominio, identificador):
         return [
-            EpisodioRemoto(numero=1, url="https://x/ep1"),
-            EpisodioRemoto(numero=2, url="https://x/ep2"),
+            EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1"),
+            EpisodioRemoto(rotulo="2", numero=2, url="https://x/ep2"),
+            EpisodioRemoto(rotulo="especial", numero=None, url="https://x/ep-especial"),
         ]
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
@@ -44,7 +45,14 @@ async def test_listar_episodios_remotos_caminho_feliz(
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
 
     assert resposta.status_code == 200
-    assert resposta.json() == [{"numero": 1}, {"numero": 2}]
+    assert resposta.json() == {
+        "dominio": "animefire.io",
+        "episodios": [
+            {"rotulo": "1", "numero": 1},
+            {"rotulo": "2", "numero": 2},
+            {"rotulo": "especial", "numero": None},
+        ],
+    }
 
 
 async def test_listar_episodios_remotos_fonte_ambigua_409(

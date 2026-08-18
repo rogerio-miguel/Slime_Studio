@@ -17,6 +17,7 @@ from api.esquemas import (
     CriarAnimeRequest,
     EpisodioRemotoSaida,
     EpisodioSaida,
+    EpisodiosRemotosSaida,
     FonteConsultadaSaida,
     ResultadoBuscaFonteSaida,
 )
@@ -26,8 +27,7 @@ from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
 from core.config import Config
 from db.catalogo import obter_ou_criar_anime_id
-from extractors import servico as servico_extractors
-from extractors.base import EpisodioRemoto, ResultadoBusca
+from extractors.base import ResultadoBusca
 from extractors.resolucao import confirmar_fonte
 from models.anime import Anime
 from models.episodio import Episodio
@@ -82,19 +82,29 @@ async def confirmar_fonte_do_anime(
     return {"status": "ok"}
 
 
-@router.get("/{anime_id}/episodios-remotos", response_model=list[EpisodioRemotoSaida])
+@router.get("/{anime_id}/episodios-remotos", response_model=EpisodiosRemotosSaida)
 async def listar_episodios_remotos_do_anime(
     anime_id: int,
     sessao: AsyncSession = Depends(obter_sessao),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
-) -> list[EpisodioRemoto]:
+) -> EpisodiosRemotosSaida:
     """Posições de episódio na fonte remota (site) do anime — o frontend cruza
     isto com `GET /api/animes/{id}/episodios` (já capturados) para montar a
-    grade prontos/não capturados na página do anime."""
+    grade prontos/não capturados na página do anime. `dominio` identifica qual
+    site resolveu a lista abaixo (hipótese mais provável de divergência de
+    contagem de episódios: fonte errada sendo exibida sem indicação de qual
+    site foi usado)."""
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
-    return await servico_fontes.listar_episodios_remotos(sessionmaker, anime)
+    resultado = await servico_fontes.listar_episodios_remotos(sessionmaker, anime)
+    return EpisodiosRemotosSaida(
+        dominio=resultado.dominio,
+        episodios=[
+            EpisodioRemotoSaida(rotulo=episodio.rotulo, numero=episodio.numero)
+            for episodio in resultado.episodios
+        ],
+    )
 
 
 @router.delete("/{anime_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -151,8 +161,8 @@ async def buscar_animes_em_fontes(
     if not titulo.strip():
         return BuscaEmFontesSaida(resultados=[], fontes=[])
 
-    fontes = await servico_extractors.buscar_em_todas_as_fontes(sessionmaker, titulo)
-    fontes = await servico_busca.enriquecer_capas(sessionmaker, fontes)
+    busca = await servico_busca.buscar_com_titulos_alternativos(sessionmaker, titulo)
+    fontes = await servico_busca.enriquecer_capas(sessionmaker, busca.fontes)
     return BuscaEmFontesSaida(
         resultados=[
             ResultadoBuscaFonteSaida(
@@ -171,6 +181,7 @@ async def buscar_animes_em_fontes(
             )
             for fonte in fontes
         ],
+        termo_alternativo=busca.termo_alternativo,
     )
 
 

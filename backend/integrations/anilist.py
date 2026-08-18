@@ -16,7 +16,7 @@ import re
 
 import requests
 
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados
+from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
 
 _URL = "https://graphql.anilist.co"
 # Estritamente menor que o `wait_for` externo de
@@ -33,6 +33,14 @@ query ($busca: String) {
     coverImage { extraLarge }
     bannerImage
     description(asHtml: false)
+  }
+}
+"""
+
+_QUERY_TITULOS = """
+query ($busca: String) {
+  Media(search: $busca, type: ANIME) {
+    title { romaji english }
   }
 }
 """
@@ -72,6 +80,19 @@ class AniListProvider(ProvedorDeMetadados):
             kitsu_id=None,
         )
 
+    def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
+        dados = self._executar(_QUERY_TITULOS, {"busca": titulo})
+        media = dados.get("Media") if isinstance(dados, dict) else None
+        if not isinstance(media, dict):
+            return None
+
+        titulo_bruto = media.get("title") or {}
+        titulo_romaji = _texto_ou_none(titulo_bruto.get("romaji"))
+        titulo_ingles = _texto_ou_none(titulo_bruto.get("english"))
+        if titulo_romaji is None and titulo_ingles is None:
+            return None
+        return TitulosDeAnime(titulo_romaji=titulo_romaji, titulo_ingles=titulo_ingles)
+
     def listar_em_alta(self) -> list[AnimeEmAlta]:
         dados = self._executar(_QUERY_EM_ALTA, {})
         pagina = dados.get("Page") if isinstance(dados, dict) else None
@@ -103,6 +124,15 @@ class AniListProvider(ProvedorDeMetadados):
         if not isinstance(corpo, dict) or "data" not in corpo:
             raise RuntimeError("AniList: resposta sem campo 'data'")
         return corpo.get("data") or {}
+
+
+def _texto_ou_none(texto: str | None) -> str | None:
+    """Duplicado de propósito de `kitsu.py::_texto_ou_none` — helper trivial,
+    não vale acoplar os dois módulos por ele (CLAUDE.md §2)."""
+    if not texto:
+        return None
+    limpo = texto.strip()
+    return limpo or None
 
 
 def _sanitizar_sinopse(bruta: str | None) -> str | None:

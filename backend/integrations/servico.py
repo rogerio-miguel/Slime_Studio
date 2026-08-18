@@ -20,7 +20,7 @@ from collections.abc import Callable
 import requests
 
 from core.erros import FalhaDeMetadados
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados
+from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
 from integrations.registro import PROVEDORES
 
 logger = logging.getLogger(__name__)
@@ -62,23 +62,49 @@ _lock_em_alta = asyncio.Lock()
 
 
 async def buscar_por_titulo(titulo: str) -> MetadadosDeAnime | None:
-    """Tenta cada provedor de `PROVEDORES` em ordem. Um provedor que responde
-    mas não encontra o título (`None`) não é falha — cai para o próximo
-    provedor tentar, mesma filosofia de `extractors/resolucao.py` (busca
-    vazia não é erro). Só levanta `FalhaDeMetadados` se todos os provedores
-    falharem de fato (rede/HTTP/timeout); se todos responderem sem encontrar,
-    devolve `None` (título não existe em nenhum provedor conhecido).
+    """Tenta cada provedor de `PROVEDORES` em ordem até achar metadados para
+    `titulo`; ver `_buscar_em_cadeia` para a semântica de fallback."""
+    return await _buscar_em_cadeia(
+        lambda provedor: provedor.buscar_por_titulo, titulo, descricao="busca por título"
+    )
+
+
+async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
+    """Tenta cada provedor de `PROVEDORES` em ordem até achar títulos
+    alternativos (romaji/inglês) para `titulo` — usado por
+    `api/servicos/busca.py` para reexpandir uma busca vazia nos sites de
+    extração; ver `_buscar_em_cadeia` para a semântica de fallback."""
+    return await _buscar_em_cadeia(
+        lambda provedor: provedor.buscar_titulos, titulo, descricao="busca de títulos"
+    )
+
+
+async def _buscar_em_cadeia[T](
+    operacao: Callable[[ProvedorDeMetadados], Callable[[str], T | None]],
+    titulo: str,
+    *,
+    descricao: str,
+) -> T | None:
+    """Tenta cada provedor de `PROVEDORES` em ordem, chamando `operacao(provedor)`
+    com `titulo`. Um provedor que responde mas não encontra o título (`None`)
+    não é falha — cai para o próximo provedor tentar, mesma filosofia de
+    `extractors/resolucao.py` (busca vazia não é erro). Só levanta
+    `FalhaDeMetadados` se todos os provedores falharem de fato (rede/HTTP/
+    timeout); se todos responderem sem encontrar, devolve `None` (título não
+    existe em nenhum provedor conhecido). `descricao` entra na mensagem de
+    log/erro para diferenciar qual operação falhou.
     """
     algum_respondeu = False
     ultimo_erro: Exception | None = None
 
     for provedor in PROVEDORES:
         try:
-            resultado = await _chamar(provedor, provedor.buscar_por_titulo, titulo)
+            resultado = await _chamar(provedor, operacao(provedor), titulo)
         except _ERROS_DE_PROVEDOR as excecao:
             logger.warning(
-                "provedor de metadados %r falhou na busca por título %r: %s",
+                "provedor de metadados %r falhou em %s de %r: %s",
                 provedor.nome,
+                descricao,
                 titulo,
                 excecao,
             )
@@ -92,7 +118,7 @@ async def buscar_por_titulo(titulo: str) -> MetadadosDeAnime | None:
     if algum_respondeu:
         return None
     raise FalhaDeMetadados(
-        f"todos os provedores de metadados falharam ao buscar {titulo!r}"
+        f"todos os provedores de metadados falharam em {descricao} de {titulo!r}"
     ) from ultimo_erro
 
 
