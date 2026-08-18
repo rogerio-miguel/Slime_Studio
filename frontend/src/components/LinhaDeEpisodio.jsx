@@ -25,9 +25,13 @@ const ROTULOS_STATUS = {
 // Uma posição de episódio na grade da página do anime — três estados:
 // (1) já capturado e pronto: link pro player; (2) capturado mas ainda em
 // processamento (ou falhou): status ao vivo, cruzado com `job` do WS quando
-// disponível; (3) não capturado: botão que dispara a captura.
+// disponível; (3) não capturado: botão que dispara a captura — desabilitado
+// quando `numero` é `null` (rótulo não numérico na fonte, ex. "Especial":
+// aparece na lista mas capturá-lo está fora de escopo por ora).
 export default function LinhaDeEpisodio({
   numero,
+  rotulo,
+  colisao,
   episodio,
   job,
   aoCapturar,
@@ -35,6 +39,19 @@ export default function LinhaDeEpisodio({
   animeId,
   animeTitulo,
 }) {
+  const naoNumerico = numero == null;
+  // `colisao` (calculado em `PaginaDoAnime.jsx`, `remotosDoNumero.length > 1`)
+  // é verdadeiro só quando existe mais de um rótulo remoto de fato mapeando
+  // pro mesmo `numero` inteiro (ex. "7" e "07" — extractors/base.py::
+  // EpisodioRemoto) — não basta o rótulo divergir textualmente do número:
+  // uma fonte que sempre zero-preenche ("07", "08", ...) sem nenhuma colisão
+  // real não deve acender este aviso em toda linha. Mostrado entre
+  // parênteses pra o usuário notar a ambiguidade (o contrato de captura
+  // ainda só aceita `numero`, então as linhas colidentes disparam a mesma
+  // captura — o backend resolve de forma determinística e loga,
+  // extractors/servico.py e api/servicos/jobs.py).
+  const rotuloDivergente = !naoNumerico && colisao && rotulo != null && rotulo !== String(numero);
+
   if (episodio?.status === 'pronto') {
     return (
       <Link
@@ -57,26 +74,49 @@ export default function LinhaDeEpisodio({
 
   if (episodio) {
     const statusAtual = job?.status ?? episodio.status;
-    const rotulo = ROTULOS_STATUS[statusAtual] ?? statusAtual;
+    const rotuloStatus = ROTULOS_STATUS[statusAtual] ?? statusAtual;
     return (
       <div className="flex items-center justify-between rounded-lg border border-border-chrome bg-surface px-4 py-2 text-sm text-ink-muted">
         <span>Episódio {numero}</span>
-        <span aria-live="polite">{rotulo}</span>
+        <span aria-live="polite">{rotuloStatus}</span>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-between rounded-lg border border-dashed border-border-chrome px-4 py-2 text-sm text-ink-muted">
-      <span>Episódio {numero}</span>
-      <button
-        type="button"
-        onClick={() => aoCapturar(numero)}
-        disabled={capturando}
-        className="rounded border border-neon-soft px-3 py-1 text-xs font-semibold uppercase tracking-wide text-neon outline-none transition-colors hover:border-neon disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-neon"
-      >
-        {capturando ? 'Capturando…' : 'Capturar'}
-      </button>
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-chrome px-4 py-2 text-sm text-ink-muted">
+      <span>
+        {naoNumerico ? rotulo : `Episódio ${numero}`}
+        {rotuloDivergente && (
+          <span className="ml-2 text-xs text-ink-muted">(rótulo "{rotulo}" na fonte)</span>
+        )}
+      </span>
+      <div className="flex items-center gap-2">
+        {naoNumerico && (
+          <span className="text-xs text-ink-muted">
+            Captura indisponível — rótulo não numérico
+          </span>
+        )}
+        <button
+          type="button"
+          // Fica focável mesmo quando `naoNumerico` (não usa `disabled`
+          // nativo pra esse caso) — `disabled` tira o elemento da ordem de
+          // tabulação, e um usuário de teclado nunca chegaria a ler o texto
+          // explicativo acima. `aria-disabled` + bloquear o clique aqui
+          // dentro preserva o foco/leitura por leitor de tela.
+          onClick={() => {
+            if (naoNumerico) return;
+            aoCapturar(numero);
+          }}
+          disabled={capturando}
+          aria-disabled={capturando || naoNumerico}
+          className={`rounded border border-neon-soft px-3 py-1 text-xs font-semibold uppercase tracking-wide text-neon outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50${
+            naoNumerico ? ' cursor-not-allowed opacity-50' : ''
+          }`}
+        >
+          {capturando ? 'Capturando…' : 'Capturar'}
+        </button>
+      </div>
     </div>
   );
 }

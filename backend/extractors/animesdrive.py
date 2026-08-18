@@ -44,7 +44,10 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT_S = 15
 _HOSTS_YOUTUBE = ("youtube.com", "youtu.be")
-_REGEX_EPISODIO = re.compile(r"^/episodio/(?P<slug>.+?)-episodio-(?P<numero>[^/]+)$")
+# `/?` antes do `$`: URL de episódio com barra final (`.../episodio-7/`) é
+# válida e comum (link relativo normalizado por navegador/CMS) — sem isso o
+# `numero` some inteiro da listagem em vez de só perder a barra.
+_REGEX_EPISODIO = re.compile(r"^/episodio/(?P<slug>.+?)-episodio-(?P<numero>[^/]+)/?$")
 
 # Ponto de extensão nomeado para quando um resolver de mídia existir (ver
 # docstring do módulo) — vazio de propósito, sem laço de despacho sobre uma
@@ -139,50 +142,72 @@ class AnimesDriveProvider(ExtratorDeSite):
 
         try:
             soup = BeautifulSoup(html, "html.parser")
-            por_numero: dict[int, EpisodioRemoto] = {}
+            total_brutos = 0
+            # Chave de dedup é o rótulo cru (string), não `int(numero)`: "7" e
+            # "07" não são necessariamente o mesmo episódio, e colapsar os dois
+            # por valor inteiro perderia um episódio de verdade (extractors/
+            # base.py::EpisodioRemoto).
+            por_rotulo: dict[str, EpisodioRemoto] = {}
             for tag_a in soup.find_all("a", href=True):
                 href = tag_a["href"]
                 match = _REGEX_EPISODIO.match(urllib.parse.urlparse(href).path)
                 if match is None or not match.group("slug").startswith(prefixo_slug):
                     continue
+                total_brutos += 1
 
-                numero_bruto = match.group("numero")
+                rotulo = match.group("numero")
                 try:
-                    numero = int(numero_bruto)
+                    numero = int(rotulo)
                 except ValueError:
-                    logger.warning(
-                        "AnimesDrive: número de episódio não numérico ignorado (%r) em %s",
-                        numero_bruto,
-                        href,
-                    )
-                    continue
+                    numero = None
 
-                if numero in por_numero:
+                if rotulo in por_rotulo:
                     # Duplicata com o mesmo href é esperada (thumbnail + título
                     # apontam pro mesmo episódio) — só avisa se os links relatados
-                    # para o mesmo número divergirem de verdade.
-                    if por_numero[numero].url != href:
+                    # para o mesmo rótulo divergirem de verdade.
+                    if por_rotulo[rotulo].url != href:
                         logger.warning(
-                            "AnimesDrive: episódio %d com hrefs conflitantes para %r,"
+                            "AnimesDrive: episódio %r com hrefs conflitantes para %r,"
                             " mantendo a 1ª ocorrência",
-                            numero,
+                            rotulo,
                             identificador,
                         )
                     continue
-                por_numero[numero] = EpisodioRemoto(numero=numero, url=href)
+                por_rotulo[rotulo] = EpisodioRemoto(rotulo=rotulo, numero=numero, url=href)
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(
                 f"estrutura da listagem de episódios do AnimesDrive mudou: {excecao}",
                 dominio=self.dominio,
             ) from excecao
 
-        if not por_numero:
+        if not por_rotulo:
             raise EstruturaDoSiteMudou(
                 f"nenhum episódio encontrado para {identificador!r} no AnimesDrive",
                 dominio=self.dominio,
             )
 
-        return sorted(por_numero.values(), key=lambda episodio: episodio.numero)
+        logger.info(
+            "AnimesDrive: %d episódio(s) brutos encontrados para %r, %d após dedup",
+            total_brutos,
+            identificador,
+            len(por_rotulo),
+        )
+
+        # Numéricos em ordem crescente primeiro, rótulos não numéricos
+        # (numero=None) depois — sem seção separada na listagem (decisão do
+        # produto), só não intercalados entre os numéricos. Sem `rotulo` na
+        # chave: `sorted` é estável, então dois rótulos com o mesmo `numero`
+        # (ex. "7"/"07") mantêm a ordem em que apareceram na página — usar
+        # `rotulo` como desempate colocaria "07" antes de "7" (comparação
+        # lexicográfica, '0' < '7'), uma ordem arbitrária e não a "natural"
+        # da fonte.
+        return sorted(
+            por_rotulo.values(),
+            key=lambda episodio: (
+                episodio.numero is None,
+                episodio.numero if episodio.numero is not None else 0,
+            ),
+        )
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:
         html = cliente.obter_html(url_episodio, timeout_s=_TIMEOUT_S)

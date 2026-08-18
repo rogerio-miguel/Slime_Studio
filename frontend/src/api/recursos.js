@@ -19,6 +19,11 @@ export function listarEpisodios(animeId) {
   return requisitar(`/api/animes/${animeId}/episodios`);
 }
 
+// `{ dominio, episodios: [{ rotulo, numero }] }` — `dominio` é o site que
+// resolveu a lista (exibido na página do anime pra o usuário notar quando a
+// fonte "errada" foi usada); `numero` é `null` quando `rotulo` não é
+// puramente numérico (ex. "Especial") — episódio aparece na lista mas ainda
+// não é capturável.
 export function listarEpisodiosRemotos(animeId) {
   return requisitar(`/api/admin/animes/${animeId}/episodios-remotos`);
 }

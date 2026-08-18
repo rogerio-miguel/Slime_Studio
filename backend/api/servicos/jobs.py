@@ -8,6 +8,7 @@ Não importa `fastapi`: devolve o `job_id` ou levanta erro de `core/erros.py`;
 """
 
 import asyncio
+import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,6 +20,8 @@ from extractors.servico import listar_episodios_em
 from models.anime import Anime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
+
+logger = logging.getLogger(__name__)
 
 # Teto para a etapa de rede da criação de job em modo "site" (resolver fonte +
 # listar episódios) — mesma filosofia de
@@ -103,7 +106,21 @@ async def criar_job_site(
             dominio=resultado.dominio,
             permite_retentativa=True,
         ) from excecao
-    correspondente = next((ep for ep in episodios_remotos if ep.numero == numero), None)
+    correspondentes = [ep for ep in episodios_remotos if ep.numero == numero]
+    if len(correspondentes) > 1:
+        # Mais de um rótulo remoto mapeia pro mesmo `numero` (ex. "7"/"07" —
+        # extractors/base.py::EpisodioRemoto) — o request só carrega `numero`
+        # (int), sem como o cliente escolher o rótulo. Escolha determinística
+        # (1ª ocorrência, ordem já estável do adapter) em vez de silenciosa —
+        # nunca some do log.
+        logger.warning(
+            "%d episódios remotos com numero=%d em %r (rótulos: %s) — usando o 1º",
+            len(correspondentes),
+            numero,
+            resultado.dominio,
+            [ep.rotulo for ep in correspondentes],
+        )
+    correspondente = correspondentes[0] if correspondentes else None
     if correspondente is None:
         raise FonteNaoEncontrada(
             f"episódio {numero} não encontrado em {resultado.dominio} para {anime.titulo!r}",

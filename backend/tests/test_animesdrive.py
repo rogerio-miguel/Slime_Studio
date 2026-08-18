@@ -120,7 +120,11 @@ def test_buscar_404_devolve_lista_vazia_sem_levantar_excecao(extrator):
     assert resultados == []
 
 
-def test_listar_episodios_deduplica_ordena_e_ignora_invalidos(extrator, cliente_falso):
+def test_listar_episodios_deduplica_ordena_e_inclui_rotulo_nao_numerico(extrator, cliente_falso):
+    """`episodios.html` tem o episódio 3 duplicado (thumbnail + título, mesmo
+    href — dedup por rótulo) e um rótulo não numérico ("especial"), que não é
+    mais descartado: entra no fim da lista com `numero=None` (decisão do
+    produto: sem seção "especial" separada, só não capturável ainda)."""
     identificador = "tensei-shitara-slime-datta-ken"
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: _ler_fixture("episodios.html")})
@@ -129,16 +133,76 @@ def test_listar_episodios_deduplica_ordena_e_ignora_invalidos(extrator, cliente_
 
     assert episodios == [
         EpisodioRemoto(
+            rotulo="1",
             numero=1,
             url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1",
         ),
         EpisodioRemoto(
+            rotulo="2",
             numero=2,
             url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-2",
         ),
         EpisodioRemoto(
+            rotulo="3",
             numero=3,
             url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-3",
+        ),
+        EpisodioRemoto(
+            rotulo="especial",
+            numero=None,
+            url=(
+                "https://animesdrive.online/episodio/"
+                "tensei-shitara-slime-datta-ken-episodio-especial"
+            ),
+        ),
+    ]
+
+
+def test_listar_episodios_rotulos_com_zero_a_esquerda_nao_colapsam(extrator, cliente_falso):
+    """Regressão da hipótese de dedup por `int(numero)`: "7" e "07" são rótulos
+    distintos na fonte e não podem colapsar num só episódio — a chave de dedup
+    é o rótulo cru, não o valor inteiro. Desempate de ordenação entre dois
+    rótulos com o mesmo `numero` segue a ordem de aparição na página ("7" antes
+    de "07" aqui, porque é assim que o HTML lista), não ordem lexicográfica do
+    rótulo — comparar "07" e "7" como string colocaria "07" primeiro
+    ('0' < '7' em ASCII), o que seria arbitrário e não a ordem "natural" da
+    fonte."""
+    identificador = "tensei-shitara-slime-datta-ken"
+    html = """
+    <a href="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-7">
+      Episódio 7
+    </a>
+    <a href="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-07">
+      Episódio 07
+    </a>
+    """
+    url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
+    cliente = cliente_falso(html_por_url={url_anime: html})
+
+    episodios = extrator.listar_episodios(cliente, identificador)
+
+    assert [(ep.rotulo, ep.numero) for ep in episodios] == [("7", 7), ("07", 7)]
+
+
+def test_listar_episodios_aceita_url_com_barra_final(extrator, cliente_falso):
+    """Regressão da hipótese 2: `_REGEX_EPISODIO` rejeitava indevidamente uma URL
+    de episódio terminada em `/`."""
+    identificador = "tensei-shitara-slime-datta-ken"
+    html = """
+    <a href="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1/">
+      Episódio 1
+    </a>
+    """
+    url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
+    cliente = cliente_falso(html_por_url={url_anime: html})
+
+    episodios = extrator.listar_episodios(cliente, identificador)
+
+    assert episodios == [
+        EpisodioRemoto(
+            rotulo="1",
+            numero=1,
+            url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1/",
         ),
     ]
 

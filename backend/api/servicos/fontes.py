@@ -3,11 +3,12 @@
 mesma resolução de fonte e listagem de `api/servicos/jobs.py::criar_job_site`;
 diferente dela, não persiste nenhum `Episodio`/`Job` — é só consulta.
 
-Não importa `fastapi`: devolve `list[EpisodioRemoto]` ou levanta erro de
+Não importa `fastapi`: devolve `EpisodiosRemotosResultado` ou levanta erro de
 `core/erros.py`; `api/rotas/animes.py` traduz para `HTTPException`/schemas.
 """
 
 import asyncio
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -24,9 +25,19 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 _TETO_LISTAGEM_REMOTA_S = 60
 
 
+@dataclass(frozen=True, slots=True)
+class EpisodiosRemotosResultado:
+    """`dominio` é o site que resolveu `episodios` — a rota (`api/rotas/animes.py`)
+    expõe isto no contrato de saída (`EpisodiosRemotosSaida`) para o usuário
+    poder notar quando a fonte "errada" foi resolvida."""
+
+    dominio: str
+    episodios: list[EpisodioRemoto]
+
+
 async def listar_episodios_remotos(
     sessionmaker: _SessionMaker, anime: Anime
-) -> list[EpisodioRemoto]:
+) -> EpisodiosRemotosResultado:
     """`anime` já carregado por quem chama (`api/rotas/animes.py`, que faz o 404
     de `anime_id` inexistente antes de chegar aqui — mesmo padrão das outras
     rotas que operam por id).
@@ -60,7 +71,7 @@ async def listar_episodios_remotos(
         )
 
     try:
-        return await asyncio.wait_for(
+        episodios = await asyncio.wait_for(
             listar_episodios_em(sessionmaker, resultado.dominio, resultado.identificador),
             timeout=_TETO_LISTAGEM_REMOTA_S,
         )
@@ -70,3 +81,5 @@ async def listar_episodios_remotos(
             dominio=resultado.dominio,
             permite_retentativa=True,
         ) from excecao
+
+    return EpisodiosRemotosResultado(dominio=resultado.dominio, episodios=episodios)
