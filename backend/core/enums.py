@@ -47,8 +47,24 @@ class TipoEpisodio(StrEnum):
 
 
 class VersaoEpisodio(StrEnum):
+    """Versão do arquivo capturado — o que o usuário assiste (`Episodio`)."""
+
     LEGENDADO = "legendado"
     DUBLADO = "dublado"
+    # Fonte é `VersaoDeFonte.NAO_DIFERENCIADA` (site não separa legendado de
+    # dublado no próprio markup) — o episódio capturado sob ela nunca herda
+    # cegamente o que o cliente pediu, é rotulado `DESCONHECIDA` (worker/jobs.py).
+    DESCONHECIDA = "desconhecida"
+
+
+class VersaoDeFonte(StrEnum):
+    """Estado do *mapeamento* de uma fonte (`FonteAnime`) — o que o site oferece,
+    não o episódio. Mantido separado de `VersaoEpisodio` de propósito: não
+    fundir os dois enums."""
+
+    LEGENDADO = "legendado"
+    DUBLADO = "dublado"
+    NAO_DIFERENCIADA = "nao_diferenciada"
 
 
 class StatusEpisodio(StrEnum):

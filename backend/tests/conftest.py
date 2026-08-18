@@ -48,6 +48,9 @@ class ClienteFalso:
     def user_agent(self) -> str:
         return "ClienteFalso/1.0"
 
+    def fechar(self) -> None:
+        """Sem recurso a liberar — existe só para completar `ClienteDeSite`."""
+
 
 @pytest.fixture
 def cliente_falso():

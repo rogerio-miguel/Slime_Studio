@@ -10,15 +10,19 @@ monkeypatcham uma camada abaixo (`integrations.servico.listar_em_alta` /
 `api/servicos/descoberta.py` rodar de verdade contra o banco de teste.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import descoberta as servico_descoberta
+from core.enums import VersaoDeFonte
 from core.erros import FalhaDeMetadados
 from core.texto import slugificar
 from integrations.base import AnimeEmAlta, MetadadosDeAnime
 from models.anime import Anime
+from models.fonte_anime import FonteAnime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -123,12 +127,74 @@ async def test_obter_anime_detalhe_caminho_feliz(
     assert resposta.status_code == 200
     assert resposta.json()["id"] == anime_id
     assert resposta.json()["titulo"] == "Anime Detalhado"
+    # Sem nenhuma `FonteAnime` mapeada ainda, não há troca de fonte confirmada
+    # a refletir.
+    assert resposta.json()["versao_confirmada_mais_recente"] is None
 
 
 async def test_obter_anime_404_para_id_inexistente(cliente: AsyncClient):
     resposta = await cliente.get("/api/animes/999999")
 
     assert resposta.status_code == 404
+
+
+async def test_obter_anime_versao_confirmada_mais_recente_reflete_ultima_troca_de_fonte(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    """`versao_confirmada_mais_recente` segue a linha de `FonteAnime` com maior
+    `resolvido_em` — não a de maior prioridade — mesmo sem nenhum episódio
+    local capturado ainda nessa versão (troca de fonte via diálogo "Trocar
+    fonte" sem download subsequente)."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Trocado", "anime-trocado")
+    async with sessionmaker_api() as sessao:
+        sessao.add_all(
+            [
+                FonteAnime(
+                    anime_id=anime_id,
+                    site_dominio="site-a.io",
+                    versao=VersaoDeFonte.LEGENDADO,
+                    identificador_no_site="a",
+                    prioridade=0,
+                    resolvido_em=datetime.now(UTC) - timedelta(hours=1),
+                ),
+                FonteAnime(
+                    anime_id=anime_id,
+                    site_dominio="site-b.io",
+                    versao=VersaoDeFonte.DUBLADO,
+                    identificador_no_site="b",
+                    prioridade=1,
+                    resolvido_em=datetime.now(UTC),
+                ),
+            ]
+        )
+        await sessao.commit()
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+
+    assert resposta.status_code == 200
+    assert resposta.json()["versao_confirmada_mais_recente"] == "dublado"
+
+
+async def test_obter_anime_versao_confirmada_mais_recente_nao_diferenciada_vira_desconhecida(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Nao Diferenciado", "anime-nd")
+    async with sessionmaker_api() as sessao:
+        sessao.add(
+            FonteAnime(
+                anime_id=anime_id,
+                site_dominio="site-a.io",
+                versao=VersaoDeFonte.NAO_DIFERENCIADA,
+                identificador_no_site="a",
+                prioridade=0,
+            )
+        )
+        await sessao.commit()
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+
+    assert resposta.status_code == 200
+    assert resposta.json()["versao_confirmada_mais_recente"] == "desconhecida"
 
 
 # --- cruzamento real (sem mock de `listar_em_alta_com_catalogo`) ---

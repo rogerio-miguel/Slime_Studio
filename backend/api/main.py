@@ -26,6 +26,7 @@ from core.erros import (
     FonteNaoEncontrada,
     JobEmExecucao,
     SiteEmCooldown,
+    VersaoIndisponivelError,
 )
 from db.engine import criar_engine, criar_sessionmaker
 
@@ -111,6 +112,15 @@ def _registrar_handlers_de_excecao(app: FastAPI) -> None:
                     "candidatos": excecao.candidatos,
                 }
             },
+        )
+
+    @app.exception_handler(VersaoIndisponivelError)
+    async def _versao_indisponivel(
+        request: Request, excecao: VersaoIndisponivelError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": {"motivo": "versao_indisponivel", "versao": excecao.versao.value}},
         )
 
     @app.exception_handler(EpisodioJaExiste)

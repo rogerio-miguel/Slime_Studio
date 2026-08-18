@@ -12,10 +12,11 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.erros import FalhaDeExtracao, FonteAmbigua
+from core.enums import VersaoEpisodio
+from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from extractors.base import EpisodioRemoto
-from extractors.resolucao import ConfirmacaoNecessaria, resolver_fonte_do_anime
-from extractors.servico import listar_episodios_em
+from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
+from extractors.servico import filtrar_por_versao, listar_episodios_em
 from models.anime import Anime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
@@ -36,7 +37,7 @@ class EpisodiosRemotosResultado:
 
 
 async def listar_episodios_remotos(
-    sessionmaker: _SessionMaker, anime: Anime
+    sessionmaker: _SessionMaker, anime: Anime, versao: VersaoEpisodio
 ) -> EpisodiosRemotosResultado:
     """`anime` já carregado por quem chama (`api/rotas/animes.py`, que faz o 404
     de `anime_id` inexistente antes de chegar aqui — mesmo padrão das outras
@@ -46,10 +47,14 @@ async def listar_episodios_remotos(
     vira `FonteAmbigua` — mesmo comportamento de
     `api/servicos/jobs.py::criar_job_site`; o cliente resolve via
     `POST /api/admin/animes/{id}/fontes/confirmar` e reenvia esta chamada.
+
+    `VersaoIndisponivel` (nenhum site serve `versao`) vira `VersaoIndisponivelError`
+    — o handler de `api/main.py` traduz pra 409.
     """
     try:
         resultado = await asyncio.wait_for(
-            resolver_fonte_do_anime(sessionmaker, anime), timeout=_TETO_LISTAGEM_REMOTA_S
+            resolver_fonte_do_anime(sessionmaker, anime, versao),
+            timeout=_TETO_LISTAGEM_REMOTA_S,
         )
     except TimeoutError as excecao:
         raise FalhaDeExtracao(
@@ -69,6 +74,8 @@ async def listar_episodios_remotos(
                 for candidato in resultado.candidatos
             ],
         )
+    if isinstance(resultado, VersaoIndisponivel):
+        raise VersaoIndisponivelError(resultado.versao)
 
     try:
         episodios = await asyncio.wait_for(
@@ -81,5 +88,11 @@ async def listar_episodios_remotos(
             dominio=resultado.dominio,
             permite_retentativa=True,
         ) from excecao
+
+    # Uma página pode cobrir as duas versões (ex. AnimesDrive quando legendado
+    # e dublado compartilham a mesma listagem) — sem este filtro, a grade
+    # remota misturaria episódios da versão errada. Mesma proteção que o
+    # caminho de captura já aplica (`api/servicos/jobs.py::criar_job_site`).
+    episodios = filtrar_por_versao(episodios, versao)
 
     return EpisodiosRemotosResultado(dominio=resultado.dominio, episodios=episodios)

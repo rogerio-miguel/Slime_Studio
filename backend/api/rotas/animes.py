@@ -3,6 +3,8 @@ remoção) e `/api/animes*` (catálogo público, leitura pelo player, feed "em
 alta" de metadados externos via `integrations/`).
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -25,14 +27,21 @@ from api.servicos import busca as servico_busca
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
+from api.servicos import jobs as servico_jobs
 from core.config import Config
+from core.enums import VersaoDeFonte, VersaoEpisodio
 from db.catalogo import obter_ou_criar_anime_id
 from extractors.base import ResultadoBusca
+from extractors.registro import EXTRATORES
 from extractors.resolucao import confirmar_fonte
+from extractors.versao import inferir_versao
 from models.anime import Anime
 from models.episodio import Episodio
+from models.fonte_anime import FonteAnime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin/animes", tags=["admin-animes"])
 router_publico = APIRouter(prefix="/api/animes", tags=["animes"])
@@ -70,13 +79,36 @@ async def confirmar_fonte_do_anime(
 ) -> dict[str, str]:
     """Stateless (D5 do plano): só grava `FonteAnime` e devolve 200. O cliente
     re-`POST`a `/api/admin/jobs` (modo `site`), que agora acha a fonte mapeada e
-    segue sem pedir confirmação de novo."""
+    segue sem pedir confirmação de novo.
+
+    `corpo.versao` é o round-trip do que o frontend recebeu em
+    `ResultadoBuscaFonteSaida.versao` pro candidato escolhido — nunca a fonte de
+    verdade: o servidor rederiva via `inferir_versao` (mesma lógica de
+    `extractors/resolucao.py::confirmar_fonte`) e só loga se divergir."""
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
 
+    extrator = next((e for e in EXTRATORES if e.dominio == corpo.dominio), None)
+    versao_servidor: VersaoEpisodio | None = None
+    if extrator is not None and extrator.diferencia_versao:
+        versao_servidor = (
+            inferir_versao(corpo.titulo_exibicao, corpo.identificador) or VersaoEpisodio.LEGENDADO
+        )
+        if corpo.versao is not None and corpo.versao != versao_servidor:
+            logger.warning(
+                "versão divergente ao confirmar fonte em %r: cliente=%r, servidor=%r —"
+                " usando servidor",
+                corpo.dominio,
+                corpo.versao,
+                versao_servidor,
+            )
+
     candidato = ResultadoBusca(
-        titulo_exibicao=corpo.titulo_exibicao, identificador=corpo.identificador, url=corpo.url
+        titulo_exibicao=corpo.titulo_exibicao,
+        identificador=corpo.identificador,
+        url=corpo.url,
+        versao=versao_servidor,
     )
     await confirmar_fonte(sessionmaker, anime, corpo.dominio, candidato)
     return {"status": "ok"}
@@ -85,6 +117,7 @@ async def confirmar_fonte_do_anime(
 @router.get("/{anime_id}/episodios-remotos", response_model=EpisodiosRemotosSaida)
 async def listar_episodios_remotos_do_anime(
     anime_id: int,
+    versao: VersaoEpisodio = Query(VersaoEpisodio.LEGENDADO),
     sessao: AsyncSession = Depends(obter_sessao),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> EpisodiosRemotosSaida:
@@ -93,11 +126,12 @@ async def listar_episodios_remotos_do_anime(
     grade prontos/não capturados na página do anime. `dominio` identifica qual
     site resolveu a lista abaixo (hipótese mais provável de divergência de
     contagem de episódios: fonte errada sendo exibida sem indicação de qual
-    site foi usado)."""
+    site foi usado). `versao` tem default `LEGENDADO` pra preservar o
+    comportamento anterior à Fase 3 até o frontend passar a enviá-la."""
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
-    resultado = await servico_fontes.listar_episodios_remotos(sessionmaker, anime)
+    resultado = await servico_fontes.listar_episodios_remotos(sessionmaker, anime, versao)
     return EpisodiosRemotosSaida(
         dominio=resultado.dominio,
         episodios=[
@@ -171,6 +205,8 @@ async def buscar_animes_em_fontes(
                 url=candidato.url,
                 dominio=fonte.dominio,
                 capa_url=candidato.capa_url,
+                versao=candidato.versao,
+                site_diferencia_versao=_diferencia_versao(fonte.dominio),
             )
             for fonte in fontes
             for candidato in fonte.candidatos
@@ -186,11 +222,58 @@ async def buscar_animes_em_fontes(
 
 
 @router_publico.get("/{anime_id}", response_model=AnimeDetalheSaida)
-async def obter_anime(anime_id: int, sessao: AsyncSession = Depends(obter_sessao)) -> Anime:
+async def obter_anime(
+    anime_id: int, sessao: AsyncSession = Depends(obter_sessao)
+) -> AnimeDetalheSaida:
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
-    return anime
+    resultado = await sessao.execute(
+        select(FonteAnime.versao, FonteAnime.resolvido_em).where(FonteAnime.anime_id == anime_id)
+    )
+    fontes_mapeadas = resultado.all()
+    versoes_de_fonte = {linha.versao for linha in fontes_mapeadas}
+    mais_recente = max(fontes_mapeadas, key=lambda linha: linha.resolvido_em, default=None)
+    versao_confirmada_mais_recente = (
+        servico_jobs.versao_episodio_da_fonte(mais_recente.versao)
+        if mais_recente is not None
+        else None
+    )
+    return AnimeDetalheSaida(
+        id=anime.id,
+        titulo=anime.titulo,
+        slug=anime.slug,
+        ano=anime.ano,
+        capa_path=anime.capa_path,
+        sinopse=anime.sinopse,
+        criado_em=anime.criado_em,
+        versoes_disponiveis=_versoes_disponiveis(versoes_de_fonte),
+        versao_confirmada_mais_recente=versao_confirmada_mais_recente,
+    )
+
+
+def _diferencia_versao(dominio: str) -> bool:
+    """`ExtratorDeSite.diferencia_versao` do extractor registrado para `dominio`
+    (`False` se o domínio não estiver registrado)."""
+    extrator = next((e for e in EXTRATORES if e.dominio == dominio), None)
+    return extrator.diferencia_versao if extrator is not None else False
+
+
+def _versoes_disponiveis(versoes_de_fonte: set[VersaoDeFonte]) -> list[VersaoEpisodio]:
+    """Deriva as versões "disponíveis" de um anime a partir das linhas de
+    `FonteAnime` já mapeadas — não é live-probe (ver docstring de `obter_anime`).
+
+    Sem nenhuma linha (fonte nunca resolvida) ou com qualquer linha
+    `NAO_DIFERENCIADA` (fonte serve qualquer versão pedida), ambas contam como
+    disponíveis; senão, só as versões com linha confirmada."""
+    if not versoes_de_fonte or VersaoDeFonte.NAO_DIFERENCIADA in versoes_de_fonte:
+        return [VersaoEpisodio.LEGENDADO, VersaoEpisodio.DUBLADO]
+    disponiveis = []
+    if VersaoDeFonte.LEGENDADO in versoes_de_fonte:
+        disponiveis.append(VersaoEpisodio.LEGENDADO)
+    if VersaoDeFonte.DUBLADO in versoes_de_fonte:
+        disponiveis.append(VersaoEpisodio.DUBLADO)
+    return disponiveis
 
 
 @router_publico.get("/{anime_id}/episodios", response_model=list[EpisodioSaida])

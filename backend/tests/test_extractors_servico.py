@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
+from core.enums import VersaoDeFonte, VersaoEpisodio
 from db.engine import criar_engine, criar_sessionmaker
 from extractors import servico
 from extractors.base import EpisodioRemoto
@@ -62,12 +63,14 @@ async def test_proximo_com_episodio_colisao_de_numero_escolhe_primeiro_e_loga(
                 FonteAnime(
                     anime_id=anime.id,
                     site_dominio="site-a.io",
+                    versao=VersaoDeFonte.NAO_DIFERENCIADA,
                     identificador_no_site="a",
                     prioridade=0,
                 ),
                 FonteAnime(
                     anime_id=anime.id,
                     site_dominio="site-b.io",
+                    versao=VersaoDeFonte.NAO_DIFERENCIADA,
                     identificador_no_site="b",
                     prioridade=1,
                 ),
@@ -87,7 +90,7 @@ async def test_proximo_com_episodio_colisao_de_numero_escolhe_primeiro_e_loga(
 
     with caplog.at_level("WARNING"):
         resultado = await servico._proximo_com_episodio(
-            sessionmaker, anime, 7, "site-a.io", {"site-a.io"}
+            sessionmaker, anime, 7, "site-a.io", {"site-a.io"}, VersaoEpisodio.DESCONHECIDA
         )
 
     assert resultado == ("site-b.io", "https://x/ep7")
@@ -103,12 +106,14 @@ async def test_proximo_com_episodio_sem_colisao_nao_loga(sessionmaker, monkeypat
                 FonteAnime(
                     anime_id=anime.id,
                     site_dominio="site-a.io",
+                    versao=VersaoDeFonte.NAO_DIFERENCIADA,
                     identificador_no_site="a",
                     prioridade=0,
                 ),
                 FonteAnime(
                     anime_id=anime.id,
                     site_dominio="site-b.io",
+                    versao=VersaoDeFonte.NAO_DIFERENCIADA,
                     identificador_no_site="b",
                     prioridade=1,
                 ),
@@ -123,8 +128,59 @@ async def test_proximo_com_episodio_sem_colisao_nao_loga(sessionmaker, monkeypat
 
     with caplog.at_level("WARNING"):
         resultado = await servico._proximo_com_episodio(
-            sessionmaker, anime, 7, "site-a.io", {"site-a.io"}
+            sessionmaker, anime, 7, "site-a.io", {"site-a.io"}, VersaoEpisodio.DESCONHECIDA
         )
 
     assert resultado == ("site-b.io", "https://x/ep7")
     assert "episódios remotos com numero" not in caplog.text
+
+
+async def test_proximo_com_episodio_prefere_versao_pedida_quando_listagem_rotula_as_duas(
+    sessionmaker, monkeypatch
+):
+    """Listagem do site de fallback tem episódio 7 rotulado nas duas versões
+    (site que diferencia, ex. AnimesDrive) — o fallback pra DUBLADO precisa
+    escolher a URL dublada, não a primeira da lista."""
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    async with sessionmaker() as sessao:
+        sessao.add_all(
+            [
+                # `site-a.io` só precisa existir pra `dominio_que_falhou` ser
+                # achado em `mapeadas` (localiza `prioridade_falhou`) — versão
+                # gravada aqui é irrelevante, esta linha nunca é candidata a
+                # próxima fonte (`prioridade > prioridade_falhou` a exclui).
+                FonteAnime(
+                    anime_id=anime.id,
+                    site_dominio="site-a.io",
+                    versao=VersaoDeFonte.NAO_DIFERENCIADA,
+                    identificador_no_site="a",
+                    prioridade=0,
+                ),
+                FonteAnime(
+                    anime_id=anime.id,
+                    site_dominio="site-b.io",
+                    versao=VersaoDeFonte.DUBLADO,
+                    identificador_no_site="b",
+                    prioridade=1,
+                ),
+            ]
+        )
+        await sessao.commit()
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [
+            EpisodioRemoto(
+                rotulo="7", numero=7, url="https://x/ep7-leg", versao=VersaoEpisodio.LEGENDADO
+            ),
+            EpisodioRemoto(
+                rotulo="7", numero=7, url="https://x/ep7-dub", versao=VersaoEpisodio.DUBLADO
+            ),
+        ]
+
+    monkeypatch.setattr(servico, "listar_episodios_em", _listar_fake)
+
+    resultado = await servico._proximo_com_episodio(
+        sessionmaker, anime, 7, "site-a.io", {"site-a.io"}, VersaoEpisodio.DUBLADO
+    )
+
+    assert resultado == ("site-b.io", "https://x/ep7-dub")

@@ -4,6 +4,8 @@ Este módulo não importa nada de framework, banco de dados ou I/O — é domín
 (ver regra de dependência da Clean Architecture no CLAUDE.md, seção 1).
 """
 
+from core.enums import VersaoEpisodio
+
 
 class ErroSlimeStudio(Exception):
     """Raiz da hierarquia de exceções de domínio do projeto."""
@@ -110,13 +112,30 @@ class FonteAmbigua(ErroSlimeStudio):
 
     `candidatos` já vem serializado (lista de `dict`), não como `ResultadoBusca` —
     este módulo é domínio puro e não importa `extractors` (regra de dependência da
-    Clean Architecture, CLAUDE.md §1).
+    Clean Architecture, CLAUDE.md §1). `versao` dentro de cada dict pode ser
+    `None` (site não diferencia versão ou nenhum marcador foi detectado).
     """
 
-    def __init__(self, dominio: str, candidatos: list[dict[str, str]]) -> None:
+    def __init__(self, dominio: str, candidatos: list[dict[str, str | None]]) -> None:
         super().__init__(f"fonte ambígua em {dominio}: {len(candidatos)} candidato(s)")
         self.dominio = dominio
         self.candidatos = candidatos
+
+
+class VersaoIndisponivelError(ErroSlimeStudio):
+    """`extractors.resolucao.resolver_fonte_do_anime` devolveu `VersaoIndisponivel`
+    — nenhum site, mapeado ou buscado ao vivo, serve a versão pedida (nem
+    confirmada, nem `VersaoDeFonte.NAO_DIFERENCIADA`, em nenhum site).
+
+    Sem tratamento HTTP ainda nesta fase (a API mapeia isto para status na
+    fase seguinte) — existe pra não deixar o caso "nenhuma fonte serve essa
+    versão" cair silenciosamente num `AttributeError` ao tentar tratar o
+    resultado como `FonteResolvida` (CLAUDE.md §4, erro nunca silencioso).
+    """
+
+    def __init__(self, versao: VersaoEpisodio) -> None:
+        super().__init__(f"nenhuma fonte disponível para a versão {versao.value!r}")
+        self.versao = versao
 
 
 class EpisodioJaExiste(ErroSlimeStudio):

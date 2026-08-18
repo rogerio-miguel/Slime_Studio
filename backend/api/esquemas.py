@@ -122,6 +122,19 @@ class AnimeDetalheSaida(BaseModel):
     capa_path: str | None
     sinopse: str | None
     criado_em: datetime
+    # Derivado das linhas de `FonteAnime` já mapeadas pro anime (não é
+    # live-probe) — ver `api/rotas/animes.py::obter_anime`. Qualquer linha
+    # `NAO_DIFERENCIADA` habilita as duas versões; sem nenhuma linha ainda
+    # (fonte nunca resolvida), também as duas, otimista.
+    versoes_disponiveis: list[VersaoEpisodio]
+    # Versão da linha de `FonteAnime` com o `resolvido_em` mais recente pro
+    # anime — reflete a última troca de fonte CONFIRMADA pelo usuário (via
+    # "Trocar fonte"), mesmo quando ainda não gerou nenhum episódio local
+    # capturado nessa versão. `NAO_DIFERENCIADA` vira `VersaoEpisodio.
+    # DESCONHECIDA` (mesma conversão de `api/servicos/jobs.py::
+    # versao_episodio_da_fonte`). `None` quando o anime não tem nenhuma
+    # linha em `FonteAnime` ainda.
+    versao_confirmada_mais_recente: VersaoEpisodio | None
 
 
 class ConfirmarFonteRequest(BaseModel):
@@ -129,6 +142,11 @@ class ConfirmarFonteRequest(BaseModel):
     identificador: str
     titulo_exibicao: str
     url: str
+    # Round-trip do `versao` que o frontend recebeu em `ResultadoBuscaFonteSaida`
+    # pro candidato escolhido — o servidor não confia cegamente nisso, sempre
+    # rederiva via `extractors.versao.inferir_versao` e loga divergência
+    # (`api/rotas/animes.py::confirmar_fonte_do_anime`).
+    versao: VersaoEpisodio | None = None
 
 
 class ResultadoBuscaFonteSaida(BaseModel):
@@ -146,6 +164,12 @@ class ResultadoBuscaFonteSaida(BaseModel):
     # imagem na busca — `api/servicos/busca.py::enriquecer_capas`). `None`
     # quando nenhuma das duas fontes achou capa.
     capa_url: str | None = None
+    # `None` quando o site não diferencia versão ou nenhum marcador foi
+    # detectado neste candidato específico (`extractors.base.ResultadoBusca.versao`).
+    versao: VersaoEpisodio | None = None
+    # Capability do site que resolveu este candidato (`ExtratorDeSite.diferencia_versao`)
+    # — a UI usa isso pra decidir se oferece a escolha legendado/dublado.
+    site_diferencia_versao: bool = False
 
 
 class FonteConsultadaSaida(BaseModel):

@@ -12,11 +12,11 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.enums import SITE_LOCAL, TipoEpisodio, VersaoEpisodio
-from core.erros import FalhaDeExtracao, FonteAmbigua, FonteNaoEncontrada
+from core.enums import SITE_LOCAL, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
+from core.erros import FalhaDeExtracao, FonteAmbigua, FonteNaoEncontrada, VersaoIndisponivelError
 from db import catalogo
-from extractors.resolucao import ConfirmacaoNecessaria, resolver_fonte_do_anime
-from extractors.servico import listar_episodios_em
+from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
+from extractors.servico import filtrar_por_numero_e_versao, listar_episodios_em
 from models.anime import Anime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
@@ -72,10 +72,18 @@ async def criar_job_site(
     `ConfirmacaoNecessaria` (mais de um candidato, sem match exato de título)
     vira `FonteAmbigua`; nenhum job é criado nesse caso — o cliente resolve via
     `POST /api/admin/animes/{id}/fontes/confirmar` e reenvia esta chamada.
+
+    `VersaoIndisponivel` (nenhum site serve `versao`) vira `VersaoIndisponivelError`
+    — sem tratamento HTTP dedicado ainda (fase seguinte), propaga em vez de
+    falhar silenciosamente tratando o resultado como `FonteResolvida`.
+
+    Invariante: `Episodio.versao` (abaixo) NUNCA vem de `versao` (o pedido do
+    cliente) direto — deriva de `resultado.versao_da_fonte`, a única fonte de
+    verdade sobre o que a fonte resolvida realmente é.
     """
     try:
         resultado = await asyncio.wait_for(
-            resolver_fonte_do_anime(sessionmaker, anime), timeout=_TETO_CRIACAO_SITE_S
+            resolver_fonte_do_anime(sessionmaker, anime, versao), timeout=_TETO_CRIACAO_SITE_S
         )
     except TimeoutError as excecao:
         raise FalhaDeExtracao(
@@ -90,10 +98,13 @@ async def criar_job_site(
                     "titulo_exibicao": candidato.titulo_exibicao,
                     "identificador": candidato.identificador,
                     "url": candidato.url,
+                    "versao": candidato.versao.value if candidato.versao else None,
                 }
                 for candidato in resultado.candidatos
             ],
         )
+    if isinstance(resultado, VersaoIndisponivel):
+        raise VersaoIndisponivelError(resultado.versao)
 
     try:
         episodios_remotos = await asyncio.wait_for(
@@ -106,7 +117,15 @@ async def criar_job_site(
             dominio=resultado.dominio,
             permite_retentativa=True,
         ) from excecao
-    correspondentes = [ep for ep in episodios_remotos if ep.numero == numero]
+    # `Episodio.versao` deriva do que a fonte resolvida realmente é
+    # (`resultado.versao_da_fonte`), nunca do `versao` pedido pelo cliente —
+    # a invariante desta fase. Também usado para filtrar a listagem abaixo:
+    # sem isso, um site que lista episódios das duas versões (mesmo risco de
+    # `extractors/servico.py::_proximo_com_episodio`) poderia gravar a URL da
+    # versão errada sob o rótulo certo.
+    versao_do_episodio = versao_episodio_da_fonte(resultado.versao_da_fonte)
+
+    correspondentes = filtrar_por_numero_e_versao(episodios_remotos, numero, versao_do_episodio)
     if len(correspondentes) > 1:
         # Mais de um rótulo remoto mapeia pro mesmo `numero` (ex. "7"/"07" —
         # extractors/base.py::EpisodioRemoto) — o request só carrega `numero`
@@ -132,8 +151,23 @@ async def criar_job_site(
         anime.id,
         numero=numero,
         tipo=tipo,
-        versao=versao,
+        versao=versao_do_episodio,
         url_fonte=correspondente.url,
         site_origem=resultado.dominio,
         duracao_esperada_s=duracao_esperada_s,
     )
+
+
+def versao_episodio_da_fonte(versao_da_fonte: VersaoDeFonte) -> VersaoEpisodio:
+    """`VersaoDeFonte.NAO_DIFERENCIADA` vira sempre `VersaoEpisodio.DESCONHECIDA`
+    — nunca herda o que o cliente pediu. `LEGENDADO`/`DUBLADO` convertem 1:1
+    (mesmo valor de string por design, `core/enums.py`, mas enums separados
+    de propósito — daí a conversão explícita em vez de reinterpretar um pelo
+    outro).
+
+    Pública (não `_`-prefixada) porque também é usada por
+    `api/rotas/animes.py::obter_anime` para derivar
+    `AnimeDetalheSaida.versao_confirmada_mais_recente`."""
+    if versao_da_fonte == VersaoDeFonte.NAO_DIFERENCIADA:
+        return VersaoEpisodio.DESCONHECIDA
+    return VersaoEpisodio(versao_da_fonte.value)

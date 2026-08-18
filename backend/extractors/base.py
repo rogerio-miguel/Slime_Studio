@@ -10,6 +10,7 @@ validação (`ruff` só), então a garantia de contrato completo precisa vir de
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from core.enums import VersaoEpisodio
 from extractors.cliente import ClienteDeSite
 
 
@@ -22,6 +23,11 @@ class ResultadoBusca:
     # imagem está ausente no card — enriquecimento best-effort por metadado de
     # provedor externo mora em `api/servicos/busca.py::enriquecer_capas`.
     capa_url: str | None = None
+    # `None` quando o site não diferencia versão (`diferencia_versao=False`) ou
+    # o adapter não detectou marcador algum — não confundir com
+    # `VersaoDeFonte.NAO_DIFERENCIADA` (esse é o estado do mapeamento, este
+    # campo é o resultado por candidato de busca).
+    versao: VersaoEpisodio | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +44,9 @@ class EpisodioRemoto:
     # "Capturar" nesse caso.
     numero: int | None
     url: str
+    # `None` quando o site não diferencia versão ou nenhum marcador foi
+    # detectado nesse episódio específico.
+    versao: VersaoEpisodio | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +68,33 @@ class ExtratorDeSite(ABC):
     @abstractmethod
     def exige_navegador(self) -> bool:
         """`True` se este site nunca é alcançável via cliente leve (ex. proteção mais dura)."""
+
+    @property
+    def exige_navegador_para_midia(self) -> bool:
+        """`True` quando só `resolver_midia` precisa de navegador — o player monta a
+        URL de mídia em tempo de execução, mas busca e listagem seguem no cliente leve.
+
+        Granularidade separada de `exige_navegador` de propósito: subir Chromium
+        em toda busca (operação mais frequente do sistema, e paralela entre sites
+        em `extractors/servico.py::buscar_em_todas_as_fontes`) pra atender um
+        único método seria caro sem necessidade. Concreta, não abstrata: o caso
+        normal é `False` e nenhum adapter existente precisa declarar isso.
+        """
+        return False
+
+    @property
+    def diferencia_versao(self) -> bool:
+        """`True` quando este site separa legendado de dublado no próprio
+        markup (slug/título de anime) — capability, não comportamento: quem
+        lê isso é o chamador, decidindo se a ausência de marcador detectado
+        por `extractors/versao.py::inferir_versao` vira `VersaoEpisodio.LEGENDADO`
+        por convenção do site (dublado sempre marcado, legendado é o default
+        silencioso) ou fica indeterminada.
+
+        Concreta, não abstrata, mesmo padrão de `exige_navegador_para_midia`:
+        o caso normal é `False`, só sites que sabem diferenciar sobrescrevem.
+        """
+        return False
 
     @abstractmethod
     def buscar(self, cliente: ClienteDeSite, titulo: str) -> list[ResultadoBusca]:
