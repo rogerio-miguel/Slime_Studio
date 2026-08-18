@@ -21,7 +21,7 @@ export default function DialogoDeFonteAmbigua({ aberto, dominio, candidatos, aoE
       onClose={aoFechar}
       onCancel={aoFechar}
       aria-labelledby="titulo-fonte-ambigua"
-      className="rounded-xl border border-neon-soft bg-surface p-6 text-white backdrop:bg-black/70"
+      className="m-auto rounded-xl border border-neon-soft bg-surface p-6 text-white backdrop:bg-black/70"
     >
       <h2 id="titulo-fonte-ambigua" className="mb-2 text-base font-semibold">
         Mais de um resultado em {dominio}

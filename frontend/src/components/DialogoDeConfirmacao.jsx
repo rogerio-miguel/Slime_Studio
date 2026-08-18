@@ -49,7 +49,7 @@ export default function DialogoDeConfirmacao({
       onClose={fechar}
       onCancel={fechar}
       aria-labelledby="titulo-dialogo-confirmacao"
-      className="rounded-xl border border-neon-soft bg-surface p-6 text-white backdrop:bg-black/70"
+      className="m-auto rounded-xl border border-neon-soft bg-surface p-6 text-white backdrop:bg-black/70"
     >
       <h2 id="titulo-dialogo-confirmacao" className="mb-2 text-base font-semibold">
         {titulo}
