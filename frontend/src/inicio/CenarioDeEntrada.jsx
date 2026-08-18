@@ -9,10 +9,16 @@ import logo from '../assets/logo.png';
 //
 // Decorativo (`aria-hidden`), sem controles, currentTime controlado
 // imperativamente por useScrubDeVideo.js — nunca via state React.
+//
+// Um degrau mais escuro que a versão anterior em cada fase (Feature
+// "continuar assistindo": a prateleira nova soma-se ao conteúdo revelado que
+// já fica sobre este vídeo — `<main>` não tem fundo opaco próprio — e
+// precisa de mais contraste). Ainda não opaco em nenhuma fase (o vídeo
+// nunca fica totalmente escondido).
 const _OPACIDADE_SCRIM_POR_FASE = {
-  entrada: 'opacity-30',
-  chegando: 'opacity-55',
-  revelado: 'opacity-80',
+  entrada: 'opacity-40',
+  chegando: 'opacity-65',
+  revelado: 'opacity-90',
 };
 
 export default function CenarioDeEntrada({ videoRef, logoRef, fase }) {
@@ -28,7 +34,7 @@ export default function CenarioDeEntrada({ videoRef, logoRef, fase }) {
         className="h-full w-full object-cover"
       />
       <div
-        className={`absolute inset-0 bg-gradient-to-t from-black via-black/30 to-black/10 transition-opacity duration-700 ease-out ${_OPACIDADE_SCRIM_POR_FASE[fase]}`}
+        className={`absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/20 transition-opacity duration-700 ease-out ${_OPACIDADE_SCRIM_POR_FASE[fase]}`}
       />
       {/* Opacidade/escala escritas por frame em useScrubDeVideo.js (via
           logoRef), não por classe/transition — aparece perto da metade do

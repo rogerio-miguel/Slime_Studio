@@ -45,6 +45,41 @@ export function marcarAssistido(episodioId) {
   return requisitar(`/api/episodios/${episodioId}/assistido`, { metodo: 'POST' });
 }
 
+// Fallback de refresh do player (PaginaDoPlayer.jsx) quando `location.state`
+// não veio (acesso direto/refresh da URL) — também traz `progresso_s` pra
+// retomar a reprodução de onde parou.
+export function obterEpisodio(episodioId) {
+  return requisitar(`/api/episodios/${episodioId}`);
+}
+
+// Disparado periodicamente pelo player (usePosicaoDeReproducao.js) enquanto
+// o episódio ainda não cruzou o limiar de assistido — o backend recusa
+// (422) segundos acima de 90% da duração, ramo que pertence a
+// `marcarAssistido`/`liberarEpisodio`. `manterVivo` (`keepalive`) pelo mesmo
+// motivo de `liberarEpisodio`: pode sair de dentro de um listener de
+// `pagehide`.
+export function salvarProgresso(episodioId, segundos, { manterVivo } = {}) {
+  return requisitar(`/api/episodios/${episodioId}/progresso`, {
+    metodo: 'POST',
+    corpo: { segundos },
+    manterVivo,
+  });
+}
+
+// Prateleira "Continuar assistindo" da Inicio.
+export function listarContinuarAssistindo() {
+  return requisitar('/api/episodios/continuar-assistindo');
+}
+
+// Dispara na saída do player (PaginaDoPlayer.jsx) quando o episódio cruzou o
+// limiar de assistido — apaga os arquivos em disco preservando o registro do
+// catálogo (`assistido_em`, `url_fonte`, etc.). `manterVivo` (`keepalive`)
+// porque este request costuma sair de dentro de um listener de `pagehide`,
+// com a página já sendo descartada.
+export function liberarEpisodio(episodioId, { manterVivo } = {}) {
+  return requisitar(`/api/episodios/${episodioId}/liberar`, { metodo: 'POST', manterVivo });
+}
+
 // `anilistId`/`kitsuId`/`capaUrl`/`sinopse` são opcionais (materialização de
 // item do feed "em alta" — Fase 4 da Inicio) — ausentes, `JSON.stringify`
 // os omite do corpo (mesmo comportamento já usado por `ano` acima) e o

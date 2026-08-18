@@ -10,6 +10,7 @@ import { useTelemetriaDeVideo } from './hooks/useTelemetriaDeVideo.js';
 import { useAtalhosDeTeclado } from './hooks/useAtalhosDeTeclado.js';
 import { usePreferencia } from './hooks/usePreferencia.js';
 import { usePontoDeAssistido } from './hooks/usePontoDeAssistido.js';
+import { usePosicaoDeReproducao } from './hooks/usePosicaoDeReproducao.js';
 import './player.css';
 
 // Único dono dos refs de DOM (video/canvas/frame/palco) e do estado que
@@ -27,7 +28,14 @@ import './player.css';
 // inteiro nesse caso, e o cleanup de cada hook roda sozinho pelo mecanismo
 // de unmount do React, sem precisar de um flag `ativo` reimplementado em
 // cada hook.
-export default function PlayerAtivo({ fonte, titulo, aoFalhar, aoAtingirAssistido }) {
+export default function PlayerAtivo({
+  fonte,
+  titulo,
+  aoFalhar,
+  aoAtingirAssistido,
+  retomarDe,
+  aoSalvarProgresso,
+}) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const frameRef = useRef(null);
@@ -51,6 +59,7 @@ export default function PlayerAtivo({ fonte, titulo, aoFalhar, aoAtingirAssistid
   const telemetria = useTelemetriaDeVideo({ videoRef, adaptador });
 
   usePontoDeAssistido(videoRef, aoAtingirAssistido);
+  usePosicaoDeReproducao(videoRef, aoSalvarProgresso, retomarDe);
 
   const alternarReproducao = useCallback(() => {
     // Gesto do usuário — ponto de entrada pro áudio cinema quando o play é

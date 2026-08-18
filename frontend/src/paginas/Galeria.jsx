@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
-import { criarAnime, listarAnimes, removerAnime } from '../api/recursos.js';
+import { criarAnime, listarAnimes, listarContinuarAssistindo, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
+import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeDeCards.jsx';
@@ -32,10 +33,15 @@ import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeD
 // `paginas/Inicio.jsx`, sem teto de largura, pra ficar pixel-idêntico.
 export default function Galeria() {
   const navigate = useNavigate();
+  const idContinuarAssistindo = useId();
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
   const { dados: animes, carregando, erro, recarregar } = useRecurso(listarAnimes, []);
+  // Seção "Continuar assistindo" — movida da Home (paginas/Inicio.jsx) pra
+  // cá: mesma condição silenciosa de exibição que já existia lá (some em
+  // loading/erro, some sem progresso salvo), sem UI nova de erro/loading.
+  const continuarAssistindo = useRecurso(listarContinuarAssistindo, []);
   const animesFiltrados = useMemo(
     () =>
       termoBuscaNormalizado
@@ -124,6 +130,23 @@ export default function Galeria() {
             Animes
           </h1>
         </header>
+
+        {!continuarAssistindo.carregando &&
+          !continuarAssistindo.erro &&
+          (continuarAssistindo.dados ?? []).length > 0 && (
+            <section aria-labelledby={idContinuarAssistindo} className="mb-8">
+              <h2 id={idContinuarAssistindo} className="mb-4 text-2xl font-semibold text-white">
+                Continuar assistindo
+              </h2>
+              <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
+                {continuarAssistindo.dados.map((item, indice) => (
+                  <SlotDeCard key={item.episodio_id} indice={indice}>
+                    <CartaoContinuarAssistindo item={item} />
+                  </SlotDeCard>
+                ))}
+              </div>
+            </section>
+          )}
 
         <form onSubmit={aoCriarAnime} className="mb-8 flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">

@@ -10,7 +10,13 @@ import PlayerAtivo from './PlayerAtivo.jsx';
 // telemetria, listener de teclado, conexão HLS) limpa sozinho via o
 // mecanismo de cleanup do React — não algo que precisa ser reimplementado
 // com um flag `ativo` espalhado por hook.
-export default function Player({ fonte, titulo, aoAtingirAssistido }) {
+export default function Player({
+  fonte,
+  titulo,
+  aoAtingirAssistido,
+  retomarDe,
+  aoSalvarProgresso,
+}) {
   // Checagem de navigator.gpu ausente é o primeiro guard.
   const [erroFatal, setErroFatal] = useState(() =>
     typeof navigator !== 'undefined' && !navigator.gpu
@@ -37,6 +43,8 @@ export default function Player({ fonte, titulo, aoAtingirAssistido }) {
       titulo={titulo}
       aoFalhar={aoFalhar}
       aoAtingirAssistido={aoAtingirAssistido}
+      retomarDe={retomarDe}
+      aoSalvarProgresso={aoSalvarProgresso}
     />
   );
 }
