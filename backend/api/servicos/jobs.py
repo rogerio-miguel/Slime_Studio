@@ -10,14 +10,26 @@ Não importa `fastapi`: devolve o `job_id` ou levanta erro de `core/erros.py`;
 import asyncio
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.enums import SITE_LOCAL, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
-from core.erros import FalhaDeExtracao, FonteAmbigua, FonteNaoEncontrada, VersaoIndisponivelError
+from api.servicos.catalogo import job_ativo_do_episodio, remover_arquivos_do_episodio
+from core.config import Config
+from core.enums import SITE_LOCAL, StatusEpisodio, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
+from core.erros import (
+    ErroSlimeStudio,
+    FalhaDeExtracao,
+    FonteAmbigua,
+    FonteNaoEncontrada,
+    JobEmExecucao,
+    VersaoIndisponivelError,
+)
 from db import catalogo
+from db.fila import criar_job as criar_job_na_fila
 from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
 from extractors.servico import filtrar_por_numero_e_versao, listar_episodios_em
 from models.anime import Anime
+from models.episodio import Episodio
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -58,6 +70,7 @@ async def criar_job_local(
 
 async def criar_job_site(
     sessionmaker: _SessionMaker,
+    config: Config,
     *,
     anime: Anime,
     numero: int,
@@ -80,6 +93,17 @@ async def criar_job_site(
     Invariante: `Episodio.versao` (abaixo) NUNCA vem de `versao` (o pedido do
     cliente) direto — deriva de `resultado.versao_da_fonte`, a única fonte de
     verdade sobre o que a fonte resolvida realmente é.
+
+    Ponto único de recaptura (D2): se já existe um `Episodio` para a
+    identidade resolvida (`anime.id`, `numero`, `tipo`, `versao_do_episodio`)
+    e ele está `LIBERADO` (Feature 1) ou foi capturado numa fonte diferente
+    da resolvida agora, a linha é reaproveitada (`_reaproveitar_episodio_
+    para_recaptura`) em vez de bater em `uq_episodio_identidade` e propagar
+    `EpisodioJaExiste` — ver ESPECIFICACAO.md/plano da feature "continuar
+    assistindo"/"liberar arquivo". Fora desses dois casos (ex.: já `PRONTO`
+    na mesma fonte), o comportamento de sempre continua valendo: o insert
+    abaixo bate no unique index e `db/catalogo.py::_inserir_episodio` propaga
+    `EpisodioJaExiste`.
     """
     try:
         resultado = await asyncio.wait_for(
@@ -146,6 +170,24 @@ async def criar_job_site(
             dominio=resultado.dominio,
         )
 
+    episodio_existente = await _localizar_episodio_por_identidade(
+        sessionmaker, anime.id, numero, tipo, versao_do_episodio
+    )
+    if episodio_existente is not None and (
+        episodio_existente.status == StatusEpisodio.LIBERADO
+        or episodio_existente.site_origem != resultado.dominio
+    ):
+        return await _reaproveitar_episodio_para_recaptura(
+            sessionmaker,
+            config,
+            anime.slug,
+            episodio_existente.id,
+            url_fonte=correspondente.url,
+            site_origem=resultado.dominio,
+            numero_fonte=correspondente.numero,
+            duracao_esperada_s=duracao_esperada_s,
+        )
+
     return await catalogo.criar_episodio_e_job(
         sessionmaker,
         anime.id,
@@ -156,6 +198,79 @@ async def criar_job_site(
         site_origem=resultado.dominio,
         duracao_esperada_s=duracao_esperada_s,
     )
+
+
+async def _localizar_episodio_por_identidade(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    numero: int,
+    tipo: TipoEpisodio,
+    versao: VersaoEpisodio,
+) -> Episodio | None:
+    async with sessionmaker() as sessao:
+        resultado = await sessao.execute(
+            select(Episodio).where(
+                Episodio.anime_id == anime_id,
+                Episodio.numero == numero,
+                Episodio.tipo == tipo,
+                Episodio.versao == versao,
+            )
+        )
+        return resultado.scalar_one_or_none()
+
+
+async def _reaproveitar_episodio_para_recaptura(
+    sessionmaker: _SessionMaker,
+    config: Config,
+    anime_slug: str,
+    episodio_id: int,
+    *,
+    url_fonte: str,
+    site_origem: str,
+    numero_fonte: int | None,
+    duracao_esperada_s: int | None,
+) -> int:
+    """D2 — episódio já cadastrado sob a mesma identidade, `LIBERADO` (Feature
+    1) ou capturado numa fonte diferente da resolvida agora: reaproveita a
+    linha em vez de bater em `uq_episodio_identidade`. Apaga os arquivos da
+    captura anterior (`remover_arquivos_do_episodio`, best-effort), zera os
+    campos de mídia e volta o episódio para `PENDENTE`; `assistido_em`
+    sobrevive (indicador de "já assistido" não reinicia numa recaptura), mas
+    `progresso_s`/`progresso_atualizado_em` NÃO sobrevivem — o arquivo novo
+    pode vir de outra fonte/duração, uma posição de retomada antiga não tem
+    relação nenhuma com ele (senão o episódio reapareceria em "continuar
+    assistindo" numa posição sem sentido).
+
+    Levanta `JobEmExecucao` se já existir um `Job` ativo para este episódio —
+    mesma checagem/motivo de `api/servicos/catalogo.py::remover_episodio`/
+    `liberar_episodio` (`job_ativo_do_episodio`): sem isto, um duplo clique em
+    "Recapturar" apagaria arquivos que um worker já está escrevendo e criaria
+    um segundo `Job` para o mesmo episódio.
+
+    Duas transações curtas (mesma filosofia de sessão-por-operação de
+    `db/catalogo.py::criar_episodio_e_job`): atualizar o `Episodio`, depois
+    criar o `Job`."""
+    async with sessionmaker() as sessao:
+        episodio = await sessao.get(Episodio, episodio_id)
+        if episodio is None:
+            raise ErroSlimeStudio(f"episódio {episodio_id} desapareceu antes da recaptura")
+
+        job_ativo_id = await job_ativo_do_episodio(sessao, episodio_id)
+        if job_ativo_id is not None:
+            raise JobEmExecucao(job_ativo_id)
+
+        remover_arquivos_do_episodio(config, anime_slug, episodio)
+        episodio.hls_path = None
+        episodio.tamanho_bytes = None
+        episodio.renditions_disponiveis = None
+        episodio.progresso_s = None
+        episodio.progresso_atualizado_em = None
+        episodio.status = StatusEpisodio.PENDENTE
+        episodio.url_fonte = url_fonte
+        episodio.site_origem = site_origem
+        episodio.numero_fonte = numero_fonte
+        await sessao.commit()
+    return await criar_job_na_fila(sessionmaker, episodio_id, duracao_esperada_s)
 
 
 def versao_episodio_da_fonte(versao_da_fonte: VersaoDeFonte) -> VersaoEpisodio:

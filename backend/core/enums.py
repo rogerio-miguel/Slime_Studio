@@ -72,6 +72,13 @@ class StatusEpisodio(StrEnum):
     PRONTO = "pronto"
     FALHOU = "falhou"
     SOMENTE_720P = "somente_720p"
+    # Terminou de ser assistido (limiar de `usePontoDeAssistido`) e teve seus
+    # arquivos em disco liberados (`api/servicos/catalogo.py::
+    # liberar_episodio`) — distinto de `PENDENTE` (nunca chegou a ser
+    # capturado) porque preserva `assistido_em`/`url_fonte`/`site_origem` da
+    # captura original; uma recaptura volta o episódio para `PENDENTE`
+    # (D2, `api/servicos/jobs.py::criar_job_site`).
+    LIBERADO = "liberado"
 
 
 # Estados que contam como "em andamento" para fins de reclaim por heartbeat

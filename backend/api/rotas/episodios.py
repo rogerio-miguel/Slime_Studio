@@ -13,13 +13,19 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
-from api.esquemas import AtualizarEpisodioRequest, EpisodioSaida
+from api.esquemas import (
+    AtualizarEpisodioRequest,
+    ContinuarAssistindoSaida,
+    EpisodioSaida,
+    SalvarProgressoRequest,
+)
 from api.servicos import catalogo as servico_catalogo
+from api.servicos import progresso as servico_progresso
 from api.servicos.midia import RecursoDeMidiaInvalido, resolver_caminho
 from core.config import Config
 from models.episodio import Episodio
@@ -33,6 +39,81 @@ _TIPO_M3U8 = "application/vnd.apple.mpegurl"
 _TIPO_TS = "video/mp2t"
 _CACHE_MANIFESTO = "private, max-age=60"
 _CACHE_SEGMENTO = "private, max-age=31536000, immutable"
+# Limiar de conclusão espelhando `progresso.py::_LIMIAR_CONCLUSAO` — acima
+# disso, o progresso salvo seria indistinguível de "já assistido", que é o
+# gatilho de `liberar_episodio` (PaginaDoPlayer.jsx), não de salvar posição.
+_LIMIAR_CONCLUSAO_PROGRESSO = 0.9
+
+
+# Path fixo antes de qualquer rota com `{episodio_id}` no mesmo prefixo (mesma
+# armadilha documentada em `api/rotas/animes.py` para `/em-alta`/`/buscar-fontes`
+# vs. `/{anime_id}`) — sem isso um `{episodio_id}` declarado antes engoliria
+# "continuar-assistindo" como valor de id (`int` typing barra a conversão, mas
+# a ordem aqui segue o mesmo padrão defensivo do resto do arquivo).
+@router.get("/continuar-assistindo", response_model=list[ContinuarAssistindoSaida])
+async def continuar_assistindo(
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[ContinuarAssistindoSaida]:
+    linhas = await servico_progresso.listar_continuar_assistindo(sessionmaker)
+    return [
+        ContinuarAssistindoSaida(
+            episodio_id=linha.episodio_id,
+            anime_id=linha.anime_id,
+            anime_titulo=linha.anime_titulo,
+            capa_path=linha.capa_path,
+            numero=linha.numero,
+            titulo=linha.titulo,
+            progresso_s=linha.progresso_s,
+            duracao_s=linha.duracao_s,
+        )
+        for linha in linhas
+    ]
+
+
+@router.get("/{episodio_id}", response_model=EpisodioSaida)
+async def obter_episodio(
+    episodio_id: int, sessao: AsyncSession = Depends(obter_sessao)
+) -> Episodio:
+    """Resolve o fallback de refresh de `PaginaDoPlayer.jsx` (título/anime/
+    progresso quando `location.state` não veio, ex. acesso direto à URL)."""
+    episodio = await sessao.get(Episodio, episodio_id)
+    if episodio is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="episódio não encontrado"
+        )
+    return episodio
+
+
+@router.post("/{episodio_id}/progresso", status_code=status.HTTP_204_NO_CONTENT)
+async def salvar_progresso(
+    episodio_id: int,
+    corpo: SalvarProgressoRequest,
+    sessao: AsyncSession = Depends(obter_sessao),
+) -> None:
+    linha = (
+        await sessao.execute(select(Episodio.duracao_s).where(Episodio.id == episodio_id))
+    ).first()
+    if linha is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="episódio não encontrado"
+        )
+    (duracao_s,) = linha
+    if duracao_s is not None and corpo.segundos > _LIMIAR_CONCLUSAO_PROGRESSO * duracao_s:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="segundos além do limiar de conclusão do episódio — use /assistido",
+        )
+
+    resultado = await sessao.execute(
+        update(Episodio)
+        .where(Episodio.id == episodio_id)
+        .values(progresso_s=corpo.segundos, progresso_atualizado_em=datetime.now(UTC))
+    )
+    if resultado.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="episódio não encontrado"
+        )
+    await sessao.commit()
 
 
 @router.get("/{episodio_id}/playlist.m3u8")
@@ -96,6 +177,22 @@ async def marcar_assistido(
             status_code=status.HTTP_404_NOT_FOUND, detail="episódio não encontrado"
         )
     await sessao.commit()
+
+
+@router.post("/{episodio_id}/liberar", status_code=status.HTTP_204_NO_CONTENT)
+async def liberar_episodio(
+    episodio_id: int,
+    config: Config = Depends(obter_config),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> None:
+    """Rota pública (não `admin`) — ação do fluxo do player, disparada ao sair
+    de um episódio já assistido (Feature "liberar arquivo ao terminar"), não
+    gestão de catálogo."""
+    liberado = await servico_catalogo.liberar_episodio(sessionmaker, config, episodio_id)
+    if not liberado:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="episódio não encontrado"
+        )
 
 
 @router_admin.patch("/{episodio_id}", response_model=EpisodioSaida)

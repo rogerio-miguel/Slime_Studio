@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.dependencias import obter_sessao, obter_sessionmaker
+from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
 from api.esquemas import (
     CancelarJobSaida,
     CriarJobLocalRequest,
@@ -15,6 +15,7 @@ from api.esquemas import (
     RetryJobSaida,
 )
 from api.servicos import jobs as servico_jobs
+from core.config import Config
 from core.enums import StatusJob
 from db.fila import reagendar_para_retry, solicitar_cancelamento
 from models.anime import Anime
@@ -30,6 +31,7 @@ async def criar_job(
     corpo: CriarJobRequest,
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
     sessao: AsyncSession = Depends(obter_sessao),
+    config: Config = Depends(obter_config),
 ) -> JobCriadoSaida:
     if isinstance(corpo, CriarJobLocalRequest):
         job_id = await servico_jobs.criar_job_local(
@@ -51,6 +53,7 @@ async def criar_job(
             )
         job_id = await servico_jobs.criar_job_site(
             sessionmaker,
+            config,
             anime=anime,
             numero=corpo.numero,
             tipo=corpo.tipo,
