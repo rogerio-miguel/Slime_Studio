@@ -26,6 +26,17 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_S = 15
 _SUFIXO_TODOS_EPISODIOS = "-todos-os-episodios"
 _REGEX_SUFIXO_QUALIDADE = re.compile(r"\s+\d+\.\d+\s+[A-Z\d]+$")
+# `/pesquisar/<termo>` do AnimeFire casa por prefixo do título principal, não
+# por texto completo — qualquer palavra de um subtítulo depois de ":"/"~"/" - "
+# já zera o resultado (confirmado ao vivo: título com subtítulo devolve 0
+# resultados mesmo sem o ":" literal, mas o título truncado antes do separador
+# encontra o card normalmente). Espaço obrigatório em pelo menos um lado do
+# separador — evita cortar hífen interno de palavra composta (ex.
+# "Keishou-sen") E evita tratar ":"/"~" colado ao texto (ex. "Re:Zero") como
+# separador de subtítulo — esse segundo caso truncaria pra um prefixo curto
+# demais ("Re") e arriscaria casar o card de outro anime por prefix-match,
+# trocando silenciosamente "não encontrei" por "encontrei o errado".
+_REGEX_SEPARADOR_SUBTITULO = re.compile(r"\s*[:~]\s+|\s+[:~]\s*|\s+[-–—]\s+")
 
 
 class AnimeFireProvider(ExtratorDeSite):
@@ -40,7 +51,25 @@ class AnimeFireProvider(ExtratorDeSite):
         return False
 
     def buscar(self, cliente: ClienteDeSite, titulo: str) -> list[ResultadoBusca]:
-        busca_formatada = titulo.strip().replace(" ", "-").lower()
+        candidatos = _candidatos_de_busca(titulo)
+        for i, candidato in enumerate(candidatos):
+            e_ultimo = i == len(candidatos) - 1
+            resultados = self._buscar_termo(cliente, candidato, e_ultimo=e_ultimo)
+            if resultados:
+                if i > 0:
+                    logger.info(
+                        "AnimeFire: busca por %r vazia, encontrado com título"
+                        " truncado no subtítulo (%r)",
+                        titulo,
+                        candidato,
+                    )
+                return resultados
+        return []
+
+    def _buscar_termo(
+        self, cliente: ClienteDeSite, termo: str, *, e_ultimo: bool
+    ) -> list[ResultadoBusca]:
+        busca_formatada = termo.strip().replace(" ", "-").lower()
         url = f"{self.BASE_URL}/pesquisar/{busca_formatada}"
         try:
             html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)
@@ -50,10 +79,12 @@ class AnimeFireProvider(ExtratorDeSite):
             # tratava isso explicitamente) — não é falha, é "zero resultados".
             # Cinto e suspensório: `FonteNaoEncontrada` já não conta como falha
             # no circuit breaker (`core/erros.py`), mas capturar aqui deixa
-            # explícito por que esse 404 específico é normal.
-            logger.warning(
-                "AnimeFire: busca por %r não encontrou nada (404) em %s", titulo, url
-            )
+            # explícito por que esse 404 específico é normal. `warning` só na
+            # última tentativa — título com subtítulo 404 no candidato completo
+            # por design (`_candidatos_de_busca`), aí o fallback resolve; isso
+            # é esperado, não um sinal de alerta.
+            log = logger.warning if e_ultimo else logger.info
+            log("AnimeFire: busca por %r não encontrou nada (404) em %s", termo, url)
             return []
 
         try:
@@ -111,25 +142,37 @@ class AnimeFireProvider(ExtratorDeSite):
         try:
             soup = BeautifulSoup(html, "html.parser")
             vistos: set[str] = set()
+            total_brutos = 0
             episodios: list[EpisodioRemoto] = []
             for tag_a in soup.find_all("a", href=True):
                 href = tag_a["href"]
-                if marcador not in href or href in vistos:
+                if marcador not in href:
+                    continue
+                total_brutos += 1
+                if href in vistos:
                     continue
                 vistos.add(href)
 
-                numero_bruto = href.rstrip("/").rsplit("/", 1)[-1]
+                # `rotulo` é o próprio texto do path (não o texto visível do
+                # link) — dedup acontece por `href` acima, não por este valor;
+                # aqui só decide se o episódio tem `numero` capturável ou
+                # segue com `numero=None` (rótulo não numérico, ex. "especial"
+                # — aparece normalmente na lista, só não é capturável ainda).
+                rotulo = href.rstrip("/").rsplit("/", 1)[-1]
                 try:
-                    numero = int(numero_bruto)
+                    numero = int(rotulo)
                 except ValueError:
-                    logger.warning(
-                        "AnimeFire: número de episódio não numérico ignorado (%r) em %s",
-                        numero_bruto,
+                    numero = None
+                    logger.info(
+                        "AnimeFire: episódio com rótulo não numérico (%r) incluído sem número"
+                        " em %s",
+                        rotulo,
                         href,
                     )
-                    continue
 
-                episodios.append(EpisodioRemoto(numero=numero, url=self._absolutizar(href)))
+                episodios.append(
+                    EpisodioRemoto(rotulo=rotulo, numero=numero, url=self._absolutizar(href))
+                )
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(
                 f"estrutura da listagem de episódios do AnimeFire mudou: {excecao}",
@@ -141,6 +184,13 @@ class AnimeFireProvider(ExtratorDeSite):
                 f"nenhum episódio encontrado para {identificador!r} no AnimeFire",
                 dominio=self.dominio,
             )
+
+        logger.info(
+            "AnimeFire: %d episódio(s) brutos encontrados para %r, %d após dedup",
+            total_brutos,
+            identificador,
+            len(episodios),
+        )
 
         # AnimeFire já lista os episódios do mais antigo pro mais novo na página
         # (confirmado contra o site real) — sem reverter aqui.
@@ -196,3 +246,15 @@ class AnimeFireProvider(ExtratorDeSite):
         if segmento.endswith(_SUFIXO_TODOS_EPISODIOS):
             segmento = segmento[: -len(_SUFIXO_TODOS_EPISODIOS)]
         return segmento
+
+
+def _candidatos_de_busca(titulo: str) -> list[str]:
+    """Título completo primeiro (caso comum, sem subtítulo ou onde a busca já
+    funciona); se houver separador de subtítulo, o título truncado antes dele
+    entra como 2º candidato — só usado se o 1º não achar nada (`buscar`)."""
+    titulo = titulo.strip()
+    candidatos = [titulo]
+    principal = _REGEX_SEPARADOR_SUBTITULO.split(titulo, maxsplit=1)[0].strip()
+    if principal and principal != titulo:
+        candidatos.append(principal)
+    return candidatos

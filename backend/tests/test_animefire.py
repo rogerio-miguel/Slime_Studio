@@ -23,12 +23,18 @@ def extrator() -> AnimeFireProvider:
     return AnimeFireProvider()
 
 
-class _ClienteQueDevolve404:
-    """Fake mínimo de `ClienteDeSite` que simula HTTP 404 (`FonteNaoEncontrada`)
-    — `ClienteFalso` (conftest.py) só devolve HTML pré-programado, nunca
-    levanta exceção, então não serve pra este caso."""
+class _ClienteComExcecoes404:
+    """Fake de `ClienteDeSite`: URLs em `html_por_url` respondem com o HTML
+    programado, qualquer outra URL simula HTTP 404 (`FonteNaoEncontrada`) —
+    `ClienteFalso` (conftest.py) não serve pra isso porque levanta
+    `AssertionError` em vez de simular 404 numa URL não mapeada."""
+
+    def __init__(self, html_por_url: dict[str, str] | None = None) -> None:
+        self._html_por_url = html_por_url or {}
 
     def obter_html(self, url: str, *, timeout_s: int) -> str:
+        if url in self._html_por_url:
+            return self._html_por_url[url]
         raise FonteNaoEncontrada(f"não encontrado: {url}")
 
     def obter_json(self, url: str, *, timeout_s: int) -> dict | list:
@@ -84,12 +90,79 @@ def test_buscar_sem_resultado_devolve_lista_vazia(extrator):
 
 
 def test_buscar_404_devolve_lista_vazia_sem_levantar_excecao(extrator):
-    resultados = extrator.buscar(_ClienteQueDevolve404(), "Anime Inexistente")
+    resultados = extrator.buscar(_ClienteComExcecoes404(), "Anime Inexistente")
 
     assert resultados == []
 
 
-def test_listar_episodios_deduplica_ordena_e_ignora_nao_numerico(extrator):
+def test_buscar_titulo_com_subtitulo_cai_para_principal_quando_completo_vazio(extrator):
+    """AnimeFire casa busca por prefixo do título principal — um subtítulo
+    depois de ':' zera o resultado mesmo pra um anime que existe no site
+    (confirmado ao vivo contra animefire.io). `buscar` cai pro título truncado
+    antes do separador como 2º candidato."""
+    titulo = "Anime Principal: Subtitulo Aqui"
+    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal:-subtitulo-aqui"
+    url_truncado = f"{extrator.BASE_URL}/pesquisar/anime-principal"
+    cliente = ClienteFalso(
+        html_por_url={
+            url_completo: _ler_fixture("busca_vazia.html"),
+            url_truncado: _ler_fixture("busca.html"),
+        }
+    )
+
+    resultados = extrator.buscar(cliente, titulo)
+
+    assert resultados
+    assert resultados[0].identificador == "tensei-shitara-slime-datta-ken"
+
+
+def test_buscar_titulo_com_subtitulo_e_404_no_completo_tambem_cai_para_truncado(extrator):
+    """Mesmo fallback quando o candidato completo dá HTTP 404 em vez de 200
+    vazio — os dois comportamentos foram observados ao vivo pro AnimeFire
+    dependendo do título (ex: presença literal de ':' na URL)."""
+    titulo = "Anime Principal: Subtitulo Aqui"
+    url_truncado = f"{extrator.BASE_URL}/pesquisar/anime-principal"
+    cliente = _ClienteComExcecoes404({url_truncado: _ler_fixture("busca.html")})
+
+    resultados = extrator.buscar(cliente, titulo)
+
+    assert resultados
+    assert resultados[0].identificador == "tensei-shitara-slime-datta-ken"
+
+
+def test_buscar_titulo_com_subtitulo_nao_tenta_truncado_quando_completo_ja_acha(extrator):
+    """Quando o candidato completo já acha resultado, não desperdiça uma 2ª
+    requisição — `ClienteFalso` levanta `AssertionError` numa URL não mapeada,
+    então isso também prova que o candidato truncado não chegou a ser chamado."""
+    titulo = "Anime Principal: Subtitulo Aqui"
+    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal:-subtitulo-aqui"
+    cliente = ClienteFalso(html_por_url={url_completo: _ler_fixture("busca.html")})
+
+    resultados = extrator.buscar(cliente, titulo)
+
+    assert resultados
+    assert resultados[0].identificador == "tensei-shitara-slime-datta-ken"
+
+
+def test_buscar_dois_pontos_colado_ao_texto_nao_e_tratado_como_subtitulo(extrator):
+    """":" sem espaço nenhum ao redor é parte do título (ex: "Re:Zero"), não
+    separador de subtítulo — tratar como separador truncaria pra um prefixo
+    curto demais ("Re") e arriscaria casar o card de outro anime por
+    prefix-match do AnimeFire, trocando silenciosamente "não encontrei" por
+    "encontrei o errado". Só 1 candidato tentado — `ClienteFalso` levantaria
+    `AssertionError` numa 2ª URL não mapeada se o código tentasse truncar."""
+    titulo = "Re:Zero kara Hajimeru Isekai Seikatsu"
+    url_busca = f"{extrator.BASE_URL}/pesquisar/re:zero-kara-hajimeru-isekai-seikatsu"
+    cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca_vazia.html")})
+
+    assert extrator.buscar(cliente, titulo) == []
+
+
+def test_listar_episodios_deduplica_e_inclui_rotulo_nao_numerico_sem_numero(extrator):
+    """`episodios.html` tem um episódio "2" duplicado (mesmo href, dedup por
+    href) e um rótulo não numérico ("especial") — que não é mais descartado:
+    entra na lista com `numero=None` (decisão do produto: sem seção
+    "especial" separada, só não capturável ainda)."""
     identificador = "tensei-shitara-slime-datta-ken"
     url_anime = f"{extrator.BASE_URL}/animes/{identificador}-todos-os-episodios"
     cliente = ClienteFalso(html_por_url={url_anime: _ler_fixture("episodios.html")})
@@ -97,9 +170,20 @@ def test_listar_episodios_deduplica_ordena_e_ignora_nao_numerico(extrator):
     episodios = extrator.listar_episodios(cliente, identificador)
 
     assert episodios == [
-        EpisodioRemoto(numero=1, url=f"{extrator.BASE_URL}/animes/{identificador}/1"),
-        EpisodioRemoto(numero=2, url=f"{extrator.BASE_URL}/animes/{identificador}/2"),
-        EpisodioRemoto(numero=3, url=f"{extrator.BASE_URL}/animes/{identificador}/3"),
+        EpisodioRemoto(
+            rotulo="1", numero=1, url=f"{extrator.BASE_URL}/animes/{identificador}/1"
+        ),
+        EpisodioRemoto(
+            rotulo="2", numero=2, url=f"{extrator.BASE_URL}/animes/{identificador}/2"
+        ),
+        EpisodioRemoto(
+            rotulo="especial",
+            numero=None,
+            url=f"{extrator.BASE_URL}/animes/{identificador}/especial",
+        ),
+        EpisodioRemoto(
+            rotulo="3", numero=3, url=f"{extrator.BASE_URL}/animes/{identificador}/3"
+        ),
     ]
 
 
