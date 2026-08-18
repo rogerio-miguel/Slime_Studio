@@ -1,11 +1,16 @@
 """Testes de `GET /api/animes/buscar-fontes` (`api/rotas/animes.py` ->
+`api/servicos/busca.py::buscar_com_titulos_alternativos` ->
 `extractors/servico.py::buscar_em_todas_as_fontes` ->
 `api/servicos/busca.py::enriquecer_capas`). `buscar_em` é monkeypatchado em
 `extractors.servico` (mesmo módulo que a rota chama via `servico_extractors`,
 então o patch vale pros dois nomes) — mesmo padrão de `test_api_animes.py`
 para resolução de fonte. Testes cujos candidatos falsos saem sem `capa_url`
 também monkeypatcham `integrations.servico.buscar_por_titulo` — sem isso,
-`enriquecer_capas` tentaria consultar AniList/Kitsu de verdade."""
+`enriquecer_capas` tentaria consultar AniList/Kitsu de verdade. Pelo mesmo
+motivo, testes cuja rodada original vem vazia em todas as fontes disponíveis
+(condição de expansão de `busca.py::_merece_expansao`) também monkeypatcham
+`integrations.servico.buscar_titulos` — sem isso, a expansão por título
+alternativo tentaria consultar AniList/Kitsu de verdade."""
 
 from datetime import UTC, datetime
 
@@ -13,6 +18,7 @@ import pytest
 from httpx import AsyncClient
 
 from extractors.base import ResultadoBusca
+from integrations.base import TitulosDeAnime
 
 
 async def test_buscar_fontes_titulo_vazio_nao_chama_extrator(
@@ -26,7 +32,7 @@ async def test_buscar_fontes_titulo_vazio_nao_chama_extrator(
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "   "})
 
     assert resposta.status_code == 200
-    assert resposta.json() == {"resultados": [], "fontes": []}
+    assert resposta.json() == {"resultados": [], "fontes": [], "termo_alternativo": None}
 
 
 async def test_buscar_fontes_falha_de_um_extrator_nao_derruba_resposta(
@@ -116,9 +122,16 @@ async def test_buscar_fontes_cooldown_sem_timestamp_usa_motivo_generico(
     async def _buscar_em_fake(sessionmaker, dominio, titulo):
         return []
 
+    async def _buscar_titulos_fake(titulo):
+        return None
+
     monkeypatch.setattr("extractors.circuit_breaker.esta_em_cooldown", _esta_em_cooldown_fake)
     monkeypatch.setattr("extractors.circuit_breaker.obter_cooldown_ate", _obter_cooldown_ate_fake)
     monkeypatch.setattr("extractors.servico.buscar_em", _buscar_em_fake)
+    # A única fonte disponível (animesdrive.online) vem vazia -> dispara a
+    # expansão por título alternativo (`_merece_expansao`); sem este patch,
+    # bateria no AniList/Kitsu de verdade.
+    monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})
 
@@ -137,14 +150,62 @@ async def test_buscar_fontes_registrada_antes_do_catch_all_anime_id(
     async def _buscar_em_fake(sessionmaker, dominio, titulo):
         return []
 
+    async def _buscar_titulos_fake(titulo):
+        return None
+
     monkeypatch.setattr("extractors.servico.buscar_em", _buscar_em_fake)
+    # Ambas as fontes disponíveis vêm vazias -> dispara a expansão por título
+    # alternativo (`_merece_expansao`); sem este patch, bateria no AniList/
+    # Kitsu de verdade.
+    monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})
 
     assert resposta.status_code == 200
     corpo = resposta.json()
     assert corpo["resultados"] == []
+    assert corpo["termo_alternativo"] is None
     assert {fonte["dominio"] for fonte in corpo["fontes"]} == {
         "animefire.io",
         "animesdrive.online",
     }
+
+
+async def test_buscar_fontes_expande_com_titulo_alternativo_quando_termo_digitado_vazio(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Ponta a ponta da tolerância a idioma (D3 do plano): a busca com o termo
+    digitado vem vazia em todas as fontes disponíveis, mas o provedor de
+    metadados acha um título alternativo (romaji) que devolve candidato — a
+    resposta final expõe esse candidato junto com `termo_alternativo`
+    preenchido, para a UI avisar que o resultado veio de um termo diferente."""
+
+    async def _buscar_em_fake(sessionmaker, dominio, titulo):
+        if titulo == "naruto":
+            return []
+        if dominio == "animefire.io":
+            return [
+                ResultadoBusca(
+                    titulo_exibicao="Naruto Shippuden",
+                    identificador="1",
+                    url="https://x/1",
+                    capa_url="https://cdn/naruto.jpg",
+                )
+            ]
+        return []
+
+    async def _buscar_titulos_fake(titulo):
+        assert titulo == "naruto"
+        return TitulosDeAnime(titulo_romaji="Naruto Shippuden", titulo_ingles=None)
+
+    monkeypatch.setattr("extractors.servico.buscar_em", _buscar_em_fake)
+    monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
+
+    resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["termo_alternativo"] == "Naruto Shippuden"
+    assert len(corpo["resultados"]) == 1
+    assert corpo["resultados"][0]["titulo_exibicao"] == "Naruto Shippuden"
+    assert corpo["resultados"][0]["dominio"] == "animefire.io"

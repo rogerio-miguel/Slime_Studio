@@ -166,16 +166,33 @@ class BuscaEmFontesSaida(BaseModel):
 
     resultados: list[ResultadoBuscaFonteSaida]
     fontes: list[FonteConsultadaSaida]
+    # Preenchido quando a busca com o termo digitado veio vazia e os resultados
+    # acima vieram de um título alternativo do mesmo anime (romaji/inglês,
+    # via provedor de metadados). `None` = resultados do termo digitado.
+    termo_alternativo: str | None = None
 
 
 class EpisodioRemotoSaida(BaseModel):
-    """Posição na fonte remota (site) — `extractors.base.EpisodioRemoto` só carrega
-    `numero`/`url`, sem título; a grade prontos/não capturados do frontend cruza
-    isto com `EpisodioSaida.numero` de `GET /api/animes/{id}/episodios`."""
+    """Posição na fonte remota (site) — `extractors.base.EpisodioRemoto` não expõe
+    `url` aqui (uso só server-side); a grade prontos/não capturados do frontend
+    cruza `numero` com `EpisodioSaida.numero` de `GET /api/animes/{id}/episodios`.
+    `numero` é `None` quando `rotulo` não é puramente numérico (ex. "Especial")
+    — o episódio ainda aparece na listagem, só não é capturável ainda."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    numero: int
+    rotulo: str
+    numero: int | None
+
+
+class EpisodiosRemotosSaida(BaseModel):
+    """Corpo de `GET /api/admin/animes/{id}/episodios-remotos`: `dominio` expõe
+    qual site resolveu a lista de episódios abaixo — sem isto o usuário não tinha
+    como notar quando a fonte "errada" (com contagem divergente) foi a
+    resolvida, causa mais provável de divergência de contagem de episódios."""
+
+    dominio: str
+    episodios: list[EpisodioRemotoSaida]
 
 
 # --- episódios (api/rotas/episodios.py) ---
