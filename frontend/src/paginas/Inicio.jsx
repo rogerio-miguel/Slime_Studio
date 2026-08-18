@@ -156,15 +156,27 @@ export default function Inicio() {
   // extração (subseção "Resultados em outras fontes"): cria o anime e já
   // confirma a fonte (`POST .../fontes/confirmar`) — sem isso, o job de
   // captura pediria confirmação de novo na página do anime.
+  //
+  // `capaUrl` precisa vir junto: `resultado.capa_url` já saiu resolvido do
+  // backend (`api/servicos/busca.py::enriquecer_capas` cobre qualquer fonte
+  // sem capa própria via AniList/Kitsu antes de chegar aqui) — sem repassar,
+  // `criarAnime` chega sem capa nenhuma e força `enriquecer_anime_criado` a
+  // reconsultar o provedor do zero por título, uma segunda tentativa
+  // best-effort independente que pode falhar silenciosamente e descartar a
+  // capa que já tínhamos em mãos.
   const materializarFonteEIrPara = useCallback(
     (resultado) =>
       materializar(`${resultado.dominio}:${resultado.identificador}`, async () => {
-        const criado = await criarAnime({ titulo: resultado.titulo_exibicao });
+        const criado = await criarAnime({
+          titulo: resultado.titulo_exibicao,
+          capaUrl: resultado.capa_url ?? undefined,
+        });
         await confirmarFonte(criado.id, {
           dominio: resultado.dominio,
           identificador: resultado.identificador,
           tituloExibicao: resultado.titulo_exibicao,
           url: resultado.url,
+          versao: resultado.versao ?? null,
         });
         return criado;
       }),
