@@ -16,7 +16,7 @@ import requests
 from core.erros import FalhaDeMetadados
 from integrations import servico
 from integrations.anilist import AniListProvider
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados
+from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
 from integrations.kitsu import KitsuProvider
 
 
@@ -112,6 +112,37 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
+def test_anilist_buscar_titulos(monkeypatch: pytest.MonkeyPatch):
+    corpo = {"data": {"Media": {"title": {"romaji": "Tensei", "english": "Reincarnated"}}}}
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_titulos("Slime")
+
+    assert resultado == TitulosDeAnime(titulo_romaji="Tensei", titulo_ingles="Reincarnated")
+
+
+def test_anilist_buscar_titulos_so_romaji_presente(monkeypatch: pytest.MonkeyPatch):
+    corpo = {"data": {"Media": {"title": {"romaji": "Tensei", "english": None}}}}
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_titulos("Slime")
+
+    assert resultado == TitulosDeAnime(titulo_romaji="Tensei", titulo_ingles=None)
+
+
+def test_anilist_buscar_titulos_media_null_devolve_none(monkeypatch: pytest.MonkeyPatch):
+    corpo = {"data": {"Media": None}}
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    assert AniListProvider().buscar_titulos("titulo inexistente") is None
+
+
 # --- KitsuProvider ---
 
 
@@ -157,7 +188,10 @@ def test_kitsu_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
                     "canonicalTitle": "Slime",
                     "titles": {
                         "en": "That Time I Got Reincarnated as a Slime",
-                        "ja_jp": "Tensei",
+                        # `en_jp` é o romaji (mesmo campo usado por
+                        # `buscar_titulos`) — `ja_jp` seria o título em kanji,
+                        # inútil como `titulo_romaji`.
+                        "en_jp": "Tensei",
                     },
                     "posterImage": {"original": "https://img/poster.jpg"},
                     "coverImage": {"original": "https://img/cover.jpg"},
@@ -182,14 +216,96 @@ def test_kitsu_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
     ]
 
 
+def test_kitsu_buscar_titulos_usa_en_jp_e_en(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": [
+            {
+                "id": "42",
+                "attributes": {
+                    "canonicalTitle": "Slime",
+                    "titles": {
+                        "en_jp": "Tensei Shitara Slime Datta Ken",
+                        "ja_jp": "転生したらスライムだった件",
+                        "en": "That Time I Got Reincarnated as a Slime",
+                    },
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = KitsuProvider().buscar_titulos("Slime")
+
+    assert resultado == TitulosDeAnime(
+        titulo_romaji="Tensei Shitara Slime Datta Ken",
+        titulo_ingles="That Time I Got Reincarnated as a Slime",
+    )
+
+
+def test_kitsu_listar_em_alta_sem_en_jp_cai_para_canonical_title(monkeypatch: pytest.MonkeyPatch):
+    """Regressão: `ja_jp` (kanji) não pode ser usado como `titulo_romaji` —
+    só `en_jp`/`canonicalTitle`. Sem `en_jp`, cai pro `canonicalTitle`, nunca
+    pro kanji de `ja_jp`."""
+    corpo = {
+        "data": [
+            {
+                "attributes": {
+                    "canonicalTitle": "Slime",
+                    "titles": {"ja_jp": "転生したらスライムだった件"},
+                    "posterImage": None,
+                    "coverImage": None,
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = KitsuProvider().listar_em_alta()
+
+    assert resultado[0].titulo_romaji == "Slime"
+
+
+def test_kitsu_buscar_titulos_sem_en_jp_cai_para_canonical_title(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    corpo = {
+        "data": [
+            {
+                "id": "42",
+                "attributes": {"canonicalTitle": "Slime", "titles": {}},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = KitsuProvider().buscar_titulos("Slime")
+
+    assert resultado == TitulosDeAnime(titulo_romaji="Slime", titulo_ingles=None)
+
+
 # --- cadeia de fallback (integrations/servico.py) ---
 
 
 class _ProvedorFake(ProvedorDeMetadados):
-    def __init__(self, nome: str, *, metadados=None, em_alta=None, erro: Exception | None = None):
+    def __init__(
+        self,
+        nome: str,
+        *,
+        metadados=None,
+        em_alta=None,
+        titulos=None,
+        erro: Exception | None = None,
+    ):
         self._nome = nome
         self._metadados = metadados
         self._em_alta = em_alta or []
+        self._titulos = titulos
         self._erro = erro
 
     @property
@@ -205,6 +321,11 @@ class _ProvedorFake(ProvedorDeMetadados):
         if self._erro is not None:
             raise self._erro
         return self._em_alta
+
+    def buscar_titulos(self, titulo: str):
+        if self._erro is not None:
+            raise self._erro
+        return self._titulos
 
 
 @pytest.fixture(autouse=True)
@@ -259,6 +380,30 @@ async def test_servico_nao_encontrado_em_nenhum_provedor_devolve_none(
     assert await servico.buscar_por_titulo("Slime") is None
 
 
+async def test_servico_buscar_titulos_cai_para_kitsu_quando_anilist_falha(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    esperado = TitulosDeAnime(titulo_romaji="Tensei", titulo_ingles="Reincarnated")
+    anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
+    kitsu = _ProvedorFake("kitsu", titulos=esperado)
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    resultado = await servico.buscar_titulos("Slime")
+
+    assert resultado is esperado
+
+
+async def test_servico_buscar_titulos_levanta_falha_de_metadados_quando_todos_falham(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
+    kitsu = _ProvedorFake("kitsu", erro=requests.ConnectionError("falhou"))
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.buscar_titulos("Slime")
+
+
 async def test_servico_timeout_de_provedor_cai_para_o_proximo(monkeypatch: pytest.MonkeyPatch):
     class _ProvedorLento(ProvedorDeMetadados):
         @property
@@ -271,6 +416,9 @@ async def test_servico_timeout_de_provedor_cai_para_o_proximo(monkeypatch: pytes
 
         def listar_em_alta(self):
             return []
+
+        def buscar_titulos(self, titulo: str):
+            return None
 
     esperado = MetadadosDeAnime(capa_url=None, sinopse=None, anilist_id=1, kitsu_id=None)
     rapido = _ProvedorFake("rapido", metadados=esperado)
@@ -337,6 +485,9 @@ async def test_servico_em_alta_concorrencia_compartilha_uma_unica_busca(
             chamadas.append(1)
             time.sleep(0.05)
             return [item]
+
+        def buscar_titulos(self, titulo: str):
+            return None
 
     monkeypatch.setattr(servico, "PROVEDORES", (_ProvedorLento(),))
 

@@ -7,7 +7,7 @@ mora a fronteira de exceção HTTP.
 
 import requests
 
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados
+from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
 
 _BASE_URL = "https://kitsu.io/api/edge"
 # Ver `integrations/anilist.py::_TIMEOUT_S` — mesmo raciocínio: estritamente
@@ -21,6 +21,36 @@ class KitsuProvider(ProvedorDeMetadados):
         return "kitsu"
 
     def buscar_por_titulo(self, titulo: str) -> MetadadosDeAnime | None:
+        item = self._primeiro_anime(titulo)
+        if item is None:
+            return None
+
+        atributos = item.get("attributes") or {}
+        return MetadadosDeAnime(
+            capa_url=_maior_imagem(atributos.get("posterImage")),
+            sinopse=_texto_ou_none(atributos.get("synopsis")),
+            anilist_id=None,
+            kitsu_id=_id_numerico(item.get("id")),
+        )
+
+    def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
+        item = self._primeiro_anime(titulo)
+        if item is None:
+            return None
+
+        atributos = item.get("attributes") or {}
+        titulos = atributos.get("titles") or {}
+        # `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em kanji, inútil
+        # pros sites de extração brasileiros (todos indexam romaji/inglês).
+        titulo_romaji = _texto_ou_none(titulos.get("en_jp")) or _texto_ou_none(
+            atributos.get("canonicalTitle")
+        )
+        titulo_ingles = _texto_ou_none(titulos.get("en"))
+        if titulo_romaji is None and titulo_ingles is None:
+            return None
+        return TitulosDeAnime(titulo_romaji=titulo_romaji, titulo_ingles=titulo_ingles)
+
+    def _primeiro_anime(self, titulo: str) -> dict | None:
         resposta = requests.get(
             f"{_BASE_URL}/anime",
             params={"filter[text]": titulo, "page[limit]": 1},
@@ -31,15 +61,7 @@ class KitsuProvider(ProvedorDeMetadados):
         itens = resposta.json().get("data")
         if not isinstance(itens, list) or not itens:
             return None
-
-        item = itens[0]
-        atributos = item.get("attributes") or {}
-        return MetadadosDeAnime(
-            capa_url=_maior_imagem(atributos.get("posterImage")),
-            sinopse=_texto_ou_none(atributos.get("synopsis")),
-            anilist_id=None,
-            kitsu_id=_id_numerico(item.get("id")),
-        )
+        return itens[0]
 
     def listar_em_alta(self) -> list[AnimeEmAlta]:
         # Sem `page[limit]`, o endpoint volta só o padrão da API (~10-12
@@ -61,7 +83,9 @@ class KitsuProvider(ProvedorDeMetadados):
             titulos = atributos.get("titles") or {}
             resultado.append(
                 AnimeEmAlta(
-                    titulo_romaji=titulos.get("ja_jp") or atributos.get("canonicalTitle") or "",
+                    # `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em
+                    # kanji (mesmo cuidado de `buscar_titulos`, acima).
+                    titulo_romaji=titulos.get("en_jp") or atributos.get("canonicalTitle") or "",
                     titulo_ingles=titulos.get("en"),
                     capa_url=_maior_imagem(atributos.get("posterImage")),
                     banner_url=_maior_imagem(atributos.get("coverImage")),

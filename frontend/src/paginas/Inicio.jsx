@@ -86,11 +86,16 @@ export default function Inicio() {
     () =>
       termoBuscaSubmetido
         ? buscarEmFontes(termoBuscaSubmetido)
-        : Promise.resolve({ resultados: [], fontes: [] }),
+        : Promise.resolve({ resultados: [], fontes: [], termo_alternativo: null }),
     [termoBuscaSubmetido]
   );
   const resultadosFontes = buscaEmFontes.dados?.resultados ?? [];
   const fontesConsultadas = buscaEmFontes.dados?.fontes ?? [];
+  // Preenchido quando a busca com o termo digitado veio vazia e os resultados
+  // acima vieram de um título alternativo do mesmo anime (romaji/inglês) —
+  // avisa o usuário em vez de trocar o resultado em silêncio (busca fuzzy do
+  // provedor pode casar anime errado).
+  const termoAlternativo = buscaEmFontes.dados?.termo_alternativo ?? null;
   const fontesIndisponiveis = fontesConsultadas.filter((fonte) => fonte.indisponivel);
   // Toda fonte consultada falhou/está em cooldown — "não consegui nem
   // tentar", diferente de "busquei e não achei nada" (pelo menos uma fonte
@@ -315,6 +320,12 @@ export default function Inicio() {
                 !buscaEmFontes.erro &&
                 resultadosFontes.length > 0 && (
                   <>
+                    {termoAlternativo && (
+                      <p className="mb-4 text-sm text-ink-muted">
+                        Nenhum resultado para “{termoBuscaSubmetido}”. Mostrando resultados para “
+                        {termoAlternativo}”.
+                      </p>
+                    )}
                     <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
                       {resultadosFontes.map((resultado, indice) => {
                         const chave = `${resultado.dominio}:${resultado.identificador}`;
