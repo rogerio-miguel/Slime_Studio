@@ -2,10 +2,11 @@
 cancelar/retry. Resolução de fonte remota (modo "site") é monkeypatchada nos
 nomes importados em `api.servicos.jobs` — o comportamento de
 `extractors.resolucao`/`extractors.servico` em si já tem testes próprios
-(`tests/test_resolucao.py`)."""
+(`tests/test_resolucao.py`, `tests/test_extractors_servico.py`)."""
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusJob
@@ -133,7 +134,7 @@ async def test_criar_job_modo_site_episodio_nao_encontrado_404(
         return FonteResolvida(dominio="animefire.io", identificador="42")
 
     async def _listar_fake(sessionmaker, dominio, identificador):
-        return [EpisodioRemoto(numero=2, url="https://x/ep2")]
+        return [EpisodioRemoto(rotulo="2", numero=2, url="https://x/ep2")]
 
     monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
@@ -144,6 +145,45 @@ async def test_criar_job_modo_site_episodio_nao_encontrado_404(
     )
 
     assert resposta.status_code == 404
+
+
+async def test_criar_job_modo_site_colisao_de_numero_usa_primeiro_e_loga(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    """Dois rótulos remotos ("7"/"07") mapeiam pro mesmo `numero=7` — regressão
+    da ambiguidade introduzida por dedup-por-rótulo (extractors/base.py::
+    EpisodioRemoto). Escolha determinística (1ª ocorrência) e log de aviso,
+    nunca silenciosa (CLAUDE.md §4)."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Colisao")
+
+    async def _resolver_fake(sessionmaker, anime):
+        return FonteResolvida(dominio="animefire.io", identificador="42")
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [
+            EpisodioRemoto(rotulo="7", numero=7, url="https://x/ep7"),
+            EpisodioRemoto(rotulo="07", numero=7, url="https://x/ep07"),
+        ]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    with caplog.at_level("WARNING"):
+        resposta = await cliente.post(
+            "/api/admin/jobs",
+            json={"modo": "site", "anime_id": anime_id, "numero": 7, "tipo": "regular"},
+        )
+
+    assert resposta.status_code == 201
+    assert "07" in caplog.text
+
+    async with sessionmaker_api() as sessao:
+        resultado = await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
+        episodio = resultado.scalar_one()
+        assert episodio.url_fonte == "https://x/ep7"
 
 
 async def test_listar_jobs_com_filtro_de_status(

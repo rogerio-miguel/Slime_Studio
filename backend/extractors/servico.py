@@ -214,9 +214,21 @@ async def _proximo_com_episodio(
         episodios_remotos = await listar_episodios_em(
             sessionmaker, proxima_fonte.dominio, proxima_fonte.identificador
         )
-        correspondente = next(
-            (ep for ep in episodios_remotos if ep.numero == numero_episodio), None
-        )
+        correspondentes = [ep for ep in episodios_remotos if ep.numero == numero_episodio]
+        if len(correspondentes) > 1:
+            # Mais de um rótulo mapeia pro mesmo `numero` (ex. "7"/"07" —
+            # extractors/base.py::EpisodioRemoto) — o contrato de fallback só
+            # carrega `numero_episodio` (int), sem como desambiguar por
+            # rótulo aqui. Escolha determinística (1ª ocorrência, ordem já
+            # estável do adapter) em vez de silenciosa — nunca some do log.
+            logger.warning(
+                "%d episódios remotos com numero=%d em %r (rótulos: %s) — usando o 1º",
+                len(correspondentes),
+                numero_episodio,
+                proxima_fonte.dominio,
+                [ep.rotulo for ep in correspondentes],
+            )
+        correspondente = correspondentes[0] if correspondentes else None
         if correspondente is not None:
             return proxima_fonte.dominio, correspondente.url
 

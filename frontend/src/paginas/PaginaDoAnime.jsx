@@ -56,17 +56,74 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     }
   }, [remotos.erro]);
 
-  const episodiosPorNumero = useMemo(() => {
-    const mapa = new Map();
-    (episodios.dados ?? []).forEach((episodio) => mapa.set(episodio.numero, episodio));
-    return mapa;
-  }, [episodios.dados]);
+  // Uma linha por posição de episódio, na ordem em que aparecem na grade.
+  // `numero` sozinho não é suficiente como chave: mais de um rótulo remoto
+  // pode mapear pro mesmo `numero` inteiro (ex. "7" e "07" — dedup por
+  // rótulo cru em `extractors/base.py::EpisodioRemoto`, não mais por
+  // `int(numero)`) — colapsar os dois numa célula só esconderia de volta a
+  // divergência que esta frente existe pra corrigir. Quando isso acontece
+  // E o número ainda não tem captura local (`!episodio`), uma linha por
+  // rótulo é gerada, com `colisao: true` (todas disparando captura pelo
+  // mesmo `numero` — o contrato de captura não distingue rótulo; o backend
+  // resolve a ambiguidade de forma determinística e loga, ver
+  // `extractors/servico.py`/`api/servicos/jobs.py`). Se já existe captura
+  // local pro número, cai no caso de linha única abaixo (`episodio` truthy)
+  // e uma eventual colisão remota fica sem representação própria na grade —
+  // limitação residual conhecida, não resolvida por exigir estender o
+  // contrato de captura por rótulo (fora do escopo desta frente). Rótulo não
+  // numérico (`numero: null`) sempre vira uma linha à parte, no fim.
+  const linhas = useMemo(() => {
+    const episodiosPorNumero = new Map();
+    (episodios.dados ?? []).forEach((episodio) => episodiosPorNumero.set(episodio.numero, episodio));
 
-  const numeros = useMemo(() => {
-    const conjunto = new Set();
-    (episodios.dados ?? []).forEach((episodio) => conjunto.add(episodio.numero));
-    (remotos.dados ?? []).forEach((remoto) => conjunto.add(remoto.numero));
-    return [...conjunto].sort((a, b) => a - b);
+    const remotosPorNumero = new Map();
+    const remotosSemNumero = [];
+    (remotos.dados?.episodios ?? []).forEach((remoto) => {
+      if (remoto.numero == null) {
+        remotosSemNumero.push(remoto);
+        return;
+      }
+      const lista = remotosPorNumero.get(remoto.numero) ?? [];
+      lista.push(remoto);
+      remotosPorNumero.set(remoto.numero, lista);
+    });
+
+    const numerosOrdenados = [
+      ...new Set([...episodiosPorNumero.keys(), ...remotosPorNumero.keys()]),
+    ].sort((a, b) => a - b);
+
+    const linhasNumericas = numerosOrdenados.flatMap((numero) => {
+      const episodio = episodiosPorNumero.get(numero) ?? null;
+      const remotosDoNumero = remotosPorNumero.get(numero) ?? [];
+      if (episodio || remotosDoNumero.length <= 1) {
+        return [
+          {
+            chave: `n-${numero}`,
+            numero,
+            rotulo: remotosDoNumero[0]?.rotulo ?? String(numero),
+            colisao: false,
+            episodio,
+          },
+        ];
+      }
+      return remotosDoNumero.map((remoto) => ({
+        chave: `n-${numero}-${remoto.rotulo}`,
+        numero,
+        rotulo: remoto.rotulo,
+        colisao: true,
+        episodio: null,
+      }));
+    });
+
+    const linhasSemNumero = remotosSemNumero.map((remoto) => ({
+      chave: `r-${remoto.rotulo}`,
+      numero: null,
+      rotulo: remoto.rotulo,
+      colisao: false,
+      episodio: null,
+    }));
+
+    return [...linhasNumericas, ...linhasSemNumero];
   }, [episodios.dados, remotos.dados]);
 
   // Fluxo de criação de job em modo "site" é síncrono no servidor e pode
@@ -244,18 +301,22 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           Consultando a fonte remota — isso pode levar até um minuto…
         </p>
       )}
+      {remotos.dados?.dominio && (
+        <p className="mb-4 text-xs text-ink-muted">Episódios resolvidos via {remotos.dados.dominio}</p>
+      )}
 
       <div className="flex flex-col gap-2">
-        {numeros.map((numero) => {
-          const episodio = episodiosPorNumero.get(numero) ?? null;
+        {linhas.map(({ chave, numero, rotulo, colisao, episodio }) => {
           const job = episodio ? jobsPorEpisodio.get(episodio.id) : null;
           return (
             <LinhaDeEpisodio
-              key={numero}
+              key={chave}
               numero={numero}
+              rotulo={rotulo}
+              colisao={colisao}
               episodio={episodio}
               job={job}
-              capturando={numeroCapturando === numero}
+              capturando={numero != null && numeroCapturando === numero}
               aoCapturar={capturar}
               animeId={animeId}
               animeTitulo={anime?.titulo}
@@ -264,7 +325,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         })}
       </div>
 
-      {numeros.length === 0 && !episodios.carregando && !remotos.carregando && (
+      {linhas.length === 0 && !episodios.carregando && !remotos.carregando && (
         <p className="text-sm text-ink-muted">Nenhum episódio encontrado.</p>
       )}
 

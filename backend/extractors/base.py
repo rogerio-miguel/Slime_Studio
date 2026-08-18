@@ -26,7 +26,17 @@ class ResultadoBusca:
 
 @dataclass(frozen=True, slots=True)
 class EpisodioRemoto:
-    numero: int
+    # Texto/label cru do episódio como aparece na fonte (ex.: "7", "07",
+    # "Especial") — chave de dedup em cada adapter (`animefire.py`,
+    # `animesdrive.py`): rótulos com zero à esquerda ("07") não são
+    # necessariamente o mesmo episódio que "7", então a chave nunca é
+    # `int(numero)` (colapsaria os dois indevidamente).
+    rotulo: str
+    # `None` quando `rotulo` não é puramente numérico (ex. "Especial",
+    # "OVA 2") — episódio ainda aparece normalmente na listagem (decisão do
+    # produto), só não é capturável ainda: o frontend desabilita o botão
+    # "Capturar" nesse caso.
+    numero: int | None
     url: str
 
 
