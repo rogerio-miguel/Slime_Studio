@@ -23,9 +23,12 @@ export function listarEpisodios(animeId) {
 // resolveu a lista (exibido na página do anime pra o usuário notar quando a
 // fonte "errada" foi usada); `numero` é `null` quando `rotulo` não é
 // puramente numérico (ex. "Especial") — episódio aparece na lista mas ainda
-// não é capturável.
-export function listarEpisodiosRemotos(animeId) {
-  return requisitar(`/api/admin/animes/${animeId}/episodios-remotos`);
+// não é capturável. `versao` ("legendado"|"dublado") é enviada explicitamente
+// pelo chamador agora (Fase 4 — antes o backend assumia "legendado" quando
+// omitido; o frontend não depende mais desse default).
+export function listarEpisodiosRemotos(animeId, versao) {
+  const query = versao ? `?versao=${encodeURIComponent(versao)}` : '';
+  return requisitar(`/api/admin/animes/${animeId}/episodios-remotos${query}`);
 }
 
 // Busca ao vivo em todos os sites de extração (ainda não catalogado
@@ -74,10 +77,13 @@ export function criarJobSite({ animeId, numero, tipo, versao, duracaoEsperadaS }
   });
 }
 
-export function confirmarFonte(animeId, { dominio, identificador, tituloExibicao, url }) {
+// `versao` ("legendado"|"dublado"|null) é o round-trip do que `buscar-fontes`
+// já informou sobre este candidato (`candidato.versao`) — o servidor
+// re-deriva e valida sozinho, o frontend só repassa o que já sabe.
+export function confirmarFonte(animeId, { dominio, identificador, tituloExibicao, url, versao }) {
   return requisitar(`/api/admin/animes/${animeId}/fontes/confirmar`, {
     metodo: 'POST',
-    corpo: { dominio, identificador, titulo_exibicao: tituloExibicao, url },
+    corpo: { dominio, identificador, titulo_exibicao: tituloExibicao, url, versao: versao ?? null },
   });
 }
 

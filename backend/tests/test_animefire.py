@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import ClienteFalso
 
+from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from extractors.animefire import AnimeFireProvider
 from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
@@ -58,11 +59,46 @@ def test_buscar_com_resultado_devolve_candidatos(extrator):
             titulo_exibicao="Tensei Shitara Slime Datta Ken",
             identificador="tensei-shitara-slime-datta-ken",
             url=f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken-todos-os-episodios",
+            versao=VersaoEpisodio.LEGENDADO,
         ),
         ResultadoBusca(
             titulo_exibicao="Tensei Shitara Slime Datta Ken 2",
             identificador="tensei-shitara-slime-datta-ken-2",
             url=f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken-2-todos-os-episodios",
+            versao=VersaoEpisodio.LEGENDADO,
+        ),
+    ]
+
+
+def test_diferencia_versao(extrator):
+    """Confirmado ao vivo em 2026-08-18 (busca por "One Piece"): AnimeFire
+    também separa legendado de dublado no próprio slug/título, mesmo padrão do
+    AnimesDrive — ex. "One Piece (Dublado)" / slug `one-piece-dublado` como
+    entrada de catálogo própria."""
+    assert extrator.diferencia_versao is True
+
+
+def test_buscar_marca_versao_dublado_via_marcador_no_slug(extrator):
+    """`busca_dublado.html` tem um card "(Dublado)" ao lado do card sem
+    marcador — mesma convenção do AnimesDrive: dublado sempre marcado,
+    ausência de marcador nunca é indeterminado, é `LEGENDADO`."""
+    url_busca = f"{extrator.BASE_URL}/pesquisar/one-piece"
+    cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca_dublado.html")})
+
+    resultados = extrator.buscar(cliente, "One Piece")
+
+    assert resultados == [
+        ResultadoBusca(
+            titulo_exibicao="One Piece",
+            identificador="one-piece",
+            url=f"{extrator.BASE_URL}/animes/one-piece-todos-os-episodios",
+            versao=VersaoEpisodio.LEGENDADO,
+        ),
+        ResultadoBusca(
+            titulo_exibicao="One Piece (Dublado)",
+            identificador="one-piece-dublado",
+            url=f"{extrator.BASE_URL}/animes/one-piece-dublado-todos-os-episodios",
+            versao=VersaoEpisodio.DUBLADO,
         ),
     ]
 

@@ -17,10 +17,12 @@ import re
 
 from bs4 import BeautifulSoup
 
+from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from core.texto import slugificar
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from extractors.cliente import ClienteDeSite
+from extractors.versao import inferir_versao
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,16 @@ class AnimeFireProvider(ExtratorDeSite):
     @property
     def exige_navegador(self) -> bool:
         return False
+
+    @property
+    def diferencia_versao(self) -> bool:
+        # Confirmado ao vivo em 2026-08-18 (busca por "One Piece"): mesmo
+        # padrão do AnimesDrive — dublado é outra entrada de catálogo com
+        # marcador próprio ("One Piece (Dublado)" / slug `one-piece-dublado`),
+        # não uma aba do mesmo anime. Pendência da modelagem original
+        # (CONTEXT_NEXT.md) resolvida — capability já existia, só faltava
+        # confirmar e ligar.
+        return True
 
     def buscar(self, cliente: ClienteDeSite, titulo: str) -> list[ResultadoBusca]:
         candidatos = _candidatos_de_busca(titulo)
@@ -111,10 +123,11 @@ class AnimeFireProvider(ExtratorDeSite):
                 titulo_limpo = titulo_limpo.replace("\xa0", " ")
 
                 url_anime = self._absolutizar(href)
+                identificador = self._extrair_slug(url_anime)
                 resultados.append(
                     ResultadoBusca(
                         titulo_exibicao=titulo_limpo,
-                        identificador=self._extrair_slug(url_anime),
+                        identificador=identificador,
                         url=url_anime,
                         # AnimeFire não expõe imagem nenhuma na página de busca
                         # (confirmado ao vivo e no código de referência
@@ -122,6 +135,12 @@ class AnimeFireProvider(ExtratorDeSite):
                         # dataclass, não falta de parsing. Enriquecimento por
                         # metadado de provedor externo mora em
                         # `api/servicos/busca.py::enriquecer_capas`.
+                        #
+                        # Mesma convenção do AnimesDrive (`animesdrive.py`):
+                        # dublado sempre marcado, ausência de marcador aqui
+                        # nunca é indeterminado, é `LEGENDADO`.
+                        versao=inferir_versao(titulo_limpo, identificador)
+                        or VersaoEpisodio.LEGENDADO,
                     )
                 )
             if not resultados:

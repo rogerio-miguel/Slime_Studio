@@ -12,8 +12,19 @@ import {
 import { useRecurso } from '../api/useRecurso.js';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
+import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+
+// Rótulo legível de `versaoAtiva`/`Episodio.versao` — inclui 'desconhecida'
+// (fonte NAO_DIFERENCIADA, o backend nunca finge saber qual versão foi
+// capturada). Fallback `?? versaoAtiva` cobre um valor futuro não mapeado
+// aqui sem quebrar a renderização.
+const ROTULO_VERSAO = {
+  legendado: 'Legendado',
+  dublado: 'Dublado',
+  desconhecida: 'Desconhecida (site não confirma)',
+};
 
 // Rota "/anime/:id" — grade prontos/não capturados. Clique num episódio não
 // capturado dispara a resolução automática de fonte direto (sem formulário
@@ -34,7 +45,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const animeNaoEncontrado = erroAnime instanceof ErroDeApi && erroAnime.status === 404;
 
   const episodios = useRecurso(() => listarEpisodios(animeId), [animeId]);
-  const remotos = useRecurso(() => listarEpisodiosRemotos(animeId), [animeId]);
 
   const [numeroCapturando, setNumeroCapturando] = useState(null);
   const [erroCaptura, setErroCaptura] = useState(null);
@@ -43,6 +53,74 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState(null);
+
+  // Troca manual de fonte por site — solução barata pedida explicitamente em
+  // vez da modelagem completa (versão como parte da chave de resolução de
+  // fonte). `FonteAnime` (backend/models/fonte_anime.py) tem PK composta
+  // (anime_id, site_dominio) com só UM `identificador_no_site` por par —
+  // confirmar uma fonte aqui SOBRESCREVE o que já estava mapeado pra aquele
+  // domínio (troca, não soma) — não dá pra guardar legendado e dublado do
+  // mesmo site ao mesmo tempo. `versaoAtiva` é só o rótulo que o usuário
+  // escolheu pra essa fonte (nunca inferido do texto do candidato — heurística
+  // tipo `.includes('dublado')` quebraria silenciosamente com outra
+  // convenção de site): `Episodio.versao` já era só rótulo antes desta
+  // frente (nome de arquivo/pasta + identidade do episódio no banco, não
+  // influencia qual fonte é resolvida — `extractors/resolucao.py`), então
+  // aqui só passamos a alimentá-lo com a escolha real em vez do hardcode
+  // anterior. Modelagem completa (versão dentro da chave de `FonteAnime`/
+  // `resolver_fonte_do_anime`, com migration, permitindo dublado E legendado
+  // do mesmo domínio ao mesmo tempo) é trabalho futuro documentado, não
+  // implementado aqui — mesmo espírito do docstring de escopo em
+  // `backend/extractors/animesdrive.py`.
+  const [trocandoFonte, setTrocandoFonte] = useState(false);
+  const [confirmandoTrocaFonte, setConfirmandoTrocaFonte] = useState(false);
+  const [erroTrocaFonte, setErroTrocaFonte] = useState(null);
+  const [versaoAtiva, setVersaoAtiva] = useState('legendado');
+
+  // `versaoAtiva` pode ser 'desconhecida' (episódio mais recente veio de uma
+  // fonte NAO_DIFERENCIADA) — válido pra EXIBIÇÃO (`ROTULO_VERSAO` já trata),
+  // mas `resolver_fonte_do_anime` rejeita `DESCONHECIDA` como versão PEDIDA
+  // (só aceita LEGENDADO/DUBLADO, `ValueError` não tratado vira 500 —
+  // `extractors/resolucao.py`). Toda chamada de API que carrega "qual versão
+  // eu quero" usa este valor grampeado, nunca `versaoAtiva` cru; convenção
+  // "sem confirmação = legendado" é a mesma já usada no restante do sistema
+  // pra ausência de marcador.
+  const versaoPedida = versaoAtiva === 'desconhecida' ? 'legendado' : versaoAtiva;
+
+  // Declarado depois de `versaoPedida` de propósito: a listagem remota agora
+  // reflete a versão ativa (senão a grade mostraria episódios da versão
+  // errada quando o usuário troca) — precisa da variável já existir.
+  const remotos = useRecurso(
+    () => listarEpisodiosRemotos(animeId, versaoPedida),
+    [animeId, versaoPedida]
+  );
+
+  // Hidrata `versaoAtiva` com prioridade: 1) `anime.versao_confirmada_mais_recente`
+  // (a fonte confirmada mais recentemente via "Trocar fonte" — pode ainda não
+  // ter gerado nenhum download; `null` = anime sem nenhuma `FonteAnime`
+  // mapeada ainda, cai pro item 2); 2) na ausência dele, o episódio LOCAL mais
+  // recentemente capturado (`episodios.dados`, traz `EpisodioSaida.versao` —
+  // backend/api/esquemas.py). Critério de "mais recente" pro episódio é
+  // `criado_em`, não `numero`: nada garante que os episódios sejam capturados
+  // em ordem crescente (ex. usuário troca pra dublado e recaptura um episódio
+  // antigo por último). `anime` e `episodios.dados` chegam de forma
+  // assíncrona e independente (`useRecurso`, cada um pode chegar antes ou
+  // depois do outro) — um único efeito reagindo aos dois evita que um rode
+  // depois do outro com dado desatualizado e sobrescreva a prioridade acima
+  // com dois efeitos concorrentes. Sem nenhuma das duas fontes ainda (anime
+  // sem fonte mapeada E sem episódio capturado), mantém o default 'legendado'
+  // do `useState` inicial.
+  useEffect(() => {
+    if (anime && anime.versao_confirmada_mais_recente != null) {
+      setVersaoAtiva(anime.versao_confirmada_mais_recente);
+      return;
+    }
+    if (!episodios.dados || episodios.dados.length === 0) return;
+    const maisRecente = episodios.dados.reduce((atual, episodio) =>
+      !atual || new Date(episodio.criado_em) > new Date(atual.criado_em) ? episodio : atual
+    , null);
+    setVersaoAtiva(maisRecente.versao);
+  }, [anime, episodios.dados]);
 
   // A própria listagem remota (não só a captura) pode bater em ambiguidade
   // na primeira visita a um anime recém-criado (`episodios-remotos` também
@@ -136,7 +214,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
       setNumeroCapturando(numero);
       setErroCaptura(null);
       try {
-        await criarJobSite({ animeId, numero, tipo: 'regular', versao: 'legendado' });
+        await criarJobSite({ animeId, numero, tipo: 'regular', versao: versaoPedida });
         episodios.recarregar();
       } catch (erroCapturado) {
         if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'fonte_ambigua') {
@@ -146,6 +224,13 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           erroCapturado.detail?.motivo === 'episodio_ja_existe'
         ) {
           episodios.recarregar();
+        } else if (
+          erroCapturado instanceof ErroDeApi &&
+          erroCapturado.detail?.motivo === 'versao_indisponivel'
+        ) {
+          setErroCaptura(
+            `A versão ${erroCapturado.detail.versao} não está disponível nesta fonte para este anime — tente trocar de fonte ou de versão.`
+          );
         } else {
           console.error('falha ao capturar episódio', erroCapturado);
           setErroCaptura(`Não foi possível capturar o episódio ${numero} — tente novamente.`);
@@ -159,7 +244,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     // objeto inteiro satisfaria o eslint mas o recriaria a cada render
     // (useRecurso.js devolve um literal novo sempre), anulando a memoização.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [animeId, episodios.recarregar]
+    [animeId, episodios.recarregar, versaoPedida]
   );
 
   const aoConfirmarFonte = useCallback(
@@ -173,6 +258,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           identificador: candidato.identificador,
           tituloExibicao: candidato.titulo_exibicao,
           url: candidato.url,
+          versao: candidato.versao ?? null,
         });
         if (numero != null) {
           await capturar(numero);
@@ -214,6 +300,57 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const fecharDialogoRemocao = useCallback(() => {
     setConfirmandoRemocao(false);
     setErroRemocao(null);
+  }, []);
+
+  // Confirma a fonte escolhida pro domínio do candidato (sobrescreve
+  // `FonteAnime` desse domínio, ver comentário do bloco de estado acima) e
+  // grava `versao` como o rótulo ativo pras próximas capturas. Diferente de
+  // `aoConfirmarFonte` (fluxo de ambiguidade automática, que sempre segue
+  // pra `capturar` de um episódio específico): aqui não há captura pendente
+  // — só troca a fonte e fecha o diálogo; a lista remota é atualizada porque
+  // pode ter mudado (domínio diferente do que estava resolvido antes).
+  const aoConfirmarTrocaDeFonte = useCallback(
+    async (candidato, versao) => {
+      setConfirmandoTrocaFonte(true);
+      setErroTrocaFonte(null);
+      try {
+        // `versao` enviado ao servidor é a verdade que a API já conhece
+        // sobre ESTE candidato (`candidato.versao`, round-trip de
+        // `buscar-fontes`) — não o `versao` recebido como argumento aqui, que
+        // é a escolha/intenção de captura do usuário e serve só pra
+        // `setVersaoAtiva` abaixo. Os dois podem divergir quando o site não
+        // diferencia (`candidato.versao === null` mas o usuário escolheu
+        // 'legendado'/'dublado' manualmente nos dois botões do diálogo).
+        await confirmarFonte(animeId, {
+          dominio: candidato.dominio,
+          identificador: candidato.identificador,
+          tituloExibicao: candidato.titulo_exibicao,
+          url: candidato.url,
+          versao: candidato.versao ?? null,
+        });
+        setVersaoAtiva(versao);
+        setTrocandoFonte(false);
+        // Não é redundante mesmo com `remotos` agora dependendo de
+        // `versaoAtiva`: se o usuário troca de domínio SEM trocar de versão
+        // (ex. legendado no site A → legendado no site B), `versaoAtiva` não
+        // muda, o efeito de `remotos` não dispara sozinho, e sem este
+        // `recarregar()` explícito a grade continuaria mostrando a listagem
+        // do domínio antigo.
+        remotos.recarregar();
+      } catch (erroCapturado) {
+        console.error('falha ao trocar fonte', erroCapturado);
+        setErroTrocaFonte('Não foi possível confirmar esta fonte — tente novamente.');
+      } finally {
+        setConfirmandoTrocaFonte(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [animeId, remotos.recarregar]
+  );
+
+  const fecharDialogoTrocaDeFonte = useCallback(() => {
+    setTrocandoFonte(false);
+    setErroTrocaFonte(null);
   }, []);
 
   return (
@@ -301,8 +438,27 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           Consultando a fonte remota — isso pode levar até um minuto…
         </p>
       )}
-      {remotos.dados?.dominio && (
-        <p className="mb-4 text-xs text-ink-muted">Episódios resolvidos via {remotos.dados.dominio}</p>
+      {!animeNaoEncontrado && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+          {remotos.dados?.dominio && <span>Episódios resolvidos via {remotos.dados.dominio}</span>}
+          <span>Baixando como: {ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva}</span>
+          {anime?.versoes_disponiveis &&
+            versaoAtiva !== 'desconhecida' &&
+            !anime.versoes_disponiveis.includes(versaoAtiva) && (
+            // Hint de cache, não bloqueante — `versoes_disponiveis` reflete o
+            // que já está mapeado em `FonteAnime`, não um live-probe. O 409
+            // `versao_indisponivel` (ver `capturar`) é o backstop real
+            // quando a versão genuinamente não existe nesta fonte.
+            <span className="text-amber-400">pode não estar disponível nesta fonte ainda</span>
+          )}
+          <button
+            type="button"
+            onClick={() => setTrocandoFonte(true)}
+            className="rounded-md border border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+          >
+            Trocar fonte
+          </button>
+        </div>
       )}
 
       <div className="flex flex-col gap-2">
@@ -335,6 +491,15 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         candidatos={fonteAmbigua?.candidatos}
         aoEscolher={aoConfirmarFonte}
         aoFechar={() => setFonteAmbigua(null)}
+      />
+
+      <DialogoDeTrocaDeFonte
+        aberto={trocandoFonte}
+        tituloAnime={anime?.titulo ?? ''}
+        aoConfirmar={aoConfirmarTrocaDeFonte}
+        aoFechar={fecharDialogoTrocaDeFonte}
+        confirmando={confirmandoTrocaFonte}
+        erro={erroTrocaFonte}
       />
 
       <DialogoDeConfirmacao

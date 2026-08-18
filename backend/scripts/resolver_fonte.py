@@ -17,11 +17,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config, carregar_config
+from core.enums import VersaoEpisodio
 from core.erros import ErroSlimeStudio
 from db.engine import criar_engine, criar_sessionmaker
 from extractors.resolucao import (
     ConfirmacaoNecessaria,
     FonteResolvida,
+    VersaoIndisponivel,
     confirmar_fonte,
     resolver_fonte_do_anime,
 )
@@ -33,6 +35,7 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 @dataclass(frozen=True, slots=True)
 class Argumentos:
     anime_slug: str
+    versao: VersaoEpisodio
 
 
 def analisar_argumentos(argv: Sequence[str]) -> Argumentos:
@@ -40,8 +43,14 @@ def analisar_argumentos(argv: Sequence[str]) -> Argumentos:
         description="Resolve (ou confirma manualmente) a fonte de site de um anime já cadastrado."
     )
     parser.add_argument("--anime-slug", required=True, help="Slug do anime (Anime.slug).")
+    parser.add_argument(
+        "--versao",
+        choices=[VersaoEpisodio.LEGENDADO.value, VersaoEpisodio.DUBLADO.value],
+        default=VersaoEpisodio.LEGENDADO.value,
+        help="Versão a resolver (default: legendado).",
+    )
     args = parser.parse_args(argv)
-    return Argumentos(anime_slug=args.anime_slug)
+    return Argumentos(anime_slug=args.anime_slug, versao=VersaoEpisodio(args.versao))
 
 
 async def resolver(args: Argumentos, config: Config) -> FonteResolvida:
@@ -49,9 +58,14 @@ async def resolver(args: Argumentos, config: Config) -> FonteResolvida:
     sessionmaker = criar_sessionmaker(engine)
     try:
         anime = await _carregar_anime(sessionmaker, args.anime_slug)
-        resultado = await resolver_fonte_do_anime(sessionmaker, anime)
+        resultado = await resolver_fonte_do_anime(sessionmaker, anime, args.versao)
         if isinstance(resultado, FonteResolvida):
             return resultado
+        if isinstance(resultado, VersaoIndisponivel):
+            raise ErroSlimeStudio(
+                f"nenhuma fonte disponível para a versão {resultado.versao.value!r} de"
+                f" {anime.titulo!r}"
+            )
         return await _confirmar_via_input(sessionmaker, anime, resultado)
     finally:
         await engine.dispose()

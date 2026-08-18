@@ -7,6 +7,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.enums import VersaoDeFonte
 from extractors.base import EpisodioRemoto, ResultadoBusca
 from extractors.resolucao import ConfirmacaoNecessaria, FonteResolvida
 from models.anime import Anime
@@ -29,8 +30,12 @@ async def test_listar_episodios_remotos_caminho_feliz(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Remoto")
 
-    async def _resolver_fake(sessionmaker, anime):
-        return FonteResolvida(dominio="animefire.io", identificador="42")
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
 
     async def _listar_fake(sessionmaker, dominio, identificador):
         return [
@@ -62,7 +67,7 @@ async def test_listar_episodios_remotos_fonte_ambigua_409(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Remoto Ambíguo")
 
-    async def _resolver_fake(sessionmaker, anime):
+    async def _resolver_fake(sessionmaker, anime, versao):
         return ConfirmacaoNecessaria(
             dominio="animefire.io",
             candidatos=[

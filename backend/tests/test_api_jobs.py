@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.enums import StatusJob
+from core.enums import StatusJob, VersaoDeFonte, VersaoEpisodio
 from extractors.base import EpisodioRemoto, ResultadoBusca
 from extractors.resolucao import ConfirmacaoNecessaria, FonteResolvida
 from models.anime import Anime
@@ -99,7 +99,7 @@ async def test_criar_job_modo_site_ambiguo_409(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Ambíguo")
 
-    async def _resolver_fake(sessionmaker, anime):
+    async def _resolver_fake(sessionmaker, anime, versao):
         return ConfirmacaoNecessaria(
             dominio="animefire.io",
             candidatos=[
@@ -130,8 +130,12 @@ async def test_criar_job_modo_site_episodio_nao_encontrado_404(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Sem Episodio")
 
-    async def _resolver_fake(sessionmaker, anime):
-        return FonteResolvida(dominio="animefire.io", identificador="42")
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
 
     async def _listar_fake(sessionmaker, dominio, identificador):
         return [EpisodioRemoto(rotulo="2", numero=2, url="https://x/ep2")]
@@ -159,8 +163,12 @@ async def test_criar_job_modo_site_colisao_de_numero_usa_primeiro_e_loga(
     nunca silenciosa (CLAUDE.md §4)."""
     anime_id = await _criar_anime(sessionmaker_api, "Anime Colisao")
 
-    async def _resolver_fake(sessionmaker, anime):
-        return FonteResolvida(dominio="animefire.io", identificador="42")
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
 
     async def _listar_fake(sessionmaker, dominio, identificador):
         return [
@@ -184,6 +192,49 @@ async def test_criar_job_modo_site_colisao_de_numero_usa_primeiro_e_loga(
         resultado = await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
         episodio = resultado.scalar_one()
         assert episodio.url_fonte == "https://x/ep7"
+
+
+async def test_criar_job_modo_site_versao_do_episodio_deriva_da_fonte_nao_do_request(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Invariante central da Fase 2 da modelagem dublado/legendado
+    (`api/servicos/jobs.py::criar_job_site`): o cliente pediu `dublado`, mas a
+    fonte resolvida é `NAO_DIFERENCIADA` — `Episodio.versao` persistido tem
+    que ser `DESCONHECIDA`, nunca herdar o pedido do cliente."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Versao Derivada")
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        assert versao == VersaoEpisodio.DUBLADO  # propagado do request
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1")]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/jobs",
+        json={
+            "modo": "site",
+            "anime_id": anime_id,
+            "numero": 1,
+            "tipo": "regular",
+            "versao": "dublado",
+        },
+    )
+
+    assert resposta.status_code == 201
+    async with sessionmaker_api() as sessao:
+        resultado = await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
+        episodio = resultado.scalar_one()
+        assert episodio.versao == VersaoEpisodio.DESCONHECIDA
 
 
 async def test_listar_jobs_com_filtro_de_status(

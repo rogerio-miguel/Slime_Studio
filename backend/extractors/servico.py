@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
+from core.enums import VersaoEpisodio
 from core.erros import FalhaDeExtracao
 from extractors import circuit_breaker, download, resiliencia, resolucao
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
@@ -131,7 +132,13 @@ async def baixar_episodio(
     destino: Path,
 ) -> Path:
     link = await resiliencia.chamar(
-        sessionmaker, extrator, lambda cliente: extrator.resolver_midia(cliente, url_episodio)
+        sessionmaker,
+        extrator,
+        lambda cliente: extrator.resolver_midia(cliente, url_episodio),
+        # Único ponto do sistema que consome `exige_navegador_para_midia`:
+        # `resolver_midia` é a operação que pode precisar do JS da página rodando
+        # (`extractors/base.py`), busca e listagem não.
+        exigir_navegador=extrator.exige_navegador_para_midia,
     )
     await _conferir_link_de_midia(link)
     return await download.baixar(link, destino, str(config.ffmpeg))
@@ -187,7 +194,7 @@ async def baixar_com_fallback_de_site(
                 raise
 
             proximo = await _proximo_com_episodio(
-                sessionmaker, anime, episodio.numero, dominio, ja_tentados
+                sessionmaker, anime, episodio.numero, dominio, ja_tentados, episodio.versao
             )
             if proximo is None:
                 raise
@@ -201,20 +208,31 @@ async def _proximo_com_episodio(
     numero_episodio: int,
     dominio_que_falhou: str,
     ja_tentados: set[str],
+    versao: VersaoEpisodio,
 ) -> tuple[str, str] | None:
     """Anda pela cadeia de próximos sites até achar um que já foi tentado (desiste,
     devolve `None`) ou que lista `numero_episodio` (usa esse). Sites mapeados/
-    descobertos que não têm o episódio são marcados como tentados e pulados."""
+    descobertos que não têm o episódio são marcados como tentados e pulados.
+
+    `versao` é `Episodio.versao` do episódio em fallback — propagada a
+    `resolucao.proximo_site_para` pra preservar a versão pedida entre sites
+    (Fase 2 da modelagem dublado/legendado); dentro de cada listagem, casar
+    só por `numero` vira "casar por número E versão" quando a listagem rotula
+    episódios (`ep.versao is not None`) e `versao` é confirmada
+    (LEGENDADO/DUBLADO) — `filtrar_por_numero_e_versao`.
+    """
     dominio_referencia = dominio_que_falhou
     while True:
-        proxima_fonte = await resolucao.proximo_site_para(sessionmaker, anime, dominio_referencia)
+        proxima_fonte = await resolucao.proximo_site_para(
+            sessionmaker, anime, dominio_referencia, versao
+        )
         if proxima_fonte is None or proxima_fonte.dominio in ja_tentados:
             return None
 
         episodios_remotos = await listar_episodios_em(
             sessionmaker, proxima_fonte.dominio, proxima_fonte.identificador
         )
-        correspondentes = [ep for ep in episodios_remotos if ep.numero == numero_episodio]
+        correspondentes = filtrar_por_numero_e_versao(episodios_remotos, numero_episodio, versao)
         if len(correspondentes) > 1:
             # Mais de um rótulo mapeia pro mesmo `numero` (ex. "7"/"07" —
             # extractors/base.py::EpisodioRemoto) — o contrato de fallback só
@@ -234,3 +252,40 @@ async def _proximo_com_episodio(
 
         ja_tentados.add(proxima_fonte.dominio)
         dominio_referencia = proxima_fonte.dominio
+
+
+def filtrar_por_numero_e_versao(
+    episodios: list[EpisodioRemoto], numero: int, versao: VersaoEpisodio
+) -> list[EpisodioRemoto]:
+    """Casa por `numero` primeiro (comportamento base), depois delega o filtro
+    de versão a `filtrar_por_versao`.
+
+    Pública (não `_`-prefixada) porque também é usada por
+    `api/servicos/jobs.py::criar_job_site` — mesmo risco de pegar o rótulo da
+    versão errada existe lá (`resultado.dominio`/`resultado.identificador`
+    pode listar episódios das duas versões, ex. página do AnimesDrive que
+    cobre ambas)."""
+    correspondentes = [ep for ep in episodios if ep.numero == numero]
+    return filtrar_por_versao(correspondentes, versao)
+
+
+def filtrar_por_versao(
+    episodios: list[EpisodioRemoto], versao: VersaoEpisodio
+) -> list[EpisodioRemoto]:
+    """Quando a versão pedida é confirmada (LEGENDADO/DUBLADO) e a listagem
+    rotula pelo menos um episódio (`ep.versao is not None` — site que
+    diferencia, ex. AnimesDrive), EXIGE `ep.versao == versao`: a listagem tem
+    episódios das duas versões e não filtrar pegaria a versão errada
+    silenciosamente. Sites que não rotulam (`ep.versao` sempre `None`) ou
+    `versao == DESCONHECIDA` devolvem a lista sem filtrar (comportamento
+    anterior a esta fase).
+
+    Pública (não `_`-prefixada) pelo mesmo motivo de `filtrar_por_numero_e_versao`
+    — usada por mais de um módulo (`api/servicos/fontes.py::listar_episodios_remotos`)."""
+    if versao == VersaoEpisodio.DESCONHECIDA:
+        return episodios
+
+    rotulados = [ep for ep in episodios if ep.versao is not None]
+    if not rotulados:
+        return episodios
+    return [ep for ep in rotulados if ep.versao == versao]

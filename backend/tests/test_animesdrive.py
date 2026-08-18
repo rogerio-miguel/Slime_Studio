@@ -6,15 +6,25 @@ from pathlib import Path
 
 import pytest
 
-from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
+from core.enums import VersaoEpisodio
+from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada
 from extractors.animesdrive import AnimesDriveProvider
 from extractors.base import EpisodioRemoto, ResultadoBusca
+from extractors.cliente import MidiaCapturada
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "animesdrive"
 
 
 def _ler_fixture(nome: str) -> str:
     return (_FIXTURES / nome).read_text(encoding="utf-8")
+
+
+def _pagina_de_episodios(*hrefs: str) -> str:
+    """Envelopa `hrefs` no box `#episodes` do tema DooPlay — é de lá que
+    `listar_episodios` lê (`_SELETOR_LISTA_EPISODIOS`), então HTML de teste com
+    `<a>` solto no corpo não representaria a página real."""
+    links = "\n".join(f'<a href="{href}">Episódio</a>' for href in hrefs)
+    return f'<div id="episodes"><div class="episodios-grid">{links}</div></div>'
 
 
 @pytest.fixture
@@ -39,6 +49,46 @@ class _ClienteQueDevolve404:
     def user_agent(self) -> str:
         return "ClienteFalso/1.0"
 
+    def fechar(self) -> None:
+        pass
+
+
+class _ClienteNavegadorFalso:
+    """Fake de `ClienteComCaptura`: devolve HTML pré-programado como o
+    `ClienteFalso` e registra o que foi pedido a `capturar_midia`, sem subir
+    Chromium nenhum. `capturada=None` simula o navegador não observar mídia."""
+
+    def __init__(self, *, html: str, capturada: MidiaCapturada | None) -> None:
+        self._html = html
+        self._capturada = capturada
+        self.pedidos: list[tuple[str, tuple[str, ...], int]] = []
+
+    def obter_html(self, url: str, *, timeout_s: int) -> str:
+        return self._html
+
+    def obter_json(self, url: str, *, timeout_s: int) -> dict | list:
+        raise AssertionError("não deveria ser chamado")
+
+    def cookies(self) -> dict[str, str]:
+        return {}
+
+    def user_agent(self) -> str:
+        return "NavegadorFalso/1.0"
+
+    def fechar(self) -> None:
+        pass
+
+    def capturar_midia(
+        self, url_pagina: str, *, hosts_ignorados: tuple[str, ...] = (), timeout_s: int
+    ) -> MidiaCapturada:
+        self.pedidos.append((url_pagina, hosts_ignorados, timeout_s))
+        if self._capturada is None:
+            raise FalhaDeExtracao(
+                f"nenhuma requisição de mídia observada em {url_pagina}",
+                permite_retentativa=True,
+            )
+        return self._capturada
+
 
 def test_buscar_com_resultado_devolve_candidatos(extrator, cliente_falso):
     url_busca = f"{extrator.BASE_URL}/?s=Tensei+Shitara+Slime+Datta+Ken"
@@ -52,12 +102,14 @@ def test_buscar_com_resultado_devolve_candidatos(extrator, cliente_falso):
             identificador="tensei-shitara-slime-datta-ken",
             url="https://animesdrive.online/anime/tensei-shitara-slime-datta-ken",
             capa_url="https://animesdrive.online/capa1.jpg",
+            versao=VersaoEpisodio.LEGENDADO,
         ),
         ResultadoBusca(
             titulo_exibicao="Tensei Shitara Slime Datta Ken Dublado",
             identificador="tensei-shitara-slime-datta-ken-dublado",
             url="https://animesdrive.online/anime/tensei-shitara-slime-datta-ken-dublado",
             capa_url="https://animesdrive.online/capa2.jpg",
+            versao=VersaoEpisodio.DUBLADO,
         ),
     ]
 
@@ -69,28 +121,37 @@ def test_buscar_absolutiza_capa_nas_3_formas_de_src(extrator, cliente_falso):
     homepage)."""
     html = """
     <div class="result-item"><article>
-      <a href="https://animesdrive.online/anime/relativo">
-        <div class="thumb"><img src="/relativo.jpg"></div>
-        <div class="title">Relativo</div>
-      </a>
+      <div class="image"><div class="thumbnail">
+        <a href="https://animesdrive.online/anime/relativo"><img src="/relativo.jpg"></a>
+      </div></div>
+      <div class="details"><div class="title">
+        <a href="https://animesdrive.online/anime/relativo">Relativo</a>
+      </div></div>
     </article></div>
     <div class="result-item"><article>
-      <a href="https://animesdrive.online/anime/protocolo-relativo">
-        <div class="thumb"><img src="//cdn.animesdrive.online/protocolo.jpg"></div>
-        <div class="title">Protocolo Relativo</div>
-      </a>
+      <div class="image"><div class="thumbnail">
+        <a href="https://animesdrive.online/anime/protocolo-relativo"
+           ><img src="//cdn.animesdrive.online/protocolo.jpg"></a>
+      </div></div>
+      <div class="details"><div class="title">
+        <a href="https://animesdrive.online/anime/protocolo-relativo">Protocolo Relativo</a>
+      </div></div>
     </article></div>
     <div class="result-item"><article>
-      <a href="https://animesdrive.online/anime/absoluto">
-        <div class="thumb"><img src="https://cdn.outra.com/absoluta.jpg"></div>
-        <div class="title">Absoluto</div>
-      </a>
+      <div class="image"><div class="thumbnail">
+        <a href="https://animesdrive.online/anime/absoluto"><img src="https://cdn.outra.com/absoluta.jpg"></a>
+      </div></div>
+      <div class="details"><div class="title">
+        <a href="https://animesdrive.online/anime/absoluto">Absoluto</a>
+      </div></div>
     </article></div>
     <div class="result-item"><article>
-      <a href="https://animesdrive.online/anime/src-vazio">
-        <div class="thumb"><img src="   "></div>
-        <div class="title">Src Vazio</div>
-      </a>
+      <div class="image"><div class="thumbnail">
+        <a href="https://animesdrive.online/anime/src-vazio"><img src="   "></a>
+      </div></div>
+      <div class="details"><div class="title">
+        <a href="https://animesdrive.online/anime/src-vazio">Src Vazio</a>
+      </div></div>
     </article></div>
     """
     url_busca = f"{extrator.BASE_URL}/?s=teste"
@@ -168,14 +229,10 @@ def test_listar_episodios_rotulos_com_zero_a_esquerda_nao_colapsam(extrator, cli
     ('0' < '7' em ASCII), o que seria arbitrário e não a ordem "natural" da
     fonte."""
     identificador = "tensei-shitara-slime-datta-ken"
-    html = """
-    <a href="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-7">
-      Episódio 7
-    </a>
-    <a href="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-07">
-      Episódio 07
-    </a>
-    """
+    html = _pagina_de_episodios(
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-7",
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-07",
+    )
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
@@ -188,11 +245,9 @@ def test_listar_episodios_aceita_url_com_barra_final(extrator, cliente_falso):
     """Regressão da hipótese 2: `_REGEX_EPISODIO` rejeitava indevidamente uma URL
     de episódio terminada em `/`."""
     identificador = "tensei-shitara-slime-datta-ken"
-    html = """
-    <a href="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1/">
-      Episódio 1
-    </a>
-    """
+    html = _pagina_de_episodios(
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1/"
+    )
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
@@ -216,75 +271,208 @@ def test_listar_episodios_vazio_levanta_estrutura_do_site_mudou(extrator, client
         extrator.listar_episodios(cliente, identificador)
 
 
-def test_resolver_midia_tres_servidores_cita_os_tres_hosts(extrator, cliente_falso):
+
+def test_listar_episodios_aceita_slug_de_episodio_diferente_do_identificador(
+    extrator, cliente_falso
+):
+    """Regressão do filtro por prefixo do `identificador`: o slug do episódio não
+    é derivável do identificador do anime. Confirmado ao vivo em 2026-08-17 —
+    o anime `one-piece-dublado-todos-os-episodios` lista episódios
+    `/episodio/one-piece-dublado-episodio-N`, e o filtro antigo
+    (`slug.startswith(identificador)`) descartava todos, quebrando a listagem
+    inteira com "nenhum episódio encontrado"."""
+    identificador = "one-piece-dublado-todos-os-episodios"
+    html = _pagina_de_episodios(
+        "https://animesdrive.online/episodio/one-piece-dublado-episodio-1",
+        "https://animesdrive.online/episodio/one-piece-dublado-episodio-2",
+    )
+    url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
+    cliente = cliente_falso(html_por_url={url_anime: html})
+
+    episodios = extrator.listar_episodios(cliente, identificador)
+
+    assert [(ep.rotulo, ep.numero) for ep in episodios] == [("1", 1), ("2", 2)]
+
+
+def test_listar_episodios_ignora_link_de_episodio_fora_do_box(extrator, cliente_falso):
+    """`episodios.html` tem um link `/episodio/outro-anime-episodio-5` num widget
+    fora de `#episodes` (estrutura real do site) — ele não pode entrar na
+    listagem, senão a captura baixaria o episódio de outro anime."""
+    identificador = "tensei-shitara-slime-datta-ken"
+    url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
+    cliente = cliente_falso(html_por_url={url_anime: _ler_fixture("episodios.html")})
+
+    episodios = extrator.listar_episodios(cliente, identificador)
+
+    assert all("outro-anime" not in episodio.url for episodio in episodios)
+
+
+def test_listar_episodios_com_duas_versoes_relacionadas_devolve_ambas_rotuladas(
+    extrator, cliente_falso
+):
+    """Página que lista legendado e dublado no mesmo box (acontece em página de
+    filme/temporada) é a exceção cirúrgica: os dois slugs só divergem pelo
+    marcador de versão (`-dublado`), então nenhuma lista é descarte — as duas
+    saem juntas, cada episódio rotulado pela versão do próprio slug."""
+    identificador = "tensei-shitara-slime-datta-ken-4th-season"
+    html = _pagina_de_episodios(
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-4th-season-episodio-1",
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-4th-season-episodio-2",
+        "https://animesdrive.online/episodio/"
+        "tensei-shitara-slime-datta-ken-4th-season-dublado-episodio-1",
+    )
+    url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
+    cliente = cliente_falso(html_por_url={url_anime: html})
+
+    episodios = extrator.listar_episodios(cliente, identificador)
+
+    assert episodios == [
+        EpisodioRemoto(
+            rotulo="1",
+            numero=1,
+            url=(
+                "https://animesdrive.online/episodio/"
+                "tensei-shitara-slime-datta-ken-4th-season-episodio-1"
+            ),
+            versao=VersaoEpisodio.LEGENDADO,
+        ),
+        EpisodioRemoto(
+            rotulo="1",
+            numero=1,
+            url=(
+                "https://animesdrive.online/episodio/"
+                "tensei-shitara-slime-datta-ken-4th-season-dublado-episodio-1"
+            ),
+            versao=VersaoEpisodio.DUBLADO,
+        ),
+        EpisodioRemoto(
+            rotulo="2",
+            numero=2,
+            url=(
+                "https://animesdrive.online/episodio/"
+                "tensei-shitara-slime-datta-ken-4th-season-episodio-2"
+            ),
+            versao=VersaoEpisodio.LEGENDADO,
+        ),
+    ]
+
+
+def test_listar_episodios_com_dois_slugs_nao_relacionados_por_versao_fica_com_a_maior(
+    extrator, cliente_falso
+):
+    """Dois grupos que divergem por outro motivo (não é marcador de versão) não
+    disparam a exceção cirúrgica — mantém o comportamento de sempre: fica com
+    o maior, descarta o resto com warning."""
+    identificador = "tensei-shitara-slime-datta-ken-ova"
+    html = _pagina_de_episodios(
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-1",
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-2",
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-movie-episodio-1",
+    )
+    url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
+    cliente = cliente_falso(html_por_url={url_anime: html})
+
+    episodios = extrator.listar_episodios(cliente, identificador)
+
+    assert [episodio.url for episodio in episodios] == [
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-1",
+        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-2",
+    ]
+
+
+def test_exige_navegador_para_midia_mas_nao_para_o_site_todo(extrator):
+    """Busca e listagem seguem no cliente leve (confirmado ao vivo: as duas
+    funcionam com `cloudscraper`) — só `resolver_midia` precisa de navegador."""
+    assert extrator.exige_navegador_para_midia is True
+    assert extrator.exige_navegador is False
+
+
+def test_diferencia_versao(extrator):
+    """AnimesDrive separa legendado de dublado no próprio slug/título — mesma
+    capability que o AnimeFire também acabou confirmando (`animefire.py`)."""
+    assert extrator.diferencia_versao is True
+
+
+def test_resolver_midia_devolve_a_url_e_os_cabecalhos_observados(extrator):
+    """O `LinkDeMidia` sai da requisição que a própria página fez — inclusive o
+    `Referer`, que ao vivo é só a origem (`https://animesdrive.online/`) e não a
+    URL do embed nem a do episódio."""
     url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
-    cliente = cliente_falso(
-        html_por_url={url_episodio: _ler_fixture("episodio_tres_servidores.html")}
+    capturada = MidiaCapturada(
+        url="https://mangas.cloud/Animes/Letra-T/Tensei/01.mp4",
+        cabecalhos={"User-Agent": "Chrome/150", "Referer": "https://animesdrive.online/"},
+    )
+    cliente = _ClienteNavegadorFalso(
+        html=_ler_fixture("episodio_tres_servidores.html"), capturada=capturada
     )
 
-    with pytest.raises(EstruturaDoSiteMudou) as excinfo:
-        extrator.resolver_midia(cliente, url_episodio)
+    link = extrator.resolver_midia(cliente, url_episodio)
 
-    mensagem = str(excinfo.value)
-    assert "blogger.com" in mensagem
-    assert "animeshd.cloud" in mensagem
-    assert "animes.strp2p.com" in mensagem
+    assert link.url == capturada.url
+    assert link.cabecalhos == capturada.cabecalhos
+    assert cliente.pedidos == [(url_episodio, ("youtube.com", "youtu.be"), 90)]
 
 
-def test_resolver_midia_um_servidor_cita_o_host(extrator, cliente_falso):
+def test_resolver_midia_sem_iframe_nao_gasta_o_navegador(extrator):
+    """Página sem player falha em ~1s como `EstruturaDoSiteMudou` (não retentável,
+    aciona o fallback pro próximo site) em vez de gastar a janela inteira de
+    captura esperando mídia que não vem."""
     url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
-    cliente = cliente_falso(
-        html_por_url={url_episodio: _ler_fixture("episodio_um_servidor.html")}
-    )
-
-    with pytest.raises(EstruturaDoSiteMudou) as excinfo:
-        extrator.resolver_midia(cliente, url_episodio)
-
-    assert "blogger.com" in str(excinfo.value)
-
-
-def test_resolver_midia_sem_iframe_levanta_mensagem_de_estrutura(extrator, cliente_falso):
-    url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
-    cliente = cliente_falso(
-        html_por_url={url_episodio: _ler_fixture("episodio_sem_iframe.html")}
+    cliente = _ClienteNavegadorFalso(
+        html=_ler_fixture("episodio_sem_iframe.html"), capturada=None
     )
 
     with pytest.raises(EstruturaDoSiteMudou) as excinfo:
         extrator.resolver_midia(cliente, url_episodio)
 
     assert "nenhum iframe de player" in str(excinfo.value)
-
-
-def test_mensagem_de_estrutura_e_de_capacidade_sao_textos_distintos(extrator, cliente_falso):
-    url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
-
-    cliente_sem_iframe = cliente_falso(
-        html_por_url={url_episodio: _ler_fixture("episodio_sem_iframe.html")}
-    )
-    with pytest.raises(EstruturaDoSiteMudou) as excinfo_estrutura:
-        extrator.resolver_midia(cliente_sem_iframe, url_episodio)
-
-    cliente_com_servidor = cliente_falso(
-        html_por_url={url_episodio: _ler_fixture("episodio_um_servidor.html")}
-    )
-    with pytest.raises(EstruturaDoSiteMudou) as excinfo_capacidade:
-        extrator.resolver_midia(cliente_com_servidor, url_episodio)
-
-    mensagem_estrutura = str(excinfo_estrutura.value)
-    mensagem_capacidade = str(excinfo_capacidade.value)
-    assert mensagem_estrutura != mensagem_capacidade
-    assert "blogger.com" not in mensagem_estrutura
-    assert "blogger.com" in mensagem_capacidade
-
-
-def test_estrutura_do_site_mudou_nao_permite_retentativa_e_tem_dominio(extrator, cliente_falso):
-    url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
-    cliente = cliente_falso(
-        html_por_url={url_episodio: _ler_fixture("episodio_sem_iframe.html")}
-    )
-
-    with pytest.raises(EstruturaDoSiteMudou) as excinfo:
-        extrator.resolver_midia(cliente, url_episodio)
-
     assert excinfo.value.permite_retentativa is False
     assert excinfo.value.dominio == "animesdrive.online"
+    assert cliente.pedidos == []
+
+
+def test_resolver_midia_com_so_trailer_do_youtube_nao_gasta_o_navegador(extrator):
+    url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
+    html = """
+    <div class="player-tabs">
+      <iframe src="about:blank"></iframe>
+      <iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>
+    </div>
+    """
+    cliente = _ClienteNavegadorFalso(html=html, capturada=None)
+
+    with pytest.raises(EstruturaDoSiteMudou):
+        extrator.resolver_midia(cliente, url_episodio)
+
+    assert cliente.pedidos == []
+
+
+def test_resolver_midia_com_cliente_sem_captura_falha_sem_retentativa(extrator, cliente_falso):
+    """Contrato quebrado (`resiliencia` entregou o cliente leve apesar de
+    `exige_navegador_para_midia`), não falha de site: repetir com o mesmo cliente
+    repetiria o erro, então não é retentável e não deve contar no circuit breaker."""
+    url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
+    cliente = cliente_falso(
+        html_por_url={url_episodio: _ler_fixture("episodio_tres_servidores.html")}
+    )
+
+    with pytest.raises(FalhaDeExtracao) as excinfo:
+        extrator.resolver_midia(cliente, url_episodio)
+
+    assert "exige cliente de navegador" in str(excinfo.value)
+    assert excinfo.value.permite_retentativa is False
+
+
+def test_resolver_midia_sem_midia_observada_e_retentavel(extrator):
+    """Player presente mas nenhuma requisição de mídia observada é transitório
+    (anúncio travou, rede lenta) — retentável, diferente de estrutura mudada."""
+    url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
+    cliente = _ClienteNavegadorFalso(
+        html=_ler_fixture("episodio_um_servidor.html"), capturada=None
+    )
+
+    with pytest.raises(FalhaDeExtracao) as excinfo:
+        extrator.resolver_midia(cliente, url_episodio)
+
+    assert excinfo.value.permite_retentativa is True
+    assert cliente.pedidos == [(url_episodio, ("youtube.com", "youtu.be"), 90)]
