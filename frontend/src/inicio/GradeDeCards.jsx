@@ -51,7 +51,15 @@ export const estiloLarguraMaxCard = {
 // Atraso escalonado por posição do `transitionDelay` de SlotDeCard — sem
 // teto: cada posição do grid dispara estritamente depois da anterior, "um
 // card por vez" em vez de um bloco inteiro a partir de um certo índice.
-const _ATRASO_POR_INDICE_MS = 60;
+// Exportado (junto com DURACAO_ENTRADA_MS abaixo): GradeRotativa.jsx usa os
+// dois pra calcular quando a última posição da leva termina de aparecer,
+// sem duplicar a fórmula.
+export const ATRASO_POR_INDICE_MS = 60;
+
+// Duração da transição de entrada de SlotDeCard — precisa bater com a
+// classe `duration-700` do className abaixo (não dá pra interpolar isto na
+// classe: quebraria a extração estática de classes do Tailwind).
+export const DURACAO_ENTRADA_MS = 700;
 
 // Slot de um card do grid — dono da transição de entrada/saída (opacity-0
 // scale-[0.8] ↔ opacity-100 scale-100, "surge do meio"). Mesma dupla
@@ -88,7 +96,7 @@ export function SlotDeCard({ indice, ativa = true, children }) {
   return (
     <div
       style={{
-        transitionDelay: `${indice * _ATRASO_POR_INDICE_MS}ms`,
+        transitionDelay: `${indice * ATRASO_POR_INDICE_MS}ms`,
         maxWidth: 'var(--largura-max-card)',
       }}
       className={`mx-auto w-full transition-[opacity,scale] duration-700 ease-out motion-reduce:opacity-100 motion-reduce:scale-100 motion-reduce:transition-none ${

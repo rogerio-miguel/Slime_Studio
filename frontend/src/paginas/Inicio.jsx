@@ -221,12 +221,18 @@ export default function Inicio() {
         // (não dá pra rolar além do que existe), daí só reload resolvia.
         // `min-h-screen` garante que a altura de <main> nunca cai abaixo de
         // 1 viewport, então o limiar de 300vh continua sempre alcançável.
-        className={`relative z-10 min-h-screen pb-20 pt-24 transition-opacity duration-700 ease-out ${
+        className={`relative z-10 min-h-screen pt-24 transition-opacity duration-700 ease-out ${
           fase === 'revelado' ? 'opacity-100' : 'opacity-0'
         }`}
       >
         {buscando ? (
-          <section aria-label="Resultados da busca" className="px-6 md:px-10">
+          // `pb-20`: só aqui, não em <main> — este bloco rola normalmente e
+          // precisa de respiro no fim. GradeRotativa (branch abaixo) já
+          // calcula a própria altura pra caber exatamente em 1 viewport
+          // (ver GradeRotativa.jsx); um pb-20 em <main> criava scroll
+          // sobrando além do ponto de encaixe e arrastava o título da seção
+          // pra debaixo da navbar fixa quando rolado até o fim da página.
+          <section aria-label="Resultados da busca" className="px-6 pb-20 md:px-10">
             <h2 className="mb-4 mt-20 text-2xl font-semibold text-white">
               Resultados para “{termoBusca.trim()}”
             </h2>
@@ -397,11 +403,11 @@ export default function Inicio() {
                 )}
 
                 {(emAlta.dados ?? []).length > 0 && (
-                  // `ativa` faz o gate de quando o timer de rotação PODE começar
-                  // (ver GradeRotativa.jsx): a fase só vira "revelado" quando
-                  // <main> deixa de estar inert/opacity-0 — sem esse gate, a
-                  // grade podia começar a trocar de lote enquanto ainda está
-                  // invisível por trás da introdução.
+                  // `ativa` faz o gate de quando o timer de rotação PODE
+                  // começar (ver GradeRotativa.jsx): a fase só vira
+                  // "revelado" quando <main> deixa de estar inert/opacity-0
+                  // — sem esse gate, a grade podia começar a trocar de lote
+                  // enquanto ainda está invisível por trás da introdução.
                   <GradeRotativa
                     titulo="Destaques da temporada"
                     itens={emAlta.dados}
@@ -420,6 +426,7 @@ export default function Inicio() {
                 )}
               </>
             )}
+
           </>
         )}
       </main>
