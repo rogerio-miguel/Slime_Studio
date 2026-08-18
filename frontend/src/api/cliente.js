@@ -31,12 +31,18 @@ async function corpoDeErro(resposta) {
 // a criação de job em modo "site" é síncrona no servidor e pode levar até
 // ~120s — um timeout curto aqui abortaria só o fetch do cliente, sem
 // cancelar o trabalho já em andamento no backend (decisão do plano).
-export async function requisitar(caminho, { metodo = 'GET', corpo } = {}) {
+//
+// `manterVivo` repassa `keepalive: true` ao `fetch` — necessário pros
+// disparos fire-and-forget de saída de página (`liberarEpisodio`/
+// `salvarProgresso` em `pagehide`, PaginaDoPlayer.jsx): sem isto o browser
+// pode abortar o request no meio quando a página já está sendo descartada.
+export async function requisitar(caminho, { metodo = 'GET', corpo, manterVivo = false } = {}) {
   const resposta = await fetch(caminho, {
     method: metodo,
     credentials: 'same-origin',
     headers: corpo !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+    keepalive: manterVivo,
   });
 
   if (!resposta.ok) {

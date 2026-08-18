@@ -26,6 +26,28 @@ const ROTULO_VERSAO = {
   desconhecida: 'Desconhecida (site não confirma)',
 };
 
+// backend/core/enums.py::SITE_LOCAL — mesmo valor de string, espelhado aqui
+// (padrão já usado em ROTULOS_STATUS de LinhaDeEpisodio.jsx).
+const SITE_LOCAL = 'local';
+
+// Um episódio local só conta como "já capturado" pra grade quando pertence à
+// fonte/versão ativas — senão, depois de uma troca de fonte (`Trocar fonte`),
+// episódios baixados da fonte ANTIGA continuam aparecendo como "prontos" na
+// grade nova (grudados), escondendo que a fonte atual ainda não tem aquele
+// número capturado. Descartado pelo predicado, o episódio não some da grade
+// (`linhas` abaixo usa os números locais sem filtrar na união com os
+// remotos) — só deixa de contar como captura, caindo no ramo remoto/não
+// capturado. Deliberadamente conservador quando o domínio ainda é
+// desconhecido (`dominioAtivo == null`: loading/erro/fonte ambígua da
+// listagem remota) — não filtra por domínio nesse caso, pra não piscar um
+// falso "nada capturado" enquanto a fonte remota ainda está sendo resolvida.
+function pertenceAFonteAtiva(episodio, { dominioAtivo, versaoAtiva }) {
+  if (episodio.site_origem === SITE_LOCAL) return true;
+  if (dominioAtivo == null) return true;
+  if (episodio.site_origem !== dominioAtivo) return false;
+  return episodio.versao === versaoAtiva || episodio.versao === 'desconhecida';
+}
+
 // Rota "/anime/:id" — grade prontos/não capturados. Clique num episódio não
 // capturado dispara a resolução automática de fonte direto (sem formulário
 // de URL, ESPECIFICACAO.md §4): `POST /api/admin/jobs` (modo "site") resolve
@@ -151,8 +173,19 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   // contrato de captura por rótulo (fora do escopo desta frente). Rótulo não
   // numérico (`numero: null`) sempre vira uma linha à parte, no fim.
   const linhas = useMemo(() => {
+    const dominioAtivo = remotos.dados?.dominio ?? null;
+    // Todos os episódios locais por número, SEM filtro — usado abaixo pra
+    // recuperar o episódio descartado por `pertenceAFonteAtiva` quando a
+    // linha precisa dele (badge "assistido"/botão "Recapturar" em
+    // LinhaDeEpisodio.jsx), já que `episodiosPorNumero` (filtrado, logo
+    // abaixo) não o carrega mais.
+    const todosLocaisPorNumero = new Map();
+    (episodios.dados ?? []).forEach((episodio) => todosLocaisPorNumero.set(episodio.numero, episodio));
+
     const episodiosPorNumero = new Map();
-    (episodios.dados ?? []).forEach((episodio) => episodiosPorNumero.set(episodio.numero, episodio));
+    (episodios.dados ?? [])
+      .filter((episodio) => pertenceAFonteAtiva(episodio, { dominioAtivo, versaoAtiva }))
+      .forEach((episodio) => episodiosPorNumero.set(episodio.numero, episodio));
 
     const remotosPorNumero = new Map();
     const remotosSemNumero = [];
@@ -166,12 +199,26 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
       remotosPorNumero.set(remoto.numero, lista);
     });
 
+    // União com os números locais SEM filtro (não `episodiosPorNumero.keys()`,
+    // já filtrado acima): garante que um episódio descartado por
+    // `pertenceAFonteAtiva` ainda gera uma linha (cai no ramo "não capturado"
+    // logo abaixo) mesmo quando a listagem remota atual não inclui esse
+    // número — nunca some da grade.
     const numerosOrdenados = [
-      ...new Set([...episodiosPorNumero.keys(), ...remotosPorNumero.keys()]),
+      ...new Set([
+        ...(episodios.dados ?? []).map((episodio) => episodio.numero),
+        ...remotosPorNumero.keys(),
+      ]),
     ].sort((a, b) => a - b);
 
     const linhasNumericas = numerosOrdenados.flatMap((numero) => {
       const episodio = episodiosPorNumero.get(numero) ?? null;
+      // Só existe episódio descartado quando o filtrado (`episodio`) é nulo —
+      // se `episodio` já é truthy, `todosLocaisPorNumero.get(numero)` é o
+      // MESMO objeto (não há dois locais por número), então reatribuí-lo aqui
+      // faria `LinhaDeEpisodio` tratar status "baixando"/"falhou" etc. como
+      // "assistido/recapturar" por engano.
+      const episodioDescartado = episodio ? null : (todosLocaisPorNumero.get(numero) ?? null);
       const remotosDoNumero = remotosPorNumero.get(numero) ?? [];
       if (episodio || remotosDoNumero.length <= 1) {
         return [
@@ -181,6 +228,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             rotulo: remotosDoNumero[0]?.rotulo ?? String(numero),
             colisao: false,
             episodio,
+            episodioDescartado,
           },
         ];
       }
@@ -190,6 +238,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         rotulo: remoto.rotulo,
         colisao: true,
         episodio: null,
+        episodioDescartado,
       }));
     });
 
@@ -202,7 +251,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     }));
 
     return [...linhasNumericas, ...linhasSemNumero];
-  }, [episodios.dados, remotos.dados]);
+  }, [episodios.dados, remotos.dados, versaoAtiva]);
 
   // Fluxo de criação de job em modo "site" é síncrono no servidor e pode
   // levar até ~120s (resolver fonte + listar episódios dentro do próprio
@@ -462,7 +511,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
       )}
 
       <div className="flex flex-col gap-2">
-        {linhas.map(({ chave, numero, rotulo, colisao, episodio }) => {
+        {linhas.map(({ chave, numero, rotulo, colisao, episodio, episodioDescartado }) => {
           const job = episodio ? jobsPorEpisodio.get(episodio.id) : null;
           return (
             <LinhaDeEpisodio
@@ -471,6 +520,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               rotulo={rotulo}
               colisao={colisao}
               episodio={episodio}
+              episodioDescartado={episodioDescartado}
               job={job}
               capturando={numero != null && numeroCapturando === numero}
               aoCapturar={capturar}

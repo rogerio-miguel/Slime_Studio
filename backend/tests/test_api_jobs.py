@@ -4,12 +4,14 @@ nomes importados em `api.servicos.jobs` — o comportamento de
 `extractors.resolucao`/`extractors.servico` em si já tem testes próprios
 (`tests/test_resolucao.py`, `tests/test_extractors_servico.py`)."""
 
+from datetime import UTC, datetime
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.enums import StatusJob, VersaoDeFonte, VersaoEpisodio
+from core.enums import StatusEpisodio, StatusJob, VersaoDeFonte, VersaoEpisodio
 from extractors.base import EpisodioRemoto, ResultadoBusca
 from extractors.resolucao import ConfirmacaoNecessaria, FonteResolvida
 from models.anime import Anime
@@ -49,6 +51,38 @@ async def _criar_episodio_e_job(
         sessao.add(job)
         await sessao.commit()
         return episodio.id, job.id
+
+
+async def _criar_episodio_existente(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    *,
+    numero: int = 1,
+    status: StatusEpisodio = StatusEpisodio.PRONTO,
+    versao: VersaoEpisodio = VersaoEpisodio.DESCONHECIDA,
+    site_origem: str = "local",
+    hls_path: str | None = None,
+    assistido_em: datetime | None = None,
+    progresso_s: int | None = None,
+) -> int:
+    async with sessionmaker() as sessao:
+        episodio = Episodio(
+            anime_id=anime_id,
+            numero=numero,
+            tipo="regular",
+            versao=versao,
+            url_fonte="https://antigo/ep",
+            site_origem=site_origem,
+            status=status,
+            hls_path=hls_path,
+            tamanho_bytes=123 if hls_path else None,
+            assistido_em=assistido_em,
+            progresso_s=progresso_s,
+            progresso_atualizado_em=datetime.now(UTC) if progresso_s is not None else None,
+        )
+        sessao.add(episodio)
+        await sessao.commit()
+        return episodio.id
 
 
 async def test_criar_job_modo_local(cliente: AsyncClient):
@@ -235,6 +269,164 @@ async def test_criar_job_modo_site_versao_do_episodio_deriva_da_fonte_nao_do_req
         resultado = await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
         episodio = resultado.scalar_one()
         assert episodio.versao == VersaoEpisodio.DESCONHECIDA
+
+
+async def test_criar_job_modo_site_reaproveita_episodio_liberado(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """D2: episódio `LIBERADO` (Feature 1) reaproveita a linha em vez de bater
+    em `uq_episodio_identidade` e propagar `EpisodioJaExiste` — `assistido_em`
+    sobrevive à recaptura, mas `progresso_s`/`progresso_atualizado_em` NÃO
+    (arquivo novo, posição de retomada antiga perde o sentido)."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Liberado")
+    assistido_em = datetime.now(UTC)
+    episodio_id = await _criar_episodio_existente(
+        sessionmaker_api,
+        anime_id,
+        status=StatusEpisodio.LIBERADO,
+        site_origem="animefire.io",
+        assistido_em=assistido_em,
+        progresso_s=300,
+    )
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/jobs",
+        json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
+    )
+
+    assert resposta.status_code == 201
+
+    async with sessionmaker_api() as sessao:
+        episodio = await sessao.get(Episodio, episodio_id)
+        assert episodio.status == StatusEpisodio.PENDENTE
+        assert episodio.url_fonte == "https://x/ep1-recapturado"
+        assert episodio.site_origem == "animefire.io"
+        assert episodio.hls_path is None
+        assert episodio.assistido_em is not None
+        assert episodio.progresso_s is None
+        assert episodio.progresso_atualizado_em is None
+
+        todos = (
+            await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
+        ).scalars().all()
+    assert len(todos) == 1  # reaproveitou a linha, não criou outra
+
+
+async def test_criar_job_modo_site_reaproveita_episodio_de_fonte_diferente(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """D2: episódio já `PRONTO`, mas capturado numa fonte diferente da
+    resolvida agora (troca de fonte) — também reaproveita a linha, sem o que
+    a recaptura ficaria "grudada" batendo em `uq_episodio_identidade`."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Fonte Trocada")
+    episodio_id = await _criar_episodio_existente(
+        sessionmaker_api,
+        anime_id,
+        status=StatusEpisodio.PRONTO,
+        site_origem="site-antigo.io",
+        hls_path="anime-fonte-trocada/1/regular/desconhecida/master.m3u8",
+    )
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="site-novo.io",
+            identificador="7",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://site-novo/ep1")]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/jobs",
+        json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
+    )
+
+    assert resposta.status_code == 201
+
+    async with sessionmaker_api() as sessao:
+        episodio = await sessao.get(Episodio, episodio_id)
+        assert episodio.status == StatusEpisodio.PENDENTE
+        assert episodio.site_origem == "site-novo.io"
+        assert episodio.hls_path is None
+
+        todos = (
+            await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
+        ).scalars().all()
+    assert len(todos) == 1
+
+
+async def test_criar_job_modo_site_recaptura_com_job_ativo_409(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """D2: episódio elegível para recaptura (`LIBERADO`), mas já tem um `Job`
+    ativo — a recaptura deve levantar `JobEmExecucao`/409 ANTES de apagar
+    arquivos ou criar um segundo `Job`, mesma checagem de
+    `api/servicos/catalogo.py::remover_episodio`/`liberar_episodio`."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Recaptura Job Ativo")
+    episodio_id = await _criar_episodio_existente(
+        sessionmaker_api,
+        anime_id,
+        status=StatusEpisodio.LIBERADO,
+        site_origem="animefire.io",
+    )
+    async with sessionmaker_api() as sessao:
+        job_ativo = Job(episodio_id=episodio_id, status=StatusJob.TRANSCODIFICANDO)
+        sessao.add(job_ativo)
+        await sessao.commit()
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/jobs",
+        json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
+    )
+
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"]["motivo"] == "job_em_execucao"
+
+    async with sessionmaker_api() as sessao:
+        episodio = await sessao.get(Episodio, episodio_id)
+        assert episodio.status == StatusEpisodio.LIBERADO  # linha não foi tocada
+        assert episodio.url_fonte == "https://antigo/ep"
+
+        jobs_do_episodio = (
+            await sessao.execute(select(Job).where(Job.episodio_id == episodio_id))
+        ).scalars().all()
+    assert len(jobs_do_episodio) == 1  # nenhum job duplicado foi criado
 
 
 async def test_listar_jobs_com_filtro_de_status(

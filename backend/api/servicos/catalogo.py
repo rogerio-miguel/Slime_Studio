@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
-from core.enums import ESTADOS_EM_EXECUCAO
+from core.enums import ESTADOS_EM_EXECUCAO, StatusEpisodio
 from core.erros import JobEmExecucao
 from core.midia import diretorio_do_episodio
 from extractors.download import caminho_raw
@@ -37,16 +37,54 @@ async def remover_episodio(sessionmaker: _SessionMaker, config: Config, episodio
         if episodio is None:
             return False
 
-        job_ativo_id = await _job_ativo_do_episodio(sessao, episodio_id)
+        job_ativo_id = await job_ativo_do_episodio(sessao, episodio_id)
         if job_ativo_id is not None:
             raise JobEmExecucao(job_ativo_id)
 
         anime = await sessao.get(Anime, episodio.anime_id)
 
         if anime is not None:
-            _remover_arquivos_do_episodio(config, anime.slug, episodio)
+            remover_arquivos_do_episodio(config, anime.slug, episodio)
 
         await sessao.delete(episodio)
+        await sessao.commit()
+        return True
+
+
+async def liberar_episodio(sessionmaker: _SessionMaker, config: Config, episodio_id: int) -> bool:
+    """Libera o espaço em disco de um episódio já assistido sem apagar o
+    registro do catálogo (diferente de `remover_episodio`): preserva
+    `assistido_em`/`url_fonte`/`site_origem`/`numero_fonte`/`titulo`/
+    `duracao_s` — uma recaptura futura reaproveita essa mesma linha em vez de
+    criar outra (D2, `api/servicos/jobs.py::criar_job_site`). Devolve `False`
+    se o episódio não existir.
+
+    Levanta `JobEmExecucao` pelo mesmo motivo de `remover_episodio`: liberar
+    arquivos que um worker está escrevendo agora corromperia o job em
+    andamento.
+
+    Idempotente: se `hls_path` já é `None` (já liberado, ou nunca teve mídia
+    empacotada), é um no-op — nem checa job ativo, só devolve `True`."""
+    async with sessionmaker() as sessao:
+        episodio = await sessao.get(Episodio, episodio_id)
+        if episodio is None:
+            return False
+
+        if episodio.hls_path is None:
+            return True
+
+        job_ativo_id = await job_ativo_do_episodio(sessao, episodio_id)
+        if job_ativo_id is not None:
+            raise JobEmExecucao(job_ativo_id)
+
+        anime = await sessao.get(Anime, episodio.anime_id)
+        if anime is not None:
+            remover_arquivos_do_episodio(config, anime.slug, episodio)
+
+        episodio.hls_path = None
+        episodio.tamanho_bytes = None
+        episodio.renditions_disponiveis = None
+        episodio.status = StatusEpisodio.LIBERADO
         await sessao.commit()
         return True
 
@@ -72,14 +110,17 @@ async def remover_anime(sessionmaker: _SessionMaker, config: Config, anime_id: i
             await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
         ).scalars()
         for episodio in episodios:
-            _remover_arquivos_do_episodio(config, anime.slug, episodio)
+            remover_arquivos_do_episodio(config, anime.slug, episodio)
 
         await sessao.delete(anime)
         await sessao.commit()
         return True
 
 
-async def _job_ativo_do_episodio(sessao: AsyncSession, episodio_id: int) -> int | None:
+async def job_ativo_do_episodio(sessao: AsyncSession, episodio_id: int) -> int | None:
+    """Pública porque também é usada por `api/servicos/jobs.py::
+    _reaproveitar_episodio_para_recaptura` (mesmo padrão de promoção de
+    `remover_arquivos_do_episodio`, ver docstring dela)."""
     resultado = await sessao.execute(
         select(Job.id).where(Job.episodio_id == episodio_id, Job.status.in_(ESTADOS_EM_EXECUCAO))
     )
@@ -108,11 +149,15 @@ async def uso_de_disco(sessionmaker: _SessionMaker, config: Config) -> tuple[int
     return uso.total, uso.free, usado_por_midia
 
 
-def _remover_arquivos_do_episodio(config: Config, anime_slug: str, episodio: Episodio) -> None:
-    """Melhor esforço (`ignore_errors=True`/`missing_ok=True`) — o registro no
-    banco já foi (ou está prestes a ser) apagado; um arquivo que resiste à
-    remoção não deve impedir a operação, só fica órfão em disco para limpeza
-    manual."""
+def remover_arquivos_do_episodio(config: Config, anime_slug: str, episodio: Episodio) -> None:
+    """Melhor esforço (`ignore_errors=True`/`missing_ok=True`) — um arquivo que
+    resiste à remoção não deve impedir a operação, só fica órfão em disco
+    para limpeza manual.
+
+    Pública porque três operações chamam: `remover_episodio`/`remover_anime`
+    (linha do banco é apagada em seguida) e `liberar_episodio`/
+    `api/servicos/jobs.py::criar_job_site` (linha do `Episodio` sobrevive,
+    só os arquivos em disco somem)."""
     if episodio.hls_path is not None:
         diretorio_hls = diretorio_do_episodio(
             config.media_root, anime_slug, episodio.numero, episodio.tipo, episodio.versao

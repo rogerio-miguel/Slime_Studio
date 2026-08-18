@@ -6,7 +6,7 @@ Clean Architecture, CLAUDE.md §1).
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 
 from core.enums import StatusEpisodio, StatusJob, TipoEpisodio, VersaoEpisodio
 
@@ -238,11 +238,32 @@ class EpisodioSaida(BaseModel):
     tipo: TipoEpisodio
     versao: VersaoEpisodio
     status: StatusEpisodio
+    site_origem: str
     hls_path: str | None
     renditions_disponiveis: list[str] | None
     duracao_s: int | None
+    progresso_s: int | None
     assistido_em: datetime | None
     criado_em: datetime
+
+
+class SalvarProgressoRequest(BaseModel):
+    segundos: NonNegativeInt
+
+
+class ContinuarAssistindoSaida(BaseModel):
+    """Item da prateleira "Continuar assistindo" da Inicio —
+    `api/servicos/progresso.py::listar_continuar_assistindo` (join
+    `Episodio`+`Anime`, já achatado)."""
+
+    episodio_id: int
+    anime_id: int
+    anime_titulo: str
+    capa_path: str | None
+    numero: int
+    titulo: str | None
+    progresso_s: int
+    duracao_s: int | None
 
 
 # --- sites (api/rotas/sites.py) ---
