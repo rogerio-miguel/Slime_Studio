@@ -1,7 +1,6 @@
 import { useCallback, useId, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
-import { criarAnime, listarAnimes, listarContinuarAssistindo, removerAnime } from '../api/recursos.js';
+import { listarAnimes, listarContinuarAssistindo, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
@@ -10,11 +9,10 @@ import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeDeCards.jsx';
 
-// Rota "/animes" — catálogo completo. Cadastro de anime é um formulário
-// mínimo (título + ano) direto pra `POST /api/admin/animes`: sem
-// busca-e-confirma no AniList/Kitsu (integrations/ ainda não existe, fora de
-// escopo desta fase — ver `backend/api/rotas/animes.py`), então este é o
-// único jeito de popular o catálogo pela UI.
+// Rota "/animes" — catálogo completo. Sem cadastro manual aqui: o catálogo
+// é populado materializando itens do feed de provedor externo na Home
+// (`paginas/Inicio.jsx`, `POST /api/admin/animes`), não por um formulário
+// nesta página.
 //
 // Navbar renderizada com `fase="revelado"` fixo (mesma prop que
 // `paginas/Inicio.jsx` deriva de `useScrubDeVideo`, aqui não há scrub —
@@ -32,7 +30,6 @@ import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeD
 // temporada" no mesmo viewport. Mesmo `px-6 md:px-10` de
 // `paginas/Inicio.jsx`, sem teto de largura, pra ficar pixel-idêntico.
 export default function Galeria() {
-  const navigate = useNavigate();
   const idContinuarAssistindo = useId();
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
@@ -50,48 +47,9 @@ export default function Galeria() {
     [animes, termoBuscaNormalizado]
   );
 
-  const [tituloNovo, setTituloNovo] = useState('');
-  const [anoNovo, setAnoNovo] = useState('');
-  const [criando, setCriando] = useState(false);
-  const [erroCriacao, setErroCriacao] = useState(null);
-
   const [animeParaRemover, setAnimeParaRemover] = useState(null);
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState(null);
-
-  const aoCriarAnime = useCallback(
-    async (event) => {
-      event.preventDefault();
-      if (!tituloNovo.trim() || criando) return;
-      setCriando(true);
-      setErroCriacao(null);
-      try {
-        const anime = await criarAnime({
-          titulo: tituloNovo.trim(),
-          ano: anoNovo ? Number(anoNovo) : undefined,
-        });
-        setTituloNovo('');
-        setAnoNovo('');
-        recarregar();
-        navigate(`/anime/${anime.id}`);
-      } catch (erroCapturado) {
-        console.error('falha ao criar anime', erroCapturado);
-        if (erroCapturado instanceof ErroDeApi && Array.isArray(erroCapturado.detail)) {
-          const referenteAoAno = erroCapturado.detail.some((item) => item.loc?.includes('ano'));
-          setErroCriacao(
-            referenteAoAno
-              ? 'Ano inválido — informe um número inteiro.'
-              : 'Dados inválidos — verifique o formulário.'
-          );
-        } else {
-          setErroCriacao('Não foi possível adicionar o anime — tente novamente.');
-        }
-      } finally {
-        setCriando(false);
-      }
-    },
-    [tituloNovo, anoNovo, criando, recarregar, navigate]
-  );
 
   const confirmarRemocao = useCallback(async () => {
     if (!animeParaRemover) return;
@@ -148,48 +106,6 @@ export default function Galeria() {
             Meu Catálogo
           </h1>
         </header>
-        <form onSubmit={aoCriarAnime} className="mb-8 flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <label htmlFor="titulo-novo-anime" className="text-xs text-ink-muted">
-              Novo anime
-            </label>
-            <input
-              id="titulo-novo-anime"
-              value={tituloNovo}
-              onChange={(event) => setTituloNovo(event.target.value)}
-              placeholder="Título"
-              className="rounded-md border border-border-chrome bg-surface px-3 py-2 text-sm text-white outline-none focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor="ano-novo-anime" className="text-xs text-ink-muted">
-              Ano
-            </label>
-            <input
-              id="ano-novo-anime"
-              type="number"
-              min="1900"
-              max={new Date().getFullYear() + 1}
-              step="1"
-              value={anoNovo}
-              onChange={(event) => setAnoNovo(event.target.value)}
-              placeholder="opcional"
-              className="w-24 rounded-md border border-border-chrome bg-surface px-3 py-2 text-sm text-white outline-none focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={criando}
-            className="rounded-md border border-neon-soft bg-surface px-4 py-2 text-sm font-semibold text-neon outline-none transition-colors hover:border-neon disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-neon"
-          >
-            {criando ? 'Adicionando…' : 'Adicionar'}
-          </button>
-          {erroCriacao && (
-            <p role="alert" className="w-full text-sm text-red-400">
-              {erroCriacao}
-            </p>
-          )}
-        </form>
 
         {carregando && <p className="text-sm text-ink-muted">Carregando catálogo…</p>}
         {erro && (
