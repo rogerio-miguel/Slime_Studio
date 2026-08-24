@@ -1,19 +1,18 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { liberarEpisodio, marcarAssistido, obterEpisodio, salvarProgresso } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import Player from '../player/Player.jsx';
 
-// Rota "/assistir/:episodioId". título/número/anime vêm preferencialmente do
+// Rota "/assistir/:episodioId". título/número vêm preferencialmente do
 // `state` da navegação (LinhaDeEpisodio.jsx passa isso no `<Link>`) — mais
 // rápido, sem round-trip. Em acesso direto/refresh (sem `state`),
-// `GET /api/episodios/{id}` cobre `numero`/`animeId` (link "voltar" e número
-// no cabeçalho); o título do ANIME em si fica fora do contrato de
-// `EpisodioSaida` (só `anime_id`), então nesse caso o cabeçalho cai para o
-// nome genérico "Slime Studio" — degradação parcial aceitável, não afeta
-// playback. O mesmo fetch também traz `progresso_s` (Feature "continuar
-// assistindo"), que o `state` de navegação nunca carrega.
+// `GET /api/episodios/{id}` cobre `numero`; o título do ANIME em si fica
+// fora do contrato de `EpisodioSaida` (só `anime_id`), então nesse caso o
+// cabeçalho cai para o nome genérico "Slime Studio" — degradação parcial
+// aceitável, não afeta playback. O mesmo fetch também traz `progresso_s`
+// (Feature "continuar assistindo"), que o `state` de navegação nunca carrega.
 export default function PaginaDoPlayer() {
   const { episodioId } = useParams();
   const location = useLocation();
@@ -21,10 +20,10 @@ export default function PaginaDoPlayer() {
   const episodio = useRecurso(() => obterEpisodio(episodioId), [episodioId]);
   const focoTitulo = useFocoAoMontar(episodioId);
 
-  // player.css define `--page-chrome` prevendo justamente esta faixa de
-  // cabeçalho acima do palco; a classe abaixo é o que estava faltando pra
-  // `html,body{overflow:hidden}` (index.css) só valer nesta rota, sem
-  // quebrar o scroll da galeria/página do anime (bug corrigido na Fase 4).
+  // Classe que liga `html,body{overflow:hidden}` (index.css) só nesta rota
+  // (tela cheia, sem scroll), sem quebrar o scroll da galeria/página do
+  // anime (bug corrigido na Fase 4). Título é overlay dentro do player
+  // (PlayerAtivo.jsx), não mais um <header> externo aqui.
   useEffect(() => {
     document.documentElement.classList.add('pagina-player');
     document.body.classList.add('pagina-player');
@@ -96,35 +95,30 @@ export default function PaginaDoPlayer() {
   }, [episodioId]);
 
   const numero = metadados?.numero ?? episodio.dados?.numero ?? null;
-  const animeId = metadados?.animeId ?? episodio.dados?.anime_id ?? null;
   const animeTitulo = metadados?.animeTitulo ?? null;
   const titulo = numero != null ? `${animeTitulo ?? 'Slime Studio'} — Episódio ${numero}` : 'Slime Studio';
 
   return (
     <main className="flex h-full flex-col">
-      <header className="flex items-center gap-4 px-4 py-2">
-        {animeId != null && (
-          <Link
-            to={`/anime/${animeId}`}
-            className="text-sm text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
-          >
-            ← voltar
-          </Link>
-        )}
-        <h1
-          ref={focoTitulo}
-          tabIndex={-1}
-          className="text-sm font-medium text-white outline-none"
-        >
-          {titulo}
-        </h1>
-      </header>
+      {/* `key={episodioId}`: trocar de episódio SEM sair da rota "/assistir/:episodioId"
+          (ex. capturar um anime, voltar e capturar outro enquanto o player de um
+          episódio anterior ainda está montado) não desmonta `PaginaDoPlayer` — o React
+          Router só re-renderiza com o novo param. Sem esta `key`, `PlayerAtivo` e toda
+          a árvore (vídeo/hls.js, pipeline WebGPU, grafo de áudio) sobrevivem à troca de
+          rota; cada hook interno reage a `fonte`/`episodioId` individualmente, e basta
+          UM deles ter uma dependência incompleta pra deixar conteúdo do episódio
+          anterior sobrevivendo sob o título do novo — exatamente o sintoma relatado
+          (título certo, vídeo de outro episódio). Forçar remonte completo aqui garante
+          vídeo/áudio/WebGPU sempre partindo de zero por episódio, sem depender de cada
+          hook (vários, alguns fora deste arquivo) acertar sua lista de dependências. */}
       <Player
+        key={episodioId}
         fonte={`/api/episodios/${episodioId}/playlist.m3u8`}
         titulo={titulo}
         aoAtingirAssistido={aoAtingirAssistido}
         retomarDe={episodio.dados?.progresso_s ?? null}
         aoSalvarProgresso={aoSalvarProgresso}
+        focoTituloRef={focoTitulo}
       />
     </main>
   );

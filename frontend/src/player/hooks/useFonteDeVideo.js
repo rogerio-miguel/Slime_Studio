@@ -14,22 +14,19 @@ export function useFonteDeVideo(videoRef, fonte, aoFalhar) {
     const video = videoRef.current;
     if (!video || !fonte) return;
 
+    // Erro é responsabilidade de `conectarFonte` (cada ramo — hls.js,
+    // Safari nativo, genérico — sabe qual fonte de erro é a certa pra ele;
+    // ver comentário de `ouvirErroNativo` em fonteHls.js).
     const desconectar = conectarFonte(video, fonte, aoFalhar);
 
     const aoCarregarMetadados = () => {
       setDimensoesDaFonte({ width: video.videoWidth, height: video.videoHeight });
     };
-    const aoDarErro = () => {
-      const detalhe = video.error ? video.error.message : 'desconhecido';
-      aoFalhar(new Error(`Erro ao carregar o vídeo: ${detalhe}`));
-    };
 
     video.addEventListener('loadedmetadata', aoCarregarMetadados, { once: true });
-    video.addEventListener('error', aoDarErro);
 
     return () => {
       video.removeEventListener('loadedmetadata', aoCarregarMetadados);
-      video.removeEventListener('error', aoDarErro);
       desconectar();
     };
   }, [videoRef, fonte, aoFalhar]);

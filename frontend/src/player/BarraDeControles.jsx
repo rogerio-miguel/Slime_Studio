@@ -33,6 +33,7 @@ export default function BarraDeControles({
   aoAlternarHud,
   aoAlternarCinema,
   cinemaHabilitado,
+  cinemaFalhou,
 }) {
   const [tocando, setTocando] = useState(false);
   const [progresso, setProgresso] = useState(0);
@@ -143,9 +144,15 @@ export default function BarraDeControles({
       <button
         type="button"
         onClick={aoAlternarCinema}
-        aria-pressed={cinemaHabilitado}
-        aria-label="Áudio cinema (graves + crossfeed para fone)"
-        className={classeBotao}
+        disabled={cinemaFalhou}
+        aria-pressed={cinemaFalhou ? false : cinemaHabilitado}
+        aria-label={
+          cinemaFalhou
+            ? 'Áudio cinema indisponível: a cadeia de áudio falhou ao montar, seguindo com áudio nativo'
+            : 'Áudio cinema (graves + crossfeed para fone)'
+        }
+        title={cinemaFalhou ? 'Áudio cinema indisponível: a cadeia de áudio falhou ao montar, seguindo com áudio nativo' : undefined}
+        className={`${classeBotao} disabled:cursor-not-allowed disabled:opacity-50`}
       >
         <IconeFones />
       </button>

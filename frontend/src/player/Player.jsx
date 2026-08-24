@@ -16,6 +16,7 @@ export default function Player({
   aoAtingirAssistido,
   retomarDe,
   aoSalvarProgresso,
+  focoTituloRef,
 }) {
   // Checagem de navigator.gpu ausente é o primeiro guard.
   const [erroFatal, setErroFatal] = useState(() =>
@@ -45,6 +46,7 @@ export default function Player({
       aoAtingirAssistido={aoAtingirAssistido}
       retomarDe={retomarDe}
       aoSalvarProgresso={aoSalvarProgresso}
+      focoTituloRef={focoTituloRef}
     />
   );
 }

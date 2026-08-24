@@ -7,8 +7,21 @@
    as constantes que não dependem do vídeo. */
 :root {
   --page-chrome: 5rem;
-  --fullscreen-margin: 5vmin;
-  --ambient-bleed: 10%;
+  /* Nome genérico (não mais só "fullscreen"): a mesma margem agora é
+     reservada em AMBOS os modos — ver comentário em `.fullscreen-stage`
+     abaixo — pra o #ambient-glow ter por onde vazar lateralmente em
+     qualquer um. */
+  --stage-margin: 4vmin;
+  /* 10% não bastava fora de tela cheia: quando --page-chrome deixa a
+     ALTURA como eixo limitante (comum em janela larga/widescreen — o
+     .frame acaba bem mais estreito que o viewport), a caixa do
+     #ambient-glow (proporcional ao .frame) parava de alcançar a borda
+     real da página bem antes do fim — sobrava fundo plano preto
+     (html{background:#000}, sem gradiente nenhum) colado nas laterais.
+     30% fecha esse vão pra janelas até ~21:9; em ultrawide extremo ainda
+     pode sobrar uma tira nas pontas — halo tem alcance finito, não é bug,
+     mas o vão fica bem menor que antes. */
+  --ambient-bleed: 5%;
 }
 
 /* `height:100%`+`overflow:hidden` só faz sentido na rota do player (tela
@@ -75,6 +88,18 @@ body.pagina-player {
      porque a regra .fullscreen-stage:fullscreen abaixo já define
      height:100vh explícito, que vence este min-height sem conflito. */
   min-height: 100dvh;
+  /* Reserva a mesma margem lateral usada em tela cheia (--stage-margin)
+     também aqui: sem isso, quando --frame-ar deixa a LARGURA como eixo
+     limitante (vídeo tão largo quanto o viewport), o .frame encosta direto
+     nas bordas esquerda/direita e o #ambient-glow (--ambient-bleed além da
+     caixa do .frame) não tem viewport sobrando pra vazar
+     lateralmente — só as faixas topo/base (reservadas por --page-chrome,
+     na fórmula de largura do .frame abaixo) mostravam halo, as laterais
+     ficavam pretas. box-sizing:border-box pra width:100% já incluir esse
+     padding, senão o .frame calcularia o espaço disponível errado (min()
+     usaria 100% + padding, estourando o container). */
+  padding-inline: var(--stage-margin);
+  box-sizing: border-box;
 }
 /* padding cria a moldura nos 4 lados — também é o que deixa o
    #ambient-glow (filho deste elemento) visível ao redor do vídeo em
@@ -86,7 +111,7 @@ body.pagina-player {
   width: 100vw;
   height: 100vh;
   background: #000;
-  padding: var(--fullscreen-margin);
+  padding: var(--stage-margin);
   box-sizing: border-box;
 }
 .frame {
@@ -99,8 +124,11 @@ body.pagina-player {
      termo de largura equivalente (`* var(--frame-ar)`) dentro do próprio
      min(), a largura já nasce correta e o aspect-ratio só precisa resolver
      a altura (auto) a partir dela — sem depender de nenhum feedback entre
-     eixos. --page-chrome cobre chrome ao redor (header/padding/folga), é o
-     que evita que o vídeo estoure a viewport típica (sem teto fixo de
+     eixos. --page-chrome não cobre mais um <header> externo (removido — o
+     título/"voltar" agora são overlay DENTRO do .frame, ver `.controls`
+     abaixo) — é folga de respiro em torno do .frame, dividida
+     ~simetricamente topo/base pela centralização flex de .fullscreen-stage,
+     e o que evita que o vídeo estoure a viewport típica (sem teto fixo de
      largura: o vídeo cresce até esbarrar no container ou nessa altura).
      Mesma técnica já usada nas fórmulas de :fullscreen abaixo. */
   width: min(100%, calc((100dvh - var(--page-chrome)) * var(--frame-ar, 1.777778)));
@@ -128,12 +156,12 @@ body.pagina-player {
    caixa. Nada mais transborda — o #output-canvas usa object-fit: contain.
    100% já é o content-box de .fullscreen-stage (pós-padding, .frame é flex
    item) — só o outro termo do min()/max() precisa descontar
-   --fullscreen-margin manualmente, porque vem direto de vw/vh (unidade de
+   --stage-margin manualmente, porque vem direto de vw/vh (unidade de
    viewport, não afetada por padding do pai). */
 .fullscreen-stage:fullscreen .frame,
 .fullscreen-stage:-webkit-full-screen .frame {
-  width: min(100%, calc((100vh - 2 * var(--fullscreen-margin)) * var(--frame-ar)));
-  height: min(100%, calc((100vw - 2 * var(--fullscreen-margin)) / var(--frame-ar)));
+  width: min(100%, calc((100vh - 2 * var(--stage-margin)) * var(--frame-ar)));
+  height: min(100%, calc((100vw - 2 * var(--stage-margin)) / var(--frame-ar)));
   max-width: none;
   max-height: none;
   margin: 0;
@@ -167,14 +195,61 @@ body.pagina-player {
    invisível, quebraria navegação por teclado). Regra de acessibilidade, não
    estética — por isso fica aqui e não em Tailwind utilitário. */
 .controls {
+  --deslocamento: 6px;
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateY(var(--deslocamento));
   transition: opacity 0.2s ease, transform 0.2s ease;
   pointer-events: none;
+}
+/* Variante pro overlay do TOPO (título, PlayerAtivo.jsx) — mesma classe
+   `.controls` cobre opacity/transition/pointer-events, mas o nudge de
+   `translateY` precisa vir invertido: a barra de baixo nasce 6px abaixo do
+   lugar final e sobe ao revelar, o título nasce 6px ACIMA do lugar final e
+   desce, senão pareceria entrar "de baixo" numa borda que é o topo do
+   vídeo. Precisa vir depois de `.controls` no arquivo (mesma especificidade,
+   a ordem no source decide) pra sobrescrever a variável `--deslocamento` de
+   lá. */
+.controls-topo {
+  --deslocamento: -6px;
 }
 .frame:hover .controls,
 .frame:focus-within .controls {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
+}
+
+/* Auto-ocultar por inatividade — a classe entra/sai do .fullscreen-stage em
+   hooks/useOcultarPorInatividade.js. A especificidade (0,4,1) VENCE de
+   propósito o `.frame:hover` acima (0,3,0): quando o tempo estoura, o normal
+   é o cursor estar parado EM CIMA do vídeo, então uma regra que não vencesse
+   o hover não esconderia nada. O caminho de revelação continua sendo só o de
+   cima — este bloco só força a ocultação.
+
+   `:not(:has(button:focus-visible, input:focus-visible, select:focus-visible))`
+   é a trava de acessibilidade, restrita aos tipos de elemento que a barra de
+   controles (BarraDeControles.jsx) realmente usa — não :focus-visible
+   genérico. Motivo: o <h1> do título recebe foco programático a cada mount
+   de rota (useFocoAoMontar.js, padrão de anúncio de rota pra leitor de tela —
+   não pode ser removido) e tem tabIndex={-1} (nunca alcançável por Tab real).
+   Esse foco programático faz :focus-visible casar nele (por isso o <h1> já
+   precisa de outline-none pra esconder o anel visual) e, sem essa restrição,
+   ficaria verdadeiro desde o mount da rota — a trava nunca desarmaria no caso
+   de uso mais comum (só assistir, sem tocar em nada), e a feature inteira
+   nunca ativaria. Restringindo aos três tipos de tag que a barra realmente
+   usa (<button>, <input type=range> de seek/volume, <select> do preset), a
+   trava só considera foco alcançado por navegação real (Tab) dentro dos
+   controles, e ignora o <h1>.
+
+   cursor:none no palco, não em .frame nem em <html>: o palco é o alvo do
+   requestFullscreen (cobre a tela toda, inclusive as faixas de
+   --stage-margin) e em janela ocupa a viewport inteira da rota, mas termina
+   antes da navbar — fora dele o cursor continua visível, que é o certo. */
+.fullscreen-stage.palco-inativo:not(:has(button:focus-visible, input:focus-visible, select:focus-visible)) {
+  cursor: none;
+}
+.fullscreen-stage.palco-inativo:not(:has(button:focus-visible, input:focus-visible, select:focus-visible)) .controls {
+  opacity: 0;
+  transform: translateY(var(--deslocamento));
+  pointer-events: none;
 }
