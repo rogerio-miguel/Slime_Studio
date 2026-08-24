@@ -18,9 +18,24 @@ export default defineConfig({
     // HLS que `player/fonteHls.js` carrega via hls.js (que roda com
     // `video.crossOrigin = 'anonymous'`; cross-origin de verdade excluiria
     // o cookie e o hls.js tomaria 401). Fase 4, ESPECIFICACAO.md §5/§10.
+    // `configure` registra um listener de erro em cada proxy — sem isto, um
+    // EPIPE ao escrever numa conexão que já fechou do outro lado (aba
+    // recarregada/fechada em pleno WS de `/ws`, backend reiniciando por
+    // `--reload`) sobe como exceção não tratada no processo do Vite em vez
+    // de só logar; a conexão específica ainda cai, mas o dev server não
+    // deveria arriscar sair fora por causa disso.
     proxy: {
-      '/api': 'http://127.0.0.1:8000',
-      '/ws': { target: 'ws://127.0.0.1:8000', ws: true },
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        configure: (proxy) =>
+          proxy.on('error', (err) => console.error('[proxy /api]', err.message)),
+      },
+      '/ws': {
+        target: 'ws://127.0.0.1:8000',
+        ws: true,
+        configure: (proxy) =>
+          proxy.on('error', (err) => console.error('[proxy /ws]', err.message)),
+      },
     },
   },
 });
