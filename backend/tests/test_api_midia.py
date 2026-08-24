@@ -157,4 +157,4 @@ async def test_segmento_servido_com_sucesso(
 
     assert resposta.status_code == 200
     assert resposta.content == b"dados-fake-do-segmento"
-    assert resposta.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert resposta.headers["cache-control"] == "private, max-age=0, must-revalidate"

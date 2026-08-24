@@ -38,7 +38,18 @@ router_admin = APIRouter(prefix="/api/admin/episodios", tags=["admin-episodios"]
 _TIPO_M3U8 = "application/vnd.apple.mpegurl"
 _TIPO_TS = "video/mp2t"
 _CACHE_MANIFESTO = "private, max-age=60"
-_CACHE_SEGMENTO = "private, max-age=31536000, immutable"
+# Nunca `immutable`/max-age longo aqui: a URL do segmento (`seg_%05d.ts`) é
+# determinística por anime/episódio (`diretorio_do_episodio`), não por
+# conteúdo — uma recaptura (remover do catálogo + baixar de novo) gera bytes
+# novos no mesmo caminho. `immutable` fazia o navegador nunca mais perguntar
+# pro servidor depois da primeira carga, servindo o segmento antigo pra
+# sempre mesmo após reprocessamento (bug reproduzido: bumper promocional do
+# site de origem, capturado só na primeira tentativa, sobrevivendo em cache
+# do Chrome a uma recaptura limpa). `FileResponse` do Starlette já calcula
+# ETag/Last-Modified do arquivo em disco (`stat_result`), então isso aqui só
+# evita a promessa falsa de imutabilidade — sem fetch, sem short-circuit 304
+# nesta versão do Starlette, a próxima carga já pega o arquivo atual.
+_CACHE_SEGMENTO = "private, max-age=0, must-revalidate"
 # Limiar de conclusão espelhando `progresso.py::_LIMIAR_CONCLUSAO` — acima
 # disso, o progresso salvo seria indistinguível de "já assistido", que é o
 # gatilho de `liberar_episodio` (PaginaDoPlayer.jsx), não de salvar posição.
