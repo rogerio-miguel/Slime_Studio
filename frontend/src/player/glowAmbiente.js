@@ -45,7 +45,7 @@ export function iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc }) {
   // "centro" do bitmap para de bater com a área real do vídeo na tela.
   const bleedRaw = getComputedStyle(elementoDeMedida).getPropertyValue('--ambient-bleed');
   const bleedPct = parseFloat(bleedRaw);
-  const bleedFraction = Number.isFinite(bleedPct) ? bleedPct / 100 : 0.1; // 0.1 = fallback do CSS
+  const bleedFraction = Number.isFinite(bleedPct) ? bleedPct / 100 : 0.3; // 0.3 = fallback do CSS
 
   const centerW = AMBIENT_CANVAS_WIDTH;
   const centerH = Math.round(centerW * (video.videoHeight / video.videoWidth)) || 18;

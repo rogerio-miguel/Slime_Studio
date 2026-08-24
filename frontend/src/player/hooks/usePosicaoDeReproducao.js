@@ -11,6 +11,13 @@ const _THROTTLE_MS = 10000;
 // importa nada de `src/api/` — `aoSalvar` é um callback plano que quem monta
 // o player decide o que fazer (PaginaDoPlayer.jsx chama a API).
 //
+// `retomarDe` chega via fetch assíncrono (obterEpisodio em PaginaDoPlayer.jsx)
+// que corre em paralelo com o carregamento do HLS (useFonteDeVideo.js conecta
+// a fonte no mount, sem esperar esse fetch). Quando o fetch demora mais que
+// `loadedmetadata` disparar, o listener abaixo é registrado tarde demais —
+// evento nativo, dispara uma vez só — e a retomada nunca aconteceria; por
+// isso o check síncrono de `readyState` logo após registrar o listener.
+//
 // Fora da janela [30s, 90% da duração) a posição não é salva (início/fim do
 // episódio não vale a pena retomar — o fim já é coberto pela Feature "liberar
 // arquivo ao terminar"/usePontoDeAssistido.js). Fire-and-forget: erro dentro
@@ -26,7 +33,7 @@ export function usePosicaoDeReproducao(videoRef, aoSalvar, retomarDe) {
     const video = videoRef.current;
     if (!video || !aoSalvar) return;
 
-    function aoCarregarMetadados() {
+    function tentarRetomar() {
       if (jaRetomouRef.current) return;
       if (!video.duration || Number.isNaN(video.duration)) return;
       if (
@@ -59,11 +66,16 @@ export function usePosicaoDeReproducao(videoRef, aoSalvar, retomarDe) {
       aoSalvar(Math.floor(video.currentTime));
     }
 
-    video.addEventListener('loadedmetadata', aoCarregarMetadados);
+    video.addEventListener('loadedmetadata', tentarRetomar);
     video.addEventListener('timeupdate', aoAtualizarTempo);
     video.addEventListener('pause', aoPausar);
+    // `loadedmetadata` já pode ter disparado antes deste efeito rodar (o
+    // fetch de `retomarDe` demorou mais que o HLS carregar) — evento nativo
+    // não dispara de novo pra um listener tardio, então cobre esse caso
+    // chamando a mesma lógica direto se os metadados já estão disponíveis.
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) tentarRetomar();
     return () => {
-      video.removeEventListener('loadedmetadata', aoCarregarMetadados);
+      video.removeEventListener('loadedmetadata', tentarRetomar);
       video.removeEventListener('timeupdate', aoAtualizarTempo);
       video.removeEventListener('pause', aoPausar);
     };
