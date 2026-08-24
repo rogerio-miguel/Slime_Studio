@@ -131,45 +131,12 @@ def test_buscar_404_devolve_lista_vazia_sem_levantar_excecao(extrator):
     assert resultados == []
 
 
-def test_buscar_titulo_com_subtitulo_cai_para_principal_quando_completo_vazio(extrator):
-    """AnimeFire casa busca por prefixo do título principal — um subtítulo
-    depois de ':' zera o resultado mesmo pra um anime que existe no site
-    (confirmado ao vivo contra animefire.io). `buscar` cai pro título truncado
-    antes do separador como 2º candidato."""
-    titulo = "Anime Principal: Subtitulo Aqui"
-    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal-subtitulo-aqui"
-    url_truncado = f"{extrator.BASE_URL}/pesquisar/anime-principal"
-    cliente = ClienteFalso(
-        html_por_url={
-            url_completo: _ler_fixture("busca_vazia.html"),
-            url_truncado: _ler_fixture("busca.html"),
-        }
-    )
-
-    resultados = extrator.buscar(cliente, titulo)
-
-    assert resultados
-    assert resultados[0].identificador == "tensei-shitara-slime-datta-ken"
-
-
-def test_buscar_titulo_com_subtitulo_e_404_no_completo_tambem_cai_para_truncado(extrator):
-    """Mesmo fallback quando o candidato completo dá HTTP 404 em vez de 200
-    vazio — os dois comportamentos foram observados ao vivo pro AnimeFire
-    dependendo do título (ex: presença literal de ':' na URL)."""
-    titulo = "Anime Principal: Subtitulo Aqui"
-    url_truncado = f"{extrator.BASE_URL}/pesquisar/anime-principal"
-    cliente = _ClienteComExcecoes404({url_truncado: _ler_fixture("busca.html")})
-
-    resultados = extrator.buscar(cliente, titulo)
-
-    assert resultados
-    assert resultados[0].identificador == "tensei-shitara-slime-datta-ken"
-
-
-def test_buscar_titulo_com_subtitulo_nao_tenta_truncado_quando_completo_ja_acha(extrator):
-    """Quando o candidato completo já acha resultado, não desperdiça uma 2ª
-    requisição — `ClienteFalso` levanta `AssertionError` numa URL não mapeada,
-    então isso também prova que o candidato truncado não chegou a ser chamado."""
+def test_buscar_chama_buscar_termo_uma_unica_vez_com_termo_exato(extrator):
+    """`buscar` não itera mais variantes internamente (responsabilidade que
+    saiu do adapter — mora em `extractors/nomes.py::variantes_de_busca` e,
+    numa camada de orquestração futura, em quem itera essas variantes).
+    Chama `_buscar_termo` uma única vez, com o título recebido tal como veio,
+    sem truncar subtítulo."""
     titulo = "Anime Principal: Subtitulo Aqui"
     url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal-subtitulo-aqui"
     cliente = ClienteFalso(html_por_url={url_completo: _ler_fixture("busca.html")})
@@ -180,18 +147,32 @@ def test_buscar_titulo_com_subtitulo_nao_tenta_truncado_quando_completo_ja_acha(
     assert resultados[0].identificador == "tensei-shitara-slime-datta-ken"
 
 
-def test_buscar_dois_pontos_colado_ao_texto_nao_e_tratado_como_subtitulo(extrator):
-    """":" sem espaço nenhum ao redor é parte do título (ex: "Re:Zero"), não
-    separador de subtítulo — tratar como separador truncaria pra um prefixo
-    curto demais ("Re") e arriscaria casar o card de outro anime por
-    prefix-match do AnimeFire, trocando silenciosamente "não encontrei" por
-    "encontrei o errado". Só 1 candidato tentado — `ClienteFalso` levantaria
-    `AssertionError` numa 2ª URL não mapeada se o código tentasse truncar."""
-    titulo = "Re:Zero kara Hajimeru Isekai Seikatsu"
-    url_busca = f"{extrator.BASE_URL}/pesquisar/re-zero-kara-hajimeru-isekai-seikatsu"
-    cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca_vazia.html")})
+def test_buscar_nao_trunca_mais_internamente_quando_termo_completo_nao_acha(extrator):
+    """Antes, um título com subtítulo caía para um 2º candidato truncado
+    quando o completo não achava nada (`_candidatos_de_busca`, removido daqui
+    — a lógica de gerar variantes agora mora em `extractors/nomes.py`). Agora
+    `buscar` faz uma única tentativa — `ClienteFalso` levantaria
+    `AssertionError` numa URL truncada não mapeada se o código ainda
+    tentasse um 2º candidato."""
+    titulo = "Anime Principal: Subtitulo Aqui"
+    url_completo = f"{extrator.BASE_URL}/pesquisar/anime-principal-subtitulo-aqui"
+    cliente = ClienteFalso(html_por_url={url_completo: _ler_fixture("busca_vazia.html")})
 
     assert extrator.buscar(cliente, titulo) == []
+
+
+def test_buscar_termo_nao_recebe_mais_e_ultimo(extrator):
+    """`_buscar_termo` perdeu o parâmetro `e_ultimo` — saber se é a última
+    variante tentada não é mais responsabilidade do adapter (o `warning` de
+    "esgotou todas as variantes" passa a ser de quem itera, fatia futura).
+    Chamar só com `cliente` e `termo` prova que a assinatura não exige mais
+    esse parâmetro."""
+    url_busca = f"{extrator.BASE_URL}/pesquisar/tensei-shitara-slime-datta-ken"
+    cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca.html")})
+
+    resultados = extrator._buscar_termo(cliente, "Tensei Shitara Slime Datta Ken")
+
+    assert resultados
 
 
 def test_buscar_titulo_com_virgula_formata_termo_via_slugificar(extrator):
@@ -249,7 +230,9 @@ def test_listar_episodios_vazio_levanta_estrutura_do_site_mudou(extrator):
         extrator.listar_episodios(cliente, identificador)
 
 
-def test_resolver_midia_pega_ultimo_item_da_lista(extrator):
+def test_resolver_midia_escolhe_a_qualidade_mais_alta_por_rotulo(extrator):
+    """`midia.json` tem SD antes de HD — a escolha vem da classificação do
+    `label` (`extractors/qualidade.py`), não da posição no array."""
     url_episodio = f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken/1"
     url_json = "https://animefire.io/video/abc123/data.json"
     cliente = ClienteFalso(
@@ -283,3 +266,113 @@ def test_resolver_midia_com_data_nao_lista_levanta_estrutura_do_site_mudou(extra
 
     with pytest.raises(EstruturaDoSiteMudou):
         extrator.resolver_midia(cliente, url_episodio)
+
+
+def test_resolver_midia_com_data_em_ordem_decrescente_ainda_escolhe_a_melhor(extrator):
+    """`data[]` com HD antes de SD (ordem invertida em relação à fixture padrão)
+    — prova que a escolha não depende mais da posição do array."""
+    url_episodio = f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken/1"
+    url_json = "https://animefire.io/video/abc123/data.json"
+    cliente = ClienteFalso(
+        html_por_url={url_episodio: _ler_fixture("episodio.html")},
+        json_por_url={
+            url_json: {
+                "data": [
+                    {"label": "HD", "src": "https://cdn.animefire.io/videos/abc123-hd.mp4"},
+                    {"label": "SD", "src": "https://cdn.animefire.io/videos/abc123-sd.mp4"},
+                ]
+            }
+        },
+    )
+
+    link = extrator.resolver_midia(cliente, url_episodio)
+
+    assert link.url == "https://cdn.animefire.io/videos/abc123-hd.mp4"
+
+
+def test_resolver_midia_so_com_sd_nao_falha_e_usa_o_disponivel(extrator):
+    """Sem piso mínimo no AnimeFire (diverge do AnimesDrive de propósito): se só
+    SD estiver disponível, o episódio continua capturável — recusar seria
+    regressão de produto (catálogo antigo frequentemente só tem SD)."""
+    url_episodio = f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken/1"
+    url_json = "https://animefire.io/video/abc123/data.json"
+    cliente = ClienteFalso(
+        html_por_url={url_episodio: _ler_fixture("episodio.html")},
+        json_por_url={
+            url_json: {
+                "data": [{"label": "SD", "src": "https://cdn.animefire.io/videos/abc123-sd.mp4"}]
+            }
+        },
+    )
+
+    link = extrator.resolver_midia(cliente, url_episodio)
+
+    assert link.url == "https://cdn.animefire.io/videos/abc123-sd.mp4"
+
+
+def test_resolver_midia_com_label_ausente_ou_vazio_nao_e_tratado_como_pior_que_sd(extrator):
+    """`label` ausente/vazio classifica como `DESCONHECIDA`, nunca
+    `ABAIXO_DO_PISO` — entra no desempate por posição normalmente e pode vencer
+    sobre um SD explícito, já que `DESCONHECIDA > ABAIXO_DO_PISO`."""
+    url_episodio = f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken/1"
+    url_json = "https://animefire.io/video/abc123/data.json"
+    cliente = ClienteFalso(
+        html_por_url={url_episodio: _ler_fixture("episodio.html")},
+        json_por_url={
+            url_json: {
+                "data": [
+                    {"label": "SD", "src": "https://cdn.animefire.io/videos/abc123-sd.mp4"},
+                    {"src": "https://cdn.animefire.io/videos/abc123-sem-label.mp4"},
+                ]
+            }
+        },
+    )
+
+    link = extrator.resolver_midia(cliente, url_episodio)
+
+    assert link.url == "https://cdn.animefire.io/videos/abc123-sem-label.mp4"
+
+
+def test_resolver_midia_com_todos_os_rotulos_desconhecidos_mantem_o_ultimo(extrator):
+    """Todos os rótulos desconhecidos (nenhum vocabulário de qualidade) —
+    trava de não-regressão: mantém o comportamento de hoje, o último item."""
+    url_episodio = f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken/1"
+    url_json = "https://animefire.io/video/abc123/data.json"
+    cliente = ClienteFalso(
+        html_por_url={url_episodio: _ler_fixture("episodio.html")},
+        json_por_url={
+            url_json: {
+                "data": [
+                    {"label": "Servidor 1", "src": "https://cdn.animefire.io/videos/abc123-s1.mp4"},
+                    {"label": "Servidor 2", "src": "https://cdn.animefire.io/videos/abc123-s2.mp4"},
+                ]
+            }
+        },
+    )
+
+    link = extrator.resolver_midia(cliente, url_episodio)
+
+    assert link.url == "https://cdn.animefire.io/videos/abc123-s2.mp4"
+
+
+def test_resolver_midia_normaliza_rotulo_f_hd_e_fullhd(extrator):
+    """`"F-HD"`/`"Fullhd"` normalizam pro mesmo tier FHD — regressão da
+    normalização de `qualidade_do_rotulo` (hífen colapsado, sem exigir
+    espaço)."""
+    url_episodio = f"{extrator.BASE_URL}/animes/tensei-shitara-slime-datta-ken/1"
+    url_json = "https://animefire.io/video/abc123/data.json"
+    cliente = ClienteFalso(
+        html_por_url={url_episodio: _ler_fixture("episodio.html")},
+        json_por_url={
+            url_json: {
+                "data": [
+                    {"label": "HD", "src": "https://cdn.animefire.io/videos/abc123-hd.mp4"},
+                    {"label": "F-HD", "src": "https://cdn.animefire.io/videos/abc123-fhd.mp4"},
+                ]
+            }
+        },
+    )
+
+    link = extrator.resolver_midia(cliente, url_episodio)
+
+    assert link.url == "https://cdn.animefire.io/videos/abc123-fhd.mp4"

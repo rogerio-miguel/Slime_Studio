@@ -22,6 +22,7 @@ from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from core.texto import slugificar
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from extractors.cliente import ClienteDeSite
+from extractors.qualidade import NivelDeQualidade, qualidade_do_rotulo
 from extractors.versao import inferir_versao
 
 logger = logging.getLogger(__name__)
@@ -29,17 +30,6 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_S = 15
 _SUFIXO_TODOS_EPISODIOS = "-todos-os-episodios"
 _REGEX_SUFIXO_QUALIDADE = re.compile(r"\s+\d+\.\d+\s+[A-Z\d]+$")
-# `/pesquisar/<termo>` do AnimeFire casa por prefixo do título principal, não
-# por texto completo — qualquer palavra de um subtítulo depois de ":"/"~"/" - "
-# já zera o resultado (confirmado ao vivo: título com subtítulo devolve 0
-# resultados mesmo sem o ":" literal, mas o título truncado antes do separador
-# encontra o card normalmente). Espaço obrigatório em pelo menos um lado do
-# separador — evita cortar hífen interno de palavra composta (ex.
-# "Keishou-sen") E evita tratar ":"/"~" colado ao texto (ex. "Re:Zero") como
-# separador de subtítulo — esse segundo caso truncaria pra um prefixo curto
-# demais ("Re") e arriscaria casar o card de outro anime por prefix-match,
-# trocando silenciosamente "não encontrei" por "encontrei o errado".
-_REGEX_SEPARADOR_SUBTITULO = re.compile(r"\s*[:~]\s+|\s+[:~]\s*|\s+[-–—]\s+")
 
 
 class AnimeFireProvider(ExtratorDeSite):
@@ -64,24 +54,9 @@ class AnimeFireProvider(ExtratorDeSite):
         return True
 
     def buscar(self, cliente: ClienteDeSite, titulo: str) -> list[ResultadoBusca]:
-        candidatos = _candidatos_de_busca(titulo)
-        for i, candidato in enumerate(candidatos):
-            e_ultimo = i == len(candidatos) - 1
-            resultados = self._buscar_termo(cliente, candidato, e_ultimo=e_ultimo)
-            if resultados:
-                if i > 0:
-                    logger.info(
-                        "AnimeFire: busca por %r vazia, encontrado com título"
-                        " truncado no subtítulo (%r)",
-                        titulo,
-                        candidato,
-                    )
-                return resultados
-        return []
+        return self._buscar_termo(cliente, titulo)
 
-    def _buscar_termo(
-        self, cliente: ClienteDeSite, termo: str, *, e_ultimo: bool
-    ) -> list[ResultadoBusca]:
+    def _buscar_termo(self, cliente: ClienteDeSite, termo: str) -> list[ResultadoBusca]:
         # `slugificar` (não um `.replace(" ", "-")` manual): o slug real do
         # AnimeFire colapsa qualquer sequência de caracteres não-alfanuméricos
         # (vírgula, apostrofo, etc.) num único hífen, não só espaço — uma
@@ -99,12 +74,11 @@ class AnimeFireProvider(ExtratorDeSite):
             # tratava isso explicitamente) — não é falha, é "zero resultados".
             # Cinto e suspensório: `FonteNaoEncontrada` já não conta como falha
             # no circuit breaker (`core/erros.py`), mas capturar aqui deixa
-            # explícito por que esse 404 específico é normal. `warning` só na
-            # última tentativa — título com subtítulo 404 no candidato completo
-            # por design (`_candidatos_de_busca`), aí o fallback resolve; isso
-            # é esperado, não um sinal de alerta.
-            log = logger.warning if e_ultimo else logger.info
-            log("AnimeFire: busca por %r não encontrou nada (404) em %s", termo, url)
+            # explícito por que esse 404 específico é normal. Sempre `info` —
+            # decidir se esgotou todas as variantes de busca (e por isso vale
+            # `warning`) passou a ser responsabilidade de quem itera variantes
+            # (`extractors/nomes.py::variantes_de_busca`), não deste método.
+            logger.info("AnimeFire: busca por %r não encontrou nada (404) em %s", termo, url)
             return []
 
         try:
@@ -224,6 +198,22 @@ class AnimeFireProvider(ExtratorDeSite):
         return episodios
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:
+        """Resolve a URL de vídeo de maior qualidade dentre `data[]`.
+
+        Classifica cada entrada pelo `label` (`extractors/qualidade.py`) em vez
+        de confiar em `qualidades[-1]` — suposição não verificada de que o
+        array vem em ordem crescente; se o AnimeFire inverter a ordem um dia, a
+        posição baixaria SD acreditando ser a melhor, silenciosamente.
+        Desempate por posição (a última entre iguais vence), o que preserva o
+        comportamento de hoje quando todos os rótulos empatam ou são
+        desconhecidos.
+
+        Sem piso mínimo de propósito (diverge do AnimesDrive): o AnimeFire é a
+        fonte padrão e frequentemente só oferece SD para catálogo antigo —
+        recusar isso transformaria "assiste em SD" em "não assiste", uma
+        regressão de produto. Onde não há escolha, o piso só quebra o que
+        funciona.
+        """
         html = cliente.obter_html(url_episodio, timeout_s=_TIMEOUT_S)
 
         try:
@@ -249,9 +239,9 @@ class AnimeFireProvider(ExtratorDeSite):
                 dominio=self.dominio,
             )
 
-        ultima_qualidade = qualidades[-1]
+        melhor_qualidade = _entrada_de_maior_qualidade(qualidades)
         link_direto = (
-            ultima_qualidade.get("src") if isinstance(ultima_qualidade, dict) else None
+            melhor_qualidade.get("src") if isinstance(melhor_qualidade, dict) else None
         )
         if not link_direto:
             raise EstruturaDoSiteMudou(
@@ -275,13 +265,21 @@ class AnimeFireProvider(ExtratorDeSite):
         return segmento
 
 
-def _candidatos_de_busca(titulo: str) -> list[str]:
-    """Título completo primeiro (caso comum, sem subtítulo ou onde a busca já
-    funciona); se houver separador de subtítulo, o título truncado antes dele
-    entra como 2º candidato — só usado se o 1º não achar nada (`buscar`)."""
-    titulo = titulo.strip()
-    candidatos = [titulo]
-    principal = _REGEX_SEPARADOR_SUBTITULO.split(titulo, maxsplit=1)[0].strip()
-    if principal and principal != titulo:
-        candidatos.append(principal)
-    return candidatos
+def _entrada_de_maior_qualidade(qualidades: list) -> object:
+    """Escolhe a entrada de `qualidades` de maior nível classificado (`label`),
+    desempatando por posição — a última entre iguais vence, preservando o
+    comportamento de hoje (`qualidades[-1]`) quando todos os rótulos empatam
+    ou são desconhecidos."""
+    melhor_entrada = qualidades[0]
+    melhor_nivel = _nivel_da_entrada(melhor_entrada)
+    for entrada in qualidades[1:]:
+        nivel = _nivel_da_entrada(entrada)
+        if nivel >= melhor_nivel:
+            melhor_nivel = nivel
+            melhor_entrada = entrada
+    return melhor_entrada
+
+
+def _nivel_da_entrada(entrada: object) -> NivelDeQualidade:
+    rotulo = entrada.get("label", "") if isinstance(entrada, dict) else ""
+    return qualidade_do_rotulo(rotulo if isinstance(rotulo, str) else "")

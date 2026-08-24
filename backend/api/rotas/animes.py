@@ -20,6 +20,7 @@ from api.esquemas import (
     EpisodioRemotoSaida,
     EpisodioSaida,
     EpisodiosRemotosSaida,
+    EscopoBusca,
     FonteConsultadaSaida,
     ResultadoBuscaFonteSaida,
 )
@@ -185,17 +186,27 @@ async def listar_animes_em_alta(
 @router_publico.get("/buscar-fontes", response_model=BuscaEmFontesSaida)
 async def buscar_animes_em_fontes(
     titulo: str = Query(..., max_length=200),
+    escopo: EscopoBusca = Query("padrao"),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> BuscaEmFontesSaida:
-    """Busca ao vivo em todos os sites de extração (ainda não catalogado
-    localmente) — alimenta a subseção "Resultados em outras fontes" da Home.
-    `fontes` traz o status de cada site consultado (disponível ou não, com
-    motivo) — a UI usa isso pra distinguir "não achei nada" de "não consegui
-    nem tentar" (CLAUDE.md §4, erro nunca silencioso)."""
+    """Busca ao vivo em sites de extração (ainda não catalogado localmente).
+    `escopo=padrao` (default): motor sequencial por site da Fase A, alimenta
+    a subseção "Resultados em outras fontes" da Home. `escopo=todas`: motor
+    paralelo × variantes da Fase B, alimenta o diálogo "Trocar fonte" (D-B1,
+    PLANO_PADRONIZACAO_FONTES.md — mesmo response assembly abaixo nos dois
+    escopos, só a estratégia de iteração de site difere). `fontes` traz o
+    status de cada site consultado (disponível ou não, com motivo) — a UI usa
+    isso pra distinguir "não achei nada" de "não consegui nem tentar"
+    (CLAUDE.md §4, erro nunca silencioso)."""
     if not titulo.strip():
         return BuscaEmFontesSaida(resultados=[], fontes=[])
 
-    busca = await servico_busca.buscar_com_titulos_alternativos(sessionmaker, titulo)
+    if escopo == "todas":
+        busca = await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(
+            sessionmaker, titulo
+        )
+    else:
+        busca = await servico_busca.buscar_com_titulos_alternativos(sessionmaker, titulo)
     fontes = await servico_busca.enriquecer_capas(sessionmaker, busca.fontes)
     return BuscaEmFontesSaida(
         resultados=[
@@ -218,6 +229,7 @@ async def buscar_animes_em_fontes(
             for fonte in fontes
         ],
         termo_alternativo=busca.termo_alternativo,
+        dominio_alternativo=busca.dominio_alternativo,
     )
 
 

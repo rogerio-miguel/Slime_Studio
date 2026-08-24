@@ -4,6 +4,7 @@ modelagem dublado/legendado).
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Final
 
 from sqlalchemy import select
@@ -13,6 +14,7 @@ from core.enums import VersaoDeFonte, VersaoEpisodio
 from core.texto import slugificar
 from extractors import circuit_breaker, resiliencia
 from extractors.base import ExtratorDeSite, ResultadoBusca
+from extractors.nomes import variantes_de_busca
 from extractors.registro import EXTRATORES
 from extractors.versao import remover_marcador_de_versao
 from models.anime import Anime
@@ -62,12 +64,11 @@ async def resolver_fonte_do_anime(
     (nunca `DESCONHECIDA`, que não é uma versão pedível, só um estado de
     `Episodio` de fonte não-diferenciada).
 
-    1. `FonteAnime` já mapeadas: uma linha CONFIRMADA da `versao` pedida, em
-       QUALQUER site mapeado, sempre vence sobre uma `NAO_DIFERENCIADA` de
-       outro site de prioridade maior — confirmação exata de versão pesa mais
-       que prioridade de site. Só na ausência de qualquer confirmação exata
-       cai para a primeira `NAO_DIFERENCIADA` encontrada, na ordem de
-       prioridade.
+    1. `FonteAnime` já mapeadas: entre as capazes de servir `versao` (uma
+       CONFIRMADA da versão pedida ou uma `NAO_DIFERENCIADA`, em QUALQUER site
+       mapeado), a mais recentemente confirmada (`resolvido_em`) vence —
+       nem prioridade de site nem exatidão de versão se sobrepõem a uma
+       escolha manual mais recente ("Trocar fonte"), ver `_resolver_em_mapeadas`.
     2. Nenhum mapeamento serve: percorre `EXTRATORES` em ordem, buscando ao
        vivo. Sites que diferenciam versão (`diferencia_versao=True`)
        particionam os candidatos por versão e desambiguam dentro da
@@ -93,9 +94,7 @@ async def resolver_fonte_do_anime(
         if await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio):
             continue
 
-        candidatos = await resiliencia.chamar(
-            sessionmaker, extrator, lambda cliente, ex=extrator: ex.buscar(cliente, anime.titulo)
-        )
+        candidatos = await _buscar_variantes(sessionmaker, extrator, anime.titulo)
         if not candidatos:
             continue
 
@@ -115,13 +114,27 @@ async def resolver_fonte_do_anime(
 
 
 async def proximo_site_para(
-    sessionmaker: _SessionMaker, anime: Anime, dominio_que_falhou: str, versao: VersaoEpisodio
+    sessionmaker: _SessionMaker, anime: Anime, ja_tentados: set[str], versao: VersaoEpisodio
 ) -> FonteResolvida | None:
-    """Próximo domínio na ordem de prioridade depois de `dominio_que_falhou` —
+    """Próxima fonte mapeada ainda não tentada nesta cadeia de fallback —
     usado quando um site já mapeado falha de extração (não confundir com
     `resolver_fonte_do_anime`, que pode pedir confirmação: aqui o job já está em
     andamento e não há quem confirme, então um site novo ambíguo é simplesmente
     pulado, não devolvido como `ConfirmacaoNecessaria`).
+
+    `ja_tentados` é o conjunto de domínios já tentados nesta cadeia (mantido
+    pelo chamador, `extractors/servico.py::_proximo_com_episodio`) — inclui o
+    domínio que acabou de falhar. Corte por exclusão explícita, não mais por
+    `FonteAnime.prioridade` (bug corrigido: o corte antigo — "qualquer fonte
+    mapeada de prioridade MAIOR que a que falhou" — dependia implicitamente
+    de a fonte em uso ser sempre a de MENOR prioridade entre as mapeadas, o
+    que só valia enquanto `_resolver_em_mapeadas` escolhia por prioridade. Ao
+    passar a escolher por `resolvido_em` — mais recentemente confirmada
+    vence, não a de site com índice menor em `EXTRATORES`, pra "Trocar
+    fonte" valer de fato — essa invariante quebrou: uma fonte mapeada,
+    capaz e nunca tentada podia ficar de fora só por ter prioridade menor
+    que a que falhou, fazendo o fallback desistir com `None` mesmo havendo
+    alternativa válida).
 
     `versao` aqui é `Episodio.versao` de quem está com download em andamento
     (`extractors/servico.py::baixar_com_fallback_de_site`) — ao contrário de
@@ -132,25 +145,19 @@ async def proximo_site_para(
     exigir capacidade de versão nenhuma).
     """
     mapeadas = await _fontes_mapeadas_ordenadas(sessionmaker, anime.id)
-    prioridade_falhou = next(
-        (fonte.prioridade for fonte in mapeadas if fonte.site_dominio == dominio_que_falhou), None
-    )
-    if prioridade_falhou is not None:
-        candidatas_mapeadas = [fonte for fonte in mapeadas if fonte.prioridade > prioridade_falhou]
-        resolvida = _proxima_mapeada_capaz(candidatas_mapeadas, versao)
-        if resolvida is not None:
-            return resolvida
+    candidatas_mapeadas = [fonte for fonte in mapeadas if fonte.site_dominio not in ja_tentados]
+    resolvida = _proxima_mapeada_capaz(candidatas_mapeadas, versao)
+    if resolvida is not None:
+        return resolvida
 
-    dominios_ja_conhecidos = {fonte.site_dominio for fonte in mapeadas} | {dominio_que_falhou}
+    dominios_ja_conhecidos = {fonte.site_dominio for fonte in mapeadas} | ja_tentados
     for indice, extrator in enumerate(EXTRATORES):
         if extrator.dominio in dominios_ja_conhecidos:
             continue
         if await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio):
             continue
 
-        candidatos = await resiliencia.chamar(
-            sessionmaker, extrator, lambda cliente, ex=extrator: ex.buscar(cliente, anime.titulo)
-        )
+        candidatos = await _buscar_variantes(sessionmaker, extrator, anime.titulo)
         if not candidatos:
             continue
 
@@ -184,34 +191,69 @@ async def proximo_site_para(
     return None
 
 
+async def _buscar_variantes(
+    sessionmaker: _SessionMaker, extrator: ExtratorDeSite, titulo: str
+) -> list[ResultadoBusca]:
+    """Tenta cada variante de `variantes_de_busca(titulo)`, na ordem, e para
+    na primeira que devolver candidatos — corrige a assimetria em que só o
+    AnimeFire tratava subtítulo internamente (na busca) e o AnimesDrive nunca
+    via variante nenhuma. Exceção de `resiliencia.chamar` propaga direto,
+    igual ao comportamento anterior de variante única — este helper não
+    introduz um novo modo de falha, só mais tentativas antes de desistir."""
+    for variante in variantes_de_busca(titulo):
+        candidatos = await resiliencia.chamar(
+            sessionmaker,
+            extrator,
+            lambda cliente, ex=extrator, v=variante: ex.buscar(cliente, v),
+            nome_operacao="buscar",
+        )
+        if candidatos:
+            return candidatos
+    return []
+
+
 def _resolver_em_mapeadas(
     mapeadas: list[FonteAnime], versao_confirmada: VersaoDeFonte
 ) -> FonteResolvida | None:
-    """Percorre os sites já mapeados (na ordem de prioridade — `mapeadas` já
-    vem ordenada por `FonteAnime.prioridade`) e devolve a primeira fonte capaz
-    de servir `versao_confirmada`: uma linha CONFIRMADA da versão pedida, em
-    QUALQUER site mapeado, sempre vence sobre uma `NAO_DIFERENCIADA` de outro
-    site de prioridade maior — confirmação exata de versão pesa mais que
-    prioridade de site (bug corrigido: antes, o primeiro site com QUALQUER
-    linha mapeada — mesmo só `NAO_DIFERENCIADA` — vencia sem olhar se outro
-    site tinha a versão exata confirmada)."""
-    confirmada = next((f for f in mapeadas if f.versao == versao_confirmada), None)
-    if confirmada is not None:
-        return FonteResolvida(
-            dominio=confirmada.site_dominio,
-            identificador=confirmada.identificador_no_site,
-            versao_da_fonte=versao_confirmada,
-        )
-    nao_diferenciada = next(
-        (f for f in mapeadas if f.versao == VersaoDeFonte.NAO_DIFERENCIADA), None
+    """Percorre os sites já mapeados e devolve a fonte capaz de servir
+    `versao_confirmada`: uma linha CONFIRMADA da versão pedida OU uma
+    `NAO_DIFERENCIADA` (site não separa, mas pode servir qualquer versão),
+    QUALQUER site mapeado. Entre as capazes, a mais RECENTEMENTE confirmada
+    (`resolvido_em`) vence sempre — nunca a de maior prioridade fixa de site
+    (`mapeadas` ainda vem ordenada por `FonteAnime.prioridade` — usado por
+    `_proxima_mapeada_capaz`/`proximo_site_para` para fallback determinístico
+    quando não há capaz nenhuma) nem a mais "exata" (bug corrigido: recência
+    tem que valer entre TODAS as capazes, não só como desempate dentro da
+    mesma exatidão — antes, uma linha CONFIRMADA da versão pedida sempre
+    vencia uma `NAO_DIFERENCIADA` mesmo quando esta era a escolha mais
+    recente do usuário via "Trocar fonte": clicar num site que não diferencia
+    versão — ex. AnimeFire — ficava sem efeito prático, a resolução
+    continuava caindo numa fonte CONFIRMADA antiga de outro domínio, tipo
+    AnimesDrive, e o usuário via a troca "não pegar". Prioridade de site já
+    tinha perdido essa disputa antes — ver histórico desta função —
+    exatidão de versão não pode ser a próxima a se sobrepor à mesma decisão
+    manual e recente). Empate de `resolvido_em` (`max` sobre a lista) cai para
+    a ordem de prioridade de site preservada em `mapeadas` — raro depois da
+    correção do sentinel de `bump_recencia=False` (duas confirmações reais no
+    mesmo instante são improváveis; duas escritas oportunistas de buscas
+    diferentes colidindo no mesmo sentinel fixo, ainda possível), mas não
+    eliminado."""
+    capazes = [
+        f for f in mapeadas if f.versao in (versao_confirmada, VersaoDeFonte.NAO_DIFERENCIADA)
+    ]
+    if not capazes:
+        return None
+    mais_recente = max(capazes, key=lambda f: f.resolvido_em)
+    versao_da_fonte = (
+        versao_confirmada
+        if mais_recente.versao == versao_confirmada
+        else VersaoDeFonte.NAO_DIFERENCIADA
     )
-    if nao_diferenciada is not None:
-        return FonteResolvida(
-            dominio=nao_diferenciada.site_dominio,
-            identificador=nao_diferenciada.identificador_no_site,
-            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
-        )
-    return None
+    return FonteResolvida(
+        dominio=mais_recente.site_dominio,
+        identificador=mais_recente.identificador_no_site,
+        versao_da_fonte=versao_da_fonte,
+    )
 
 
 def _proxima_mapeada_capaz(
@@ -278,6 +320,20 @@ async def _resolver_no_site_que_diferencia(
     if particao_outra:
         escolhido_outra = _desambiguar_por_versao(anime.titulo, particao_outra)
         if escolhido_outra is not None:
+            # `bump_recencia=False`: isto é cache oportunista ("dado grátis"),
+            # não uma confirmação — se `outra_versao` já tinha uma linha
+            # mapeada neste domínio (o usuário confirmou este site pra essa
+            # versão antes e já trocou pra outro desde então), tocar nela só
+            # porque a busca da versão PEDIDA passou por aqui não pode
+            # reviver essa fonte antiga como "mais recente" em
+            # `_resolver_em_mapeadas` — sem isto, resolver a versão PEDIDA
+            # (ex. dublado) podia silenciosamente desfazer uma troca de
+            # fonte manual anterior da OUTRA versão (ex. legendado). Mesma
+            # proteção vale quando a linha é NOVA (domínio nunca mapeado
+            # nesta versão): `_gravar_fonte_anime` grava um `resolvido_em`
+            # sentinel (`_RESOLVIDO_EM_OPORTUNISTA`), nunca `datetime.now(UTC)`
+            # — senão esta escrita "de graça" venceria, em `_resolver_em_mapeadas`,
+            # uma confirmação manual genuína feita antes noutro domínio.
             await _gravar_fonte_anime(
                 sessionmaker,
                 anime.id,
@@ -285,6 +341,7 @@ async def _resolver_no_site_que_diferencia(
                 escolhido_outra.identificador,
                 _MAPA_VERSAO_EPISODIO_PARA_FONTE[outra_versao],
                 prioridade=indice,
+                bump_recencia=False,
             )
 
     return FonteResolvida(
@@ -419,6 +476,17 @@ async def confirmar_fonte(
     )
 
 
+# Sentinel de `resolvido_em` para a escrita "de graça" (`bump_recencia=False`)
+# quando a linha é NOVA — a coluna é `nullable=False` (`models/fonte_anime.py`),
+# então precisa de um valor explícito, mas nunca `datetime.now(UTC)`: isso
+# tornaria a escrita oportunista indistinguível de uma confirmação real em
+# `_resolver_em_mapeadas` (`max(capazes, key=resolvido_em)`), deixando-a vencer
+# uma fonte já confirmada manualmente em outro domínio. Data mínima
+# representável — nunca vence um `resolvido_em` genuíno, mas ainda deixa a
+# linha elegível quando é a ÚNICA fonte capaz daquela versão.
+_RESOLVIDO_EM_OPORTUNISTA: Final[datetime] = datetime.min.replace(tzinfo=UTC)
+
+
 async def _gravar_fonte_anime(
     sessionmaker: _SessionMaker,
     anime_id: int,
@@ -427,10 +495,21 @@ async def _gravar_fonte_anime(
     versao: VersaoDeFonte,
     *,
     prioridade: int,
+    bump_recencia: bool = True,
 ) -> None:
     async with sessionmaker() as sessao:
         existente = await sessao.get(FonteAnime, (anime_id, dominio, versao))
         if existente is None:
+            # `resolvido_em` explícito nos dois casos (coluna sem default
+            # aproveitável aqui, ver `_RESOLVIDO_EM_OPORTUNISTA` acima): uma
+            # gravação real (`bump_recencia=True`, o padrão) grava
+            # `datetime.now(UTC)`, igual à reconfirmação abaixo; a escrita "de
+            # graça" da OUTRA versão em `_resolver_no_site_que_diferencia`
+            # (`bump_recencia=False`) grava o sentinel — bug corrigido: antes
+            # caía no `default=now()` do model por omissão, tornando uma
+            # linha nunca escolhida pelo usuário capaz de vencer, em
+            # `_resolver_em_mapeadas`, uma fonte confirmada manualmente antes
+            # noutro domínio.
             sessao.add(
                 FonteAnime(
                     anime_id=anime_id,
@@ -438,9 +517,25 @@ async def _gravar_fonte_anime(
                     versao=versao,
                     identificador_no_site=identificador,
                     prioridade=prioridade,
+                    resolvido_em=(
+                        datetime.now(UTC) if bump_recencia else _RESOLVIDO_EM_OPORTUNISTA
+                    ),
                 )
             )
         else:
             existente.identificador_no_site = identificador
             existente.prioridade = prioridade
+            # Reconfirmar um domínio já mapeado (ex.: "Trocar fonte" de volta
+            # pra um site usado antes) também é uma escolha manual do
+            # usuário agora — sem bumpar `resolvido_em`, `_resolver_em_mapeadas`
+            # continuaria preferindo outro domínio só por ter sido tocado
+            # mais recentemente por acaso, não por decisão do usuário.
+            # `bump_recencia=False` (só usado pela escrita "de graça" da
+            # OUTRA versão em `_resolver_no_site_que_diferencia`): a linha já
+            # existia com um `resolvido_em` de antes (real ou sentinel) — não
+            # tocar nele preserva o que já estava lá, seja uma confirmação
+            # genuína anterior, seja um sentinel de uma escrita oportunista
+            # anterior. Ver comentário no call site.
+            if bump_recencia:
+                existente.resolvido_em = datetime.now(UTC)
         await sessao.commit()

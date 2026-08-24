@@ -85,17 +85,26 @@ export default function Inicio() {
   const buscaEmFontes = useRecurso(
     () =>
       termoBuscaSubmetido
-        ? buscarEmFontes(termoBuscaSubmetido)
-        : Promise.resolve({ resultados: [], fontes: [], termo_alternativo: null }),
+        ? buscarEmFontes(termoBuscaSubmetido, 'padrao')
+        : Promise.resolve({
+            resultados: [],
+            fontes: [],
+            termo_alternativo: null,
+            dominio_alternativo: null,
+          }),
     [termoBuscaSubmetido]
   );
   const resultadosFontes = buscaEmFontes.dados?.resultados ?? [];
   const fontesConsultadas = buscaEmFontes.dados?.fontes ?? [];
-  // Preenchido quando a busca com o termo digitado veio vazia e os resultados
-  // acima vieram de um título alternativo do mesmo anime (romaji/inglês) —
-  // avisa o usuário em vez de trocar o resultado em silêncio (busca fuzzy do
-  // provedor pode casar anime errado).
+  // Preenchido quando os resultados vieram de um termo diferente do digitado
+  // (variante de regex reduzida ou, por último, título alternativo do mesmo
+  // anime via provedor — romaji/inglês) — avisa o usuário em vez de trocar o
+  // resultado em silêncio (busca fuzzy pode casar anime errado).
   const termoAlternativo = buscaEmFontes.dados?.termo_alternativo ?? null;
+  // Preenchido quando quem respondeu não foi o site padrão (ex. teve que
+  // cair pro AnimesDrive) — sinal a mais além do termo: o usuário também
+  // precisa saber que a fonte não é a de sempre, não só que o termo mudou.
+  const dominioAlternativo = buscaEmFontes.dados?.dominio_alternativo ?? null;
   const fontesIndisponiveis = fontesConsultadas.filter((fonte) => fonte.indisponivel);
   // Toda fonte consultada falhou/está em cooldown — "não consegui nem
   // tentar", diferente de "busquei e não achei nada" (pelo menos uma fonte
@@ -338,10 +347,17 @@ export default function Inicio() {
                 !buscaEmFontes.erro &&
                 resultadosFontes.length > 0 && (
                   <>
-                    {termoAlternativo && (
+                    {(termoAlternativo || dominioAlternativo) && (
                       <p className="mb-4 text-sm text-ink-muted">
-                        Nenhum resultado para “{termoBuscaSubmetido}”. Mostrando resultados para “
-                        {termoAlternativo}”.
+                        {termoAlternativo ? (
+                          <>
+                            Nenhum resultado para “{termoBuscaSubmetido}”. Mostrando resultados
+                            para “{termoAlternativo}”
+                            {dominioAlternativo && <> em {dominioAlternativo}</>}.
+                          </>
+                        ) : (
+                          <>Resultados de {dominioAlternativo}.</>
+                        )}
                       </p>
                     )}
                     <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>

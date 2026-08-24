@@ -2,12 +2,12 @@
 prioridade de fallback (`extractors/registro.py`), atrás do AnimeFire.
 
 Strategy Pattern completo. É o único adapter do projeto que declara
-`exige_navegador_para_midia`: os três players embutidos aqui só montam a URL de
+`exige_navegador_para_midia`: os players embutidos aqui só montam a URL de
 mídia rodando o próprio JS, e a estratégia é **observar** o navegador fazendo o
 que a página faria com um usuário real (`extractors/cliente.py::capturar_midia`),
 nunca reimplementar o player. Achados ao vivo contra animesdrive.online:
 
-- Nenhum dos três players expõe URL de vídeo estática no HTML:
+- Nenhum dos players de iframe expõe URL de vídeo estática no HTML:
   `blogger.com/video.g?token=...` é SPA do Google (framework "Wiz"), e
   `animeshd.cloud`/`animes.strp2p.com` são o mesmo player de terceiros, que lê
   `location.hash` como id, chama `GET /api/v1/video?id=<hash>&...` e monta a
@@ -20,8 +20,20 @@ nunca reimplementar o player. Achados ao vivo contra animesdrive.online:
   o `Referer` real medido é `https://animesdrive.online/` (só a origem, por
   causa do `referrer-policy` do embed) — não a URL do embed, como esta docstring
   previa antes de existir medição.
-- Orçamento: `_TIMEOUT_CAPTURA_S` abaixo, coberto por
+- Orçamento: `_TIMEOUT_CAPTURA_S`/`_ORCAMENTO_CAPTURAS_S` abaixo, cobertos por
   `extractors/resiliencia.py::_TETO_ESPERA_NAVEGADOR_S`.
+
+Confirmado ao vivo em 2026-08-18 (episódios com seletor de qualidade): a página
+de episódio pode renderizar uma seção `animeq-player` com botões
+`[data-animeq-switch]` (um por servidor/qualidade) e painéis
+`[data-animeq-source]` correspondentes — cada painel é um `<video><source>`
+(vídeo direto) ou um `<iframe>` (mesmos players de terceiros de cima). O rótulo
+do botão **não prediz** o tipo de painel (um "FHD" pode ser vídeo direto num
+episódio e iframe em outro), o vocabulário de rótulo varia entre episódios
+(`"Mobile / Celular"`, `"FullHD / HLS"`, `"Dublado"`), e o botão marcado
+`is-active` é só o único com `src` real no HTML estático — os demais vêm
+`about:blank` + `data-lazy-src` (WP Rocket), sem relação com qualidade. Páginas
+sem esse seletor (modo legado) seguem exatamente como antes.
 
 Como no AnimeFire, `buscar` vazio é caso normal, e erro de parsing vira
 `EstruturaDoSiteMudou` via `except AttributeError`.
@@ -29,24 +41,33 @@ Como no AnimeFire, `buscar` vazio é caso normal, e erro de parsing vira
 
 import logging
 import re
+import time
 import urllib.parse
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 
 from core.enums import VersaoEpisodio
-from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada
+from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
-from extractors.cliente import ClienteComCaptura, ClienteDeSite
+from extractors.cliente import ClienteComCaptura, ClienteDeSite, responde
+from extractors.qualidade import NivelDeQualidade, qualidade_do_rotulo
 from extractors.versao import inferir_versao
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_S = 15
-# Janela da captura de mídia no navegador. Medido ao vivo: 3s a 17s da navegação
-# até a requisição de mídia. O excedente é folga pro caso patológico (overlay de
+# Janela de UMA captura no navegador. Medido ao vivo: 3s a 17s da navegação até
+# a requisição de mídia. O excedente é folga pro caso patológico (overlay de
 # anúncio engolindo os primeiros cliques), não expectativa de caso normal.
 _TIMEOUT_CAPTURA_S = 90
+# Relógio de parede pro CONJUNTO de tentativas de servidor de um episódio —
+# cobre também os `responde()` dos candidatos de vídeo direto. Com um único
+# candidato de navegador a janela calculada por `_janela_de_captura` dá
+# min(90, 120) = 90, idêntica a hoje (não regride a calibração medida acima).
+_ORCAMENTO_CAPTURAS_S = 120
+_MAX_CAPTURAS_POR_EPISODIO = 3
 _HOSTS_YOUTUBE = ("youtube.com", "youtu.be")
 # `/?` antes do `$`: URL de episódio com barra final (`.../episodio-7/`) é
 # válida e comum (link relativo normalizado por navegador/CMS) — sem isso o
@@ -61,6 +82,10 @@ _REGEX_EPISODIO = re.compile(r"^/episodio/(?P<slug>.+?)-episodio-(?P<numero>[^/]
 # (confirmado ao vivo em 2026-08-17). Todo link de episódio da página vive dentro
 # deste box — conferido em 6 páginas reais, incluindo uma com 19 temporadas.
 _SELETOR_LISTA_EPISODIOS = "#episodes a[href]"
+# Ordem de leitura de atributo do iframe dentro de um painel de qualidade —
+# WP Rocket adia o `src` real em `data-lazy-src` até o elemento entrar em
+# viewport; o `src` cru costuma ficar `about:blank` até lá.
+_ATRIBUTOS_DE_IFRAME = ("data-lazy-src", "src", "data-src")
 
 
 class AnimesDriveProvider(ExtratorDeSite):
@@ -275,15 +300,179 @@ class AnimesDriveProvider(ExtratorDeSite):
         return _ordenar_episodios(por_rotulo.values())
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:
-        """Confere que a página tem player e deixa o navegador tocá-la, devolvendo
-        a URL de mídia que a própria página pediu.
+        """Resolve a melhor mídia utilizável do episódio.
 
-        A conferência de iframes acontece antes da captura de propósito: página
-        sem player é `EstruturaDoSiteMudou` (não retentável, aciona o fallback pro
-        próximo site) e responde em ~1s, enquanto uma captura sem player só
-        falharia depois de gastar `_TIMEOUT_CAPTURA_S` inteiro.
+        Dois modos, detectados pela presença de `[data-animeq-switch]`:
+
+        - **Modo A** (com seletor de qualidade): classifica cada servidor,
+          descarta abaixo do piso HD (nunca SD), tenta o de maior qualidade
+          primeiro (vídeo direto antes de iframe no mesmo tier), e falha sem
+          retentativa se só sobrou SD/Mobile — retentar não faz FHD aparecer.
+        - **Modo B** (legado, sem seletor): caminho de sempre — um iframe,
+          uma captura, sem escolha de qualidade.
         """
         html = cliente.obter_html(url_episodio, timeout_s=_TIMEOUT_S)
+        candidatos = self._candidatos_de_servidor(html, url_episodio)
+
+        if not candidatos:
+            return self._resolver_modo_legado(cliente, html, url_episodio)
+
+        usaveis = [c for c in candidatos if c.qualidade >= NivelDeQualidade.HD]
+        if not usaveis:
+            # Página não oferece escolha de qualidade real (conteúdo legado tipo
+            # "Dublado"): o piso existe pra ESCOLHER entre qualidades; sem
+            # escolha, exigi-lo só quebraria episódio antigo que funciona hoje.
+            usaveis = [c for c in candidatos if c.qualidade is NivelDeQualidade.DESCONHECIDA]
+        if not usaveis:
+            raise FalhaDeExtracao(
+                f"nenhum servidor acima do piso de qualidade (HD) em {url_episodio};"
+                f" descartados: {[(c.rotulo, c.qualidade.name) for c in candidatos]}",
+                dominio=self.dominio,
+                permite_retentativa=False,
+            )
+
+        usaveis.sort(key=_chave_de_ordenacao)
+
+        if not isinstance(cliente, ClienteComCaptura):
+            # Contrato quebrado, não falha de site: `exige_navegador_para_midia`
+            # é `True` aqui e `extractors/resiliencia.py` deveria ter entregue o
+            # cliente de navegador. Retentar com o mesmo cliente repetiria o erro.
+            # Conferido cedo (não só no 1º candidato de iframe): modo A pode nem
+            # precisar de captura (vídeo direto vivo), mas a mensagem de
+            # "contrato quebrado" fica mais clara conferindo antes do loop.
+            raise FalhaDeExtracao(
+                "resolver mídia do AnimesDrive exige cliente de navegador, recebido"
+                f" {type(cliente).__name__}",
+                dominio=self.dominio,
+                permite_retentativa=False,
+            )
+
+        cabecalhos = {"User-Agent": cliente.user_agent(), "Referer": f"{self.BASE_URL}/"}
+        limite = time.monotonic() + _ORCAMENTO_CAPTURAS_S
+        capturas_feitas = 0
+        falhas: list[str] = []
+
+        for posicao, candidato in enumerate(usaveis):
+            try:
+                if candidato.url_video:
+                    if responde(candidato.url_video, cabecalhos):
+                        logger.info(
+                            "AnimesDrive: %s (%s) resolvido por vídeo direto",
+                            candidato.rotulo,
+                            candidato.qualidade.name,
+                        )
+                        return LinkDeMidia(url=candidato.url_video, cabecalhos=cabecalhos)
+                    falhas.append(f"{candidato.rotulo}: URL estática não responde")
+                    continue
+
+                restante = limite - time.monotonic()
+                capturas_restantes = min(
+                    sum(1 for c in usaveis[posicao:] if not c.url_video),
+                    _MAX_CAPTURAS_POR_EPISODIO - capturas_feitas,
+                )
+                if capturas_restantes <= 0 or restante <= 0:
+                    falhas.append(f"{candidato.rotulo}: sem orçamento de captura restante")
+                    continue
+
+                capturas_feitas += 1
+                capturada = cliente.capturar_midia(
+                    url_episodio,
+                    hosts_ignorados=_HOSTS_YOUTUBE,
+                    seletor_para_ativar=f'[data-animeq-switch="{candidato.indice}"]',
+                    timeout_s=_janela_de_captura(restante, capturas_restantes),
+                )
+                logger.info(
+                    "AnimesDrive: %s (%s) resolvido por captura de navegador",
+                    candidato.rotulo,
+                    candidato.qualidade.name,
+                )
+                return LinkDeMidia(url=capturada.url, cabecalhos=capturada.cabecalhos)
+            except SessaoRejeitada:
+                raise  # sessão, não candidato: o próximo bateria na mesma parede
+            except FalhaDeExtracao as excecao:
+                falhas.append(f"{candidato.rotulo}: {excecao}")
+                logger.warning(
+                    "AnimesDrive: servidor %r falhou (%s)", candidato.rotulo, excecao
+                )
+
+        raise FalhaDeExtracao(
+            f"nenhum servidor FHD/HD utilizável em {url_episodio}: {falhas}",
+            dominio=self.dominio,
+            permite_retentativa=True,
+        )
+
+    def _candidatos_de_servidor(self, html: str, url_episodio: str) -> list["_Candidato"]:
+        """Lê os botões `[data-animeq-switch]` e os painéis correspondentes.
+        Lista vazia (nenhum botão na página) sinaliza modo B ao chamador — não é
+        erro, é a maioria das páginas do site hoje."""
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            botoes = soup.select("[data-animeq-switch]")
+            if not botoes:
+                return []
+
+            candidatos: list[_Candidato] = []
+            indices_vistos: set[str] = set()
+            for botao in botoes:
+                indice = botao.get("data-animeq-switch")
+                if indice in indices_vistos:
+                    logger.warning(
+                        "AnimesDrive: dois botões com data-animeq-switch=%r em %s,"
+                        " usando o painel do 1º",
+                        indice,
+                        url_episodio,
+                    )
+                    continue
+                indices_vistos.add(indice)
+
+                rotulo = botao.get("data-source-name") or " ".join(botao.get_text().split())
+                painel = soup.select_one(f'[data-animeq-source="{indice}"]')
+                if painel is None:
+                    logger.warning(
+                        "AnimesDrive: botão %r sem painel correspondente em %s, ignorado",
+                        indice,
+                        url_episodio,
+                    )
+                    continue
+
+                url_video = _url_de_video_direto(painel, self.BASE_URL)
+                tem_iframe = _tem_iframe_utilizavel(painel)
+                if url_video is None and not tem_iframe:
+                    logger.warning(
+                        "AnimesDrive: painel %r sem vídeo direto nem iframe em %s, ignorado",
+                        indice,
+                        url_episodio,
+                    )
+                    continue
+
+                candidatos.append(
+                    _Candidato(
+                        indice=indice,
+                        rotulo=rotulo,
+                        qualidade=qualidade_do_rotulo(rotulo),
+                        url_video=url_video,
+                        tem_iframe=tem_iframe,
+                    )
+                )
+
+            if not candidatos:
+                raise EstruturaDoSiteMudou(
+                    f"botões de qualidade em {url_episodio} sem painel parseável",
+                    dominio=self.dominio,
+                )
+            return candidatos
+        except AttributeError as excecao:
+            raise EstruturaDoSiteMudou(
+                f"estrutura do seletor de qualidade do AnimesDrive mudou: {excecao}"
+                f" ({url_episodio})",
+                dominio=self.dominio,
+            ) from excecao
+
+    def _resolver_modo_legado(
+        self, cliente: ClienteDeSite, html: str, url_episodio: str
+    ) -> LinkDeMidia:
+        """Caminho de antes do seletor de qualidade existir: um iframe, uma
+        captura, sem escolha entre servidores."""
         hosts_de_player = self._hosts_de_player(html, url_episodio)
 
         if not hosts_de_player:
@@ -292,9 +481,6 @@ class AnimesDriveProvider(ExtratorDeSite):
             )
 
         if not isinstance(cliente, ClienteComCaptura):
-            # Contrato quebrado, não falha de site: `exige_navegador_para_midia`
-            # é `True` aqui e `extractors/resiliencia.py` deveria ter entregue o
-            # cliente de navegador. Retentar com o mesmo cliente repetiria o erro.
             raise FalhaDeExtracao(
                 "resolver mídia do AnimesDrive exige cliente de navegador, recebido"
                 f" {type(cliente).__name__}",
@@ -335,6 +521,57 @@ class AnimesDriveProvider(ExtratorDeSite):
                 f" ({url_episodio})",
                 dominio=self.dominio,
             ) from excecao
+
+
+@dataclass(frozen=True, slots=True)
+class _Candidato:
+    indice: str  # valor cru de data-animeq-switch (string: casamento é igualdade de atributo)
+    rotulo: str
+    qualidade: NivelDeQualidade
+    url_video: str | None  # <source src> absolutizado, quando o painel é vídeo direto
+    tem_iframe: bool
+
+
+def _url_de_video_direto(painel, base_url: str) -> str | None:
+    tag = painel.select_one("video source[src], video[src]")
+    if tag is None:
+        return None
+    src = (tag.get("src") or "").strip()
+    if not src or src == "about:blank":
+        return None
+    url = urllib.parse.urljoin(base_url, src)
+    if any(marcador in urllib.parse.urlparse(url).netloc for marcador in _HOSTS_YOUTUBE):
+        return None
+    return url
+
+
+def _tem_iframe_utilizavel(painel) -> bool:
+    iframe = painel.find("iframe")
+    if iframe is None:
+        return False
+    for atributo in _ATRIBUTOS_DE_IFRAME:
+        src = (iframe.get(atributo) or "").strip()
+        if not src or src == "about:blank":
+            continue
+        if src.startswith("//"):
+            src = f"https:{src}"
+        host = urllib.parse.urlparse(src).netloc
+        if any(marcador in host for marcador in _HOSTS_YOUTUBE):
+            return False
+        return True
+    return False
+
+
+def _chave_de_ordenacao(candidato: _Candidato) -> tuple[int, int]:
+    """Maior qualidade primeiro; dentro do mesmo tier, vídeo direto antes de
+    iframe (custa uma requisição `Range: bytes=0-0`, não uma janela de captura
+    inteira). `sorted` é estável, então a ordem da página desempata sozinha
+    entre iframes do mesmo tier — nenhum peso extra pro botão `is-active`."""
+    return (-candidato.qualidade, 0 if candidato.url_video else 1)
+
+
+def _janela_de_captura(restante_s: float, capturas_restantes: int) -> int:
+    return max(1, min(_TIMEOUT_CAPTURA_S, int(restante_s // capturas_restantes)))
 
 
 def _extrair_identificador(url_anime: str) -> str:

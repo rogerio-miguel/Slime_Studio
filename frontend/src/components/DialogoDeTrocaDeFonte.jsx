@@ -91,7 +91,7 @@ export default function DialogoDeTrocaDeFonte({
   const busca = useRecurso(
     () =>
       aberto && termoSubmetido
-        ? buscarEmFontes(termoSubmetido)
+        ? buscarEmFontes(termoSubmetido, 'todas')
         : Promise.resolve({ resultados: [] }),
     [aberto, termoSubmetido]
   );

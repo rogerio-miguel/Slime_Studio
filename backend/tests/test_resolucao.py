@@ -63,6 +63,42 @@ class _ExtratorFalso(ExtratorDeSite):
         raise NotImplementedError
 
 
+class _ExtratorTruncamentoFalso(ExtratorDeSite):
+    """Fake que só acha o card no termo já truncado do subtítulo — simula um
+    site de busca por prefixo (ex. AnimeFire) depois que `buscar` parou de
+    truncar internamente (fatia 1 de PLANO_PADRONIZACAO_FONTES.md): a
+    assimetria só fica coberta se `_buscar_variantes` (fatia 2) tentar o
+    termo truncado por `variantes_de_busca`."""
+
+    def __init__(self, dominio: str, *, termo_truncado: str, candidato: ResultadoBusca) -> None:
+        self._dominio = dominio
+        self._termo_truncado = termo_truncado
+        self._candidato = candidato
+        self.chamadas: list[str] = []
+
+    @property
+    def dominio(self) -> str:
+        return self._dominio
+
+    @property
+    def exige_navegador(self) -> bool:
+        return False
+
+    @property
+    def diferencia_versao(self) -> bool:
+        return False
+
+    def buscar(self, cliente, titulo):
+        self.chamadas.append(titulo)
+        return [self._candidato] if titulo == self._termo_truncado else []
+
+    def listar_episodios(self, cliente, identificador):
+        return []
+
+    def resolver_midia(self, cliente, url_episodio):
+        raise NotImplementedError
+
+
 @pytest.fixture
 async def sessionmaker(tmp_path: Path) -> async_sessionmaker[AsyncSession]:
     config = Config(
@@ -89,7 +125,13 @@ def _resiliencia_sem_cliente_real(monkeypatch):
     falsos deste teste ignoram o `cliente` recebido."""
 
     async def _chamar_falso(
-        sessionmaker, extrator, operacao, *, permitir_navegador=True, exigir_navegador=False
+        sessionmaker,
+        extrator,
+        operacao,
+        *,
+        nome_operacao="operacao",
+        permitir_navegador=True,
+        exigir_navegador=False,
     ):
         return operacao(None)
 
@@ -189,13 +231,14 @@ async def test_fonte_mapeada_sem_capacidade_no_site_segue_pro_proximo_site_mapea
     )
 
 
-async def test_fonte_confirmada_em_site_de_prioridade_menor_vence_nao_diferenciada_de_maior(
+async def test_fonte_confirmada_mais_recente_vence_nao_diferenciada_mais_antiga_de_prioridade_menor(
     sessionmaker,
 ):
-    """Bug corrigido: site-a (prioridade maior, NAO_DIFERENCIADA) não deve
-    vencer sobre site-b (prioridade menor) com a versão pedida CONFIRMADA —
-    confirmação exata de versão pesa mais que prioridade de site."""
+    """site-a (prioridade menor, NAO_DIFERENCIADA, resolvida antes) não deve
+    vencer sobre site-b (prioridade maior) com a versão pedida CONFIRMADA
+    mais recentemente — prioridade de site não decide entre capazes."""
     anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    agora = datetime.now(UTC)
     async with sessionmaker() as sessao:
         sessao.add_all(
             [
@@ -205,6 +248,7 @@ async def test_fonte_confirmada_em_site_de_prioridade_menor_vence_nao_diferencia
                     versao=VersaoDeFonte.NAO_DIFERENCIADA,
                     identificador_no_site="a",
                     prioridade=0,
+                    resolvido_em=agora - timedelta(hours=1),
                 ),
                 FonteAnime(
                     anime_id=anime.id,
@@ -212,6 +256,7 @@ async def test_fonte_confirmada_em_site_de_prioridade_menor_vence_nao_diferencia
                     versao=VersaoDeFonte.DUBLADO,
                     identificador_no_site="b",
                     prioridade=1,
+                    resolvido_em=agora,
                 ),
             ]
         )
@@ -223,6 +268,50 @@ async def test_fonte_confirmada_em_site_de_prioridade_menor_vence_nao_diferencia
 
     assert resultado == resolucao.FonteResolvida(
         dominio="site-b.io", identificador="b", versao_da_fonte=VersaoDeFonte.DUBLADO
+    )
+
+
+async def test_troca_manual_para_site_nao_diferenciado_vence_confirmada_antiga_de_outro_site(
+    sessionmaker,
+):
+    """Regressão do bug relatado: usuário confirma manualmente ("Trocar
+    fonte") um site que NÃO diferencia versão (ex. AnimeFire) depois de já
+    ter uma versão CONFIRMADA mapeada num site diferente (ex. AnimesDrive) —
+    a escolha manual mais recente tem que valer, mesmo sendo
+    NAO_DIFERENCIADA contra uma CONFIRMADA exata mais antiga."""
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    agora = datetime.now(UTC)
+    async with sessionmaker() as sessao:
+        sessao.add_all(
+            [
+                FonteAnime(
+                    anime_id=anime.id,
+                    site_dominio="animesdrive.online",
+                    versao=VersaoDeFonte.DUBLADO,
+                    identificador_no_site="slime-datta-ken-dublado",
+                    prioridade=0,
+                    resolvido_em=agora - timedelta(days=1),
+                ),
+                FonteAnime(
+                    anime_id=anime.id,
+                    site_dominio="animefire.io",
+                    versao=VersaoDeFonte.NAO_DIFERENCIADA,
+                    identificador_no_site="slime-datta-ken",
+                    prioridade=1,
+                    resolvido_em=agora,
+                ),
+            ]
+        )
+        await sessao.commit()
+
+    resultado = await resolucao.resolver_fonte_do_anime(
+        sessionmaker, anime, VersaoEpisodio.DUBLADO
+    )
+
+    assert resultado == resolucao.FonteResolvida(
+        dominio="animefire.io",
+        identificador="slime-datta-ken",
+        versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
     )
 
 
@@ -256,6 +345,38 @@ async def test_sem_mapeamento_site_nao_diferenciado_resolve_e_grava_nao_diferenc
         assert fonte is not None
         assert fonte.identificador_no_site == "slime"
         assert fonte.prioridade == 0
+
+
+async def test_titulo_com_subtitulo_resolve_via_variante_truncada_sem_confirmacao_manual(
+    sessionmaker, monkeypatch
+):
+    """D-A6 (PLANO_PADRONIZACAO_FONTES.md): antes da fatia 1, `AnimeFireProvider.
+    buscar` truncava o subtítulo internamente e a resolução automática
+    funcionava "de graça" para títulos com subtítulo. Agora que `buscar` não
+    trunca mais, é `_buscar_variantes` (fatia 2) quem precisa cobrir essa
+    necessidade — regressão: título com subtítulo continua resolvendo
+    sozinho, sem cair em `ConfirmacaoNecessaria`."""
+    titulo_completo = "Anime Principal: Um Subtítulo Longo"
+    titulo_truncado = "Anime Principal"
+    candidato = ResultadoBusca(
+        titulo_exibicao="Anime Principal", identificador="anime-principal", url="http://x/ap"
+    )
+    extrator = _ExtratorTruncamentoFalso(
+        "animefire.io", termo_truncado=titulo_truncado, candidato=candidato
+    )
+    monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
+    anime = await _criar_anime(sessionmaker, titulo_completo)
+
+    resultado = await resolucao.resolver_fonte_do_anime(
+        sessionmaker, anime, VersaoEpisodio.LEGENDADO
+    )
+
+    assert resultado == resolucao.FonteResolvida(
+        dominio="animefire.io",
+        identificador="anime-principal",
+        versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+    )
+    assert extrator.chamadas == [titulo_completo, titulo_truncado]
 
 
 async def test_sem_resultado_no_primeiro_site_tenta_o_proximo(sessionmaker, monkeypatch):
@@ -431,6 +552,86 @@ async def test_site_que_diferencia_grava_as_duas_versoes_numa_busca_so(sessionma
         assert dublado is not None and dublado.identificador_no_site == "slime-dublado"
 
 
+async def test_site_que_diferencia_versao_de_graca_usa_sentinel_que_nao_vence_confirmacao_antiga(
+    sessionmaker, monkeypatch
+):
+    """Regressão do bug crítico: `bump_recencia=False` só era respeitado no
+    ramo de UPDATE de `_gravar_fonte_anime` — uma linha NOVA (domínio nunca
+    mapeado nesta versão) caía no `default=now()` do model. Aqui o domínio
+    "animesdrive.online" é novo pras duas versões; resolvendo LEGENDADO
+    (pedida), a partição DUBLADO ("de graça") também desambigua e é gravada
+    com `bump_recencia=False`. Ela não pode vencer, na resolução seguinte de
+    DUBLADO, uma fonte já mapeada e mais antiga em outro domínio que o
+    usuário confirmou manualmente antes."""
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    agora = datetime.now(UTC)
+    async with sessionmaker() as sessao:
+        sessao.add(
+            FonteAnime(
+                anime_id=anime.id,
+                site_dominio="site-antigo.io",
+                versao=VersaoDeFonte.DUBLADO,
+                identificador_no_site="antigo-dublado",
+                prioridade=0,
+                resolvido_em=agora - timedelta(days=30),
+            )
+        )
+        await sessao.commit()
+
+    candidatos = [
+        ResultadoBusca(
+            titulo_exibicao="Slime Datta Ken",
+            identificador="slime",
+            url="x",
+            versao=VersaoEpisodio.LEGENDADO,
+        ),
+        ResultadoBusca(
+            titulo_exibicao="Slime Datta Ken Dublado",
+            identificador="slime-dublado",
+            url="y",
+            versao=VersaoEpisodio.DUBLADO,
+        ),
+    ]
+    extrator = _ExtratorFalso("animesdrive.online", candidatos=candidatos, diferencia_versao=True)
+    monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
+
+    resultado_legendado = await resolucao.resolver_fonte_do_anime(
+        sessionmaker, anime, VersaoEpisodio.LEGENDADO
+    )
+
+    assert resultado_legendado == resolucao.FonteResolvida(
+        dominio="animesdrive.online",
+        identificador="slime",
+        versao_da_fonte=VersaoDeFonte.LEGENDADO,
+    )
+
+    async with sessionmaker() as sessao:
+        legendado = await sessao.get(
+            FonteAnime, (anime.id, "animesdrive.online", VersaoDeFonte.LEGENDADO)
+        )
+        dublado_de_graca = await sessao.get(
+            FonteAnime, (anime.id, "animesdrive.online", VersaoDeFonte.DUBLADO)
+        )
+        assert legendado is not None and legendado.resolvido_em >= agora
+        assert dublado_de_graca is not None
+        # Sentinel, não `datetime.now(UTC)`: bem anterior a qualquer timestamp
+        # real usado neste teste, inclusive o do "site-antigo.io".
+        assert dublado_de_graca.resolvido_em < agora - timedelta(days=365)
+
+    # Resolvendo DUBLADO na sequência: a linha "de graça" recém-criada em
+    # animesdrive.online NÃO pode vencer a confirmação genuína e mais antiga
+    # de site-antigo.io.
+    resultado_dublado = await resolucao.resolver_fonte_do_anime(
+        sessionmaker, anime, VersaoEpisodio.DUBLADO
+    )
+
+    assert resultado_dublado == resolucao.FonteResolvida(
+        dominio="site-antigo.io",
+        identificador="antigo-dublado",
+        versao_da_fonte=VersaoDeFonte.DUBLADO,
+    )
+
+
 async def test_site_que_diferencia_desambigua_por_identificador_com_titulo_entre_parenteses(
     sessionmaker, monkeypatch
 ):
@@ -592,7 +793,7 @@ async def test_proximo_site_para_prefere_mapeamento_ja_existente(sessionmaker):
         await sessao.commit()
 
     resultado = await resolucao.proximo_site_para(
-        sessionmaker, anime, "site-a.io", VersaoEpisodio.LEGENDADO
+        sessionmaker, anime, {"site-a.io"}, VersaoEpisodio.LEGENDADO
     )
 
     assert resultado == resolucao.FonteResolvida(
@@ -625,7 +826,7 @@ async def test_proximo_site_para_sem_mapeamento_seguinte_descobre_novo_site(
         await sessao.commit()
 
     resultado = await resolucao.proximo_site_para(
-        sessionmaker, anime, "site-a.io", VersaoEpisodio.LEGENDADO
+        sessionmaker, anime, {"site-a.io"}, VersaoEpisodio.LEGENDADO
     )
 
     assert resultado == resolucao.FonteResolvida(
@@ -644,7 +845,7 @@ async def test_proximo_site_para_sem_nenhuma_opcao_devolve_none(sessionmaker, mo
     anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
 
     resultado = await resolucao.proximo_site_para(
-        sessionmaker, anime, "animefire.io", VersaoEpisodio.LEGENDADO
+        sessionmaker, anime, {"animefire.io"}, VersaoEpisodio.LEGENDADO
     )
 
     assert resultado is None
@@ -677,7 +878,7 @@ async def test_proximo_site_para_versao_desconhecida_ignora_capacidade_de_versao
         await sessao.commit()
 
     resultado = await resolucao.proximo_site_para(
-        sessionmaker, anime, "site-a.io", VersaoEpisodio.DESCONHECIDA
+        sessionmaker, anime, {"site-a.io"}, VersaoEpisodio.DESCONHECIDA
     )
 
     assert resultado == resolucao.FonteResolvida(

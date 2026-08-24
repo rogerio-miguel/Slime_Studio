@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
-from core.erros import FonteNaoEncontrada, SiteEmCooldown
+from core.erros import FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada, SiteEmCooldown
 from db.engine import criar_engine, criar_sessionmaker
 from extractors import circuit_breaker, resiliencia, sessao_cache
 from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
@@ -180,3 +180,111 @@ async def test_chamar_sem_exigir_navegador_nao_sobe_navegador(sessionmaker, nave
     await resiliencia.chamar(sessionmaker, _ExtratorFalso(), lambda cliente: "ok")
 
     assert navegador_falso.instancias == []
+
+
+async def test_chamar_loga_duracao_e_operacao_no_sucesso(sessionmaker, caplog):
+    """Fase E1 (PLANO_PADRONIZACAO_FONTES.md) — log estruturado de sucesso, sem
+    escalada: domínio, operação, cliente e duração aparecem no log, sem URL."""
+    with caplog.at_level("INFO", logger="extractors.resiliencia"):
+        resultado = await resiliencia.chamar(
+            sessionmaker, _ExtratorFalso(), lambda cliente: "ok", nome_operacao="testar"
+        )
+
+    assert resultado == "ok"
+    assert f"dominio={_DOMINIO}" in caplog.text
+    assert "operacao=testar" in caplog.text
+    assert "cliente=leve" in caplog.text
+    assert "escalou=False" in caplog.text
+    assert "duracao_s=" in caplog.text
+
+
+async def test_chamar_loga_escalada_com_duracao_da_etapa_leve_e_cliente_final(
+    sessionmaker, navegador_falso, caplog
+):
+    """Sessão rejeitada no cliente leve escala pro navegador (D-E1, "Mult. 1") —
+    o log de escalada carrega a duração até ali, e o log final marca
+    escalou=True e cliente=navegador."""
+    tentativas: list[str] = []
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        tentativas.append("tentativa")
+        if len(tentativas) == 1:
+            raise SessaoRejeitada("desafio Cloudflare")
+        return "ok"
+
+    with caplog.at_level("INFO", logger="extractors.resiliencia"):
+        resultado = await resiliencia.chamar(
+            sessionmaker, _ExtratorFalso(), operacao, nome_operacao="testar"
+        )
+
+    assert resultado == "ok"
+    assert "escalando para o navegador" in caplog.text
+    assert "operacao=testar" in caplog.text
+    assert "cliente=navegador" in caplog.text
+    assert "escalou=True" in caplog.text
+
+
+async def test_chamar_loga_falha_direta_sem_escalada(sessionmaker, caplog):
+    """Regressão: nenhum ramo de exceção logava duração antes desta correção
+    — aqui, falha direta (sem `SessaoRejeitada` no meio), sem escalada."""
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        raise FonteNaoEncontrada("não encontrado: http://exemplo/x", dominio=_DOMINIO)
+
+    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+        with pytest.raises(FonteNaoEncontrada):
+            await resiliencia.chamar(
+                sessionmaker, _ExtratorFalso(), operacao, nome_operacao="testar"
+            )
+
+    assert f"dominio={_DOMINIO}" in caplog.text
+    assert "operacao=testar" in caplog.text
+    assert "escalou=False" in caplog.text
+    assert "duracao_s=" in caplog.text
+
+
+async def test_chamar_loga_falha_de_sessao_rejeitada_sem_fallback(
+    sessionmaker, navegador_falso, caplog
+):
+    """`SessaoRejeitada` já no cliente de navegador (`exigir_navegador=True`)
+    não escala de novo — propaga direto, e o log de falha ainda sai, com
+    `escalou=False`."""
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        raise SessaoRejeitada("desafio Cloudflare")
+
+    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+        with pytest.raises(SessaoRejeitada):
+            await resiliencia.chamar(
+                sessionmaker,
+                _ExtratorFalso(),
+                operacao,
+                nome_operacao="testar",
+                exigir_navegador=True,
+            )
+
+    assert f"dominio={_DOMINIO}" in caplog.text
+    assert "operacao=testar" in caplog.text
+    assert "escalou=False" in caplog.text
+    assert "duracao_s=" in caplog.text
+
+
+async def test_chamar_loga_falha_apos_escalar_e_navegador_tambem_falhar(
+    sessionmaker, navegador_falso, caplog
+):
+    """Sessão rejeitada no cliente leve escala pro navegador, que também
+    falha — o log de falha sai com `escalou=True`."""
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        raise SessaoRejeitada("desafio Cloudflare")
+
+    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+        with pytest.raises(FalhaDeExtracao):
+            await resiliencia.chamar(
+                sessionmaker, _ExtratorFalso(), operacao, nome_operacao="testar"
+            )
+
+    assert f"dominio={_DOMINIO}" in caplog.text
+    assert "operacao=testar" in caplog.text
+    assert "escalou=True" in caplog.text
+    assert "duracao_s=" in caplog.text

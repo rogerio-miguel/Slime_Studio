@@ -137,6 +137,15 @@ class AnimeDetalheSaida(BaseModel):
     versao_confirmada_mais_recente: VersaoEpisodio | None
 
 
+# Parâmetro `escopo` de `GET /api/animes/buscar-fontes` (D-B1,
+# PLANO_PADRONIZACAO_FONTES.md — Fase B). `Literal` (não `str` + `if` manual)
+# pra ganhar 422 de graça do FastAPI/Pydantic num valor inválido (caso de
+# borda 1 da Fase B). `"padrao"`: motor sequencial por site da Fase A (Home).
+# `"todas"`: motor paralelo × variantes da fatia 1 de `extractors/servico.py`
+# (diálogo "Trocar fonte").
+EscopoBusca = Literal["padrao", "todas"]
+
+
 class ConfirmarFonteRequest(BaseModel):
     dominio: str
     identificador: str
@@ -190,10 +199,23 @@ class BuscaEmFontesSaida(BaseModel):
 
     resultados: list[ResultadoBuscaFonteSaida]
     fontes: list[FonteConsultadaSaida]
-    # Preenchido quando a busca com o termo digitado veio vazia e os resultados
-    # acima vieram de um título alternativo do mesmo anime (romaji/inglês,
-    # via provedor de metadados). `None` = resultados do termo digitado.
+    # Preenchido quando os resultados vieram de um termo diferente do digitado
+    # — variante de regex reduzida (`extractors.nomes.variantes_de_busca`, ex.
+    # sem subtítulo/sufixo de temporada) ou, se nenhuma variante achou nada,
+    # título alternativo do mesmo anime (romaji/inglês, via provedor de
+    # metadados). `None` = resultados vieram do termo exatamente digitado.
+    # Exceção: sempre `None` quando `escopo=todas` — `buscar_em_todas_as_
+    # fontes_com_titulos_alternativos` (`api/servicos/busca.py`) não expõe
+    # qual variante/rodada venceu, ver docstring de lá pro racional completo.
     termo_alternativo: str | None = None
+    # Preenchido quando quem respondeu não foi o site padrão (índice 0 de
+    # `extractors.registro.EXTRATORES`, ex. AnimeFire) — distingue "achei com
+    # um termo diferente no MESMO site" de "tive que cair pra OUTRO site",
+    # sinal que a Home usa pro aviso de resultado alternativo.
+    # Exceção: sempre `None` quando `escopo=todas`, mesmo motivo do campo
+    # acima — ver `api/servicos/busca.py::buscar_em_todas_as_fontes_com_
+    # titulos_alternativos`.
+    dominio_alternativo: str | None = None
 
 
 class EpisodioRemotoSaida(BaseModel):

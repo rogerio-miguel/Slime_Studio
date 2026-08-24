@@ -5,9 +5,12 @@ breaker por trás.
 
 import asyncio
 import logging
+import time
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,13 +34,53 @@ logger = logging.getLogger(__name__)
 # linha de defesa contra travamento.
 _TETO_ESPERA_CONFERENCIA_S = 30
 
+# Teto de relógio de parede pra EXTRAÇÃO da cadeia inteira de
+# `baixar_com_fallback_de_site` (busca + listagem + resolução de mídia +
+# conferência de link), contado desde o início real da função e aplicado via
+# `_dentro_do_prazo`/`wait_for` — não uma soma de tetos independentes por elo
+# (essa era a lacuna corrigida nesta revisão: antes, nada limitava de fato o
+# tempo gasto descobrindo o próximo site, e a tentativa final não descontava o
+# que já tinha sido gasto). Cobre tanto a tentativa original quanto a
+# descoberta/tentativa de próximo site (`_proximo_com_episodio`, escalada de
+# sessão incluída). `download.baixar` (ffmpeg) fica sempre FORA deste
+# orçamento — teto próprio de 2h por design (multiplicador 3 de D-E1),
+# deliberadamente independente do orçamento de extração.
+#
+# Valor mantido em 405s mesmo com a mudança de garantia: troca de site só
+# nasce de falha não-retentável (`EstruturaDoSiteMudou`, `SiteEmCooldown`,
+# `FonteNaoEncontrada`), tipicamente rápida de detectar — reavaliar quando a
+# Fase E1 tiver dados reais de distribuição de duração da cadeia.
+#
+# Limitação herdada do mesmo padrão já em uso por
+# `api/servicos/busca.py::_TETO_EXPANSAO_S`: cancelar via `wait_for` não mata
+# a thread do SO já em voo dentro de `asyncio.to_thread`
+# (`extractors/resiliencia.py`), só o aguardo por ela — na pior das hipóteses
+# ela roda até terminar sozinha. Mesma limitação documentada lá, não é
+# regressão nova desta revisão.
+#
+# Estourar este teto não é "site lento", é "gastamos tempo demais tentando
+# trocar de site" — propaga a última falha real em vez de insistir, e nunca
+# loga a URL do episódio (pode carregar token de sessão).
+_ORCAMENTO_CADEIA_S = 405
+
+
+async def _dentro_do_prazo[T](corotina: Coroutine[Any, Any, T], prazo: float) -> T:
+    """`wait_for` com o que sobrou do orçamento de cadeia (`prazo` é um
+    `time.monotonic()` absoluto, não uma duração). Prazo já vencido => timeout
+    imediato (`wait_for` ainda agenda e cancela a corrotina corretamente, sem
+    "coroutine was never awaited")."""
+    return await asyncio.wait_for(corotina, timeout=max(prazo - time.monotonic(), 0))
+
 
 async def buscar_em(
     sessionmaker: _SessionMaker, dominio: str, titulo: str
 ) -> list[ResultadoBusca]:
     extrator = obter_extrator(dominio)
     return await resiliencia.chamar(
-        sessionmaker, extrator, lambda cliente: extrator.buscar(cliente, titulo)
+        sessionmaker,
+        extrator,
+        lambda cliente: extrator.buscar(cliente, titulo),
+        nome_operacao="buscar",
     )
 
 
@@ -108,6 +151,88 @@ async def buscar_em_todas_as_fontes(
     return [por_dominio[extrator.dominio] for extrator in EXTRATORES]
 
 
+async def buscar_em_com_variantes(
+    sessionmaker: _SessionMaker, dominio: str, variantes: list[str]
+) -> tuple[ResultadoDeFonte, str | None]:
+    """Tenta cada variante em `dominio`, na ordem, e para na primeira que
+    devolver candidatos. Devolve o `ResultadoDeFonte` e a variante que
+    funcionou (`None` quando foi a variante 0, o título original).
+
+    `FalhaDeExtracao` de qualquer variante aborta as restantes — mesmo
+    critério de "indisponível" usado por `buscar_em_todas_as_fontes` (nunca
+    silencioso, CLAUDE.md §4): uma falha de extração não é "não achei nada",
+    é "não consegui nem tentar"."""
+    extrator = obter_extrator(dominio)
+    for indice, variante in enumerate(variantes):
+        try:
+            candidatos = await resiliencia.chamar(
+                sessionmaker,
+                extrator,
+                lambda cliente, v=variante: extrator.buscar(cliente, v),
+                nome_operacao="buscar",
+            )
+        except FalhaDeExtracao as excecao:
+            logger.warning(
+                "extrator %r falhou na busca por variante %r: %s",
+                dominio,
+                variante,
+                excecao,
+            )
+            return (
+                ResultadoDeFonte(
+                    dominio=dominio, candidatos=[], indisponivel=True, motivo=str(excecao)
+                ),
+                None,
+            )
+        if candidatos:
+            variante_vencedora = variante if indice > 0 else None
+            return (
+                ResultadoDeFonte(
+                    dominio=dominio, candidatos=candidatos, indisponivel=False, motivo=None
+                ),
+                variante_vencedora,
+            )
+
+    return (
+        ResultadoDeFonte(dominio=dominio, candidatos=[], indisponivel=False, motivo=None),
+        None,
+    )
+
+
+async def buscar_em_todas_as_fontes_com_variantes(
+    sessionmaker: _SessionMaker, variantes: list[str]
+) -> list[ResultadoDeFonte]:
+    """Executa `buscar_em_todas_as_fontes` por variante, na ordem, e para na
+    primeira rodada em que qualquer fonte devolver candidatos (D-B1/D-B2,
+    PLANO_PADRONIZACAO_FONTES.md — Fase B, escopo `todas`). Devolve a lista de
+    `ResultadoDeFonte` daquela rodada inteira — todos os domínios, cada
+    candidato com seu `dominio` preservado.
+
+    A rodada de variante é a unidade atômica de resultado (INV-1 do plano):
+    se a variante 1 não achou nada em nenhum site e a variante 2 acha no
+    AnimeFire, a resposta final é exatamente `buscar_em_todas_as_fontes`
+    daquela variante 2, nunca uma mistura das duas rodadas. Sites em
+    cooldown/indisponíveis dentro de uma rodada seguem o comportamento que
+    `buscar_em_todas_as_fontes` já garante (nunca mexido aqui).
+
+    Esgotadas todas as variantes sem nenhum candidato em site nenhum, devolve
+    o resultado da última rodada — mesma forma de "busquei e não achei nada"
+    que `buscar_em_todas_as_fontes` já devolve (todos os domínios, cada um com
+    `candidatos=[]`). `variantes` vazio segue o mesmo contrato: `nomes.py::
+    variantes_de_busca` promete nunca devolver lista vazia, mas o laço abaixo
+    não roda nenhuma vez sem essa garantia — o default abaixo cobre isso sem
+    depender do chamador."""
+    resultado: list[ResultadoDeFonte] = [
+        ResultadoDeFonte(dominio=extrator.dominio, candidatos=[], indisponivel=False, motivo=None)
+        for extrator in EXTRATORES
+    ]
+    for variante in variantes:
+        resultado = await buscar_em_todas_as_fontes(sessionmaker, variante)
+        if any(fonte.candidatos for fonte in resultado):
+            return resultado
+    return resultado
+
+
 def _formatar_motivo_cooldown(cooldown_ate: datetime | None) -> str:
     if cooldown_ate is None:
         return "em cooldown"
@@ -119,7 +244,10 @@ async def listar_episodios_em(
 ) -> list[EpisodioRemoto]:
     extrator = obter_extrator(dominio)
     return await resiliencia.chamar(
-        sessionmaker, extrator, lambda cliente: extrator.listar_episodios(cliente, identificador)
+        sessionmaker,
+        extrator,
+        lambda cliente: extrator.listar_episodios(cliente, identificador),
+        nome_operacao="listar_episodios",
     )
 
 
@@ -130,17 +258,49 @@ async def baixar_episodio(
     extrator: ExtratorDeSite,
     url_episodio: str,
     destino: Path,
+    prazo: float | None = None,
 ) -> Path:
-    link = await resiliencia.chamar(
-        sessionmaker,
-        extrator,
-        lambda cliente: extrator.resolver_midia(cliente, url_episodio),
-        # Único ponto do sistema que consome `exige_navegador_para_midia`:
-        # `resolver_midia` é a operação que pode precisar do JS da página rodando
-        # (`extractors/base.py`), busca e listagem não.
-        exigir_navegador=extrator.exige_navegador_para_midia,
-    )
-    await _conferir_link_de_midia(link)
+    """Resolve a mídia do episódio (com conferência de link) e baixa via `ffmpeg`.
+
+    `prazo` (Fase E2, PLANO_PADRONIZACAO_FONTES.md): teto de relógio de
+    parede — `time.monotonic()` absoluto — aplicado só à resolução de mídia +
+    conferência de link, a parte que compete pelo orçamento de
+    `baixar_com_fallback_de_site::_ORCAMENTO_CADEIA_S`. `None` (default,
+    comportamento de qualquer chamador fora do laço de fallback) preserva o
+    comportamento anterior a esta fase: nenhum teto agregado aqui, só os tetos
+    internos de `resiliencia.chamar`/`_conferir_link_de_midia`.
+
+    `download.baixar` (ffmpeg) nunca entra no `wait_for` — teto próprio de 2h
+    por design, deliberadamente fora do orçamento de extração.
+    """
+
+    async def _resolver_e_conferir() -> LinkDeMidia:
+        link = await resiliencia.chamar(
+            sessionmaker,
+            extrator,
+            lambda cliente: extrator.resolver_midia(cliente, url_episodio),
+            nome_operacao="resolver_midia",
+            # Único ponto do sistema que consome `exige_navegador_para_midia`:
+            # `resolver_midia` é a operação que pode precisar do JS da página rodando
+            # (`extractors/base.py`), busca e listagem não.
+            exigir_navegador=extrator.exige_navegador_para_midia,
+        )
+        await _conferir_link_de_midia(link)
+        return link
+
+    try:
+        link = (
+            await _resolver_e_conferir()
+            if prazo is None
+            else await _dentro_do_prazo(_resolver_e_conferir(), prazo)
+        )
+    except TimeoutError as excecao:
+        raise FalhaDeExtracao(
+            f"resolução de mídia em {extrator.dominio} excedeu o orçamento restante da cadeia",
+            dominio=extrator.dominio,
+            permite_retentativa=True,  # retentável — o orçamento é nosso, não uma falha do site
+        ) from excecao
+
     return await download.baixar(link, destino, str(config.ffmpeg))
 
 
@@ -178,41 +338,128 @@ async def baixar_com_fallback_de_site(
     a busca pelo próximo site (`resolucao.proximo_site_para`), que por sua vez
     precisa localizar o mesmo `episodio.numero` na listagem do novo site antes de
     tentar baixar por lá.
+
+    Instrumentação (Fase E1, PLANO_PADRONIZACAO_FONTES.md): loga no fim da
+    cadeia inteira — sucesso em `info`, esgotamento dos sites em `warning` —
+    com `sites_tentados` (tamanho de `ja_tentados`) e a duração total, nunca a
+    URL do episódio, que pode carregar token de sessão.
+
+    Deadline de cadeia (Fase E2): `prazo` é um teto de relógio de parede
+    (`_ORCAMENTO_CADEIA_S`) aplicado via `_dentro_do_prazo`/`wait_for` em duas
+    frentes — a resolução de mídia de `baixar_episodio` (própria e a do site
+    novo) e a busca/listagem de `_proximo_com_episodio` — mais o portão
+    (`time.monotonic() >= prazo`) logo antes de retomar o download num site
+    novo, como segunda camada de diagnóstico. Qualquer estouro propaga a MESMA
+    falha não-retentável que motivou a troca (`raise` sem argumento, dentro do
+    `except`, ou `raise excecao` depois do `TimeoutError` de
+    `_proximo_com_episodio`) em vez de tentar o site novo. Nunca substitui a
+    falha real por um erro de deadline genérico: quem chama
+    (`db/fila.py::falhar_extracao` via `worker/executor.py`) decide reagendar
+    ou não pelo `permite_retentativa` da própria falha original, sem precisar
+    conhecer um tipo novo.
     """
     dominio = episodio.site_origem
     url_episodio = episodio.url_fonte
     ja_tentados = {dominio}
+    inicio = time.monotonic()
+    prazo = inicio + _ORCAMENTO_CADEIA_S
 
     while True:
         extrator = obter_extrator(dominio)
         try:
-            return await baixar_episodio(
-                sessionmaker, config, extrator=extrator, url_episodio=url_episodio, destino=destino
+            resultado = await baixar_episodio(
+                sessionmaker,
+                config,
+                extrator=extrator,
+                url_episodio=url_episodio,
+                destino=destino,
+                prazo=prazo,
             )
         except FalhaDeExtracao as excecao:
             if excecao.permite_retentativa:
                 raise
 
-            proximo = await _proximo_com_episodio(
-                sessionmaker, anime, episodio.numero, dominio, ja_tentados, episodio.versao
-            )
+            try:
+                proximo = await _dentro_do_prazo(
+                    _proximo_com_episodio(
+                        sessionmaker, anime, episodio.numero, ja_tentados, episodio.versao
+                    ),
+                    prazo,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "download abortou a busca por outro site por estouro do orçamento de "
+                    "cadeia (%ds): anime_id=%s episodio_numero=%s sites_tentados=%d "
+                    "duracao_total_s=%.3f",
+                    _ORCAMENTO_CADEIA_S,
+                    anime.id,
+                    episodio.numero,
+                    len(ja_tentados),
+                    time.monotonic() - inicio,
+                )
+                # `from None`: `excecao` é a falha original já capturada, não uma causada por este
+                # `TimeoutError` — sem isso o traceback ganharia um "During handling of the above
+                # exception..." espúrio, ligando duas exceções que não têm relação de causa.
+                raise excecao from None
+
             if proximo is None:
+                logger.warning(
+                    "download esgotou os sites disponíveis: anime_id=%s episodio_numero=%s "
+                    "sites_tentados=%d duracao_total_s=%.3f",
+                    anime.id,
+                    episodio.numero,
+                    len(ja_tentados),
+                    time.monotonic() - inicio,
+                )
                 raise
+
+            if time.monotonic() >= prazo:
+                logger.warning(
+                    "download abortou troca de site por estouro do orçamento de cadeia "
+                    "(%ds): anime_id=%s episodio_numero=%s proximo_dominio=%s "
+                    "sites_tentados=%d duracao_total_s=%.3f",
+                    _ORCAMENTO_CADEIA_S,
+                    anime.id,
+                    episodio.numero,
+                    proximo[0],
+                    len(ja_tentados),
+                    time.monotonic() - inicio,
+                )
+                raise
+
             dominio, url_episodio = proximo
             ja_tentados.add(dominio)
+            continue
+
+        logger.info(
+            "download concluído: anime_id=%s episodio_numero=%s sites_tentados=%d "
+            "duracao_total_s=%.3f",
+            anime.id,
+            episodio.numero,
+            len(ja_tentados),
+            time.monotonic() - inicio,
+        )
+        return resultado
 
 
 async def _proximo_com_episodio(
     sessionmaker: _SessionMaker,
     anime: Anime,
     numero_episodio: int,
-    dominio_que_falhou: str,
     ja_tentados: set[str],
     versao: VersaoEpisodio,
 ) -> tuple[str, str] | None:
     """Anda pela cadeia de próximos sites até achar um que já foi tentado (desiste,
     devolve `None`) ou que lista `numero_episodio` (usa esse). Sites mapeados/
     descobertos que não têm o episódio são marcados como tentados e pulados.
+
+    Sem parâmetro separado pra "domínio que acabou de falhar": `ja_tentados`
+    (mantido pelo chamador, `baixar_com_fallback_de_site`) já inclui esse
+    domínio antes desta função ser chamada — repassar os dois seria
+    redundante. `resolucao.proximo_site_para` exclui `ja_tentados` inteiro
+    ao escolher a próxima fonte mapeada, não só o último domínio (ver
+    docstring de lá pro porquê disso importa desde que a escolha de fonte
+    passou a priorizar recência, não mais prioridade fixa de site).
 
     `versao` é `Episodio.versao` do episódio em fallback — propagada a
     `resolucao.proximo_site_para` pra preservar a versão pedida entre sites
@@ -221,12 +468,11 @@ async def _proximo_com_episodio(
     episódios (`ep.versao is not None`) e `versao` é confirmada
     (LEGENDADO/DUBLADO) — `filtrar_por_numero_e_versao`.
     """
-    dominio_referencia = dominio_que_falhou
     while True:
-        proxima_fonte = await resolucao.proximo_site_para(
-            sessionmaker, anime, dominio_referencia, versao
-        )
-        if proxima_fonte is None or proxima_fonte.dominio in ja_tentados:
+        # `proximo_site_para` já exclui todo domínio em `ja_tentados` (mapeadas
+        # filtradas + descoberta ao vivo) — nunca devolve um já tentado.
+        proxima_fonte = await resolucao.proximo_site_para(sessionmaker, anime, ja_tentados, versao)
+        if proxima_fonte is None:
             return None
 
         episodios_remotos = await listar_episodios_em(
@@ -251,7 +497,6 @@ async def _proximo_com_episodio(
             return proxima_fonte.dominio, correspondente.url
 
         ja_tentados.add(proxima_fonte.dominio)
-        dominio_referencia = proxima_fonte.dominio
 
 
 def filtrar_por_numero_e_versao(

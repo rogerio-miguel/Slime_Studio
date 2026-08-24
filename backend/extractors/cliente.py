@@ -66,7 +66,12 @@ class ClienteComCaptura(Protocol):
     (`ClienteDeSite`) segue sendo o mínimo que todo adapter pode assumir."""
 
     def capturar_midia(
-        self, url_pagina: str, *, hosts_ignorados: tuple[str, ...], timeout_s: int
+        self,
+        url_pagina: str,
+        *,
+        hosts_ignorados: tuple[str, ...],
+        seletor_para_ativar: str | None = None,
+        timeout_s: int,
     ) -> MidiaCapturada: ...
 
 
@@ -179,6 +184,9 @@ _ESPERA_POR_RODADA_S = 2.5
 _ESPERA_POR_PACOTE_S = 0.5
 # Conferência de um candidato de mídia: 1 byte, só pra saber se a origem responde.
 _TIMEOUT_CONFERENCIA_S = 10
+# Espera curta pelo botão de troca de servidor/qualidade: pode renderizar um
+# instante depois do load da página.
+_ESPERA_ELEMENTO_S = 5
 # Localiza o maior elemento de player visível e devolve o centro dele, já
 # rolado para dentro da viewport. Maior área (não o primeiro `<iframe>`) porque
 # páginas de episódio carregam iframes de 1x1 px de rastreamento/anúncio.
@@ -242,7 +250,12 @@ class ClienteNavegador:
         return dados
 
     def capturar_midia(
-        self, url_pagina: str, *, hosts_ignorados: tuple[str, ...] = (), timeout_s: int
+        self,
+        url_pagina: str,
+        *,
+        hosts_ignorados: tuple[str, ...] = (),
+        seletor_para_ativar: str | None = None,
+        timeout_s: int,
     ) -> MidiaCapturada:
         """Carrega `url_pagina`, deixa o player fazer o que faria com um usuário
         real e devolve a primeira requisição de mídia que a página dispara **e que
@@ -251,6 +264,15 @@ class ClienteNavegador:
         Sempre navega de novo, mesmo que a página já esteja carregada: a escuta
         de rede precisa estar ativa *antes* da requisição acontecer, e reaproveitar
         uma carga anterior perderia o pacote por corrida.
+
+        Sem `seletor_para_ativar` o comportamento é o de sempre (primeiro player
+        que a página monta sozinha). Com ele: clica no elemento (troca de
+        servidor/qualidade) e **rearma a escuta de rede logo depois** — o servidor
+        ativo por padrão pode já ter disparado a mídia dele antes da troca (o
+        navegador roda com `--autoplay-policy=no-user-gesture-required`), e
+        devolver aquele pacote seria devolver a qualidade errada. Elemento não
+        encontrado falha o candidato (`FalhaDeExtracao`) em vez de seguir com o
+        player default — qualidade errada silenciosa é pior que falha limpa.
         """
         pagina = self._obter_pagina()
         limite = time.monotonic() + timeout_s
@@ -260,6 +282,10 @@ class ClienteNavegador:
         pagina.listen.start(True)
         try:
             pagina.get(url_pagina, retry=0, timeout=timeout_s)
+            if seletor_para_ativar:
+                self._ativar_servidor(pagina, seletor_para_ativar)
+                pagina.listen.stop()
+                pagina.listen.start(True)
             ponto = pagina.run_js(_JS_CENTRO_DO_PLAYER)
             while time.monotonic() < limite:
                 pacote = self._esperar_pacote_de_midia(
@@ -278,7 +304,7 @@ class ClienteNavegador:
                     continue
 
                 cabecalhos = _cabecalhos_da_requisicao(pacote, self.user_agent())
-                if _responde(pacote.url, cabecalhos):
+                if responde(pacote.url, cabecalhos):
                     return MidiaCapturada(url=pacote.url, cabecalhos=cabecalhos)
                 descartadas.append(pacote.url)
                 logger.info(
@@ -339,6 +365,23 @@ class ClienteNavegador:
             ) from excecao
         return self._pagina
 
+    def _ativar_servidor(self, pagina, seletor: str) -> None:
+        """Clica no elemento de `seletor` pra trocar de servidor/qualidade —
+        `<button>` real, não overlay coberto pelo player: clique por seletor,
+        não por coordenada."""
+        from DrissionPage.errors import BaseError
+
+        try:
+            elemento = pagina.ele(f"css:{seletor}", timeout=_ESPERA_ELEMENTO_S)
+        except BaseError:
+            elemento = None
+        if not elemento:
+            raise FalhaDeExtracao(
+                f"elemento {seletor!r} não encontrado para ativar servidor",
+                permite_retentativa=True,
+            )
+        elemento.click()
+
     def _navegar(self, pagina, url: str, *, timeout_s: int) -> int | None:
         """Navega e devolve o status HTTP do documento (`None` se a resposta não
         foi observada) — é o que dá a `ClienteNavegador` a mesma distinção de
@@ -392,14 +435,19 @@ def _localizar_binario_de_navegador() -> str:
     )
 
 
-def _responde(url: str, cabecalhos: dict[str, str]) -> bool:
-    """Confere que a URL capturada responde, com os mesmos cabeçalhos (e sem
-    cookie) que o `ffmpeg` do pipeline vai usar — `extractors/download.py`.
+def responde(url: str, cabecalhos: dict[str, str]) -> bool:
+    """Confere que a URL responde, com os mesmos cabeçalhos (e sem cookie) que o
+    `ffmpeg` do pipeline vai usar — `extractors/download.py`.
 
     Existe porque o player tenta mais de uma origem: no mesmo episódio, o
     primeiro `.mp4` pedido devolvia 404 e só o segundo tocava (confirmado ao vivo
     em 2026-08-17). Sem esta conferência a captura devolveria a URL morta, e o
     job só descobriria isso no download.
+
+    Não é só pra URL observada saindo do navegador: também vale pra URL de
+    `<source>` lida direto do HTML estático (`extractors/animesdrive.py`, painel
+    de qualidade com vídeo direto) — mesma razão (o site serve URL morta), mesmo
+    tratamento.
 
     Só status — a validação de isca (HTML/imagem no lugar de mídia) continua em
     `extractors/download.py::conferir_link_de_midia`, que roda no pipeline; não

@@ -31,14 +31,19 @@ export function listarEpisodiosRemotos(animeId, versao) {
   return requisitar(`/api/admin/animes/${animeId}/episodios-remotos${query}`);
 }
 
-// Busca ao vivo em todos os sites de extração (ainda não catalogado
-// localmente) — subseção "Resultados em outras fontes" da Home. Resolve para
+// Busca ao vivo em sites de extração (ainda não catalogado localmente).
+// `escopo` espelha o parâmetro do backend (`padrao|todas`, default `padrao`):
+// `padrao` é o motor sequencial de fonte única (Home, subseção "Resultados em
+// outras fontes"); `todas` varre todos os domínios/versões numa única rodada
+// de variante vencedora (DialogoDeTrocaDeFonte). Resolve para
 // `{ resultados, fontes }` (não mais um array direto): `resultados` são os
 // candidatos achatados de todas as fontes disponíveis, `fontes` é o status de
 // cada site consultado (`{ dominio, indisponivel, motivo }`) — distingue
 // "busquei e não achei nada" de "não consegui nem tentar" (cooldown/erro).
-export function buscarEmFontes(titulo) {
-  return requisitar(`/api/animes/buscar-fontes?titulo=${encodeURIComponent(titulo)}`);
+export function buscarEmFontes(titulo, escopo = 'padrao') {
+  return requisitar(
+    `/api/animes/buscar-fontes?titulo=${encodeURIComponent(titulo)}&escopo=${encodeURIComponent(escopo)}`
+  );
 }
 
 export function marcarAssistido(episodioId) {
