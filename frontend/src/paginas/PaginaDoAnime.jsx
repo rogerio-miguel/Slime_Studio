@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
 import {
   confirmarFonte,
@@ -10,6 +10,7 @@ import {
   removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
+import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
@@ -67,6 +68,36 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const animeNaoEncontrado = erroAnime instanceof ErroDeApi && erroAnime.status === 404;
 
   const episodios = useRecurso(() => listarEpisodios(animeId), [animeId]);
+
+  // Sem isto, LinhaDeEpisodio.jsx (ramo `episodio.status === 'pronto'`) fica
+  // preso ao status local desatualizado até um refresh manual da página,
+  // mesmo o WebSocket já sabendo que o job terminou — os outros status
+  // (baixando/upscaling/etc.) já são reativos via `job?.status` direto
+  // (LinhaDeEpisodio.jsx), só a transição pra "pronto" depende de refetch.
+  // Auto-encerra: depois do recarregar, `episodio.status` já bate com
+  // `job.status` e a condição para de disparar. `'liberado'` (backend/
+  // core/enums.py::StatusEpisodio, mesmo literal usado sem importar o enum
+  // em LinhaDeEpisodio.jsx) precisa ficar de fora dessa exclusão: é um
+  // estado TERMINAL (episódio assistido até o fim, feature
+  // "liberação automática") que nunca converge pra `'pronto'` como os
+  // demais status intermediários — o `Job` daquele download continua
+  // `pronto` pra sempre, então sem esta exclusão a condição ficaria presa em
+  // `true` permanentemente pra qualquer episódio liberado, e como
+  // `jobsPorEpisodio` é o Map global de `/ws/admin` (todos os jobs do app,
+  // referência nova a cada `job_atualizado`, não só desta página) o efeito
+  // dispararia `episodios.recarregar()` a cada tick de QUALQUER job ativo no
+  // sistema.
+  useEffect(() => {
+    const algumProntoNaoRefletido = (episodios.dados ?? []).some((episodio) => {
+      const job = jobsPorEpisodio.get(episodio.id);
+      return job?.status === 'pronto' && episodio.status !== 'pronto' && episodio.status !== 'liberado';
+    });
+    if (algumProntoNaoRefletido) episodios.recarregar();
+    // mesmo caso de `capturar`/`aoConfirmarFonte` mais abaixo: `episodios`
+    // inteiro (useRecurso.js) é um literal novo a cada render — declará-lo
+    // aqui rodaria o efeito em todo render, não só quando os dados mudam.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobsPorEpisodio, episodios.dados, episodios.recarregar]);
 
   const [numeroCapturando, setNumeroCapturando] = useState(null);
   const [erroCaptura, setErroCaptura] = useState(null);
@@ -403,164 +434,181 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   }, []);
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <Link
-        to="/animes"
-        className="mb-4 inline-block text-sm text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
-      >
-        ← catálogo
-      </Link>
-      <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-          {anime?.capa_path && (
-            <img
-              src={anime.capa_path}
-              alt=""
-              className="h-40 w-28 flex-none rounded-lg border border-neon-soft object-cover"
-            />
-          )}
-          <div>
-            <h1
-              ref={focoTitulo}
-              tabIndex={-1}
-              className="mb-2 text-2xl font-semibold text-white outline-none"
-            >
-              {anime?.titulo ?? `Anime #${animeId}`}
-              {anime?.ano ? ` (${anime.ano})` : ''}
-            </h1>
-            {anime?.sinopse && <p className="max-w-2xl text-sm text-ink-muted">{anime.sinopse}</p>}
+    <>
+      {/* `fase="revelado"` fixo, mesmo uso de `paginas/Galeria.jsx` — não há
+          scrub de vídeo aqui, a navbar já nasce visível/interativa. Sem
+          `termoBusca`/`aoMudarBusca`: esta página não tem uma lista pra
+          filtrar, então a caixa de busca nem renderiza (ver
+          `components/BarraDeNavegacao.jsx`). */}
+      <BarraDeNavegacao fase="revelado" />
+      <main className="px-6 pb-16 pt-24 md:px-10">
+        {/* Header ampliado — vira o conteúdo central da página (capa e
+            título maiores, mais respiro) em vez de um preâmbulo estreito
+            acima da grade; lista de episódios continua abaixo, sem herdar
+            essa largura (max-w-4xl no container da lista, mais adiante) pra
+            não esticar linha de episódio a ponto de ficar ilegível em telas
+            largas. */}
+        <header className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+            {anime?.capa_path && (
+              <img
+                src={anime.capa_path}
+                alt=""
+                className="h-56 w-40 flex-none rounded-lg border border-neon-soft object-cover sm:h-72 sm:w-52"
+              />
+            )}
+            <div>
+              <h1
+                ref={focoTitulo}
+                tabIndex={-1}
+                className="mb-3 text-3xl font-semibold text-white outline-none sm:text-4xl md:text-5xl"
+              >
+                {anime?.titulo ?? `Anime #${animeId}`}
+                {anime?.ano ? ` (${anime.ano})` : ''}
+              </h1>
+              {anime?.sinopse && (
+                <p className="max-w-2xl text-sm text-ink-muted sm:text-base">{anime.sinopse}</p>
+              )}
+            </div>
           </div>
-        </div>
-        {!animeNaoEncontrado && (
-          <button
-            type="button"
-            onClick={() => setConfirmandoRemocao(true)}
-            className="flex-none rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 focus-visible:ring-2 focus-visible:ring-neon"
+          {!animeNaoEncontrado && (
+            <button
+              type="button"
+              onClick={() => setConfirmandoRemocao(true)}
+              className="flex-none rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 focus-visible:ring-2 focus-visible:ring-neon"
+            >
+              Remover do catálogo
+            </button>
+          )}
+        </header>
+
+        {erroAnime && (
+          <div
+            role="alert"
+            className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
           >
-            Remover do catálogo
-          </button>
+            {animeNaoEncontrado ? (
+              'Este anime não foi encontrado — pode ter sido removido do catálogo.'
+            ) : (
+              <>
+                Não foi possível carregar os dados do anime.{' '}
+                <button type="button" onClick={recarregarAnime} className="underline">
+                  Tentar novamente
+                </button>
+              </>
+            )}
+          </div>
         )}
-      </header>
-
-      {erroAnime && (
-        <div
-          role="alert"
-          className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-        >
-          {animeNaoEncontrado ? (
-            'Este anime não foi encontrado — pode ter sido removido do catálogo.'
-          ) : (
-            <>
-              Não foi possível carregar os dados do anime.{' '}
-              <button type="button" onClick={recarregarAnime} className="underline">
-                Tentar novamente
-              </button>
-            </>
-          )}
-        </div>
-      )}
-      {remotos.erro && !animeNaoEncontrado && (
-        <div
-          role="alert"
-          className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-        >
-          {remotos.erro instanceof ErroDeApi && remotos.erro.status === 404 ? (
-            'Este anime não foi encontrado — pode ter sido removido do catálogo.'
-          ) : (
-            <>
-              Não foi possível consultar a fonte remota.{' '}
-              <button type="button" onClick={remotos.recarregar} className="underline">
-                Tentar novamente
-              </button>
-            </>
-          )}
-        </div>
-      )}
-      {erroCaptura && (
-        <p role="alert" className="mb-4 text-sm text-red-400">
-          {erroCaptura}
-        </p>
-      )}
-      {episodios.carregando && <p className="text-sm text-ink-muted">Carregando episódios…</p>}
-      {remotos.carregando && (
-        <p className="text-sm text-ink-muted">
-          Consultando a fonte remota — isso pode levar até um minuto…
-        </p>
-      )}
-      {!animeNaoEncontrado && (
-        <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-          {remotos.dados?.dominio && <span>Episódios resolvidos via {remotos.dados.dominio}</span>}
-          <span>Baixando como: {ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva}</span>
-          {anime?.versoes_disponiveis &&
-            versaoAtiva !== 'desconhecida' &&
-            !anime.versoes_disponiveis.includes(versaoAtiva) && (
-            // Hint de cache, não bloqueante — `versoes_disponiveis` reflete o
-            // que já está mapeado em `FonteAnime`, não um live-probe. O 409
-            // `versao_indisponivel` (ver `capturar`) é o backstop real
-            // quando a versão genuinamente não existe nesta fonte.
-            <span className="text-amber-400">pode não estar disponível nesta fonte ainda</span>
-          )}
-          <button
-            type="button"
-            onClick={() => setTrocandoFonte(true)}
-            className="rounded-md border border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+        {remotos.erro && !animeNaoEncontrado && (
+          <div
+            role="alert"
+            className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
           >
-            Trocar fonte
-          </button>
+            {remotos.erro instanceof ErroDeApi && remotos.erro.status === 404 ? (
+              'Este anime não foi encontrado — pode ter sido removido do catálogo.'
+            ) : (
+              <>
+                Não foi possível consultar a fonte remota.{' '}
+                <button type="button" onClick={remotos.recarregar} className="underline">
+                  Tentar novamente
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {erroCaptura && (
+          <p role="alert" className="mb-4 text-sm text-red-400">
+            {erroCaptura}
+          </p>
+        )}
+        {episodios.carregando && <p className="text-sm text-ink-muted">Carregando episódios…</p>}
+        {remotos.carregando && (
+          <p className="text-sm text-ink-muted">
+            Consultando a fonte remota — isso pode levar até um minuto…
+          </p>
+        )}
+        {!animeNaoEncontrado && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+            {remotos.dados?.dominio && <span>Episódios resolvidos via {remotos.dados.dominio}</span>}
+            <span>Baixando como: {ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva}</span>
+            {anime?.versoes_disponiveis &&
+              versaoAtiva !== 'desconhecida' &&
+              !anime.versoes_disponiveis.includes(versaoAtiva) && (
+              // Hint de cache, não bloqueante — `versoes_disponiveis` reflete
+              // o que já está mapeado em `FonteAnime`, não um live-probe. O
+              // 409 `versao_indisponivel` (ver `capturar`) é o backstop real
+              // quando a versão genuinamente não existe nesta fonte.
+              <span className="text-amber-400">pode não estar disponível nesta fonte ainda</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setTrocandoFonte(true)}
+              className="rounded-md border border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+            >
+              Trocar fonte
+            </button>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2">
+          {linhas.map(({ chave, numero, rotulo, colisao, episodio, episodioDescartado }) => {
+            const job = episodio ? jobsPorEpisodio.get(episodio.id) : null;
+            return (
+              <LinhaDeEpisodio
+                key={chave}
+                numero={numero}
+                rotulo={rotulo}
+                colisao={colisao}
+                episodio={episodio}
+                episodioDescartado={episodioDescartado}
+                // `remotos.dados?.dominio` já é o mesmo valor usado na linha
+                // "Episódios resolvidos via {…}" acima — reusado direto aqui
+                // em vez de expor pelo `useMemo` de `linhas`, que não precisa
+                // dele pra montar as linhas em si (só `LinhaDeEpisodio` usa,
+                // pra anotar a origem de um `episodioDescartado`).
+                dominioAtivo={remotos.dados?.dominio ?? null}
+                versaoAtiva={versaoAtiva}
+                job={job}
+                capturando={numero != null && numeroCapturando === numero}
+                aoCapturar={capturar}
+                animeId={animeId}
+                animeTitulo={anime?.titulo}
+              />
+            );
+          })}
         </div>
-      )}
 
-      <div className="flex flex-col gap-2">
-        {linhas.map(({ chave, numero, rotulo, colisao, episodio, episodioDescartado }) => {
-          const job = episodio ? jobsPorEpisodio.get(episodio.id) : null;
-          return (
-            <LinhaDeEpisodio
-              key={chave}
-              numero={numero}
-              rotulo={rotulo}
-              colisao={colisao}
-              episodio={episodio}
-              episodioDescartado={episodioDescartado}
-              job={job}
-              capturando={numero != null && numeroCapturando === numero}
-              aoCapturar={capturar}
-              animeId={animeId}
-              animeTitulo={anime?.titulo}
-            />
-          );
-        })}
-      </div>
+        {linhas.length === 0 && !episodios.carregando && !remotos.carregando && (
+          <p className="text-sm text-ink-muted">Nenhum episódio encontrado.</p>
+        )}
 
-      {linhas.length === 0 && !episodios.carregando && !remotos.carregando && (
-        <p className="text-sm text-ink-muted">Nenhum episódio encontrado.</p>
-      )}
+        <DialogoDeFonteAmbigua
+          aberto={fonteAmbigua != null}
+          dominio={fonteAmbigua?.dominio}
+          candidatos={fonteAmbigua?.candidatos}
+          aoEscolher={aoConfirmarFonte}
+          aoFechar={() => setFonteAmbigua(null)}
+        />
 
-      <DialogoDeFonteAmbigua
-        aberto={fonteAmbigua != null}
-        dominio={fonteAmbigua?.dominio}
-        candidatos={fonteAmbigua?.candidatos}
-        aoEscolher={aoConfirmarFonte}
-        aoFechar={() => setFonteAmbigua(null)}
-      />
+        <DialogoDeTrocaDeFonte
+          aberto={trocandoFonte}
+          tituloAnime={anime?.titulo ?? ''}
+          aoConfirmar={aoConfirmarTrocaDeFonte}
+          aoFechar={fecharDialogoTrocaDeFonte}
+          confirmando={confirmandoTrocaFonte}
+          erro={erroTrocaFonte}
+        />
 
-      <DialogoDeTrocaDeFonte
-        aberto={trocandoFonte}
-        tituloAnime={anime?.titulo ?? ''}
-        aoConfirmar={aoConfirmarTrocaDeFonte}
-        aoFechar={fecharDialogoTrocaDeFonte}
-        confirmando={confirmandoTrocaFonte}
-        erro={erroTrocaFonte}
-      />
-
-      <DialogoDeConfirmacao
-        aberto={confirmandoRemocao}
-        titulo="Remover do catálogo"
-        mensagem={`Remover "${anime?.titulo ?? `Anime #${animeId}`}" do catálogo? Episódios e capturas associados serão apagados.`}
-        erro={erroRemocao}
-        aoConfirmar={confirmarRemocao}
-        aoFechar={fecharDialogoRemocao}
-        confirmando={removendo}
-      />
-    </main>
+        <DialogoDeConfirmacao
+          aberto={confirmandoRemocao}
+          titulo="Remover do catálogo"
+          mensagem={`Remover "${anime?.titulo ?? `Anime #${animeId}`}" do catálogo? Episódios e capturas associados serão apagados.`}
+          erro={erroRemocao}
+          aoConfirmar={confirmarRemocao}
+          aoFechar={fecharDialogoRemocao}
+          confirmando={removendo}
+        />
+      </main>
+    </>
   );
 }

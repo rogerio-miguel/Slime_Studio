@@ -1,5 +1,17 @@
 import { Link } from 'react-router-dom';
 
+// Espelha PaginaDoAnime.jsx::ROTULO_VERSAO — duplicado em vez de importado
+// (componente não deve depender da página que o renderiza; mesma lógica de
+// PaginaDoAnime.jsx::SITE_LOCAL, que espelha um enum do backend em vez de
+// importar). Usado só na nota de origem do ramo `liberadoOuDescartado`
+// abaixo, quando o episódio descartado é do mesmo domínio ativo mas de
+// versão diferente (legendado/dublado).
+const ROTULO_VERSAO = {
+  legendado: 'Legendado',
+  dublado: 'Dublado',
+  desconhecida: 'Desconhecida (site não confirma)',
+};
+
 // Rótulos em `core/enums.py::StatusJob`/`StatusEpisodio` (backend) — mesmos
 // valores StrEnum, traduzidos aqui pra exibição.
 const ROTULOS_STATUS = {
@@ -32,7 +44,12 @@ const ROTULOS_STATUS = {
 // badge "✓ assistido" (quando `assistido_em` de qualquer uma das duas fontes)
 // e rótulo "Recapturar" em vez de "Capturar" — o backend (D2,
 // `api/servicos/jobs.py::criar_job_site`) reaproveita a linha existente
-// nesses dois casos em vez de criar outra; (3) capturado mas ainda em
+// nesses dois casos em vez de criar outra; no caso `episodioDescartado`, uma
+// nota "(via {site})" ou "(versão real)" indica a origem quando difere da
+// fonte ativa (nunca as duas juntas — site diferente já basta pra explicar a
+// divergência e tem prioridade, ver `notaOrigem` abaixo) — sem isso, "✓
+// assistido" pareceria vir da fonte que o usuário está navegando agora;
+// (3) capturado mas ainda em
 // processamento (ou falhou): status ao vivo, cruzado com `job` do WS quando
 // disponível; (4) nunca capturado: botão que dispara a captura —
 // desabilitado quando `numero` é `null` (rótulo não numérico na fonte, ex.
@@ -43,6 +60,17 @@ export default function LinhaDeEpisodio({
   colisao,
   episodio,
   episodioDescartado,
+  // `PaginaDoAnime.jsx::remotos.dados?.dominio ?? null` — domínio da fonte
+  // remota ativa (`null` enquanto ainda carrega/erra/está ambígua). Usado só
+  // pra decidir a nota de origem do `episodioDescartado` no ramo
+  // `liberadoOuDescartado` abaixo; sem valor, a nota fica suprimida (mesmo
+  // critério conservador de `pertenceAFonteAtiva`, que também não filtra
+  // com domínio desconhecido).
+  dominioAtivo,
+  // `PaginaDoAnime.jsx::versaoAtiva` — só usado quando `episodioDescartado`
+  // é do MESMO domínio ativo mas de versão diferente (ver nota de origem
+  // abaixo); nos outros ramos deste componente não é lido.
+  versaoAtiva,
   job,
   aoCapturar,
   capturando,
@@ -114,6 +142,40 @@ export default function LinhaDeEpisodio({
 
   const liberadoOuDescartado = episodio?.status === 'liberado' ? episodio : episodioDescartado;
   if (liberadoOuDescartado) {
+    // Nota de origem: só faz sentido quando o "✓ assistido"/"Recapturar"
+    // vem de `episodioDescartado` (registro de OUTRA fonte/versão que não a
+    // ativa, `PaginaDoAnime.jsx::pertenceAFonteAtiva`) — nunca quando é o
+    // próprio `episodio` da fonte ativa em estado terminal `liberado`, caso
+    // em que `episodioDescartado` é sempre `null` (PaginaDoAnime.jsx só
+    // popula `episodioDescartado` quando `episodio` é nulo). Sem isto,
+    // "Episódio 18 ✓ assistido" numa fonte cujo catálogo remoto só vai até
+    // 16 fica sem pista de que aquele registro é de outra fonte.
+    // `dominioAtivo == null` (loading/erro/fonte ambígua) suprime a nota
+    // pelo mesmo critério conservador de `pertenceAFonteAtiva`.
+    let notaOrigem = null;
+    if (episodioDescartado && dominioAtivo != null) {
+      // 'local' (backend/core/enums.py::SITE_LOCAL, mesmo literal usado sem
+      // import em PaginaDoAnime.jsx::SITE_LOCAL) não conta como "outra
+      // fonte" com sentido pro usuário — captura manual não tem "site" pra
+      // nomear.
+      if (episodioDescartado.site_origem !== dominioAtivo && episodioDescartado.site_origem !== 'local') {
+        notaOrigem = `via ${episodioDescartado.site_origem}`;
+      } else if (
+        episodioDescartado.site_origem === dominioAtivo &&
+        episodioDescartado.versao !== versaoAtiva
+      ) {
+        // Mesmo domínio da fonte ativa, versão diferente (ex. dublado
+        // gravado enquanto a fonte ativa agora pede legendado) — mostrar o
+        // domínio de novo não ajudaria (seria idêntico ao ativo), a versão
+        // real é o que explica a divergência. `episodioDescartado.versao ===
+        // 'desconhecida'` nunca cai aqui na prática — mesmo domínio +
+        // 'desconhecida' já faz `pertenceAFonteAtiva` (PaginaDoAnime.jsx)
+        // aceitar o episódio como pertencente à fonte ativa, então ele nunca
+        // vira `episodioDescartado` nesse caso; mantido mesmo assim por
+        // completude (`ROTULO_VERSAO` cobre 'desconhecida').
+        notaOrigem = ROTULO_VERSAO[episodioDescartado.versao] ?? episodioDescartado.versao;
+      }
+    }
     return (
       <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-chrome px-4 py-2 text-sm text-ink-muted">
         <span>
@@ -123,6 +185,7 @@ export default function LinhaDeEpisodio({
               ✓ assistido
             </span>
           )}
+          {notaOrigem && <span className="ml-2 text-xs text-ink-muted">({notaOrigem})</span>}
         </span>
         <button
           type="button"

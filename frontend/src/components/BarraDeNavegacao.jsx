@@ -12,10 +12,13 @@ import { Link } from 'react-router-dom';
 // (`disabled` + `aria-disabled` + `title`), nunca escondidos.
 //
 // Busca: `termoBusca`/`aoMudarBusca` controlados pelo pai (`paginas/Inicio.jsx`
-// — único lugar que hoje renderiza esta navbar). Filtro local ao vivo, sem
-// submit: digitar já dispara `aoMudarBusca` via `onChange`. Enter
-// (`onSubmit`, `preventDefault` evita reload de página) dispara
+// e `paginas/Galeria.jsx`, cada um filtrando sua própria lista). Filtro local
+// ao vivo, sem submit: digitar já dispara `aoMudarBusca` via `onChange`.
+// Enter (`onSubmit`, `preventDefault` evita reload de página) dispara
 // `aoSubmeterBusca`, opcional — hoje aciona a busca em fontes externas.
+// `aoMudarBusca` inteiro é opcional: `paginas/PaginaDoAnime.jsx` não tem uma
+// lista pra filtrar, então o formulário de busca nem renderiza ali — melhor
+// omitir a caixa do que exibir um campo que não faz nada ao digitar.
 export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSubmeterBusca }) {
   const idBusca = useId();
   const visivel = fase === 'revelado';
@@ -76,26 +79,28 @@ export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSub
           </li>
         </ul>
       </div>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          aoSubmeterBusca?.();
-        }}
-        role="search"
-        className="flex items-center gap-2"
-      >
-        <label htmlFor={idBusca} className="sr-only">
-          Buscar animes
-        </label>
-        <input
-          id={idBusca}
-          type="search"
-          value={termoBusca}
-          onChange={(event) => aoMudarBusca(event.target.value)}
-          placeholder="Buscar…"
-          className="w-32 rounded-md border border-border-chrome bg-surface/80 px-3 py-1.5 text-sm text-white outline-none transition-all focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon sm:w-40"
-        />
-      </form>
+      {aoMudarBusca && (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            aoSubmeterBusca?.();
+          }}
+          role="search"
+          className="flex items-center gap-2"
+        >
+          <label htmlFor={idBusca} className="sr-only">
+            Buscar animes
+          </label>
+          <input
+            id={idBusca}
+            type="search"
+            value={termoBusca}
+            onChange={(event) => aoMudarBusca(event.target.value)}
+            placeholder="Buscar…"
+            className="w-32 rounded-md border border-border-chrome bg-surface/80 px-3 py-1.5 text-sm text-white outline-none transition-all focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon sm:w-40"
+          />
+        </form>
+      )}
     </nav>
   );
 }
