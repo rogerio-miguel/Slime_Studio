@@ -1,5 +1,5 @@
 import videoEntrada from '../assets/video_entrada.mp4';
-import logo from '../assets/logo.png';
+import logo from '../assets/logo2.png';
 
 // Camada de fundo fixa (position: fixed; inset: 0; z-0) da Inicio — não
 // sticky (ver plano). Fica atrás de todo o resto da página (spacer
@@ -34,7 +34,7 @@ export default function CenarioDeEntrada({ videoRef, logoRef, fase }) {
         className="h-full w-full object-cover"
       />
       <div
-        className={`absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/20 transition-opacity duration-700 ease-out ${_OPACIDADE_SCRIM_POR_FASE[fase]}`}
+        className={`absolute inset-0 bg-gradient-to-t from-black via-black/90 to-black/45 transition-opacity duration-700 ease-out ${_OPACIDADE_SCRIM_POR_FASE[fase]}`}
       />
       {/* Opacidade/escala escritas por frame em useScrubDeVideo.js (via
           logoRef), não por classe/transition — aparece perto da metade do
