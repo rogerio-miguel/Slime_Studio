@@ -125,11 +125,6 @@ export default function Galeria() {
     <>
       <BarraDeNavegacao fase="revelado" termoBusca={termoBusca} aoMudarBusca={setTermoBusca} />
       <main className="px-6 pb-10 pt-24 md:px-10">
-        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <h1 ref={focoTitulo} tabIndex={-1} className="text-2xl font-semibold text-white outline-none">
-            Animes
-          </h1>
-        </header>
 
         {!continuarAssistindo.carregando &&
           !continuarAssistindo.erro &&
@@ -148,6 +143,11 @@ export default function Galeria() {
             </section>
           )}
 
+        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <h1 ref={focoTitulo} tabIndex={-1} className="text-2xl font-semibold text-white outline-none">
+            Meu Catálogo
+          </h1>
+        </header>
         <form onSubmit={aoCriarAnime} className="mb-8 flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
             <label htmlFor="titulo-novo-anime" className="text-xs text-ink-muted">
