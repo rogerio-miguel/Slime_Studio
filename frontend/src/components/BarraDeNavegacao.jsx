@@ -1,5 +1,6 @@
 import { useId } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import logo from '../assets/logo2.png';
 
 // Navbar fixa (z-20, sempre acima do vídeo hero e do conteúdo revelado) —
 // opacidade e `inert` controlados pela fase do scrub (paginas/Inicio.jsx via
@@ -22,37 +23,41 @@ import { Link } from 'react-router-dom';
 export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSubmeterBusca }) {
   const idBusca = useId();
   const visivel = fase === 'revelado';
+  const { pathname } = useLocation();
+  const emAnimes = pathname.startsWith('/animes');
 
   return (
     <nav
       aria-label="Principal"
       inert={fase !== 'revelado'}
-      className={`fixed inset-x-0 top-0 z-20 flex items-center justify-between gap-6 bg-surface/70 px-6 py-4 backdrop-blur-sm transition-opacity duration-700 ease-out md:px-10 ${
+      className={`fixed inset-x-0 top-0 z-20 flex h-20 items-center justify-between gap-6 bg-surface/70 px-6 backdrop-blur-sm transition-opacity duration-700 ease-out md:px-10 ${
         visivel ? 'opacity-100' : 'opacity-0'
       }`}
     >
       <div className="flex items-center gap-10">
         <Link
           to="/"
-          className="text-2xl font-semibold tracking-wide text-white outline-none focus-visible:ring-2 focus-visible:ring-neon"
+          // `state.revelado`: sinaliza pra Inicio.jsx (via `location.state`)
+          // que a navegação veio do clique na logo — pula a intro de scroll
+          // direto pro estado final em vez de reiniciá-la do zero.
+          state={{ revelado: true }}
+          className="outline-none focus-visible:ring-2 focus-visible:ring-neon"
         >
-          Slime Studio
+          {/* Altura da nav é fixa (h-20 acima) e não depende do tamanho da
+              logo. Para redimensionar a logo, ajuste só a classe h-* abaixo
+              (até o teto de max-h-full = altura da nav). */}
+          <img src={logo} alt="Slime Studio" className="h-20 max-h-full w-auto object-contain" />
         </Link>
         <ul className="hidden items-center gap-8 text-lg text-ink-muted sm:flex sm:text-lg">
           <li>
             <Link
-              to="/"
-              className="outline-none transition-colors hover:text-white focus-visible:text-white focus-visible:ring-2 focus-visible:ring-neon"
-            >
-              Início
-            </Link>
-          </li>
-          <li>
-            <Link
               to="/animes"
-              className="outline-none transition-colors hover:text-white focus-visible:text-white focus-visible:ring-2 focus-visible:ring-neon"
+              aria-current={emAnimes ? 'page' : undefined}
+              className={`outline-none transition-colors font-bold hover:text-neon focus-visible:ring-2 focus-visible:ring-neon ${
+                emAnimes ? 'text-neon' : 'focus-visible:text-white'
+              }`}
             >
-              Animes
+              Meu Catálogo
             </Link>
           </li>
           <li>
@@ -61,7 +66,7 @@ export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSub
               disabled
               aria-disabled="true"
               title="Em breve"
-              className="cursor-not-allowed opacity-50"
+              className="cursor-not-allowed opacity-50 font-bold"
             >
               Gêneros
             </button>
@@ -72,7 +77,7 @@ export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSub
               disabled
               aria-disabled="true"
               title="Em breve"
-              className="cursor-not-allowed opacity-50"
+              className="cursor-not-allowed opacity-50 font-bold"
             >
               Favoritos
             </button>
@@ -97,7 +102,7 @@ export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSub
             value={termoBusca}
             onChange={(event) => aoMudarBusca(event.target.value)}
             placeholder="Buscar…"
-            className="w-32 rounded-md border border-border-chrome bg-surface/80 px-3 py-1.5 text-sm text-white outline-none transition-all focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon sm:w-40"
+            className="w-60 rounded-md border border-border-chrome bg-surface/80 px-3 py-1.5 text-sm text-white outline-none transition-all focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
           />
         </form>
       )}

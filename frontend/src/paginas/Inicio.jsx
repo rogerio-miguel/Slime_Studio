@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   buscarEmFontes,
   confirmarFonte,
@@ -49,9 +49,40 @@ export default function Inicio() {
   const videoRef = useRef(null);
   const logoRef = useRef(null);
   const { fase, movimentoReduzido, pularIntroducao } = useScrubDeVideo(videoRef, logoRef);
+  const location = useLocation();
+  // Contador (não bool) pra um segundo clique na logo — já revelado, mesmo
+  // `location.state` de antes já foi limpo — ainda disparar o efeito abaixo
+  // (que reage a mudança de valor, não só de truthiness).
+  const [pedidoScrollFinal, setPedidoScrollFinal] = useState(0);
+
+  // Clique na logo (BarraDeNavegacao.jsx) navega pra "/" com
+  // `state.revelado` — em vez de reiniciar a animação de entrada do zero,
+  // pula direto pro estado final (mesmo mecanismo do botão "Pular
+  // introdução") e depois desce até o final real da página (efeito abaixo,
+  // que espera "Destaques da temporada" carregar). `replace` limpa o state
+  // depois de consumido, senão um refresh ou "voltar" do navegador
+  // reexecutaria o pulo.
+  useEffect(() => {
+    if (location.state?.revelado) {
+      pularIntroducao();
+      setPedidoScrollFinal((n) => n + 1);
+      navigate('.', { replace: true, state: null });
+    }
+  }, [location.state, pularIntroducao, navigate]);
 
   const emAlta = useRecurso(listarAnimesEmAlta, []);
   const catalogo = useRecurso(listarAnimes, []);
+
+  // Completa o pulo pedido acima: desce até o final real do documento, não
+  // só o início do conteúdo revelado (onde `pularIntroducao` para). Depende
+  // de `emAlta.carregando` porque é a grade "Destaques da temporada" que
+  // define a altura final da página — um clique que chega antes do fetch
+  // terminar rolaria pra uma altura ainda provisória; ao terminar de
+  // carregar, este efeito roda de novo e corrige pro final de verdade.
+  useEffect(() => {
+    if (pedidoScrollFinal === 0) return;
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  }, [pedidoScrollFinal, emAlta.carregando]);
 
   const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
   const [erroMaterializacao, setErroMaterializacao] = useState(null);

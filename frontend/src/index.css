@@ -7,12 +7,12 @@
 
   /* Tokens da Fase 4 (galeria/página do anime) — linguagem visual portada
      de Slime_Shell_Web/AnimeCard.jsx (ver comentário em
-     components/AnimeCard.jsx), valores próprios pra combinar com a paleta
-     verde do HUD acima. */
+     components/AnimeCard.jsx). Accent principal em azul (#2080f0),
+     independente da paleta verde do HUD acima. */
   --color-surface: #14161b;
   --color-surface-hover: #1b1e25;
-  --color-neon: #6ee7c7;
-  --color-neon-soft: #2a5c4c;
+  --color-neon: #2080f0;
+  --color-neon-soft: #1c3b5f;
   --color-ink-muted: #9aa0a6;
 }
 
