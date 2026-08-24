@@ -94,6 +94,12 @@ Qualquer coisa que não passe no teste acima. Sequência:
    `architect` e pular direto ao `implementer`, o critério objetivo decide, não a cautela.
 3. **`implementer`** — sempre. Recebe o plano do `architect` quando houve um, ou a instrução
    direta quando não houve. Repasse o contexto que você já tem em vez de deixá-lo redescobrir.
+   Escopo grande demais numa chamada só é o mesmo problema de leitura direta, um nível abaixo:
+   "implemente a Fase X inteira" num único `implementer` acumula contexto turno a turno igual ao
+   loop principal faria sem delegar (medido neste projeto: um caso real chegou a 354 turnos / 53M
+   tokens numa única cadeia). Fatie por unidade natural do trabalho (arquivo, rota, endpoint,
+   componente) e trate cada fatia como uma chamada própria, com o `reviewer` entrando entre elas —
+   não como um pacote só a validar no fim.
 4. **`reviewer`** — sempre neste caminho, sobre o diff.
 
 ### Falhas e reentrada
@@ -101,6 +107,9 @@ Qualquer coisa que não passe no teste acima. Sequência:
 - `implementer` falhou uma tentativa direta em bug → agora o `architect` é justificado (causa-raiz).
 - `reviewer` apontou problema → volte ao `implementer` com os achados; só re-invoque o `reviewer`
   se a correção mudou o desenho, não a cada ajuste pontual.
+- Rodada de correção depois do `reviewer` → prefira abrir um `implementer` novo com prompt focado
+  só no diff/achados, em vez de retomar o mesmo agente da implementação original. Retomar recarrega
+  o histórico inteiro a cada vez e é o que faz o custo de uma tarefa grande crescer sem limite.
 
 ---
 
