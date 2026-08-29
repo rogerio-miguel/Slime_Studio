@@ -5,7 +5,10 @@ Strategy Pattern completo. É o único adapter do projeto que declara
 `exige_navegador_para_midia`: os players embutidos aqui só montam a URL de
 mídia rodando o próprio JS, e a estratégia é **observar** o navegador fazendo o
 que a página faria com um usuário real (`extractors/cliente.py::capturar_midia`),
-nunca reimplementar o player. Achados ao vivo contra animesdrive.online:
+nunca reimplementar o player. Achados ao vivo contra o site (host mudou de
+`animesdrive.online` para `animesdrive.cloud` em 2026-08-25 — `dominio` é
+identificador estável desacoplado do host, só `BASE_URL` muda numa próxima
+troca de domínio; achados abaixo continuam válidos, foi só migração de host):
 
 - Nenhum dos players de iframe expõe URL de vídeo estática no HTML:
   `blogger.com/video.g?token=...` é SPA do Google (framework "Wiz"), e
@@ -17,9 +20,9 @@ nunca reimplementar o player. Achados ao vivo contra animesdrive.online:
   mesmo com o `Referer` certo. Quem se carrega é a página do episódio; o player
   embutido nela resolve normal (3 episódios de 3 animes, 2026-08-17).
 - Os cabeçalhos do `LinkDeMidia` vêm da requisição observada, não de suposição:
-  o `Referer` real medido é `https://animesdrive.online/` (só a origem, por
-  causa do `referrer-policy` do embed) — não a URL do embed, como esta docstring
-  previa antes de existir medição.
+  o `Referer` real medido é a origem do site (só a origem, por causa do
+  `referrer-policy` do embed) — não a URL do embed, como esta docstring previa
+  antes de existir medição.
 - Orçamento: `_TIMEOUT_CAPTURA_S`/`_ORCAMENTO_CAPTURAS_S` abaixo, cobertos por
   `extractors/resiliencia.py::_TETO_ESPERA_NAVEGADOR_S`.
 
@@ -84,16 +87,22 @@ _REGEX_EPISODIO = re.compile(r"^/episodio/(?P<slug>.+?)-episodio-(?P<numero>[^/]
 _SELETOR_LISTA_EPISODIOS = "#episodes a[href]"
 # Ordem de leitura de atributo do iframe dentro de um painel de qualidade —
 # WP Rocket adia o `src` real em `data-lazy-src` até o elemento entrar em
-# viewport; o `src` cru costuma ficar `about:blank` até lá.
-_ATRIBUTOS_DE_IFRAME = ("data-lazy-src", "src", "data-src")
+# viewport; o `src` cru costuma ficar `about:blank` até lá. `data-animeq-src`
+# é o lazy-src do próprio player `animeq` (painel HD, confirmado ao vivo em
+# 2026-08-25) — mesma convenção `data-animeq-*` do resto do markup.
+_ATRIBUTOS_DE_IFRAME = ("data-lazy-src", "data-animeq-src", "src", "data-src")
 
 
 class AnimesDriveProvider(ExtratorDeSite):
-    BASE_URL = "https://animesdrive.online"
+    # Migração de domínio 2026-08-25 (.online -> .cloud): `dominio` abaixo é
+    # identificador estável, desacoplado do host real — troca de domínio
+    # futura exige mudar só esta constante, nunca `dominio` nem os dados já
+    # persistidos com ele como chave (`fonte_anime.site_dominio` etc.).
+    BASE_URL = "https://animesdrive.cloud"
 
     @property
     def dominio(self) -> str:
-        return "animesdrive.online"
+        return "animesdrive"
 
     @property
     def exige_navegador(self) -> bool:
@@ -173,7 +182,7 @@ class AnimesDriveProvider(ExtratorDeSite):
                 )
             if not resultados:
                 # info, não warning: com a busca em paralelo em todos os sites
-                # (extractors/servico.py::buscar_em_todas_as_fontes), um título
+                # (extractors/servico.py::buscar_por_site_com_variantes), um título
                 # existir só num dos dois é o caso comum, não uma falha — não
                 # dá pra distinguir "não achei mesmo" de "estrutura mudou" só
                 # por contagem zero, então não escala pra warning (isso viraria
@@ -306,8 +315,11 @@ class AnimesDriveProvider(ExtratorDeSite):
 
         - **Modo A** (com seletor de qualidade): classifica cada servidor,
           descarta abaixo do piso HD (nunca SD), tenta o de maior qualidade
-          primeiro (vídeo direto antes de iframe no mesmo tier), e falha sem
-          retentativa se só sobrou SD/Mobile — retentar não faz FHD aparecer.
+          primeiro (vídeo direto antes de iframe no mesmo tier — "vídeo
+          direto" cobre tanto `<video><source>` quanto o painel Video.js
+          `[data-animeq-videojs-host]`, ver `_url_de_video_direto`), e falha
+          sem retentativa se só sobrou SD/Mobile — retentar não faz FHD
+          aparecer.
         - **Modo B** (legado, sem seletor): caminho de sempre — um iframe,
           uma captura, sem escolha de qualidade.
         """
@@ -533,10 +545,18 @@ class _Candidato:
 
 
 def _url_de_video_direto(painel, base_url: str) -> str | None:
+    """URL de vídeo direto do painel, em dois padrões possíveis: `<video><source
+    src>` (padrão original) ou `[data-animeq-videojs-host][data-video-src]`
+    (player Video.js sem `<video>`/`<iframe>` nenhum no HTML, confirmado ao
+    vivo em 2026-08-25 — painel FHD). Ambos resultam numa URL que o resto do
+    pipeline valida com `responde()` antes de confiar, então tratá-los como o
+    mesmo tipo de candidato é seguro."""
     tag = painel.select_one("video source[src], video[src]")
-    if tag is None:
-        return None
-    src = (tag.get("src") or "").strip()
+    if tag is not None:
+        src = (tag.get("src") or "").strip()
+    else:
+        host_videojs = painel.select_one("[data-animeq-videojs-host]")
+        src = (host_videojs.get("data-video-src") or "").strip() if host_videojs else ""
     if not src or src == "about:blank":
         return None
     url = urllib.parse.urljoin(base_url, src)
