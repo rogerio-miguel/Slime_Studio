@@ -529,8 +529,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         )}
         {!animeNaoEncontrado && (
           <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-            {remotos.dados?.dominio && <span>Episódios resolvidos via {remotos.dados.dominio}</span>}
-            <span>Baixando como: {ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva}</span>
+            {remotos.dados?.dominio && <span>Episódios resolvidos via <span className="font-bold">{remotos.dados.dominio}</span></span>}
+            <span>Baixando como: <span className="font-bold">{ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva}</span></span>
             {anime?.versoes_disponiveis &&
               versaoAtiva !== 'desconhecida' &&
               !anime.versoes_disponiveis.includes(versaoAtiva) && (
