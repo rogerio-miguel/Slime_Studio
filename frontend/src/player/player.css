@@ -2,25 +2,17 @@
    genéricas) é Tailwind, direto nos componentes. Comentários de racional do
    protótipo (teste/bench.html) preservados. */
 
-/* --frame-ar é setado inline por Player.jsx a partir de
-   videoWidth/videoHeight (o protótipo fixava 1.7778) — aqui só o fallback e
-   as constantes que não dependem do vídeo. */
+/* --bar-height/--bar-height-fullscreen controlam a faixa preta acima/abaixo
+   do vídeo — um valor por modo, ajustáveis sem depender um do outro (ver
+   `.frame` abaixo). O vídeo sempre ocupa 100% da largura — sem faixa
+   lateral. */
 :root {
-  --page-chrome: 5rem;
-  /* Nome genérico (não mais só "fullscreen"): a mesma margem agora é
-     reservada em AMBOS os modos — ver comentário em `.fullscreen-stage`
-     abaixo — pra o #ambient-glow ter por onde vazar lateralmente em
-     qualquer um. */
-  --stage-margin: 4vmin;
-  /* 10% não bastava fora de tela cheia: quando --page-chrome deixa a
-     ALTURA como eixo limitante (comum em janela larga/widescreen — o
-     .frame acaba bem mais estreito que o viewport), a caixa do
-     #ambient-glow (proporcional ao .frame) parava de alcançar a borda
-     real da página bem antes do fim — sobrava fundo plano preto
-     (html{background:#000}, sem gradiente nenhum) colado nas laterais.
-     30% fecha esse vão pra janelas até ~21:9; em ultrawide extremo ainda
-     pode sobrar uma tira nas pontas — halo tem alcance finito, não é bug,
-     mas o vão fica bem menor que antes. */
+  --bar-height: 4rem;
+  --bar-height-fullscreen: 5rem;
+  /* Bleed do #ambient-glow: só tem efeito visível pra cima/baixo — o .frame
+     toca as bordas laterais da tela, então o bleed lateral vaza direto pra
+     fora da viewport (cortado pelo overflow:hidden de
+     html.pagina-player/body.pagina-player, abaixo). */
   --ambient-bleed: 5%;
 }
 
@@ -66,17 +58,41 @@ body.pagina-player {
   width: calc(100% + 2 * var(--ambient-bleed));
   height: calc(100% + 2 * var(--ambient-bleed));
   z-index: -1;
-  filter: blur(60px) saturate(1.6) brightness(1.2);
-  opacity: 0.9;
+  /* contrast(1.6) por último: o canvas de amostragem é minúsculo
+     (AMBIENT_CANVAS_WIDTH em glowAmbiente.js) e o blur(60px) é grande demais
+     em relação a esse tamanho intrínseco — sem contrast, cor de qualquer
+     região vaza pro quadro inteiro e vira cinza-escuro nas áreas sem glow
+     (o canvas é opaco, `alpha:false` no ctx, então não existe "transparente"
+     de verdade — só preto sólido igual ao background do .frame por trás).
+     contrast empurra tom-médio pra longe do meio: escuro que já tende a
+     preto vira preto sólido, cor de glow real fica mais saturada — sem isso
+     o "sem glow" nunca chega a preto puro, só a um cinza que destaca a
+     borda do halo em vez de se fundir no fundo. */
+  filter: blur(60px) saturate(1.6) brightness(1.2) contrast(1.6);
+  /* Desligado por padrão (fundo 100% preto sólido) — decisão deliberada do
+     usuário, não bug: --action-intensity só existe depois que
+     glowAmbiente.js detecta movimento/ação sustentada entre frames (EMA
+     lenta, AMBIENT_ACAO_SUAVIZACAO) e GlowAmbiente.jsx escreve a variável
+     neste próprio elemento a cada frame amostrado. Sem valor setado, o
+     fallback do var() é 0 → opacity 0 → halo invisível, canvas por trás
+     pinta preto sólido (ver comentário de contrast acima). Teto em 0.9, não
+     1, pelo mesmo motivo já documentado: evita o halo "sólido" demais
+     mesmo no pico de ação. transition é a segunda camada de suavização,
+     complementar à EMA em JS — rede de segurança contra jitter
+     frame-a-frame que a média móvel sozinha não pegasse (updates de canvas
+     rodam no ritmo do vídeo, a transição de opacity roda no compositor,
+     então o resultado visual fica suave mesmo se algum frame pontual
+     variar mais que o esperado). */
+  opacity: calc(var(--action-intensity, 0) * 0.9);
+  transition: opacity 0.5s ease;
   pointer-events: none;
 }
 
 /* Alvo do fullscreen é este wrapper, não o .frame — o navegador força esse
    elemento a 100vw/100vh do jeito que quiser (não brigamos com isso). O
-   .frame fica dentro, como item de flex, e mantém proporção via
-   aspect-ratio + width calculado explicitamente (ver regra .frame): como
-   ele nunca é o próprio alvo do :fullscreen, nenhuma regra nativa do
-   navegador sobrescreve o tamanho dele. */
+   .frame fica dentro, como item de flex, com largura e altura calculadas
+   direto em unidades de viewport (ver regra .frame) — não depende do
+   tamanho que o navegador dá a este wrapper. */
 .fullscreen-stage {
   display: flex;
   align-items: center;
@@ -88,51 +104,26 @@ body.pagina-player {
      porque a regra .fullscreen-stage:fullscreen abaixo já define
      height:100vh explícito, que vence este min-height sem conflito. */
   min-height: 100dvh;
-  /* Reserva a mesma margem lateral usada em tela cheia (--stage-margin)
-     também aqui: sem isso, quando --frame-ar deixa a LARGURA como eixo
-     limitante (vídeo tão largo quanto o viewport), o .frame encosta direto
-     nas bordas esquerda/direita e o #ambient-glow (--ambient-bleed além da
-     caixa do .frame) não tem viewport sobrando pra vazar
-     lateralmente — só as faixas topo/base (reservadas por --page-chrome,
-     na fórmula de largura do .frame abaixo) mostravam halo, as laterais
-     ficavam pretas. box-sizing:border-box pra width:100% já incluir esse
-     padding, senão o .frame calcularia o espaço disponível errado (min()
-     usaria 100% + padding, estourando o container). */
-  padding-inline: var(--stage-margin);
-  box-sizing: border-box;
 }
-/* padding cria a moldura nos 4 lados — também é o que deixa o
-   #ambient-glow (filho deste elemento) visível ao redor do vídeo em
-   fullscreen, não só nos 2 lados que sobrariam com margin.
-   box-sizing:border-box pra 100vw/100vh já incluir o padding, senão o
-   .frame calcularia o espaço disponível errado (ver regra abaixo). */
 .fullscreen-stage:fullscreen,
 .fullscreen-stage:-webkit-full-screen {
   width: 100vw;
   height: 100vh;
   background: #000;
-  padding: var(--stage-margin);
-  box-sizing: border-box;
 }
+/* Sem aspect-ratio: a caixa ocupa 100% da largura (toca as bordas laterais
+   da tela nos dois modos) e a altura vem de --bar-height — mesma fórmula
+   em janela e fullscreen, só a variável muda (regra `:fullscreen .frame`
+   abaixo troca pra --bar-height-fullscreen), pra dar dois tamanhos de
+   barra independentes. dvh funciona nos dois modos (fullscreen força
+   .fullscreen-stage a 100vh, praticamente idêntico a 100dvh na prática). O
+   descompasso de proporção com o vídeo fica por conta do object-fit:fill
+   do #output-canvas (ver regra abaixo): a imagem estica até cobrir a caixa
+   toda, sem pillarbox/letterbox e sem recorte (trade-off aceito: leve
+   distorção pra não sobrar borda nas laterais). */
 .frame {
-  /* Largura calculada explicitamente (não max-height + aspect-ratio) de
-     propósito: .frame é item de um container flex (.fullscreen-stage) com
-     align-items:center, e o tamanho no eixo principal (largura) de um item
-     flex é resolvido pelo algoritmo de flex-basis ANTES do eixo cruzado —
-     "transferred size" (CSS Sizing 4) não alimenta de volta uma largura já
-     fixada por esse passo anterior. Convertendo o teto de altura em um
-     termo de largura equivalente (`* var(--frame-ar)`) dentro do próprio
-     min(), a largura já nasce correta e o aspect-ratio só precisa resolver
-     a altura (auto) a partir dela — sem depender de nenhum feedback entre
-     eixos. --page-chrome não cobre mais um <header> externo (removido — o
-     título/"voltar" agora são overlay DENTRO do .frame, ver `.controls`
-     abaixo) — é folga de respiro em torno do .frame, dividida
-     ~simetricamente topo/base pela centralização flex de .fullscreen-stage,
-     e o que evita que o vídeo estoure a viewport típica (sem teto fixo de
-     largura: o vídeo cresce até esbarrar no container ou nessa altura).
-     Mesma técnica já usada nas fórmulas de :fullscreen abaixo. */
-  width: min(100%, calc((100dvh - var(--page-chrome)) * var(--frame-ar, 1.777778)));
-  aspect-ratio: var(--frame-ar, 1.777778);
+  width: 100%;
+  height: calc(100dvh - 2 * var(--bar-height));
   background: #000;
   position: relative;
   /* Sem isso, .frame não forma stacking context próprio (position:relative
@@ -145,26 +136,13 @@ body.pagina-player {
      de tudo — a ordem pretendida pelo design (ver comentários da regra
      #ambient-glow acima). */
   isolation: isolate;
-  margin-inline: auto;
 }
-/* width/height:auto colapsava pra 0×0 aqui: o único conteúdo do .frame é
-   position:absolute (fora do fluxo), então não há base de conteúdo pro
-   "auto" — tela cheia ficava toda preta. Tamanho vem só de viewport units
-   (min() escolhe o eixo que limita, preservando a proporção), sem depender
-   do conteúdo interno.
-   Sem overflow:hidden: o #ambient-glow é filho e PRECISA vazar pra fora da
-   caixa. Nada mais transborda — o #output-canvas usa object-fit: contain.
-   100% já é o content-box de .fullscreen-stage (pós-padding, .frame é flex
-   item) — só o outro termo do min()/max() precisa descontar
-   --stage-margin manualmente, porque vem direto de vw/vh (unidade de
-   viewport, não afetada por padding do pai). */
+/* Único ponto que difere entre os dois modos: a altura troca de var pra
+   permitir barra de tamanho diferente em fullscreen. Largura continua
+   100% (herdado de .frame acima, não repetido aqui). */
 .fullscreen-stage:fullscreen .frame,
 .fullscreen-stage:-webkit-full-screen .frame {
-  width: min(100%, calc((100vh - 2 * var(--stage-margin)) * var(--frame-ar)));
-  height: min(100%, calc((100vw - 2 * var(--stage-margin)) / var(--frame-ar)));
-  max-width: none;
-  max-height: none;
-  margin: 0;
+  height: calc(100dvh - 2 * var(--bar-height-fullscreen));
 }
 .frame video {
   position: absolute;
@@ -174,19 +152,20 @@ body.pagina-player {
   opacity: 0;
   pointer-events: none;
 }
-/* "Contain", igual dentro e fora de tela cheia: o canvas de saída do WebGPU
-   (#output-canvas) ocupa a caixa toda do .frame, mas object-fit preserva a
-   proporção do bitmap e nunca corta — o que sobrar em qualquer eixo vira
-   faixa preta invisível (.frame e html já são #000). Seletor por id, não
-   `.frame canvas`: o #ambient-glow também é um <canvas> filho de .frame, e
-   inset:0 + object-fit:contain aqui sobrescreveria o posicionamento do glow
-   e criaria barras pretas no halo. */
+/* "Fill", igual dentro e fora de tela cheia: o canvas de saída do WebGPU
+   (#output-canvas) ocupa a caixa toda do .frame e object-fit:fill estica o
+   bitmap pra cobrir os dois eixos exatamente — sem sobra (logo, sem
+   pillarbox/letterbox), mas também sem preservar a proporção original
+   quando a caixa não é a mesma do vídeo (trade-off deliberado, ver
+   comentário do .frame). Seletor por id, não `.frame canvas`: o
+   #ambient-glow também é um <canvas> filho de .frame, e inset:0 +
+   object-fit aqui sobrescreveria o posicionamento do glow. */
 #output-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: fill;
 }
 
 /* Overlay dentro de .frame, escondido por padrão, revelado em
@@ -243,7 +222,7 @@ body.pagina-player {
 
    cursor:none no palco, não em .frame nem em <html>: o palco é o alvo do
    requestFullscreen (cobre a tela toda, inclusive as faixas de
-   --stage-margin) e em janela ocupa a viewport inteira da rota, mas termina
+   --bar-height) e em janela ocupa a viewport inteira da rota, mas termina
    antes da navbar — fora dele o cursor continua visível, que é o certo. */
 .fullscreen-stage.palco-inativo:not(:has(button:focus-visible, input:focus-visible, select:focus-visible)) {
   cursor: none;
