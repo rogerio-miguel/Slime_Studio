@@ -1,10 +1,13 @@
-"""Testes de `api/servicos/busca.py`: `enriquecer_capas` e
-`buscar_com_titulos_alternativos`, sem rede — `integrations.servico.
-buscar_por_titulo`/`buscar_titulos` e `extractors.servico.
+"""Testes de `api/servicos/busca.py::buscar_com_titulos_alternativos` (e do
+motor paralelo `buscar_em_todas_as_fontes_com_titulos_alternativos`), sem
+rede — `integrations.servico.buscar_titulos` e `extractors.busca.servico.
 buscar_em_com_variantes`/`buscar_por_site_com_variantes` são monkeypatchados
 nos nomes de módulo (mesmo padrão usado em `tests/test_api_buscar_fontes.py`),
 pois `busca.py` os chama via `servico_metadados`/`servico_extractors`, que
 apontam pro mesmo objeto de módulo.
+
+O enriquecimento de capa (`enriquecer_capas`) saiu de `busca.py` para
+`api/servicos/capas.py` — sua cobertura mora em `tests/test_servico_capas.py`.
 
 `buscar_com_titulos_alternativos` (Fase A, fatia 3 de
 PLANO_PADRONIZACAO_FONTES.md) é sequencial por site na Fase 1 (ordem de
@@ -27,8 +30,8 @@ import pytest
 from api.servicos import busca as servico_busca
 from core.erros import FalhaDeMetadados
 from extractors.base import ResultadoBusca
-from extractors.servico import ResultadoDeFonte
-from integrations.base import MetadadosDeAnime, TitulosDeAnime
+from extractors.busca.servico import ResultadoDeFonte
+from integrations.base import TitulosDeAnime
 
 
 def _fonte(dominio: str, *candidatos: ResultadoBusca) -> ResultadoDeFonte:
@@ -39,102 +42,6 @@ def _fonte(dominio: str, *candidatos: ResultadoBusca) -> ResultadoDeFonte:
 
 def _fonte_indisponivel(dominio: str, motivo: str = "falhou") -> ResultadoDeFonte:
     return ResultadoDeFonte(dominio=dominio, candidatos=[], indisponivel=True, motivo=motivo)
-
-
-async def test_enriquecer_capas_preenche_resultado_sem_capa(monkeypatch: pytest.MonkeyPatch):
-    async def _buscar_por_titulo_fake(titulo: str) -> MetadadosDeAnime | None:
-        assert titulo == "Naruto"
-        return MetadadosDeAnime(
-            capa_url="https://cdn/naruto.jpg", sinopse=None, anilist_id=1, kitsu_id=None
-        )
-
-    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
-
-    fonte = _fonte(
-        "animefire.io",
-        ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1"),
-    )
-
-    resultado = await servico_busca.enriquecer_capas(None, [fonte])
-
-    assert resultado[0].candidatos[0].capa_url == "https://cdn/naruto.jpg"
-
-
-async def test_enriquecer_capas_dedupe_por_titulo_normalizado(monkeypatch: pytest.MonkeyPatch):
-    chamadas: list[str] = []
-
-    async def _buscar_por_titulo_fake(titulo: str) -> MetadadosDeAnime | None:
-        chamadas.append(titulo)
-        return MetadadosDeAnime(
-            capa_url="https://cdn/naruto.jpg", sinopse=None, anilist_id=None, kitsu_id=None
-        )
-
-    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
-
-    fontes = [
-        _fonte(
-            "animefire.io",
-            ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1"),
-        ),
-        _fonte(
-            "animesdrive",
-            ResultadoBusca(titulo_exibicao="naruto", identificador="2", url="https://y/2"),
-        ),
-    ]
-
-    resultado = await servico_busca.enriquecer_capas(None, fontes)
-
-    assert len(chamadas) == 1
-    assert resultado[0].candidatos[0].capa_url == "https://cdn/naruto.jpg"
-    assert resultado[1].candidatos[0].capa_url == "https://cdn/naruto.jpg"
-
-
-async def test_enriquecer_capas_falha_de_uma_consulta_nao_derruba_as_outras(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    async def _buscar_por_titulo_fake(titulo: str) -> MetadadosDeAnime | None:
-        if titulo == "Naruto":
-            raise RuntimeError("provedor fora do ar")
-        return MetadadosDeAnime(
-            capa_url="https://cdn/bleach.jpg", sinopse=None, anilist_id=None, kitsu_id=None
-        )
-
-    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
-
-    fonte = _fonte(
-        "animefire.io",
-        ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1"),
-        ResultadoBusca(titulo_exibicao="Bleach", identificador="2", url="https://x/2"),
-    )
-
-    resultado = await servico_busca.enriquecer_capas(None, [fonte])
-
-    candidatos = resultado[0].candidatos
-    assert candidatos[0].capa_url is None
-    assert candidatos[1].capa_url == "https://cdn/bleach.jpg"
-
-
-async def test_enriquecer_capas_nao_reconsulta_resultado_que_ja_tem_capa(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    async def _falha_se_chamado(titulo: str) -> MetadadosDeAnime | None:
-        raise AssertionError("não deveria consultar título que já veio com capa")
-
-    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _falha_se_chamado)
-
-    fonte = _fonte(
-        "animesdrive",
-        ResultadoBusca(
-            titulo_exibicao="Naruto",
-            identificador="1",
-            url="https://x/1",
-            capa_url="https://animesdrive.online/capa.jpg",
-        ),
-    )
-
-    resultado = await servico_busca.enriquecer_capas(None, [fonte])
-
-    assert resultado[0].candidatos[0].capa_url == "https://animesdrive.online/capa.jpg"
 
 
 # --- buscar_com_titulos_alternativos ---
@@ -154,7 +61,7 @@ async def test_fase1_acha_no_site_padrao_nao_chama_provedor_nem_o_2o_site(
         raise AssertionError("buscar_titulos não deveria ser chamado quando a Fase 1 já achou")
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _falha_se_chamado)
 
@@ -182,7 +89,7 @@ async def test_fase1_so_acha_no_2o_site_dominio_alternativo_e_o_domino_real(
         raise AssertionError("buscar_titulos não deveria ser chamado quando a Fase 1 já achou")
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _falha_se_chamado)
 
@@ -214,10 +121,11 @@ async def test_fase2_termo_de_provedor_acha_no_site_padrao(monkeypatch: pytest.M
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes", _buscar_por_site_com_variantes_fake
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -249,10 +157,11 @@ async def test_fase2_termo_de_provedor_so_acha_no_2o_site(monkeypatch: pytest.Mo
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes", _buscar_por_site_com_variantes_fake
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -297,10 +206,11 @@ async def test_fase2_termo_a_falha_termo_b_acha_escada_por_termo(monkeypatch: py
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=ingles)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes", _buscar_por_site_com_variantes_fake
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -350,10 +260,11 @@ async def test_fase2_dois_sites_acham_no_mesmo_termo_desempate_por_prioridade_ex
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes", _buscar_por_site_com_variantes_fake
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -403,10 +314,11 @@ async def test_fase2_dedupe_nao_reconsulta_variante_ja_tentada_na_fase1(
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes", _buscar_por_site_com_variantes_fake
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -437,17 +349,17 @@ def test_variantes_sem_repetir_fase1_filtra_slugs_ja_tentados():
 
 
 def test_teto_expansao_revisado_para_escada_por_termo():
-    """A fatia 5 trocou a semântica de Fase 2 (termos tratados como uma lista
-    plana de variantes, 1 request por termo por site) por uma escada própria
-    por termo (até ~7 variantes por termo, mesmo gerador da Fase 1). Uma
-    correção posterior paralelizou os sites dentro de cada termo em
-    `_tentar_termos_de_provedor` (fan-out via `buscar_por_site_com_variantes`,
-    mesmo molde do escopo `todas`) — eliminando o fator de 2 sites que
-    multiplicava o pior caso antigo (2 termos × 2 sites × 105s = 420s, teto de
-    430s). Trava de regressão do valor documentado no comentário de
-    `_TETO_EXPANSAO_S` (10s de metadado + até 2 termos × 105s, sites em
-    paralelo dentro de cada termo)."""
-    assert servico_busca._TETO_EXPANSAO_S == 220
+    """Fase 2 gera uma escada própria por termo (mesmo gerador da Fase 1,
+    `variantes_de_busca`), com sites em paralelo dentro de cada termo
+    (`_expandir_com_termos_de_provedor` e
+    `_expandir_com_termos_de_provedor_em_todas_as_fontes` via
+    `buscar_por_site_com_variantes`) — só os até 2 termos de provedor
+    multiplicam a escada, os sites não. Com a escada crescente de
+    `extractors/busca/termos.py` (até 3 do bloco de precisão + até 3 prefixos
+    crescentes = 6 variantes × 15s = 90s por termo), o comentário de
+    `_TETO_EXPANSAO_S` documenta 10s de metadado + 2 × 90s. Trava de regressão
+    desse valor."""
+    assert servico_busca._TETO_EXPANSAO_S == 190
 
 
 async def test_site_padrao_em_cooldown_nao_e_retentado_na_fase2(monkeypatch: pytest.MonkeyPatch):
@@ -472,10 +384,11 @@ async def test_site_padrao_em_cooldown_nao_e_retentado_na_fase2(monkeypatch: pyt
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes", _buscar_por_site_com_variantes_fake
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -499,7 +412,7 @@ async def test_nenhum_site_acha_nada_em_fase_nenhuma(monkeypatch: pytest.MonkeyP
         return None  # provedor não achou título nenhum
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -527,7 +440,7 @@ async def test_completar_nao_consultados_marca_2o_site_como_nao_tentado(
         raise AssertionError("buscar_titulos não deveria ser chamado quando a Fase 1 já achou")
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _falha_se_chamado)
 
@@ -543,7 +456,7 @@ async def test_completar_nao_consultados_marca_2o_site_como_nao_tentado(
 async def test_todos_os_sites_indisponiveis_nao_chama_provedor(monkeypatch: pytest.MonkeyPatch):
     """Regressão do `_merece_expansao` antigo: se os dois sites já vieram
     `indisponivel` na Fase 1, a Fase 2 vai pular os dois de qualquer forma
-    (mesmo filtro de `_tentar_termos_de_provedor`) — chamar `buscar_titulos`
+    (mesmo filtro de `_expandir_com_termos_de_provedor`) — chamar `buscar_titulos`
     aqui seria rede garantidamente desperdiçada."""
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
@@ -556,7 +469,7 @@ async def test_todos_os_sites_indisponiveis_nao_chama_provedor(monkeypatch: pyte
         )
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _falha_se_chamado)
 
@@ -594,7 +507,7 @@ async def test_fase2_atualiza_status_do_site_mesmo_quando_ninguem_acha_nada(
 ):
     """Site que veio disponível-mas-vazio na Fase 1 e falha (`indisponivel`)
     durante a tentativa da Fase 2 não pode voltar a aparecer com o status
-    otimista da Fase 1 na resposta final — `_tentar_termos_de_provedor` muta
+    otimista da Fase 1 na resposta final — `_expandir_com_termos_de_provedor` muta
     o dict do chamador, não uma cópia local descartada."""
     romaji = "Naruto Shippuden"
 
@@ -613,10 +526,11 @@ async def test_fase2_atualiza_status_do_site_mesmo_quando_ninguem_acha_nada(
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes", _buscar_por_site_com_variantes_fake
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -637,7 +551,7 @@ async def test_fase2_falha_de_metadados_nao_propaga_devolve_rodada_da_fase1(
         raise FalhaDeMetadados("todos os provedores de metadados falharam")
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_falha)
 
@@ -683,7 +597,7 @@ async def test_todas_fase2_termo_de_provedor_acha_quando_fase1_vazia(
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes",
+        "extractors.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -739,7 +653,7 @@ async def test_todas_fase2_termo_por_termo_restringe_dominios_aos_pendentes(
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=ingles)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes",
+        "extractors.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -758,14 +672,115 @@ async def test_todas_fase2_termo_por_termo_restringe_dominios_aos_pendentes(
     assert fontes_por_dominio["animesdrive"].candidatos == [candidato_ad]
 
 
+async def test_todas_fase2_expande_no_site_pendente_mesmo_com_outro_ja_tendo_achado(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Bug real (2026-08-29, "Dogul Wang"): com gate GLOBAL da Fase 2, o
+    AnimeFire achar na escada de regex pulava a Fase 2 inteira e o AnimesDrive
+    nunca era consultado com o título inglês do provedor ("Tomb Raider King"),
+    onde o anime existe — o diálogo "Trocar fonte" listava uma fonte só. Com o
+    gate POR-SITE, a Fase 2 roda enquanto sobrar site pendente (não
+    `indisponivel`, sem candidato), mesmo com outro já tendo achado — o
+    contrato do escopo `todas` é a UNIÃO. O `dominios=` do fan-out do termo fica
+    restrito ao pendente; o candidato da Fase 1 de quem já achou é preservado."""
+    candidato_af = ResultadoBusca(
+        titulo_exibicao="Dogul Wang", identificador="1", url="https://af/1"
+    )
+    candidato_ad = ResultadoBusca(
+        titulo_exibicao="Tomb Raider King", identificador="2", url="https://ad/2"
+    )
+    chamadas: list[tuple[str, list[str] | None]] = []
+
+    async def _buscar_por_site_com_variantes_fake(
+        sessionmaker, variantes, *, referencia, dominios=None
+    ):
+        chamadas.append((referencia, sorted(dominios) if dominios is not None else None))
+        if referencia == "Tomb Raider King":
+            return {"animesdrive": _fonte("animesdrive", candidato_ad)}
+        # Fase 1 (referencia == título digitado): AnimeFire acha pela escada de
+        # regex, AnimesDrive vem disponível-mas-vazio.
+        return {
+            "animefire.io": _fonte("animefire.io", candidato_af),
+            "animesdrive": _fonte("animesdrive"),
+        }
+
+    async def _buscar_titulos_fake(titulo: str) -> TitulosDeAnime | None:
+        assert titulo == "Dogul Wang"
+        # romaji == título digitado (`_termos_alternativos` descarta); só o
+        # título inglês sobra pra Fase 2.
+        return TitulosDeAnime(titulo_romaji="Dogul Wang", titulo_ingles="Tomb Raider King")
+
+    monkeypatch.setattr(
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
+    )
+    monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
+
+    resultado = await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(
+        None, "Dogul Wang"
+    )
+
+    assert chamadas == [("Dogul Wang", None), ("Tomb Raider King", ["animesdrive"])]
+    fontes = {f.dominio: f for f in resultado.fontes}
+    assert fontes["animefire.io"].candidatos == [candidato_af]  # Fase 1 preservada
+    assert fontes["animesdrive"].candidatos == [candidato_ad]  # Fase 2 no pendente
+    assert resultado.termo_alternativo is None
+    assert resultado.dominio_alternativo is None
+
+
+async def test_todas_fase2_nao_roda_quando_todos_os_sites_ja_acharam(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Contrapartida do gate POR-SITE: quando NENHUM site ficou pendente (os
+    dois acharam candidato na Fase 1), a Fase 2 continua sendo pulada inteira —
+    `buscar_titulos` aqui seria rede garantidamente desperdiçada."""
+    candidato_af = ResultadoBusca(
+        titulo_exibicao="Naruto", identificador="1", url="https://af/1"
+    )
+    candidato_ad = ResultadoBusca(
+        titulo_exibicao="Naruto", identificador="2", url="https://ad/2"
+    )
+
+    async def _buscar_por_site_com_variantes_fake(
+        sessionmaker, variantes, *, referencia, dominios=None
+    ):
+        return {
+            "animefire.io": _fonte("animefire.io", candidato_af),
+            "animesdrive": _fonte("animesdrive", candidato_ad),
+        }
+
+    async def _falha_se_chamado(titulo: str):
+        raise AssertionError(
+            "buscar_titulos não deveria ser chamado quando todos os sites já"
+            " acharam candidato na Fase 1"
+        )
+
+    monkeypatch.setattr(
+        "extractors.busca.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
+    )
+    monkeypatch.setattr("integrations.servico.buscar_titulos", _falha_se_chamado)
+
+    resultado = await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(
+        None, "Naruto"
+    )
+
+    assert resultado.termo_alternativo is None
+    assert resultado.dominio_alternativo is None
+    fontes = {f.dominio: f for f in resultado.fontes}
+    assert fontes["animefire.io"].candidatos == [candidato_af]
+    assert fontes["animesdrive"].candidatos == [candidato_ad]
+
+
 async def test_todas_fase1_e_fase2_vazias_preserva_rodada_da_fase1(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Fase 2 também não acha nada (`_expandir_termo_de_provedor_em_todas_as_
-    fontes` devolve `None`) — o chamador preserva a rodada original da Fase 1
-    em vez de substituí-la por uma rodada vazia diferente. As duas rodadas
-    vêm marcadas de forma distinguível (`indisponivel`/`motivo`) só pra provar
-    que a substituição realmente não acontece."""
+    """Fase 2 também não acha nada
+    (`_expandir_com_termos_de_provedor_em_todas_as_fontes` devolve `None`) — o
+    chamador preserva a rodada original da Fase 1 em vez de substituí-la por
+    uma rodada vazia diferente. As duas rodadas vêm marcadas de forma
+    distinguível (`indisponivel`/`motivo`) só pra provar que a substituição
+    realmente não acontece."""
     romaji = "Naruto Shippuden"
 
     async def _buscar_por_site_com_variantes_fake(
@@ -785,7 +800,7 @@ async def test_todas_fase1_e_fase2_vazias_preserva_rodada_da_fase1(
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes",
+        "extractors.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -816,7 +831,7 @@ async def test_todas_fase2_falha_de_metadados_nao_propaga_devolve_rodada_da_fase
         raise FalhaDeMetadados("todos os provedores de metadados falharam")
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes",
+        "extractors.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_falha)
@@ -836,8 +851,8 @@ async def test_todas_todos_os_sites_indisponiveis_nao_chama_provedor(
 ):
     """Mesma regressão do `_merece_expansao` antigo, agora pro escopo `todas`:
     se os dois sites já vieram `indisponivel` na Fase 1, a Fase 2 é pulada
-    inteira (`algum_site_disponivel` na guarda) — chamar `buscar_titulos`
-    aqui seria rede garantidamente desperdiçada."""
+    inteira (`algum_site_pendente` na guarda: site indisponível não é pendente)
+    — chamar `buscar_titulos` aqui seria rede garantidamente desperdiçada."""
 
     async def _buscar_por_site_com_variantes_fake(
         sessionmaker, variantes, *, referencia, dominios=None
@@ -854,7 +869,7 @@ async def test_todas_todos_os_sites_indisponiveis_nao_chama_provedor(
         )
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes",
+        "extractors.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _falha_se_chamado)

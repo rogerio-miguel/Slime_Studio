@@ -21,7 +21,7 @@ class ResultadoBusca:
     url: str
     # `None` quando o site não expõe capa na busca (ex. AnimeFire) ou a tag de
     # imagem está ausente no card — enriquecimento best-effort por metadado de
-    # provedor externo mora em `api/servicos/busca.py::enriquecer_capas`.
+    # provedor externo mora em `api/servicos/capas.py::enriquecer_capas`.
     capa_url: str | None = None
     # `None` quando o site não diferencia versão (`diferencia_versao=False`) ou
     # o adapter não detectou marcador algum — não confundir com
@@ -76,7 +76,7 @@ class ExtratorDeSite(ABC):
 
         Granularidade separada de `exige_navegador` de propósito: subir Chromium
         em toda busca (operação mais frequente do sistema, e paralela entre sites
-        em `extractors/servico.py::buscar_por_site_com_variantes`) pra atender um
+        em `extractors/busca/servico.py::buscar_por_site_com_variantes`) pra atender um
         único método seria caro sem necessidade. Concreta, não abstrata: o caso
         normal é `False` e nenhum adapter existente precisa declarar isso.
         """

@@ -1,10 +1,12 @@
-"""Testes de `extractors/nomes.py` — domínio puro, sem rede.
-`PLANO_PADRONIZACAO_FONTES.md` D-A1/D-A2/D-A3/D-A6 (`variantes_de_busca`) e
-Fatia 1 do plano de correspondência de card (`corresponde_ao_titulo`)."""
+"""Testes de `extractors/busca/termos.py` e `extractors/busca/correspondencia.py`
+— domínio puro, sem rede. `PLANO_PADRONIZACAO_FONTES.md` D-A1/D-A2/D-A3/D-A6
+(`variantes_de_busca`) e Fatia 1 do plano de correspondência de card
+(`corresponde_ao_titulo`)."""
 
 import pytest
 
-from extractors.nomes import corresponde_ao_titulo, variantes_de_busca
+from extractors.busca.correspondencia import corresponde_ao_titulo, proximidade_do_titulo
+from extractors.busca.termos import variantes_de_busca
 
 
 def test_titulo_simples_sem_tratamento_nenhum_devolve_so_o_titulo():
@@ -62,8 +64,9 @@ def test_marcadores_de_temporada_e_parte_empilhados_removem_os_dois():
 def test_fronteira_de_token_nao_corta_ii_de_dentro_de_outra_palavra():
     """"Torii" termina em "ii" mas não é marcador de temporada — o corte de
     "II"/"III" exige espaço antes do marcador (fronteira de token), não
-    substring solta de dentro de outra palavra."""
-    assert variantes_de_busca("Anime Torii") == ["Anime Torii"]
+    substring solta de dentro de outra palavra. O bloco de recall gera "Anime"
+    (1ª palavra), mas "Torii" nunca aparece cortado no meio."""
+    assert variantes_de_busca("Anime Torii") == ["Anime Torii", "Anime"]
 
 
 def test_dedup_nao_gera_candidato_redundante_quando_marcador_ja_saiu_com_subtitulo():
@@ -90,45 +93,81 @@ def test_ordem_e_sempre_titulo_original_primeiro_travando_a_lista_inteira():
     ]
 
 
-def test_prefixo_decrescente_cobre_palavra_divergente_no_meio_do_titulo():
+def test_prefixo_crescente_cobre_palavra_divergente_no_meio_do_titulo():
     """Bug real (2026-08-25, job 35): título salvo usa romaji Hepburn
     separado ("de wa"), mas o slug do AnimeFire contrai pra "dewa" — busca
-    pelo título completo falha, mas o prefixo antes da palavra divergente
-    casa. Corte de subtítulo/temporada não resolve porque a divergência não
-    está no fim do título — por isso o prefixo decrescente entra depois dos
-    dois, sobre o candidato já mais cortado."""
+    pelo título completo falha, mas um prefixo que para antes da palavra
+    divergente casa. Corte de subtítulo/temporada não resolve porque a
+    divergência não está no fim do título — por isso os prefixos crescentes
+    entram depois dos dois, sobre o candidato já mais cortado."""
     titulo = "Futsutsuka na Akujo de wa Gozaimasu ga"
     variantes = variantes_de_busca(titulo)
     assert variantes[0] == titulo
-    assert "Futsutsuka na Akujo" in variantes
-    # mais específico (mais palavras) tentado antes do mais curto
-    assert variantes.index("Futsutsuka na Akujo de") < variantes.index("Futsutsuka na Akujo")
+    assert "Futsutsuka na Akujo" in variantes  # prefixo que para antes de "de wa"
+    # ordem crescente: prefixo mais curto tentado antes do mais longo
+    assert variantes.index("Futsutsuka na") < variantes.index("Futsutsuka na Akujo")
 
 
-def test_prefixo_decrescente_para_no_minimo_de_duas_palavras():
-    """Abaixo de 2 palavras o termo vira comum demais (risco de prefix-match
-    com outro anime) — não desce até 1 palavra."""
+def test_prefixo_crescente_pula_prefixo_curto_demais():
+    """Piso por caractere, não por nº de palavras: a 1ª palavra "Um" (slug
+    "um", 2 chars < 3) fica fora da escada — termo curto demais casaria o card
+    de outro anime por prefix-match. Prefixos com slug de 3+ chars entram."""
     variantes = variantes_de_busca("Um Dois Tres Quatro")
-    assert "Um Dois" in variantes
     assert "Um" not in variantes
+    assert "Um Dois" in variantes
+    assert "Um Dois Tres" in variantes
 
 
-def test_prefixo_decrescente_nao_ativa_pra_titulo_curto():
-    """Título de 1-2 palavras não gera prefixo nenhum — `_MINIMO_PALAVRAS_PREFIXO`
-    já é o próprio título, não haveria o que cortar de novo."""
+def test_prefixo_crescente_nao_ativa_pra_titulo_de_uma_palavra():
+    """Título de 1 palavra não gera prefixo nenhum (`_prefixos_crescentes`
+    exige 2+ palavras). Título de 2 palavras gera exatamente o prefixo da 1ª
+    palavra."""
     assert variantes_de_busca("Naruto") == ["Naruto"]
-    assert variantes_de_busca("Anime Torii") == ["Anime Torii"]
+    assert variantes_de_busca("Anime Torii") == ["Anime Torii", "Anime"]
 
 
-def test_prefixo_decrescente_respeita_teto_de_variantes_em_titulo_longo():
-    """Cada variante é 1 request real por site (`extractors/servico.py`), sem
+def test_prefixo_crescente_respeita_teto_de_variantes_em_titulo_longo():
+    """Cada variante é 1 request real por site (`extractors/busca/servico.py`), sem
     teto de tempo de lote como a Fase 2 de `api/servicos/busca.py` tem — um
     título muito longo não pode multiplicar o número de requests sem limite."""
     titulo = "Um Dois Tres Quatro Cinco Seis Sete Oito Nove Dez"  # 10 palavras
     variantes = variantes_de_busca(titulo)
-    # título original + até `_MAXIMO_PREFIXOS` prefixos, nunca mais
-    assert len(variantes) <= 1 + 5
-    assert "Um Dois" not in variantes  # ficaria fora do teto antes de chegar no piso
+    # título original + até `_MAXIMO_PREFIXOS` (3) prefixos, nunca mais
+    assert len(variantes) <= 1 + 3
+    assert "Um Dois" in variantes  # escada crescente inclui os prefixos curtos
+    assert "Um Dois Tres Quatro" not in variantes  # 4º prefixo passa do teto de 3
+
+
+def test_lista_completa_trava_os_dois_blocos_e_o_teto_de_tres():
+    """Título de 7 palavras sem subtítulo nem marcador de temporada: bloco de
+    precisão é só a sonda 0, bloco de recall gera os 3 primeiros prefixos.
+    Trava a ordem (não monotônica em tamanho) e o teto de 3."""
+    assert variantes_de_busca("Futsutsuka na Akujo de wa Gozaimasu ga") == [
+        "Futsutsuka na Akujo de wa Gozaimasu ga",
+        "Futsutsuka",
+        "Futsutsuka na",
+        "Futsutsuka na Akujo",
+    ]
+
+
+def test_lista_completa_interacao_marcador_de_temporada_com_recall():
+    """"Season 3 Part 2" some no bloco de precisão (dois marcadores
+    empilhados) e o bloco de recall roda sobre "Shingeki no Kyojin" já
+    reduzido, não sobre o título original."""
+    assert variantes_de_busca("Shingeki no Kyojin Season 3 Part 2") == [
+        "Shingeki no Kyojin Season 3 Part 2",
+        "Shingeki no Kyojin",
+        "Shingeki",
+        "Shingeki no",
+    ]
+
+
+def test_grafia_colada_no_site_vira_busca_pela_primeira_palavra():
+    """Título local com espaço ("Dogul Wang") e site que grafa colado
+    ("Dogulwang"): a busca pela 1ª palavra ("Dogul", slug de 5 chars) é o que
+    faz o card aparecer — `corresponde_ao_titulo` valida depois por chave
+    normalizada."""
+    assert variantes_de_busca("Dogul Wang") == ["Dogul Wang", "Dogul"]
 
 
 _REFERENCIA_COM_SUBTITULO = (
@@ -173,7 +212,7 @@ def test_corresponde_ao_titulo_rejeita_card_que_so_compartilha_prefixo_curto():
     """"Futsutsuka na" sozinho é um prefixo comum demais — um card de anime
     genuinamente diferente que só compartilha esse começo não pode passar
     como se fosse o mesmo título (falso-positivo de busca por prefixo, ver
-    `_prefixos_decrescentes`)."""
+    `_prefixos_crescentes`)."""
     candidato_de_outro_anime = "Futsutsuka na Akademi de Mahou wo Narau Ken"
     assert corresponde_ao_titulo(_REFERENCIA_COM_SUBTITULO, candidato_de_outro_anime) is False
 
@@ -197,3 +236,82 @@ def test_corresponde_ao_titulo_strings_vazias_ou_so_espaco_degradam_pra_aceitar(
     já não tem base pra rejeitar."""
     assert corresponde_ao_titulo("", "") is True
     assert corresponde_ao_titulo("   ", "   ") is True
+
+
+@pytest.mark.parametrize(
+    ("referencia", "candidato"),
+    [
+        ("One Piece", "One"),
+        ("Kaguya-sama wa Kokurasetai", "Kaguya"),
+        ("Naruto Shippuden", "Naruto"),
+    ],
+)
+def test_corresponde_ao_titulo_rejeita_card_de_uma_palavra_para_referencia_composta(
+    referencia, candidato
+):
+    """A escada de prefixos crescentes (busca começando pela 1ª palavra) faz os
+    sites devolverem muitos cards de uma palavra — "One" numa busca por "One
+    Piece" — e a contenção de prefixo sozinha os aceitaria ("one" é prefixo de
+    "onepiece"). Um card de UMA palavra é sinal fraco demais pra auto-aceitar
+    contra uma `referencia` de 2+ palavras quando o mesmo veredito decide qual
+    episódio baixar. Contagem no texto original, antes da normalização."""
+    assert corresponde_ao_titulo(referencia, candidato) is False
+
+
+@pytest.mark.parametrize(
+    ("referencia", "candidato"),
+    [
+        # chaves normalizadas idênticas ("dogulwang") — escapam do guard de
+        # contagem e travam a proteção de grafia colada vs. separada entre sites
+        ("DogulWang", "Dogul Wang"),
+        # candidato de 2 palavras: o guard de uma palavra não dispara, a
+        # contenção de prefixo continua valendo para card truncado antes do
+        # subtítulo
+        ("Fate/stay night: Unlimited Blade Works", "Fate/stay night"),
+        ("Bleach", "Bleach"),
+    ],
+)
+def test_corresponde_ao_titulo_guard_de_uma_palavra_nao_endurece_casos_legitimos(
+    referencia, candidato
+):
+    assert corresponde_ao_titulo(referencia, candidato) is True
+
+
+@pytest.mark.parametrize(
+    ("referencia", "candidato", "esperado_primeiro_criterio"),
+    [
+        # chave normalizada idêntica -> 0 (o `_deduplicar_por_slug` colapsa
+        # grafia colada/separada na mesma chave "dogulwang")
+        ("Naruto", "Naruto", 0),
+        ("DogulWang", "Dogul Wang", 0),
+        # só compartilha prefixo -> 1, sempre depois de qualquer match idêntico
+        ("Naruto", "Naruto Shippuden", 1),
+        ("One Piece", "One Piece: A Grande Era Pirata", 1),
+        # `referencia` sem chave (vazia/só espaço) nunca conta como idêntica —
+        # o `ref and` impede que candidatos de chave vazia empatem em 0
+        ("", "", 1),
+        ("   ", "Qualquer Card", 1),
+    ],
+)
+def test_proximidade_do_titulo_pontua_identico_antes_de_prefixo(
+    referencia, candidato, esperado_primeiro_criterio
+):
+    """1º critério da tupla: 0 quando a chave normalizada é idêntica à da
+    `referencia` (match exato), 1 quando só há contenção de prefixo. Chave
+    idêntica ainda zera o 2º critério (mesma chave, diferença de comprimento 0)."""
+    proximidade = proximidade_do_titulo(referencia, candidato)
+    assert proximidade[0] == esperado_primeiro_criterio
+    if esperado_primeiro_criterio == 0:
+        assert proximidade == (0, 0)
+
+
+def test_proximidade_do_titulo_ordena_do_match_exato_ao_mais_distante():
+    """`sorted` com a chave: match exato primeiro (`(0, 0)`), depois os que só
+    compartilham prefixo por menor diferença de comprimento — o card truncado
+    mais perto da referência antes da continuação bem mais longa."""
+    candidatos = ["Naruto Shippuden Ultimate Ninja Storm", "Naruto Shippuden", "Naruto"]
+    assert sorted(candidatos, key=lambda t: proximidade_do_titulo("Naruto", t)) == [
+        "Naruto",
+        "Naruto Shippuden",
+        "Naruto Shippuden Ultimate Ninja Storm",
+    ]

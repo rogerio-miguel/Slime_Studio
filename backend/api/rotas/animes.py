@@ -25,6 +25,7 @@ from api.esquemas import (
     ResultadoBuscaFonteSaida,
 )
 from api.servicos import busca as servico_busca
+from api.servicos import capas as servico_capas
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
@@ -194,7 +195,7 @@ async def buscar_animes_em_fontes(
     a subseção "Resultados em outras fontes" da Home. `escopo=todas`: cada
     site busca em paralelo, esgotando de forma independente e exaustiva sua
     própria escada de variantes, sem que um "roube a vez" do outro (INV-1',
-    `extractors.servico.buscar_por_site_com_variantes`) — alimenta o diálogo
+    `extractors.busca.servico.buscar_por_site_com_variantes`) — alimenta o diálogo
     "Trocar fonte" (D-B1, PLANO_PADRONIZACAO_FONTES.md — mesmo response
     assembly abaixo nos dois escopos, só a estratégia de iteração de site
     difere). `fontes` traz o status de cada site consultado (disponível ou
@@ -209,7 +210,7 @@ async def buscar_animes_em_fontes(
         )
     else:
         busca = await servico_busca.buscar_com_titulos_alternativos(sessionmaker, titulo)
-    fontes = await servico_busca.enriquecer_capas(sessionmaker, busca.fontes)
+    fontes = await servico_capas.enriquecer_capas(sessionmaker, busca.fontes)
     return BuscaEmFontesSaida(
         resultados=[
             ResultadoBuscaFonteSaida(

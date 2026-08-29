@@ -141,7 +141,7 @@ class AnimeDetalheSaida(BaseModel):
 # PLANO_PADRONIZACAO_FONTES.md — Fase B). `Literal` (não `str` + `if` manual)
 # pra ganhar 422 de graça do FastAPI/Pydantic num valor inválido (caso de
 # borda 1 da Fase B). `"padrao"`: motor sequencial por site da Fase A (Home).
-# `"todas"`: motor paralelo × variantes da fatia 1 de `extractors/servico.py`
+# `"todas"`: motor paralelo × variantes da fatia 1 de `extractors/busca/servico.py`
 # (diálogo "Trocar fonte").
 EscopoBusca = Literal["padrao", "todas"]
 
@@ -170,7 +170,7 @@ class ResultadoBuscaFonteSaida(BaseModel):
     dominio: str
     # Preenchida direto do parsing (AnimesDrive) ou por enriquecimento
     # best-effort via metadado de provedor externo (AnimeFire, que não expõe
-    # imagem na busca — `api/servicos/busca.py::enriquecer_capas`). `None`
+    # imagem na busca — `api/servicos/capas.py::enriquecer_capas`). `None`
     # quando nenhuma das duas fontes achou capa.
     capa_url: str | None = None
     # `None` quando o site não diferencia versão ou nenhum marcador foi
@@ -200,7 +200,7 @@ class BuscaEmFontesSaida(BaseModel):
     resultados: list[ResultadoBuscaFonteSaida]
     fontes: list[FonteConsultadaSaida]
     # Preenchido quando os resultados vieram de um termo diferente do digitado
-    # — variante de regex reduzida (`extractors.nomes.variantes_de_busca`, ex.
+    # — variante de regex reduzida (`extractors.busca.termos.variantes_de_busca`, ex.
     # sem subtítulo/sufixo de temporada) ou, se nenhuma variante achou nada,
     # título alternativo do mesmo anime (romaji/inglês, via provedor de
     # metadados). `None` = resultados vieram do termo exatamente digitado.

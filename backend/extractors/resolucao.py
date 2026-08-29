@@ -14,7 +14,8 @@ from core.enums import VersaoDeFonte, VersaoEpisodio
 from core.texto import slugificar
 from extractors import circuit_breaker, resiliencia
 from extractors.base import ExtratorDeSite, ResultadoBusca
-from extractors.nomes import variantes_de_busca
+from extractors.busca.correspondencia import corresponde_ao_titulo
+from extractors.busca.termos import variantes_de_busca
 from extractors.registro import EXTRATORES
 from extractors.versao import remover_marcador_de_versao
 from models.anime import Anime
@@ -194,12 +195,24 @@ async def proximo_site_para(
 async def _buscar_variantes(
     sessionmaker: _SessionMaker, extrator: ExtratorDeSite, titulo: str
 ) -> list[ResultadoBusca]:
-    """Tenta cada variante de `variantes_de_busca(titulo)`, na ordem, e para
-    na primeira que devolver candidatos — corrige a assimetria em que só o
-    AnimeFire tratava subtítulo internamente (na busca) e o AnimesDrive nunca
-    via variante nenhuma. Exceção de `resiliencia.chamar` propaga direto,
-    igual ao comportamento anterior de variante única — este helper não
-    introduz um novo modo de falha, só mais tentativas antes de desistir."""
+    """Tenta cada variante de `variantes_de_busca(titulo)`, na ordem, e para na
+    primeira que devolver candidatos que correspondem ao título
+    (`extractors/busca/correspondencia.py::corresponde_ao_titulo`), não qualquer candidato — o
+    bloco de recall de `variantes_de_busca` sonda por prefixo curto (1ª
+    palavra), então uma variante devolve cards de outros animes que só
+    compartilham o prefixo; sem o filtro, `_desambiguar`/`_desambiguar_por_versao`
+    receberia esse pool largo e cairia em `None` (slug exato não único) →
+    `ConfirmacaoNecessaria`/site pulado com muito mais frequência.
+
+    Corrige também a assimetria em que só o AnimeFire tratava subtítulo
+    internamente (na busca) e o AnimesDrive nunca via variante nenhuma.
+
+    Exceção de `resiliencia.chamar` propaga direto, igual ao comportamento
+    anterior de variante única — este helper não introduz um novo modo de
+    falha, só mais tentativas antes de desistir (não confundir com
+    `extractors/busca/servico.py::buscar_em_com_variantes`, que captura
+    `FalhaDeExtracao` e devolve `indisponivel`; aqui a exceção sobe de
+    propósito)."""
     for variante in variantes_de_busca(titulo):
         candidatos = await resiliencia.chamar(
             sessionmaker,
@@ -207,8 +220,9 @@ async def _buscar_variantes(
             lambda cliente, ex=extrator, v=variante: ex.buscar(cliente, v),
             nome_operacao="buscar",
         )
-        if candidatos:
-            return candidatos
+        validos = [c for c in candidatos if corresponde_ao_titulo(titulo, c.titulo_exibicao)]
+        if validos:
+            return validos
     return []
 
 

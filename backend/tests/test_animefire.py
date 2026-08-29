@@ -108,7 +108,7 @@ def test_buscar_resultados_nao_tem_capa_url(extrator):
     vivo e no código de referência Slime_Shell_Web) — documenta que
     `capa_url` sai `None` de propósito, não por parsing esquecido.
     Enriquecimento por metadado de provedor externo mora em
-    `api/servicos/busca.py::enriquecer_capas`."""
+    `api/servicos/capas.py::enriquecer_capas`."""
     url_busca = f"{extrator.BASE_URL}/pesquisar/tensei-shitara-slime-datta-ken"
     cliente = ClienteFalso(html_por_url={url_busca: _ler_fixture("busca.html")})
 
@@ -133,7 +133,7 @@ def test_buscar_404_devolve_lista_vazia_sem_levantar_excecao(extrator):
 
 def test_buscar_chama_buscar_termo_uma_unica_vez_com_termo_exato(extrator):
     """`buscar` não itera mais variantes internamente (responsabilidade que
-    saiu do adapter — mora em `extractors/nomes.py::variantes_de_busca` e,
+    saiu do adapter — mora em `extractors/busca/termos.py::variantes_de_busca` e,
     numa camada de orquestração futura, em quem itera essas variantes).
     Chama `_buscar_termo` uma única vez, com o título recebido tal como veio,
     sem truncar subtítulo."""
@@ -150,7 +150,7 @@ def test_buscar_chama_buscar_termo_uma_unica_vez_com_termo_exato(extrator):
 def test_buscar_nao_trunca_mais_internamente_quando_termo_completo_nao_acha(extrator):
     """Antes, um título com subtítulo caía para um 2º candidato truncado
     quando o completo não achava nada (`_candidatos_de_busca`, removido daqui
-    — a lógica de gerar variantes agora mora em `extractors/nomes.py`). Agora
+    — a lógica de gerar variantes agora mora em `extractors/busca/termos.py`). Agora
     `buscar` faz uma única tentativa — `ClienteFalso` levantaria
     `AssertionError` numa URL truncada não mapeada se o código ainda
     tentasse um 2º candidato."""
