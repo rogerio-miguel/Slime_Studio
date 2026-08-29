@@ -144,7 +144,13 @@ async def processar(job_id: int, sessionmaker: _SessionMaker, config: Config) ->
                 await _marcar_episodio_falhou(sessionmaker, episodio_id)
         _remover_tmp_orfao(destino)
     except (FonteInvalida, FalhaDeFerramenta) as excecao:
-        logger.warning("job %s: falhou em %s: %s", job_id, etapa_atual, excecao)
+        # `cauda_stderr` só existe em `FalhaDeFerramenta` (não em `FonteInvalida`) e
+        # carrega o stderr do ffmpeg — sem ele no log o motivo real da falha some.
+        cauda_stderr = getattr(excecao, "cauda_stderr", "")
+        sufixo_stderr = f"\nstderr do ffmpeg: {cauda_stderr}" if cauda_stderr else ""
+        logger.warning(
+            "job %s: falhou em %s: %s%s", job_id, etapa_atual, excecao, sufixo_stderr
+        )
         if episodio_id is not None:
             await _marcar_episodio_falhou(sessionmaker, episodio_id)
         await falhar(sessionmaker, job_id, etapa=etapa_atual, erro=str(excecao))
