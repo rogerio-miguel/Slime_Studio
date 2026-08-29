@@ -29,7 +29,7 @@ _IDENTIFICADOR_REFERENCIA = "one-piece"
 # do adapter quebrava.
 _IDENTIFICADOR_SLUG_DIVERGENTE = "one-piece-dublado-todos-os-episodios"
 _EPISODIO_REFERENCIA_COM_PLAYER = (
-    "https://animesdrive.online/episodio/solo-leveling-dublado-episodio-01"
+    "https://animesdrive.cloud/episodio/solo-leveling-dublado-episodio-01"
 )
 
 

@@ -10,11 +10,13 @@ PLANO_PADRONIZACAO_FONTES.md), que precisa de um extrator falso injetado via
 substituído por uma versão que chama a operação direto, mesmo padrão de
 `tests/test_resolucao.py::_resiliencia_sem_cliente_real`.
 
-E `buscar_em_todas_as_fontes_com_variantes` (Fase B, fatia 1 — camada
-`extractors/`), que testa isolado de `buscar_em_todas_as_fontes` via
-`monkeypatch.setattr(servico, "buscar_em_todas_as_fontes", ...)` — essa função
-já tem cobertura própria (paralelismo entre sites, cooldown); aqui só importa
-a iteração por rodada de variante.
+E `buscar_por_site_com_variantes` (Fase B, fatia 3/4 — camada `extractors/`),
+que injeta extratores falsos via `monkeypatch.setattr(servico, "EXTRATORES",
+...)`/`monkeypatch.setattr(servico, "obter_extrator", ...)` (mesmo padrão de
+`tests/test_resolucao.py::test_pula_site_em_cooldown` pro cenário de
+cooldown, inserindo `EstadoSite` de verdade no banco) — cobre a garantia
+central da fatia (INV-1', "o site é a unidade atômica, não a rodada de
+variante").
 
 E o deadline de cadeia de `baixar_com_fallback_de_site` (Fase E2): o teto
 (`_ORCAMENTO_CADEIA_S`) agora é um `wait_for` real (`_dentro_do_prazo`), não
@@ -40,6 +42,7 @@ que precisam isolar:
 
 import asyncio
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -55,6 +58,7 @@ from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
 from models.anime import Anime
 from models.base import Base
 from models.episodio import Episodio
+from models.estado_site import EstadoSite
 from models.fonte_anime import FonteAnime
 
 
@@ -285,7 +289,7 @@ async def test_baixar_com_fallback_de_site_conta_sites_tentados_apos_fallback(
         sessao.add(
             FonteAnime(
                 anime_id=anime.id,
-                site_dominio="animesdrive.online",
+                site_dominio="animesdrive",
                 versao=VersaoDeFonte.NAO_DIFERENCIADA,
                 identificador_no_site="b",
                 prioridade=1,
@@ -330,7 +334,7 @@ async def test_baixar_com_fallback_de_site_conta_sites_tentados_apos_fallback(
         )
 
     assert resultado == destino
-    assert chamadas == ["animefire.io", "animesdrive.online"]
+    assert chamadas == ["animefire.io", "animesdrive"]
     assert "sites_tentados=2" in caplog.text
     # Fase E2: dentro do orçamento padrão, a cadeia completa sem o log de
     # estouro de deadline — comportamento idêntico ao de antes do E2 existir.
@@ -403,7 +407,7 @@ async def test_baixar_com_fallback_de_site_deadline_estourado_nao_tenta_proximo_
         sessao.add(
             FonteAnime(
                 anime_id=anime.id,
-                site_dominio="animesdrive.online",
+                site_dominio="animesdrive",
                 versao=VersaoDeFonte.NAO_DIFERENCIADA,
                 identificador_no_site="b",
                 prioridade=1,
@@ -455,7 +459,7 @@ async def test_baixar_com_fallback_de_site_deadline_estourado_nao_tenta_proximo_
     assert excinfo.value is falha_original  # a mesma falha, não um erro novo de deadline
     assert chamadas == ["animefire.io"]  # site de fallback nunca chegou a ser tentado
     assert "abortou a busca por outro site" in caplog.text  # novo log: estouro na descoberta
-    assert "animesdrive.online" not in caplog.text  # domínio nunca chegou a ser descoberto
+    assert "animesdrive" not in caplog.text  # domínio nunca chegou a ser descoberto
     assert "segredo-1" not in caplog.text  # nunca a URL crua do episódio original
     assert "segredo-2" not in caplog.text  # nem a do site de fallback
 
@@ -509,7 +513,7 @@ async def test_baixar_com_fallback_de_site_deadline_estoura_entre_listar_e_baixa
         sessao.add(
             FonteAnime(
                 anime_id=anime.id,
-                site_dominio="animesdrive.online",
+                site_dominio="animesdrive",
                 versao=VersaoDeFonte.NAO_DIFERENCIADA,
                 identificador_no_site="b",
                 prioridade=1,
@@ -560,7 +564,7 @@ async def test_baixar_com_fallback_de_site_deadline_estoura_entre_listar_e_baixa
             destino=destino,
         )
 
-    assert buscas == ["animesdrive.online"]  # a listagem no site novo aconteceu de verdade
+    assert buscas == ["animesdrive"]  # a listagem no site novo aconteceu de verdade
     assert chamadas == ["animefire.io"]  # mas o download por lá nunca foi tentado
 
 
@@ -600,7 +604,7 @@ async def test_baixar_com_fallback_de_site_propaga_falha_original_quando_proximo
         sessionmaker, anime, numero_episodio, ja_tentados, versao
     ):
         await asyncio.sleep(0.3)
-        return ("animesdrive.online", "https://animesdrive.online/ep1")
+        return ("animesdrive", "https://animesdrive.cloud/ep1")
 
     monkeypatch.setattr(servico, "baixar_episodio", _baixar_episodio_fake)
     monkeypatch.setattr(servico, "_proximo_com_episodio", _proximo_com_episodio_lento)
@@ -828,7 +832,7 @@ async def test_buscar_em_com_variantes_para_na_primeira_variante_com_candidatos(
     monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"]
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
     assert resultado == servico.ResultadoDeFonte(
@@ -847,7 +851,7 @@ async def test_buscar_em_com_variantes_devolve_variante_vencedora_quando_nao_e_a
     monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"]
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
     assert resultado.candidatos == [candidato]
@@ -866,7 +870,7 @@ async def test_buscar_em_com_variantes_falha_de_extracao_aborta_variantes_restan
     monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"]
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
     assert resultado.indisponivel is True
@@ -882,7 +886,7 @@ async def test_buscar_em_com_variantes_nenhuma_variante_encontra_nada(sessionmak
     monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"]
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
     assert resultado == servico.ResultadoDeFonte(
@@ -892,174 +896,171 @@ async def test_buscar_em_com_variantes_nenhuma_variante_encontra_nada(sessionmak
     assert extrator.chamadas == ["Anime X: Sub", "Anime X"]
 
 
-def _fake_buscar_em_todas_as_fontes(rodadas: dict[str, list[servico.ResultadoDeFonte]]):
-    """Substitui `servico.buscar_em_todas_as_fontes` por uma versão que só
-    devolve a rodada pré-fabricada da variante pedida e registra a ordem das
-    chamadas — usado pelos testes de `buscar_em_todas_as_fontes_com_variantes`
-    para isolar a iteração por variante do paralelismo entre sites (já coberto
-    pelos testes da própria `buscar_em_todas_as_fontes`)."""
-    chamadas: list[str] = []
-
-    async def _fake(sessionmaker, titulo):
-        chamadas.append(titulo)
-        return rodadas[titulo]
-
-    return _fake, chamadas
-
-
-async def test_buscar_em_todas_as_fontes_com_variantes_para_na_primeira_rodada_com_candidatos(
+async def test_buscar_em_com_variantes_descarta_candidato_que_nao_corresponde_a_referencia(
     sessionmaker, monkeypatch
 ):
+    _resiliencia_direta(monkeypatch)
+    candidato_errado_1 = ResultadoBusca(
+        titulo_exibicao="Outro Anime Totalmente Diferente", identificador="y1", url="https://y/1"
+    )
+    candidato_errado_2 = ResultadoBusca(
+        titulo_exibicao="Anime Completamente Distinto", identificador="y2", url="https://y/2"
+    )
+    extrator = _ExtratorDeBuscaFalso(
+        respostas={
+            "Anime X: Sub": [candidato_errado_1],
+            "Anime X": [candidato_errado_2],
+        }
+    )
+    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
+
+    resultado, variante_vencedora = await servico.buscar_em_com_variantes(
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
+    )
+
+    assert resultado.candidatos == []
+    assert resultado.indisponivel is False
+    assert resultado.motivo == "2 candidato(s) descartado(s) por não corresponder ao título"
+    assert variante_vencedora is None
+    # loop continuou pra 2ª variante mesmo a 1ª tendo devolvido candidato (só não válido)
+    assert extrator.chamadas == ["Anime X: Sub", "Anime X"]
+
+
+def _configurar_extratores(
+    monkeypatch: pytest.MonkeyPatch, *extratores: _ExtratorDeBuscaFalso
+) -> None:
+    """Registra `extratores` (cada um com `.dominio` já setado) como
+    `servico.EXTRATORES`/`servico.obter_extrator` — usado pelos testes de
+    `buscar_por_site_com_variantes` abaixo, mesmo padrão de
+    `monkeypatch.setattr(servico, "obter_extrator", ...)` já usado pros testes
+    de `buscar_em_com_variantes` acima, mais `monkeypatch.setattr(servico,
+    "EXTRATORES", ...)` (mesmo padrão de
+    `tests/test_resolucao.py::test_pula_site_em_cooldown`) pra controlar o
+    `dominios=None` (percorre todo `EXTRATORES`)."""
+    monkeypatch.setattr(servico, "EXTRATORES", tuple(extratores))
+    mapa = {extrator.dominio: extrator for extrator in extratores}
+    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: mapa[dominio])
+
+
+async def test_buscar_por_site_com_variantes_cada_site_busca_de_forma_independente(
+    sessionmaker, monkeypatch
+):
+    """Site A acha na 1ª variante, site B só na 2ª — não existe mais rodada
+    compartilhada (INV-1', fatia 3/4): os dois aparecem no dict final, cada
+    um com seu próprio resultado, sem overwrite entre eles."""
+    _resiliencia_direta(monkeypatch)
+    candidato_a = ResultadoBusca(titulo_exibicao="Anime X", identificador="a", url="https://a/1")
+    candidato_b = ResultadoBusca(titulo_exibicao="Anime X", identificador="b", url="https://b/1")
+    extrator_a = _ExtratorDeBuscaFalso(respostas={"Anime X: Sub": [candidato_a]})
+    extrator_a.dominio = "site-a.io"
+    extrator_b = _ExtratorDeBuscaFalso(respostas={"Anime X": [candidato_b]})
+    extrator_b.dominio = "site-b.io"
+    _configurar_extratores(monkeypatch, extrator_a, extrator_b)
+
+    resultado = await servico.buscar_por_site_com_variantes(
+        sessionmaker, ["Anime X: Sub", "Anime X"], referencia="Anime X"
+    )
+
+    assert resultado == {
+        "site-a.io": servico.ResultadoDeFonte(
+            dominio="site-a.io", candidatos=[candidato_a], indisponivel=False, motivo=None
+        ),
+        "site-b.io": servico.ResultadoDeFonte(
+            dominio="site-b.io", candidatos=[candidato_b], indisponivel=False, motivo=None
+        ),
+    }
+    assert extrator_a.chamadas == ["Anime X: Sub"]  # achou na 1ª, não tentou a 2ª
+    assert extrator_b.chamadas == ["Anime X: Sub", "Anime X"]  # só achou na 2ª
+
+
+async def test_buscar_por_site_com_variantes_site_em_cooldown_nao_e_chamado(
+    sessionmaker, monkeypatch
+):
+    _resiliencia_direta(monkeypatch)
     candidato = ResultadoBusca(titulo_exibicao="Anime X", identificador="x", url="https://x/1")
-    rodada_1 = [
-        servico.ResultadoDeFonte(
-            dominio="animefire.io", candidatos=[], indisponivel=False, motivo=None
-        ),
-        servico.ResultadoDeFonte(
-            dominio="animesdrive.online", candidatos=[], indisponivel=False, motivo=None
-        ),
-    ]
-    rodada_2 = [
-        servico.ResultadoDeFonte(
-            dominio="animefire.io", candidatos=[candidato], indisponivel=False, motivo=None
-        ),
-        servico.ResultadoDeFonte(
-            dominio="animesdrive.online", candidatos=[], indisponivel=False, motivo=None
-        ),
-    ]
-    fake, chamadas = _fake_buscar_em_todas_as_fontes(
-        {"Anime X: Sub": rodada_1, "Anime X": rodada_2}
-    )
-    monkeypatch.setattr(servico, "buscar_em_todas_as_fontes", fake)
+    extrator_disponivel = _ExtratorDeBuscaFalso(respostas={"Anime X": [candidato]})
+    extrator_disponivel.dominio = "site-disponivel.io"
+    extrator_cooldown = _ExtratorDeBuscaFalso()
+    extrator_cooldown.dominio = "site-cooldown.io"
+    _configurar_extratores(monkeypatch, extrator_disponivel, extrator_cooldown)
 
-    resultado = await servico.buscar_em_todas_as_fontes_com_variantes(
-        sessionmaker, ["Anime X: Sub", "Anime X"]
+    async with sessionmaker() as sessao:
+        sessao.add(
+            EstadoSite(
+                site_dominio="site-cooldown.io",
+                falhas_consecutivas=3,
+                cooldown_ate=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        await sessao.commit()
+
+    resultado = await servico.buscar_por_site_com_variantes(
+        sessionmaker, ["Anime X"], referencia="Anime X"
     )
 
-    assert resultado == rodada_2
-    assert chamadas == ["Anime X: Sub", "Anime X"]  # 3ª variante (se houvesse) nem seria tentada
+    assert resultado["site-cooldown.io"].indisponivel is True
+    assert "cooldown" in resultado["site-cooldown.io"].motivo
+    assert resultado["site-disponivel.io"] == servico.ResultadoDeFonte(
+        dominio="site-disponivel.io", candidatos=[candidato], indisponivel=False, motivo=None
+    )
+    assert extrator_cooldown.chamadas == []  # em cooldown, nunca chegou a ser chamado
 
 
-async def test_buscar_em_todas_as_fontes_com_variantes_nao_mistura_candidatos_de_rodadas_diferentes(
+async def test_buscar_por_site_com_variantes_excecao_nao_tratada_marca_indisponivel(
     sessionmaker, monkeypatch
 ):
-    """Variante 1: os dois sites vazios. Variante 2: só o AnimeFire acha. O
-    resultado final tem que ser exatamente a rodada 2 inteira (AnimesDrive
-    incluído, mesmo vazio) — nunca uma mistura com a rodada 1 (INV-1,
-    PLANO_PADRONIZACAO_FONTES.md D-B4)."""
-    candidato = ResultadoBusca(titulo_exibicao="Anime X", identificador="x", url="https://x/1")
-    rodada_1 = [
-        servico.ResultadoDeFonte(
-            dominio="animefire.io", candidatos=[], indisponivel=False, motivo=None
-        ),
-        servico.ResultadoDeFonte(
-            dominio="animesdrive.online", candidatos=[], indisponivel=False, motivo=None
-        ),
-    ]
-    rodada_2 = [
-        servico.ResultadoDeFonte(
-            dominio="animefire.io", candidatos=[candidato], indisponivel=False, motivo=None
-        ),
-        servico.ResultadoDeFonte(
-            dominio="animesdrive.online", candidatos=[], indisponivel=False, motivo=None
-        ),
-    ]
-    fake, chamadas = _fake_buscar_em_todas_as_fontes(
-        {"Anime X: Sub": rodada_1, "Anime X": rodada_2}
-    )
-    monkeypatch.setattr(servico, "buscar_em_todas_as_fontes", fake)
+    _resiliencia_direta(monkeypatch)
+    excecao = ValueError("erro inesperado do site")
+    extrator = _ExtratorDeBuscaFalso(falha_na_variante="Anime X", excecao=excecao)
+    extrator.dominio = "site-falso.io"
+    _configurar_extratores(monkeypatch, extrator)
 
-    resultado = await servico.buscar_em_todas_as_fontes_com_variantes(
-        sessionmaker, ["Anime X: Sub", "Anime X"]
+    resultado = await servico.buscar_por_site_com_variantes(
+        sessionmaker, ["Anime X"], referencia="Anime X"
     )
 
-    assert resultado is rodada_2  # a rodada inteira da variante vencedora, sem recombinar
-    assert chamadas == ["Anime X: Sub", "Anime X"]
+    assert resultado == {
+        "site-falso.io": servico.ResultadoDeFonte(
+            dominio="site-falso.io", candidatos=[], indisponivel=True, motivo=str(excecao)
+        ),
+    }
 
 
-async def test_buscar_em_todas_as_fontes_com_variantes_nenhuma_variante_encontra_nada(
+async def test_buscar_por_site_com_variantes_dominios_none_cobre_todo_extratores(
     sessionmaker, monkeypatch
 ):
-    rodada_1 = [
-        servico.ResultadoDeFonte(
-            dominio="animefire.io", candidatos=[], indisponivel=False, motivo=None
-        ),
-        servico.ResultadoDeFonte(
-            dominio="animesdrive.online", candidatos=[], indisponivel=False, motivo=None
-        ),
-    ]
-    rodada_2 = [
-        servico.ResultadoDeFonte(
-            dominio="animefire.io", candidatos=[], indisponivel=False, motivo=None
-        ),
-        servico.ResultadoDeFonte(
-            dominio="animesdrive.online",
-            candidatos=[],
-            indisponivel=True,
-            motivo="em cooldown",
-        ),
-    ]
-    fake, chamadas = _fake_buscar_em_todas_as_fontes(
-        {"Anime X: Sub": rodada_1, "Anime X": rodada_2}
-    )
-    monkeypatch.setattr(servico, "buscar_em_todas_as_fontes", fake)
+    _resiliencia_direta(monkeypatch)
+    extrator_a = _ExtratorDeBuscaFalso()
+    extrator_a.dominio = "site-a.io"
+    extrator_b = _ExtratorDeBuscaFalso()
+    extrator_b.dominio = "site-b.io"
+    _configurar_extratores(monkeypatch, extrator_a, extrator_b)
 
-    resultado = await servico.buscar_em_todas_as_fontes_com_variantes(
-        sessionmaker, ["Anime X: Sub", "Anime X"]
+    resultado = await servico.buscar_por_site_com_variantes(
+        sessionmaker, ["Anime X"], referencia="Anime X"
     )
 
-    assert resultado == rodada_2  # última rodada, não uma lista vazia solta
-    assert chamadas == ["Anime X: Sub", "Anime X"]  # esgotou todas as variantes
+    assert set(resultado) == {"site-a.io", "site-b.io"}
+    assert extrator_a.chamadas == ["Anime X"]
+    assert extrator_b.chamadas == ["Anime X"]
 
 
-async def test_buscar_em_todas_as_fontes_com_variantes_preserva_dominio_por_candidato(
+async def test_buscar_por_site_com_variantes_dominios_explicito_limita_busca(
     sessionmaker, monkeypatch
 ):
-    candidato_animefire = ResultadoBusca(
-        titulo_exibicao="Anime X", identificador="x-af", url="https://animefire.io/x"
+    """Passar `dominios` restringe a busca a esses sites — o site fora da
+    lista não é consultado nem aparece no dict final."""
+    _resiliencia_direta(monkeypatch)
+    extrator_a = _ExtratorDeBuscaFalso()
+    extrator_a.dominio = "site-a.io"
+    extrator_b = _ExtratorDeBuscaFalso()
+    extrator_b.dominio = "site-b.io"
+    _configurar_extratores(monkeypatch, extrator_a, extrator_b)
+
+    resultado = await servico.buscar_por_site_com_variantes(
+        sessionmaker, ["Anime X"], referencia="Anime X", dominios=["site-a.io"]
     )
-    candidato_animesdrive = ResultadoBusca(
-        titulo_exibicao="Anime X", identificador="x-ad", url="https://animesdrive.online/x"
-    )
-    rodada = [
-        servico.ResultadoDeFonte(
-            dominio="animefire.io",
-            candidatos=[candidato_animefire],
-            indisponivel=False,
-            motivo=None,
-        ),
-        servico.ResultadoDeFonte(
-            dominio="animesdrive.online",
-            candidatos=[candidato_animesdrive],
-            indisponivel=False,
-            motivo=None,
-        ),
-    ]
-    fake, _ = _fake_buscar_em_todas_as_fontes({"Anime X": rodada})
-    monkeypatch.setattr(servico, "buscar_em_todas_as_fontes", fake)
 
-    resultado = await servico.buscar_em_todas_as_fontes_com_variantes(sessionmaker, ["Anime X"])
-
-    assert [fonte.dominio for fonte in resultado] == ["animefire.io", "animesdrive.online"]
-    assert resultado[0].candidatos == [candidato_animefire]
-    assert resultado[1].candidatos == [candidato_animesdrive]
-
-
-async def test_buscar_em_todas_as_fontes_com_variantes_lista_vazia_nao_devolve_lista_solta(
-    sessionmaker, monkeypatch
-):
-    """`variantes_de_busca` promete nunca devolver lista vazia (D-A2), mas a
-    função não deve depender disso: sem nenhuma variante pra tentar, o
-    contrato ainda é "todos os domínios, cada um com candidatos=[]" — a mesma
-    forma que `buscar_em_todas_as_fontes` usa pra 'não achei nada', nunca uma
-    lista Python vazia."""
-    fake, chamadas = _fake_buscar_em_todas_as_fontes({})
-    monkeypatch.setattr(servico, "buscar_em_todas_as_fontes", fake)
-
-    resultado = await servico.buscar_em_todas_as_fontes_com_variantes(sessionmaker, [])
-
-    assert chamadas == []
-    assert [fonte.dominio for fonte in resultado] == [
-        extrator.dominio for extrator in servico.EXTRATORES
-    ]
-    assert all(fonte.candidatos == [] and not fonte.indisponivel for fonte in resultado)
+    assert set(resultado) == {"site-a.io"}
+    assert extrator_a.chamadas == ["Anime X"]
+    assert extrator_b.chamadas == []  # fora do subconjunto pedido, nunca consultado

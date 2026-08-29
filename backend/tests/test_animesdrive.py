@@ -158,15 +158,15 @@ def test_buscar_com_resultado_devolve_candidatos(extrator, cliente_falso):
         ResultadoBusca(
             titulo_exibicao="Tensei Shitara Slime Datta Ken",
             identificador="tensei-shitara-slime-datta-ken",
-            url="https://animesdrive.online/anime/tensei-shitara-slime-datta-ken",
-            capa_url="https://animesdrive.online/capa1.jpg",
+            url="https://animesdrive.cloud/anime/tensei-shitara-slime-datta-ken",
+            capa_url="https://animesdrive.cloud/capa1.jpg",
             versao=VersaoEpisodio.LEGENDADO,
         ),
         ResultadoBusca(
             titulo_exibicao="Tensei Shitara Slime Datta Ken Dublado",
             identificador="tensei-shitara-slime-datta-ken-dublado",
-            url="https://animesdrive.online/anime/tensei-shitara-slime-datta-ken-dublado",
-            capa_url="https://animesdrive.online/capa2.jpg",
+            url="https://animesdrive.cloud/anime/tensei-shitara-slime-datta-ken-dublado",
+            capa_url="https://animesdrive.cloud/capa2.jpg",
             versao=VersaoEpisodio.DUBLADO,
         ),
     ]
@@ -180,35 +180,35 @@ def test_buscar_absolutiza_capa_nas_3_formas_de_src(extrator, cliente_falso):
     html = """
     <div class="result-item"><article>
       <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.online/anime/relativo"><img src="/relativo.jpg"></a>
+        <a href="https://animesdrive.cloud/anime/relativo"><img src="/relativo.jpg"></a>
       </div></div>
       <div class="details"><div class="title">
-        <a href="https://animesdrive.online/anime/relativo">Relativo</a>
+        <a href="https://animesdrive.cloud/anime/relativo">Relativo</a>
       </div></div>
     </article></div>
     <div class="result-item"><article>
       <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.online/anime/protocolo-relativo"
-           ><img src="//cdn.animesdrive.online/protocolo.jpg"></a>
+        <a href="https://animesdrive.cloud/anime/protocolo-relativo"
+           ><img src="//cdn.animesdrive.cloud/protocolo.jpg"></a>
       </div></div>
       <div class="details"><div class="title">
-        <a href="https://animesdrive.online/anime/protocolo-relativo">Protocolo Relativo</a>
+        <a href="https://animesdrive.cloud/anime/protocolo-relativo">Protocolo Relativo</a>
       </div></div>
     </article></div>
     <div class="result-item"><article>
       <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.online/anime/absoluto"><img src="https://cdn.outra.com/absoluta.jpg"></a>
+        <a href="https://animesdrive.cloud/anime/absoluto"><img src="https://cdn.outra.com/absoluta.jpg"></a>
       </div></div>
       <div class="details"><div class="title">
-        <a href="https://animesdrive.online/anime/absoluto">Absoluto</a>
+        <a href="https://animesdrive.cloud/anime/absoluto">Absoluto</a>
       </div></div>
     </article></div>
     <div class="result-item"><article>
       <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.online/anime/src-vazio"><img src="   "></a>
+        <a href="https://animesdrive.cloud/anime/src-vazio"><img src="   "></a>
       </div></div>
       <div class="details"><div class="title">
-        <a href="https://animesdrive.online/anime/src-vazio">Src Vazio</a>
+        <a href="https://animesdrive.cloud/anime/src-vazio">Src Vazio</a>
       </div></div>
     </article></div>
     """
@@ -218,8 +218,8 @@ def test_buscar_absolutiza_capa_nas_3_formas_de_src(extrator, cliente_falso):
     resultados = extrator.buscar(cliente, "teste")
 
     capas = {resultado.identificador: resultado.capa_url for resultado in resultados}
-    assert capas["relativo"] == "https://animesdrive.online/relativo.jpg"
-    assert capas["protocolo-relativo"] == "https://cdn.animesdrive.online/protocolo.jpg"
+    assert capas["relativo"] == "https://animesdrive.cloud/relativo.jpg"
+    assert capas["protocolo-relativo"] == "https://cdn.animesdrive.cloud/protocolo.jpg"
     assert capas["absoluto"] == "https://cdn.outra.com/absoluta.jpg"
     assert capas["src-vazio"] is None
 
@@ -254,23 +254,23 @@ def test_listar_episodios_deduplica_ordena_e_inclui_rotulo_nao_numerico(extrator
         EpisodioRemoto(
             rotulo="1",
             numero=1,
-            url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1",
+            url="https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-1",
         ),
         EpisodioRemoto(
             rotulo="2",
             numero=2,
-            url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-2",
+            url="https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-2",
         ),
         EpisodioRemoto(
             rotulo="3",
             numero=3,
-            url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-3",
+            url="https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-3",
         ),
         EpisodioRemoto(
             rotulo="especial",
             numero=None,
             url=(
-                "https://animesdrive.online/episodio/"
+                "https://animesdrive.cloud/episodio/"
                 "tensei-shitara-slime-datta-ken-episodio-especial"
             ),
         ),
@@ -288,8 +288,8 @@ def test_listar_episodios_rotulos_com_zero_a_esquerda_nao_colapsam(extrator, cli
     fonte."""
     identificador = "tensei-shitara-slime-datta-ken"
     html = _pagina_de_episodios(
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-7",
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-07",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-7",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-07",
     )
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
@@ -304,7 +304,7 @@ def test_listar_episodios_aceita_url_com_barra_final(extrator, cliente_falso):
     de episódio terminada em `/`."""
     identificador = "tensei-shitara-slime-datta-ken"
     html = _pagina_de_episodios(
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1/"
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-1/"
     )
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
@@ -315,7 +315,7 @@ def test_listar_episodios_aceita_url_com_barra_final(extrator, cliente_falso):
         EpisodioRemoto(
             rotulo="1",
             numero=1,
-            url="https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-episodio-1/",
+            url="https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-1/",
         ),
     ]
 
@@ -341,8 +341,8 @@ def test_listar_episodios_aceita_slug_de_episodio_diferente_do_identificador(
     inteira com "nenhum episódio encontrado"."""
     identificador = "one-piece-dublado-todos-os-episodios"
     html = _pagina_de_episodios(
-        "https://animesdrive.online/episodio/one-piece-dublado-episodio-1",
-        "https://animesdrive.online/episodio/one-piece-dublado-episodio-2",
+        "https://animesdrive.cloud/episodio/one-piece-dublado-episodio-1",
+        "https://animesdrive.cloud/episodio/one-piece-dublado-episodio-2",
     )
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
@@ -374,9 +374,9 @@ def test_listar_episodios_com_duas_versoes_relacionadas_devolve_ambas_rotuladas(
     saem juntas, cada episódio rotulado pela versão do próprio slug."""
     identificador = "tensei-shitara-slime-datta-ken-4th-season"
     html = _pagina_de_episodios(
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-4th-season-episodio-1",
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-4th-season-episodio-2",
-        "https://animesdrive.online/episodio/"
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-4th-season-episodio-1",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-4th-season-episodio-2",
+        "https://animesdrive.cloud/episodio/"
         "tensei-shitara-slime-datta-ken-4th-season-dublado-episodio-1",
     )
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
@@ -389,7 +389,7 @@ def test_listar_episodios_com_duas_versoes_relacionadas_devolve_ambas_rotuladas(
             rotulo="1",
             numero=1,
             url=(
-                "https://animesdrive.online/episodio/"
+                "https://animesdrive.cloud/episodio/"
                 "tensei-shitara-slime-datta-ken-4th-season-episodio-1"
             ),
             versao=VersaoEpisodio.LEGENDADO,
@@ -398,7 +398,7 @@ def test_listar_episodios_com_duas_versoes_relacionadas_devolve_ambas_rotuladas(
             rotulo="1",
             numero=1,
             url=(
-                "https://animesdrive.online/episodio/"
+                "https://animesdrive.cloud/episodio/"
                 "tensei-shitara-slime-datta-ken-4th-season-dublado-episodio-1"
             ),
             versao=VersaoEpisodio.DUBLADO,
@@ -407,7 +407,7 @@ def test_listar_episodios_com_duas_versoes_relacionadas_devolve_ambas_rotuladas(
             rotulo="2",
             numero=2,
             url=(
-                "https://animesdrive.online/episodio/"
+                "https://animesdrive.cloud/episodio/"
                 "tensei-shitara-slime-datta-ken-4th-season-episodio-2"
             ),
             versao=VersaoEpisodio.LEGENDADO,
@@ -423,9 +423,9 @@ def test_listar_episodios_com_dois_slugs_nao_relacionados_por_versao_fica_com_a_
     o maior, descarta o resto com warning."""
     identificador = "tensei-shitara-slime-datta-ken-ova"
     html = _pagina_de_episodios(
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-1",
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-2",
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-movie-episodio-1",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-ova-episodio-1",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-ova-episodio-2",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-movie-episodio-1",
     )
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
@@ -433,8 +433,8 @@ def test_listar_episodios_com_dois_slugs_nao_relacionados_por_versao_fica_com_a_
     episodios = extrator.listar_episodios(cliente, identificador)
 
     assert [episodio.url for episodio in episodios] == [
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-1",
-        "https://animesdrive.online/episodio/tensei-shitara-slime-datta-ken-ova-episodio-2",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-ova-episodio-1",
+        "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-ova-episodio-2",
     ]
 
 
@@ -453,12 +453,12 @@ def test_diferencia_versao(extrator):
 
 def test_resolver_midia_devolve_a_url_e_os_cabecalhos_observados(extrator):
     """O `LinkDeMidia` sai da requisição que a própria página fez — inclusive o
-    `Referer`, que ao vivo é só a origem (`https://animesdrive.online/`) e não a
+    `Referer`, que ao vivo é só a origem (`https://animesdrive.cloud/`) e não a
     URL do embed nem a do episódio."""
     url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
     capturada = MidiaCapturada(
         url="https://mangas.cloud/Animes/Letra-T/Tensei/01.mp4",
-        cabecalhos={"User-Agent": "Chrome/150", "Referer": "https://animesdrive.online/"},
+        cabecalhos={"User-Agent": "Chrome/150", "Referer": "https://animesdrive.cloud/"},
     )
     cliente = _ClienteNavegadorFalso(
         html=_ler_fixture("episodio_tres_servidores.html"), capturada=capturada
@@ -485,7 +485,7 @@ def test_resolver_midia_sem_iframe_nao_gasta_o_navegador(extrator):
 
     assert "nenhum iframe de player" in str(excinfo.value)
     assert excinfo.value.permite_retentativa is False
-    assert excinfo.value.dominio == "animesdrive.online"
+    assert excinfo.value.dominio == "animesdrive"
     assert cliente.pedidos == []
 
 
@@ -549,7 +549,7 @@ def test_resolver_midia_prefere_fhd_de_video_direto_sem_gastar_navegador(extrato
     assert link.url == "https://aniplay.online/fhd.mp4"
     assert link.cabecalhos == {
         "User-Agent": "NavegadorFalso/1.0",
-        "Referer": "https://animesdrive.online/",
+        "Referer": "https://animesdrive.cloud/",
     }
     assert cliente.pedidos == []
 
@@ -560,7 +560,7 @@ def test_resolver_midia_cai_pra_hd_quando_o_fhd_nao_responde(extrator, monkeypat
     monkeypatch.setattr(modulo_animesdrive, "responde", lambda url, cabecalhos: False)
     capturada_hd = MidiaCapturada(
         url="https://draft.blogger.com/hd_resolvido.mp4",
-        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.online/"},
+        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.cloud/"},
     )
     cliente = _ClienteNavegadorFalso(
         html=_ler_fixture("episodio_qualidades.html"),
@@ -615,7 +615,7 @@ def test_resolver_midia_tenta_video_direto_antes_de_iframe_no_mesmo_tier(extrato
     monkeypatch.setattr(modulo_animesdrive, "responde", lambda url, cabecalhos: False)
     capturada_final = MidiaCapturada(
         url="https://animes.strp2p.com/final.mp4",
-        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.online/"},
+        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.cloud/"},
     )
     cliente = _ClienteNavegadorFalso(
         html=_ler_fixture("episodio_qualidades_fhd_iframe.html"),
@@ -672,7 +672,7 @@ def test_resolver_midia_com_um_candidato_so_mantem_a_janela_calibrada_de_90s(ext
     """
     capturada = MidiaCapturada(
         url="https://animeshd.cloud/final.mp4",
-        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.online/"},
+        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.cloud/"},
     )
     cliente = _ClienteNavegadorFalso(
         html=html, capturada_por_seletor={'[data-animeq-switch="0"]': capturada}
@@ -701,7 +701,7 @@ def test_resolver_midia_sem_rotulo_de_qualidade_usa_o_servidor_disponivel(extrat
     """
     capturada = MidiaCapturada(
         url="https://blogger.com/final.mp4",
-        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.online/"},
+        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.cloud/"},
     )
     cliente = _ClienteNavegadorFalso(
         html=html, capturada_por_seletor={'[data-animeq-switch="0"]': capturada}
@@ -786,13 +786,67 @@ def test_candidatos_de_servidor_sem_data_source_name_usa_texto_do_botao(extrator
     assert cliente.pedidos == []
 
 
+def test_candidatos_de_servidor_reconhece_iframe_com_data_animeq_src(extrator):
+    """Regressão do painel HD real (migração 2026-08-25): o `src` cru fica
+    `about:blank` e o `data-lazy-src` de sempre não existe — o site usa
+    `data-animeq-src` como lazy-src do próprio player `animeq`. Sem esse
+    atributo em `_ATRIBUTOS_DE_IFRAME`, o painel era descartado por inteiro
+    (nem vídeo direto nem iframe utilizável)."""
+    html = """
+    <div class="animeq-player">
+      <button data-animeq-switch="1" data-source-name="HD" class="is-active">HD</button>
+      <div class="animeq-player__source" data-animeq-source="1" hidden="">
+        <div class="animeq-player__media animeq-player__media--iframe">
+          <iframe class="animeq-player__iframe" data-animeq-frame=""
+            data-animeq-src="https://www.blogger.com/video.g?token=abc123"
+            src="about:blank" title="HD"></iframe>
+        </div>
+      </div>
+    </div>
+    """
+    url_episodio = f"{extrator.BASE_URL}/episodio/painel-hd"
+
+    candidatos = extrator._candidatos_de_servidor(html, url_episodio)
+
+    assert len(candidatos) == 1
+    assert candidatos[0].tem_iframe is True
+    assert candidatos[0].url_video is None
+    assert candidatos[0].qualidade == modulo_animesdrive.NivelDeQualidade.HD
+
+
+def test_candidatos_de_servidor_reconhece_videojs_host_como_video_direto(extrator):
+    """Regressão do painel FHD real (migração 2026-08-25): 3º padrão de player,
+    sem `<video>` nem `<iframe>` — um `<div data-animeq-videojs-host
+    data-video-src>` montado por Video.js. `_url_de_video_direto` precisa
+    reconhecer esse padrão como fallback do `<video><source>` de sempre."""
+    html = """
+    <div class="animeq-player">
+      <button data-animeq-switch="2" data-source-name="FHD" class="is-active">FHD</button>
+      <div class="animeq-player__source" data-animeq-source="2" hidden="">
+        <div class="animeq-player__media animeq-player__media--videojs">
+          <div class="animeq-player__videojs-host" data-animeq-videojs-host=""
+            data-video-src="https://ccdn.xyz/stream.php?f=video.mp4"
+            data-video-title="FHD"></div>
+        </div>
+      </div>
+    </div>
+    """
+    url_episodio = f"{extrator.BASE_URL}/episodio/painel-fhd"
+
+    candidatos = extrator._candidatos_de_servidor(html, url_episodio)
+
+    assert len(candidatos) == 1
+    assert candidatos[0].url_video == "https://ccdn.xyz/stream.php?f=video.mp4"
+    assert candidatos[0].qualidade == modulo_animesdrive.NivelDeQualidade.FHD
+
+
 def test_resolver_midia_legado_sem_seletor_de_qualidade_segue_como_antes(extrator):
     """`episodio_um_servidor.html` não tem `[data-animeq-switch]` — modo B,
     zero comportamento novo: uma captura, sem seletor."""
     url_episodio = f"{extrator.BASE_URL}/episodio/tensei-shitara-slime-datta-ken-episodio-1"
     capturada = MidiaCapturada(
         url="https://mangas.cloud/final.mp4",
-        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.online/"},
+        cabecalhos={"User-Agent": "NavegadorFalso/1.0", "Referer": "https://animesdrive.cloud/"},
     )
     cliente = _ClienteNavegadorFalso(
         html=_ler_fixture("episodio_um_servidor.html"), capturada=capturada

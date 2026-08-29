@@ -76,7 +76,7 @@ class ExtratorDeSite(ABC):
 
         Granularidade separada de `exige_navegador` de propósito: subir Chromium
         em toda busca (operação mais frequente do sistema, e paralela entre sites
-        em `extractors/servico.py::buscar_em_todas_as_fontes`) pra atender um
+        em `extractors/servico.py::buscar_por_site_com_variantes`) pra atender um
         único método seria caro sem necessidade. Concreta, não abstrata: o caso
         normal é `False` e nenhum adapter existente precisa declarar isso.
         """

@@ -204,17 +204,19 @@ class BuscaEmFontesSaida(BaseModel):
     # sem subtítulo/sufixo de temporada) ou, se nenhuma variante achou nada,
     # título alternativo do mesmo anime (romaji/inglês, via provedor de
     # metadados). `None` = resultados vieram do termo exatamente digitado.
-    # Exceção: sempre `None` quando `escopo=todas` — `buscar_em_todas_as_
-    # fontes_com_titulos_alternativos` (`api/servicos/busca.py`) não expõe
-    # qual variante/rodada venceu, ver docstring de lá pro racional completo.
+    # Exceção: sempre `None` quando `escopo=todas` — com cada site esgotando
+    # sua própria escada de variantes em paralelo (INV-1',
+    # `buscar_em_todas_as_fontes_com_titulos_alternativos` em
+    # `api/servicos/busca.py`) não há uma única variante/rodada vencedora pra
+    # reportar, ver docstring de lá pro racional completo.
     termo_alternativo: str | None = None
     # Preenchido quando quem respondeu não foi o site padrão (índice 0 de
     # `extractors.registro.EXTRATORES`, ex. AnimeFire) — distingue "achei com
     # um termo diferente no MESMO site" de "tive que cair pra OUTRO site",
     # sinal que a Home usa pro aviso de resultado alternativo.
     # Exceção: sempre `None` quando `escopo=todas`, mesmo motivo do campo
-    # acima — ver `api/servicos/busca.py::buscar_em_todas_as_fontes_com_
-    # titulos_alternativos`.
+    # acima — ver `api/servicos/busca.py::
+    # buscar_em_todas_as_fontes_com_titulos_alternativos`.
     dominio_alternativo: str | None = None
 
 
