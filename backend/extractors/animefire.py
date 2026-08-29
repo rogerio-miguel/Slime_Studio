@@ -119,7 +119,7 @@ class AnimeFireProvider(ExtratorDeSite):
                 )
             if not resultados:
                 # info, não warning: com a busca em paralelo em todos os sites
-                # (extractors/servico.py::buscar_em_todas_as_fontes), um título
+                # (extractors/servico.py::buscar_por_site_com_variantes), um título
                 # existir só num dos dois é o caso comum, não uma falha — não dá
                 # pra distinguir "não achei mesmo" de "estrutura mudou" só por
                 # contagem zero, então não escala pra warning (isso viraria

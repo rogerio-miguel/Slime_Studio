@@ -191,13 +191,15 @@ async def buscar_animes_em_fontes(
 ) -> BuscaEmFontesSaida:
     """Busca ao vivo em sites de extração (ainda não catalogado localmente).
     `escopo=padrao` (default): motor sequencial por site da Fase A, alimenta
-    a subseção "Resultados em outras fontes" da Home. `escopo=todas`: motor
-    paralelo × variantes da Fase B, alimenta o diálogo "Trocar fonte" (D-B1,
-    PLANO_PADRONIZACAO_FONTES.md — mesmo response assembly abaixo nos dois
-    escopos, só a estratégia de iteração de site difere). `fontes` traz o
-    status de cada site consultado (disponível ou não, com motivo) — a UI usa
-    isso pra distinguir "não achei nada" de "não consegui nem tentar"
-    (CLAUDE.md §4, erro nunca silencioso)."""
+    a subseção "Resultados em outras fontes" da Home. `escopo=todas`: cada
+    site busca em paralelo, esgotando de forma independente e exaustiva sua
+    própria escada de variantes, sem que um "roube a vez" do outro (INV-1',
+    `extractors.servico.buscar_por_site_com_variantes`) — alimenta o diálogo
+    "Trocar fonte" (D-B1, PLANO_PADRONIZACAO_FONTES.md — mesmo response
+    assembly abaixo nos dois escopos, só a estratégia de iteração de site
+    difere). `fontes` traz o status de cada site consultado (disponível ou
+    não, com motivo) — a UI usa isso pra distinguir "não achei nada" de "não
+    consegui nem tentar" (CLAUDE.md §4, erro nunca silencioso)."""
     if not titulo.strip():
         return BuscaEmFontesSaida(resultados=[], fontes=[])
 

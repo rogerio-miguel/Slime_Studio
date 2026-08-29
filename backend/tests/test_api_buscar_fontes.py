@@ -37,7 +37,7 @@ def _fonte_indisponivel(dominio: str, motivo: str) -> ResultadoDeFonte:
 async def test_buscar_fontes_titulo_vazio_nao_chama_extrator(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _falha_se_chamado(sessionmaker, dominio, variantes):
+    async def _falha_se_chamado(sessionmaker, dominio, variantes, *, referencia):
         raise AssertionError("buscar_em_com_variantes não deveria ser chamado para título vazio")
 
     monkeypatch.setattr("extractors.servico.buscar_em_com_variantes", _falha_se_chamado)
@@ -56,11 +56,11 @@ async def test_buscar_fontes_titulo_vazio_nao_chama_extrator(
 async def test_buscar_fontes_falha_de_um_extrator_nao_derruba_resposta(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes):
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
         if dominio == "animefire.io":
             return _fonte_indisponivel("animefire.io", "site fora do ar"), None
         candidato = ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1")
-        return _fonte("animesdrive.online", candidato), None
+        return _fonte("animesdrive", candidato), None
 
     async def _buscar_por_titulo_fake(titulo):
         return None
@@ -75,15 +75,15 @@ async def test_buscar_fontes_falha_de_um_extrator_nao_derruba_resposta(
     assert resposta.status_code == 200
     corpo = resposta.json()
     assert len(corpo["resultados"]) == 1
-    assert corpo["resultados"][0]["dominio"] == "animesdrive.online"
+    assert corpo["resultados"][0]["dominio"] == "animesdrive"
     assert corpo["resultados"][0]["titulo_exibicao"] == "Naruto"
     # Quem respondeu não foi o site padrão (animefire.io falhou) — preenchido.
-    assert corpo["dominio_alternativo"] == "animesdrive.online"
+    assert corpo["dominio_alternativo"] == "animesdrive"
 
     fontes_por_dominio = {fonte["dominio"]: fonte for fonte in corpo["fontes"]}
     assert fontes_por_dominio["animefire.io"]["indisponivel"] is True
     assert fontes_por_dominio["animefire.io"]["motivo"] == "site fora do ar"
-    assert fontes_por_dominio["animesdrive.online"]["indisponivel"] is False
+    assert fontes_por_dominio["animesdrive"]["indisponivel"] is False
 
 
 async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
@@ -95,14 +95,14 @@ async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
     cobre é que a API repassa esse status intacto, sem mascarar como "não
     achei nada"."""
 
-    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes):
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
         if dominio == "animefire.io":
             return (
                 _fonte_indisponivel("animefire.io", "em cooldown até 2026-01-01 12:00:00 UTC"),
                 None,
             )
         candidato = ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1")
-        return _fonte("animesdrive.online", candidato), None
+        return _fonte("animesdrive", candidato), None
 
     async def _buscar_por_titulo_fake(titulo):
         return None
@@ -117,14 +117,14 @@ async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
     assert resposta.status_code == 200
     corpo = resposta.json()
     assert len(corpo["resultados"]) == 1
-    assert corpo["resultados"][0]["dominio"] == "animesdrive.online"
-    assert corpo["dominio_alternativo"] == "animesdrive.online"
+    assert corpo["resultados"][0]["dominio"] == "animesdrive"
+    assert corpo["dominio_alternativo"] == "animesdrive"
 
     fontes_por_dominio = {fonte["dominio"]: fonte for fonte in corpo["fontes"]}
     assert fontes_por_dominio["animefire.io"]["indisponivel"] is True
     motivo_esperado = "em cooldown até 2026-01-01 12:00:00 UTC"
     assert fontes_por_dominio["animefire.io"]["motivo"] == motivo_esperado
-    assert fontes_por_dominio["animesdrive.online"]["indisponivel"] is False
+    assert fontes_por_dominio["animesdrive"]["indisponivel"] is False
 
 
 async def test_buscar_fontes_site_indisponivel_ainda_expande_com_termo_de_provedor_no_outro(
@@ -135,10 +135,10 @@ async def test_buscar_fontes_site_indisponivel_ainda_expande_com_termo_de_proved
     também não acha título nenhum, então a resposta final só precisa manter o
     motivo de indisponibilidade do site em cooldown intacto."""
 
-    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes):
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
         if dominio == "animefire.io":
             return _fonte_indisponivel("animefire.io", "em cooldown"), None
-        return _fonte("animesdrive.online"), None
+        return _fonte("animesdrive"), None
 
     async def _buscar_titulos_fake(titulo):
         return None
@@ -165,7 +165,7 @@ async def test_buscar_fontes_registrada_antes_do_catch_all_anime_id(
     chamada cairia no handler de `obter_anime` (que rejeitaria "buscar-fontes"
     como `anime_id: int` com 422) em vez de bater na busca em fontes."""
 
-    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes):
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
         return _fonte(dominio), None
 
     async def _buscar_titulos_fake(titulo):
@@ -187,7 +187,7 @@ async def test_buscar_fontes_registrada_antes_do_catch_all_anime_id(
     assert corpo["dominio_alternativo"] is None
     assert {fonte["dominio"] for fonte in corpo["fontes"]} == {
         "animefire.io",
-        "animesdrive.online",
+        "animesdrive",
     }
 
 
@@ -204,7 +204,7 @@ async def test_buscar_fontes_expande_com_titulo_alternativo_quando_termo_digitad
 
     romaji = "Naruto Shippuden"
 
-    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes):
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
         if romaji in variantes:
             candidato = ResultadoBusca(
                 titulo_exibicao="Naruto Shippuden",
@@ -245,7 +245,7 @@ async def test_buscar_fontes_escopo_ausente_e_padrao_explicito_sao_identicos(
     `escopo=padrao` explicitamente. Regressão: o comportamento anterior a esta
     fatia (só existia o caminho `padrao`) não pode mudar."""
 
-    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes):
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
         if dominio == "animefire.io":
             candidato = ResultadoBusca(
                 titulo_exibicao="Naruto", identificador="1", url="https://x/1"
@@ -272,12 +272,12 @@ async def test_buscar_fontes_padrao_lista_dominio_nao_consultado_quando_primeiro
 ):
     """AnimeFire (site padrão, `EXTRATORES[0]`) acha candidato na Fase 1 — o
     laço sequencial nunca chega a chamar `buscar_em_com_variantes` para
-    animesdrive.online. Mesmo assim `fontes` tem que listar os dois domínios
+    animesdrive. Mesmo assim `fontes` tem que listar os dois domínios
     (D-B1): o não consultado sai com `indisponivel=False`, e um motivo que
     deixa isso explícito — senão `todasFontesIndisponiveis` da Home mentiria
     quando na verdade só um site foi de fato tentado."""
 
-    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes):
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencia):
         assert dominio == "animefire.io", "animesdrive não deveria ser consultado"
         candidato = ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1")
         return _fonte(dominio, candidato), None
@@ -292,37 +292,40 @@ async def test_buscar_fontes_padrao_lista_dominio_nao_consultado_quando_primeiro
     corpo = resposta.json()
     assert len(corpo["resultados"]) == 1
     fontes_por_dominio = {fonte["dominio"]: fonte for fonte in corpo["fontes"]}
-    assert set(fontes_por_dominio) == {"animefire.io", "animesdrive.online"}
-    assert fontes_por_dominio["animesdrive.online"]["indisponivel"] is False
-    assert "não consultado" in fontes_por_dominio["animesdrive.online"]["motivo"]
+    assert set(fontes_por_dominio) == {"animefire.io", "animesdrive"}
+    assert fontes_por_dominio["animesdrive"]["indisponivel"] is False
+    assert "não consultado" in fontes_por_dominio["animesdrive"]["motivo"]
 
 
 async def test_buscar_fontes_escopo_todas_usa_caminho_paralelo_e_preserva_dominio(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    """`escopo=todas` usa `buscar_em_todas_as_fontes_com_variantes` (fatia 1,
-    paralelo × variantes) em vez do motor sequencial por site — candidatos de
+    """`escopo=todas` usa `buscar_por_site_com_variantes` (fatia 3/4, cada site
+    esgotando sua própria escada em paralelo, INV-1') em vez do motor
+    sequencial por site (`buscar_com_titulos_alternativos`) — candidatos de
     domínios diferentes na mesma resposta preservam `dominio` cada um
-    (D-B4/INV-1, nunca achatar/perder essa informação)."""
+    (D-B4/INV-1', nunca achatar/perder essa informação)."""
 
-    async def _buscar_em_todas_as_fontes_com_variantes_fake(sessionmaker, variantes):
+    async def _buscar_por_site_com_variantes_fake(
+        sessionmaker, variantes, *, referencia, dominios=None
+    ):
         candidato_af = ResultadoBusca(
             titulo_exibicao="Naruto", identificador="1", url="https://af/1"
         )
         candidato_ad = ResultadoBusca(
             titulo_exibicao="Naruto (Dublado)", identificador="2", url="https://ad/2"
         )
-        return [
-            _fonte("animefire.io", candidato_af),
-            _fonte("animesdrive.online", candidato_ad),
-        ]
+        return {
+            "animefire.io": _fonte("animefire.io", candidato_af),
+            "animesdrive": _fonte("animesdrive", candidato_ad),
+        }
 
-    async def _falha_se_chamado(sessionmaker, dominio, variantes):
+    async def _falha_se_chamado(sessionmaker, dominio, variantes, *, referencia):
         raise AssertionError("escopo=todas não deveria usar o motor sequencial por site")
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_todas_as_fontes_com_variantes",
-        _buscar_em_todas_as_fontes_com_variantes_fake,
+        "extractors.servico.buscar_por_site_com_variantes",
+        _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("extractors.servico.buscar_em_com_variantes", _falha_se_chamado)
 
@@ -334,9 +337,9 @@ async def test_buscar_fontes_escopo_todas_usa_caminho_paralelo_e_preserva_domini
     corpo = resposta.json()
     assert len(corpo["resultados"]) == 2
     por_dominio = {resultado["dominio"]: resultado for resultado in corpo["resultados"]}
-    assert set(por_dominio) == {"animefire.io", "animesdrive.online"}
+    assert set(por_dominio) == {"animefire.io", "animesdrive"}
     assert por_dominio["animefire.io"]["identificador"] == "1"
-    assert por_dominio["animesdrive.online"]["identificador"] == "2"
+    assert por_dominio["animesdrive"]["identificador"] == "2"
 
 
 async def test_buscar_fontes_escopo_invalido_da_422(cliente: AsyncClient):
