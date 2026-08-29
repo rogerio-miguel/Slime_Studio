@@ -100,8 +100,6 @@ export default function PlayerAtivo({
   );
   useAtalhosDeTeclado({ videoRef, acoes: acoesDeTeclado });
 
-  const frameAr = dimensoesDaFonte ? dimensoesDaFonte.width / dimensoesDaFonte.height : 1.777778;
-
   return (
     <div
       className="fullscreen-stage"
@@ -109,7 +107,7 @@ export default function PlayerAtivo({
       role="region"
       aria-label={titulo || 'Player de vídeo'}
     >
-      <div className="frame" ref={frameRef} style={{ '--frame-ar': frameAr }}>
+      <div className="frame" ref={frameRef}>
         {dimensoesDaFonte && <GlowAmbiente videoRef={videoRef} elementoDeMedidaRef={frameRef} />}
         {/* Vídeo invisível (opacity 0 via player.css) — só alimenta o
             pipeline WebGPU e o áudio. Nunca remonta (D3): createMediaElementSource

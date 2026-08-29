@@ -17,7 +17,20 @@ export default function GlowAmbiente({ videoRef, elementoDeMedidaRef }) {
     if (!video || !canvas || !elementoDeMedida) return;
 
     const rvfc = obterRvfcOriginal(video);
-    return iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc });
+    // Mutação imperativa de estilo, não state React: `--action-intensity`
+    // muda a cada frame amostrado (glowAmbiente.js), e o próprio canvas já
+    // está referenciado aqui — nenhum ref novo, nenhum re-render por frame.
+    // Setado no #ambient-glow em si porque é ele quem lê a variável (ver
+    // regra `opacity` em player.css).
+    return iniciarGlowAmbiente({
+      video,
+      canvas,
+      elementoDeMedida,
+      rvfc,
+      aoAtualizarIntensidadeAcao: (intensidade) => {
+        canvas.style.setProperty('--action-intensity', String(intensidade));
+      },
+    });
   }, [videoRef, elementoDeMedidaRef]);
 
   return <canvas ref={canvasRef} id="ambient-glow" aria-hidden="true" />;
