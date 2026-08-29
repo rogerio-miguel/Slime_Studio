@@ -5,9 +5,11 @@ import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
+import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeDeCards.jsx';
+import { VIDEOS_LOCAIS } from '../videosLocais.js';
 
 // Rota "/animes" — catálogo completo. Sem cadastro manual aqui: o catálogo
 // é populado materializando itens do feed de provedor externo na Home
@@ -31,6 +33,7 @@ import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeD
 // `paginas/Inicio.jsx`, sem teto de largura, pra ficar pixel-idêntico.
 export default function Galeria() {
   const idContinuarAssistindo = useId();
+  const idVideosLocais = useId();
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
@@ -133,6 +136,28 @@ export default function Galeria() {
             </SlotDeCard>
           ))}
         </div>
+
+        {/* Vídeos locais (videosLocais.js) — arquivos já em disco (public/
+            videos-locais/), fora do catálogo/backend por completo: card
+            leva direto pro player (`/assistir-local/:slug`), sem passar
+            por materialização/captura. Depois da grade principal — não é
+            catálogo de verdade, é um apêndice de arquivos soltos. Some
+            quando a lista está vazia, mesma condição silenciosa de
+            "Continuar assistindo" acima. */}
+        {VIDEOS_LOCAIS.length > 0 && (
+          <section aria-labelledby={idVideosLocais} className="mt-10">
+            <h2 id={idVideosLocais} className="mb-4 text-2xl font-semibold text-white">
+              Vídeos locais
+            </h2>
+            <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
+              {VIDEOS_LOCAIS.map((video, indice) => (
+                <SlotDeCard key={video.slug} indice={indice}>
+                  <CartaoDeVideoLocal video={video} />
+                </SlotDeCard>
+              ))}
+            </div>
+          </section>
+        )}
 
         <DialogoDeConfirmacao
           aberto={animeParaRemover != null}

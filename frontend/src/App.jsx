@@ -9,6 +9,7 @@ import Inicio from './paginas/Inicio.jsx';
 import Galeria from './paginas/Galeria.jsx';
 import PaginaDoAnime from './paginas/PaginaDoAnime.jsx';
 import PaginaDoPlayer from './paginas/PaginaDoPlayer.jsx';
+import PaginaDoPlayerLocal from './paginas/PaginaDoPlayerLocal.jsx';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ function Shell() {
         <Route path="/animes" element={<Galeria />} />
         <Route path="/anime/:id" element={<PaginaDoAnime jobsPorEpisodio={jobsPorEpisodio} />} />
         <Route path="/assistir/:episodioId" element={<PaginaDoPlayer />} />
+        <Route path="/assistir-local/:slug" element={<PaginaDoPlayerLocal />} />
         <Route path="/debug/fonte" element={<RotaDebugFonte />} />
       </Routes>
     </>
