@@ -30,3 +30,7 @@ frontend/test/*.ndjson
 
 # Backup do vídeo de entrada original, pré-reencode (hero da Inicio.jsx)
 frontend/src/assets/video_entrada.original.mp4
+
+# Vídeos locais catalogados sem captura/backend (paginas/Galeria.jsx, seção
+# "Vídeos locais" — servidos estáticos por Vite via public/, nunca commitados)
+frontend/public/videos-locais/*.mp4
