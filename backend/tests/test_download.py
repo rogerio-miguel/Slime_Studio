@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from core.enums import TipoEpisodio, VersaoEpisodio
-from core.erros import FalhaDeExtracao
+from core.erros import FalhaDeExtracao, FalhaDeFerramenta
 from extractors import download
 from extractors.base import LinkDeMidia
 from worker.pipeline.ferramentas import executar
@@ -50,6 +50,14 @@ def test_montar_comando_ordem_dos_argumentos():
         "-y",
         "-headers",
         "Referer: r\r\n",
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_on_network_error",
+        "1",
+        "-reconnect_delay_max",
+        "30",
         "-i",
         "https://cdn.exemplo/video.mp4",
         "-c",
@@ -135,6 +143,47 @@ def test_conferir_link_de_midia_detecta_corpo_pequeno_demais(monkeypatch):
 
     with pytest.raises(FalhaDeExtracao):
         download.conferir_link_de_midia(link)
+
+
+async def test_baixar_traduz_falha_do_ffmpeg_em_falha_de_extracao_retentavel(tmp_path, monkeypatch):
+    """Download truncado pelo CDN (ffmpeg sai != 0) vira `FalhaDeExtracao`
+    retentável — o executor reagenda com backoff em vez de falha definitiva — e
+    preserva a cauda do stderr na mensagem. O `.part` parcial é removido."""
+    destino = tmp_path / "raw" / "anime-teste" / "001-regular-legendado.mkv"
+    parcial = destino.with_name(destino.name + ".part")
+
+    async def _executar_falho(argumentos, *, timeout_s):
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        parcial.write_bytes(b"parcial truncado")
+        raise FalhaDeFerramenta(
+            "comando falhou (código 187)", cauda_stderr="video.mp4: End of file"
+        )
+
+    monkeypatch.setattr(download, "executar", _executar_falho)
+    link = LinkDeMidia(url="https://cdn.exemplo/video.mp4", cabecalhos={"Referer": "r"})
+
+    with pytest.raises(FalhaDeExtracao) as info:
+        await download.baixar(link, destino, "ffmpeg")
+
+    assert info.value.permite_retentativa is True
+    assert "187" in str(info.value)
+    assert "End of file" in str(info.value)
+    assert not parcial.exists()
+
+
+async def test_baixar_nao_traduz_part_ausente_apos_ffmpeg_ok(tmp_path, monkeypatch):
+    """`.part` ausente depois do ffmpeg sair 0 é bug interno, não falha de rede —
+    continua `FalhaDeFerramenta` (falha definitiva do job)."""
+    destino = tmp_path / "raw" / "anime-teste" / "001-regular-legendado.mkv"
+
+    async def _executar_ok(argumentos, *, timeout_s):
+        return None
+
+    monkeypatch.setattr(download, "executar", _executar_ok)
+    link = LinkDeMidia(url="https://cdn.exemplo/video.mp4", cabecalhos={})
+
+    with pytest.raises(FalhaDeFerramenta):
+        await download.baixar(link, destino, "ffmpeg")
 
 
 async def _gerar_clipe_sintetico(ffmpeg: Path, destino: Path) -> None:

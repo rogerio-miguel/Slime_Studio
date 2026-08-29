@@ -90,13 +90,25 @@ async def baixar(link: LinkDeMidia, destino: Path, ffmpeg_bin: str) -> Path:
     """Baixa `link` via `ffmpeg -c copy` para `destino` (`.mkv`), escrevendo em
     `<destino>.part` e promovendo com `os.replace()` (rename atômico) só ao
     concluir com sucesso. Remove o `.part` em qualquer `BaseException` — nunca
-    deixa lixo parcial em `MEDIA_ROOT/raw/`."""
+    deixa lixo parcial em `MEDIA_ROOT/raw/`.
+
+    Falha do `ffmpeg` no download (conexão truncada pelo CDN, timeout de rede) é
+    traduzida para `FalhaDeExtracao` retentável — o executor reagenda o job com
+    backoff em vez de marcá-lo como falho definitivo. Só o `.part` ausente após
+    sucesso do `ffmpeg` continua sendo `FalhaDeFerramenta` (bug interno, não rede)."""
     destino.parent.mkdir(parents=True, exist_ok=True)
     parcial = destino.with_name(destino.name + ".part")
 
     try:
         argumentos = _montar_comando(ffmpeg_bin, link, parcial)
-        await executar(argumentos, timeout_s=_TIMEOUT_DOWNLOAD_S)
+        try:
+            await executar(argumentos, timeout_s=_TIMEOUT_DOWNLOAD_S)
+        except FalhaDeFerramenta as excecao:
+            sufixo_stderr = f" — stderr: {excecao.cauda_stderr}" if excecao.cauda_stderr else ""
+            raise FalhaDeExtracao(
+                f"ffmpeg falhou no download ({excecao}){sufixo_stderr}",
+                permite_retentativa=True,
+            ) from excecao
         if not parcial.exists():
             raise FalhaDeFerramenta(f"ffmpeg concluiu sem erro mas não gerou {parcial}")
         os.replace(parcial, destino)
@@ -121,5 +133,14 @@ def _montar_comando(ffmpeg_bin: str, link: LinkDeMidia, destino_parcial: Path) -
     if link.cabecalhos:
         cabecalhos = "".join(f"{chave}: {valor}\r\n" for chave, valor in link.cabecalhos.items())
         argumentos += ["-headers", cabecalhos]
+        # CDN de anime derruba conexões HTTP longas no meio do download; sem estas
+        # flags um drop truncado faz o ffmpeg sair com AVERROR_EOF e o job inteiro
+        # se perde. São opções de input (valem pra http/https) — vêm antes do `-i`.
+        argumentos += [
+            "-reconnect", "1",
+            "-reconnect_streamed", "1",
+            "-reconnect_on_network_error", "1",
+            "-reconnect_delay_max", "30",
+        ]
     argumentos += ["-i", link.url, "-c", "copy", "-f", "matroska", str(destino_parcial)]
     return argumentos
