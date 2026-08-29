@@ -77,7 +77,7 @@ class AnimeFireProvider(ExtratorDeSite):
             # explícito por que esse 404 específico é normal. Sempre `info` —
             # decidir se esgotou todas as variantes de busca (e por isso vale
             # `warning`) passou a ser responsabilidade de quem itera variantes
-            # (`extractors/nomes.py::variantes_de_busca`), não deste método.
+            # (`extractors/busca/termos.py::variantes_de_busca`), não deste método.
             logger.info("AnimeFire: busca por %r não encontrou nada (404) em %s", termo, url)
             return []
 
@@ -108,7 +108,7 @@ class AnimeFireProvider(ExtratorDeSite):
                         # Slime_Shell_Web) — `capa_url=None` via default do
                         # dataclass, não falta de parsing. Enriquecimento por
                         # metadado de provedor externo mora em
-                        # `api/servicos/busca.py::enriquecer_capas`.
+                        # `api/servicos/capas.py::enriquecer_capas`.
                         #
                         # Mesma convenção do AnimesDrive (`animesdrive.py`):
                         # dublado sempre marcado, ausência de marcador aqui
@@ -119,7 +119,7 @@ class AnimeFireProvider(ExtratorDeSite):
                 )
             if not resultados:
                 # info, não warning: com a busca em paralelo em todos os sites
-                # (extractors/servico.py::buscar_por_site_com_variantes), um título
+                # (extractors/busca/servico.py::buscar_por_site_com_variantes), um título
                 # existir só num dos dois é o caso comum, não uma falha — não dá
                 # pra distinguir "não achei mesmo" de "estrutura mudou" só por
                 # contagem zero, então não escala pra warning (isso viraria

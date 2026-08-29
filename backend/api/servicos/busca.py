@@ -2,28 +2,82 @@
 `integrations/` — único ponto que importa os dois lados da fronteira pra este
 fluxo, mesma decisão de `api/servicos/descoberta.py`/`fontes.py` (CLAUDE.md
 §1: `extractors/` NUNCA importa de `integrations/`, e vice-versa; orquestração
-cross-camada mora aqui). Três responsabilidades:
+cross-camada mora aqui).
 
-- `buscar_com_titulos_alternativos` (escopo `padrao`): busca sequencial por
-  site (ordem de `extractors.registro.EXTRATORES`), em duas fases ordenadas
-  por custo (Fase A do PLANO_PADRONIZACAO_FONTES.md): primeiro as variantes
-  puras de regex de `extractors/nomes.py::variantes_de_busca` (de graça, sem
-  I/O de provedor externo), e só se nenhum site achar nada com elas, os
-  termos de provedor (romaji/inglês, via `integrations/servico.py::
-  buscar_titulos`) — tolerância a idioma (usuário digitou em inglês, sites
-  indexam romaji, ou vice-versa).
-- `buscar_em_todas_as_fontes_com_titulos_alternativos` (escopo `todas`, Fase
-  B): mesma composição de variantes acima, mas busca paralela por site
-  (`extractors.servico.buscar_por_site_com_variantes`) — cada site esgota sua
-  própria escada de variantes de forma independente e exaustiva, sem que um
-  "roube a vez" do outro (INV-1'); o resultado final é a união de todas as
-  fontes onde o anime realmente existe. Serve o diálogo "Trocar fonte".
-- `enriquecer_capas`: preenche `capa_url` dos candidatos que vieram sem, via
-  metadado de provedor externo (`integrations/`). Hoje só o AnimeFire precisa
-  disto — a página de busca dele genuinamente não expõe imagem nenhuma
-  (confirmado ao vivo e no código de referência Slime_Shell_Web, não é bug de
-  parsing). O AnimesDrive já vem com capa própria da busca
-  (`extractors/animesdrive.py::buscar`).
+Duas funções públicas, o MESMO pipeline de duas fases em dois contratos de
+saída diferentes (Fases A/B do PLANO_PADRONIZACAO_FONTES.md):
+
+- `buscar_com_titulos_alternativos` (escopo `padrao`): Fase 1 SEQUENCIAL por
+  site (ordem de `extractors.registro.EXTRATORES`), para no primeiro site que
+  acha candidatos; devolve UMA fonte. Alimenta o banner de "termo/fonte
+  alternativa" da Home.
+- `buscar_em_todas_as_fontes_com_titulos_alternativos` (escopo `todas`): Fase
+  1 PARALELA, cada site esgota a própria escada de variantes de forma
+  independente e exaustiva; devolve a UNIÃO das fontes onde o anime realmente
+  existe. Serve o diálogo "Trocar fonte".
+
+Fase 1 = variantes puras de regex (`variantes_de_busca` de
+`extractors.busca.termos`, de graça, sem I/O de provedor). Fase 2 = termos de
+provedor romaji/inglês (via `integrations.servico.buscar_titulos`),
+best-effort, quando a Fase 1 deixou trabalho em aberto (critério por escopo —
+ver "O que DIFERE") — tolerância a idioma (usuário digitou em inglês, sites
+indexam romaji, ou vice-versa).
+
+O que é IDÊNTICO nos dois escopos:
+
+- gerador de variantes: `variantes_de_busca` de `extractors.busca.termos`, o
+  mesmo nas duas fases;
+- ordem por custo: as variantes de regex (de graça) sempre antes da rede de
+  provedor;
+- guarda de expansão: nunca gastar o round-trip de `buscar_titulos` quando a
+  Fase 2 não teria site nenhum pra consultar — o gate de cada escopo é
+  exatamente o filtro de elegibilidade de site que o helper dele aplica
+  (`disponiveis` no `padrao`, `pendentes` no `todas`); gate e filtro
+  divergentes já causaram bug real, ver "O que DIFERE";
+- termos de provedor: obtidos por `_termos_alternativos` (romaji, depois
+  inglês; descarta o que repete o título digitado ou slugifica pra vazio);
+- dedupe entre fases: `_variantes_sem_repetir_fase1` remove da escada de cada
+  termo toda variante cujo slug a Fase 1 já tentou;
+- referência de validação: `referencia=<termo>` própria por termo de provedor
+  na Fase 2 (o invariante multilíngue — cada termo valida contra si mesmo,
+  não contra o título digitado, que pode estar em outro idioma);
+- tetos: `_TETO_EXPANSAO_S` (fase inteira da expansão) e `_TETO_METADADOS_S`
+  (só o `buscar_titulos` dentro dela), os mesmos valores nos dois escopos
+  porque o perfil de pior caso é o mesmo;
+- caráter best-effort da Fase 2: falha, timeout (`_TETO_EXPANSAO_S`) ou
+  qualquer outro erro da expansão nunca propaga pra fora nem derruba a busca
+  da Fase 1 — devolve a rodada já obtida.
+
+O que DIFERE entre os escopos:
+
+- Fase 1: `padrao` é sequencial-com-break (para no primeiro site que acha);
+  `todas` é fan-out paralelo (cada site esgota a própria escada);
+- contrato de saída: `padrao` reporta uma fonte ÚNICA, com desempate
+  determinístico por prioridade de `EXTRATORES` quando mais de um site acha
+  no mesmo termo de provedor; `todas` reporta a UNIÃO das fontes;
+- alvo de `dominios=` na Fase 2: `padrao` restringe aos sites ainda
+  DISPONÍVEIS (não `indisponivel`); `todas` restringe aos PENDENTES (não
+  `indisponivel` E ainda sem candidato de termo de provedor anterior);
+- gatilho da Fase 2: `padrao` só expande se NENHUM site achou na Fase 1
+  (early-exit — o contrato é UMA fonte que funciona; com vencedor em mãos,
+  candidato de outro site seria descartado pelo desempate de qualquer forma);
+  `todas` expande enquanto sobrar site PENDENTE (não `indisponivel` e sem
+  candidato), mesmo com outro site já tendo achado — o contrato é a UNIÃO.
+  Bug real (2026-08-29): com gate global, "Dogul Wang" achado no AnimeFire
+  pela escada de regex impedia o AnimesDrive de ser consultado com o título
+  inglês do provedor ("Tomb Raider King"), onde o anime existe — o diálogo
+  "Trocar fonte" listava uma fonte só;
+- `termo_alternativo`/`dominio_alternativo`: preenchidos no `padrao` (a Home
+  precisa saber de qual termo/site veio o resultado), sempre `None` no
+  `todas` (a união já expõe `dominio`/`versao` por candidato).
+
+Por que NÃO são uma função só: a diferença de contrato de saída (fonte única
+com desempate vs. união de fontes) é o motivo — registrado aqui pra evitar
+que a próxima passada (humana ou agente) tente fundir os dois caminhos.
+
+O enriquecimento de capa saiu deste módulo pra `api/servicos/capas.py` e é
+aplicado pela rota (`api/rotas/animes.py`) DEPOIS da busca — o resultado que
+sai daqui ainda NÃO tem `capa_url` preenchida pros candidatos que vieram sem.
 """
 
 import asyncio
@@ -33,11 +87,10 @@ from dataclasses import dataclass, replace
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.texto import slugificar
-from extractors import servico as servico_extractors
-from extractors.base import ResultadoBusca
-from extractors.nomes import variantes_de_busca
+from extractors.busca import servico as servico_extractors
+from extractors.busca.servico import ResultadoDeFonte
+from extractors.busca.termos import variantes_de_busca
 from extractors.registro import EXTRATORES
-from extractors.servico import ResultadoDeFonte
 from integrations import servico as servico_metadados
 from integrations.base import TitulosDeAnime
 
@@ -45,55 +98,34 @@ logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
-# Teto pequeno de propósito: `buscar-fontes` já roda a busca sequencial por
-# site de `buscar_com_titulos_alternativos`; este enriquecimento roda LOGO
-# DEPOIS, sobre um provedor diferente (AniList/Kitsu, sem circuit breaker
-# próprio como `extractors/`) — 5 é um teto conservador pra nunca virar uma
-# segunda rajada descontrolada, mesmo espírito de
-# `integrations/servico.py::_lock_em_alta` (thundering herd), sem depender de
-# medição real de rate limit ainda inexistente pra este caminho.
-_CONCORRENCIA_MAXIMA = 5
-
-# Teto do LOTE inteiro (asyncio.wait, não wait_for por chamada individual):
-# `integrations/servico.py::buscar_por_titulo` tenta AniList e, se falhar,
-# Kitsu, cada um com até `_TIMEOUT_POR_PROVEDOR_S` (8s) — pior caso de UMA
-# chamada é 16s. Mesmo raciocínio de
-# `api/servicos/descoberta.py::_TETO_ENRIQUECIMENTO_S` (16s + margem = 18s)
-# pra essa mesma função; aqui o teto cobre várias chamadas em paralelo
-# (limitadas pelo semáforo acima) — quem não terminar a tempo é cancelado
-# explicitamente, nunca some rodando em segundo plano após a resposta.
-_TETO_LOTE_S = 18
-
 # Teto da fase inteira de expansão por termo de provedor (Fase 2, fatia 5 do
 # plano): `buscar_titulos` (até `_TETO_METADADOS_S`, 10s) mais o pior caso de
 # uma escada por termo — cada termo de provedor (romaji, inglês — até 2) gera
-# sua PRÓPRIA escada de variantes (`extractors/nomes.py::variantes_de_busca`,
-# mesmo gerador da Fase 1: título + até 2 cortes de subtítulo/temporada + até
-# `_MAXIMO_PREFIXOS`=5 prefixos truncados, ~7 variantes no pior caso), cada
+# sua PRÓPRIA escada de variantes (`extractors/busca/termos.py::variantes_de_busca`,
+# mesmo gerador da Fase 1: bloco de precisão com até 3 termos — título + corte
+# de subtítulo + corte de marcador de temporada — mais bloco de recall com até
+# `_MAXIMO_PREFIXOS`=3 prefixos crescentes, 6 variantes no pior caso), cada
 # uma até o timeout do GET síncrono dos adapters (`_TIMEOUT_S` de
 # `extractors/animefire.py`/`extractors/animesdrive.py`, 15s) — uma escada
-# completa custa até 7 × 15s = 105s num único site.
+# completa custa até 6 × 15s = 90s num único site.
 #
-# `_tentar_termos_de_provedor` (escopo `padrao`) e
-# `_expandir_termo_de_provedor_em_todas_as_fontes` (escopo `todas`) têm hoje o
+# `_expandir_com_termos_de_provedor` (escopo `padrao`) e
+# `_expandir_com_termos_de_provedor_em_todas_as_fontes` (escopo `todas`) têm o
 # MESMO perfil de pior caso: as duas são termo-major sequencial, mas sites em
-# PARALELO dentro de cada termo (`extractors.servico.buscar_por_site_com_
-# variantes` nas duas, desde esta revisão — antes dela, `_tentar_termos_de_
-# provedor` também era site-major sequencial, com o extra fator de 2 sites
-# multiplicando a escada: 2 termos × 2 sites × 105s = 420s, teto de 430s; a
-# paralelização de sites dentro do termo, no molde de
-# `buscar_por_site_com_variantes`, eliminou esse fator). Só os até 2 termos
+# PARALELO dentro de cada termo (`extractors.busca.servico.buscar_por_site_com_
+# variantes` nas duas — a paralelização de sites dentro do termo já eliminou
+# o fator de 2 sites que multiplicava a escada). Só os até 2 termos
 # multiplicam a escada agora — os sites não multiplicam mais nada, correm
-# juntos. Conta final: 10 (metadado) + até 2 × 105s (uma escada completa no
-# site mais lento do par que respondeu por último) = 220s. Reaproveitar o
-# mesmo teto entre os dois escopos agora reflete a mesma estrutura de fato,
-# não só "por padrão".
+# juntos. Conta final: 10 (metadado) + até 2 × 90s (uma escada completa no
+# site mais lento do par que respondeu por último) = 190s. Reaproveitar o
+# mesmo teto entre os dois escopos reflete a mesma estrutura de fato, não só
+# "por padrão".
 #
 # A variância de captura de navegador do AnimesDrive (até 90s) é um risco
 # estrutural separado, rastreado na Fase E do plano — fora do escopo desta
 # conta. Quem não terminar a tempo é cancelado — devolve a rodada da Fase 1
 # em vez de travar a resposta.
-_TETO_EXPANSAO_S = 220
+_TETO_EXPANSAO_S = 190
 
 # Sub-teto só de `buscar_titulos` dentro da fase acima: sem isto, AniList +
 # Kitsu no pior caso (cada um até `integrations/servico.py::
@@ -118,6 +150,11 @@ class BuscaEmFontes:
     dominio_alternativo: str | None
 
 
+# --- Escopo `padrao`: Fase 1 sequencial por site + Fase 2 por termo de provedor ---
+# Fase 2 (expansão por termo de provedor, best-effort) mora em
+# `_expandir_com_termos_de_provedor` — o helper irmão do escopo `todas` é
+# `_expandir_com_termos_de_provedor_em_todas_as_fontes` (mesma estrutura, só o
+# contrato de saída difere).
 async def buscar_com_titulos_alternativos(
     sessionmaker: _SessionMaker, titulo: str
 ) -> BuscaEmFontes:
@@ -126,27 +163,30 @@ async def buscar_com_titulos_alternativos(
     — nunca gastar rede de provedor externo antes de esgotar as variantes de
     regex, que são de graça):
 
-    Fase 1 — variantes puras (`extractors.nomes.variantes_de_busca`, sem I/O
+    Fase 1 — variantes puras (`extractors.busca.termos.variantes_de_busca`, sem I/O
     de provedor), tentadas em cada site até o primeiro achar candidatos.
 
-    Fase 2 — só se a Fase 1 não achou nada em site nenhum: termos de provedor
-    (romaji/inglês, via `integrations.servico.buscar_titulos`) — tolerância a
-    idioma (usuário digitou em inglês, sites indexam romaji, ou vice-versa).
+    Fase 2 — só se a Fase 1 não achou nada em site nenhum (ao contrário do
+    escopo `todas`, que expande enquanto sobrar site pendente — ver docstring
+    de módulo): termos de provedor (romaji/inglês, via
+    `integrations.servico.buscar_titulos`) — tolerância a idioma (usuário
+    digitou em inglês, sites indexam romaji, ou vice-versa).
     Cada termo tem sua PRÓPRIA escada de variantes (mesmo gerador da Fase 1,
     `variantes_de_busca`) e sua PRÓPRIA referência de validação (o próprio
     termo, não `titulo`) — um termo que não corresponde a `titulo` sob
     `corresponde_ao_titulo` (ex. título em inglês vs romaji) não pode ser
     rejeitado por validar contra a referência errada. Variante cujo slug já
     foi tentado na Fase 1 é pulada (dedupe, não reconsulta o mesmo termo).
-    Delegada a `_tentar_termos_de_provedor`, best-effort: falha ou timeout
+    Delegada a `_expandir_com_termos_de_provedor`, best-effort: falha ou timeout
     (`_TETO_EXPANSAO_S`) nunca propaga daqui pra fora nem derruba a busca da
     Fase 1 — devolve a rodada já obtida.
 
-    Limitação conhecida (mesma já documentada em `_consultar_capas`): o
-    `wait_for` da Fase 2 cancela a *task* asyncio, não a thread do SO já em
-    voo dentro do `to_thread` de `extractors/resiliencia.py` — na pior das
-    hipóteses ela roda até terminar sozinha, e a rodada cancelada não registra
-    sucesso/falha no circuit breaker.
+    Limitação conhecida (mesma já documentada em
+    `api/servicos/capas.py::_consultar_capas`): o `wait_for` da Fase 2 cancela
+    a *task* asyncio, não a thread do SO já em voo dentro do `to_thread` de
+    `extractors/resiliencia.py` — na pior das hipóteses ela roda até terminar
+    sozinha, e a rodada cancelada não registra sucesso/falha no circuit
+    breaker.
     """
     variantes_puras = variantes_de_busca(titulo)
 
@@ -166,13 +206,13 @@ async def buscar_com_titulos_alternativos(
     # `resultados` já está completo pra todo `EXTRATORES` neste ponto (a Fase 1
     # só sai do loop sem `break` depois de tentar todos) — se os dois já vieram
     # `indisponivel` (cooldown/erro), a Fase 2 vai pular ambos de qualquer
-    # forma (mesmo filtro dentro de `_tentar_termos_de_provedor`), então gastar
-    # o round-trip de `buscar_titulos` seria rede garantidamente desperdiçada.
+    # forma (mesmo filtro dentro de `_expandir_com_termos_de_provedor`), então
+    # gastar o round-trip de `buscar_titulos` seria rede garantidamente desperdiçada.
     if vencedor_dominio is None and any(not r.indisponivel for r in resultados.values()):
         slugs_fase1 = {slugificar(v) for v in variantes_puras}
         try:
             expandido = await asyncio.wait_for(
-                _tentar_termos_de_provedor(sessionmaker, titulo, resultados, slugs_fase1),
+                _expandir_com_termos_de_provedor(sessionmaker, titulo, resultados, slugs_fase1),
                 timeout=_TETO_EXPANSAO_S,
             )
         except Exception as excecao:
@@ -197,20 +237,27 @@ async def buscar_com_titulos_alternativos(
     )
 
 
-async def _tentar_termos_de_provedor(
+async def _expandir_com_termos_de_provedor(
     sessionmaker: _SessionMaker,
     titulo: str,
     resultados: dict[str, ResultadoDeFonte],
     slugs_fase1: set[str],
 ) -> BuscaEmFontes | None:
-    """Só chamada quando nenhum site achou nada com as variantes puras de
-    `extractors/nomes.py`. Busca romaji/inglês do provedor UMA VEZ e tenta
+    """Fase 2 do escopo `padrao`. Par, no escopo `todas`, de
+    `_expandir_com_termos_de_provedor_em_todas_as_fontes`: mesma estrutura —
+    `_termos_alternativos` uma vez, escada própria por termo com dedupe contra
+    a Fase 1, fan-out paralelo por site — só mudam o contrato de saída (fonte
+    única com desempate vs. união de fontes) e o critério de elegibilidade de
+    site (`disponiveis` vs. `pendentes`).
+
+    Só chamada quando nenhum site achou nada com as variantes puras de
+    `extractors/busca/termos.py`. Busca romaji/inglês do provedor UMA VEZ e tenta
     termo por termo (escada própria por termo, não aborta tudo se um termo
     falhar): para cada termo, gera sua própria escada de variantes
     (`variantes_de_busca`, mesmo gerador da Fase 1) filtrada pelo dedupe de
     `slugs_fase1`, e busca essa escada em TODOS os sites ainda disponíveis
     (não `indisponivel` em `resultados`) EM PARALELO — mesma função que o
-    escopo `todas` usa (`extractors.servico.buscar_por_site_com_variantes`,
+    escopo `todas` usa (`extractors.busca.servico.buscar_por_site_com_variantes`,
     `dominios=` restrito aos sites ainda disponíveis), não mais um loop
     sequencial `for extrator in EXTRATORES`. Só passa pro próximo termo depois
     que o fan-out inteiro do termo atual não achar candidato em site nenhum.
@@ -294,16 +341,21 @@ async def _tentar_termos_de_provedor(
     return None
 
 
+# --- Escopo `todas`: Fase 1 paralela por site + Fase 2 por termo de provedor ---
+# Fase 2 (expansão por termo de provedor, best-effort) mora em
+# `_expandir_com_termos_de_provedor_em_todas_as_fontes` — o helper irmão do
+# escopo `padrao` é `_expandir_com_termos_de_provedor` (mesma estrutura, só o
+# contrato de saída difere).
 async def buscar_em_todas_as_fontes_com_titulos_alternativos(
     sessionmaker: _SessionMaker, titulo: str
 ) -> BuscaEmFontes:
     """`escopo=todas` (D-B1/D-B2, Fase B do PLANO_PADRONIZACAO_FONTES.md):
     busca paralela em todos os sites, cada um esgotando sua própria escada de
     variantes de forma independente e exaustiva
-    (`extractors.servico.buscar_por_site_com_variantes`, fatia 3/4, INV-1') —
+    (`extractors.busca.servico.buscar_por_site_com_variantes`, fatia 3/4, INV-1') —
     nenhum site interrompe ou "rouba a vez" da busca dos outros, o resultado
     final é a união de todas as fontes que realmente têm o anime (aplicando a
-    validação de `extractors/nomes.py::corresponde_ao_titulo` já embutida em
+    validação de `extractors/busca/correspondencia.py::corresponde_ao_titulo` já embutida em
     `buscar_em_com_variantes`). Serve o diálogo "Trocar fonte", que existe
     justamente pra mostrar as alternativas lado a lado (D-B2).
 
@@ -311,18 +363,19 @@ async def buscar_em_todas_as_fontes_com_titulos_alternativos(
     custo — reaproveita `variantes_de_busca` e `_termos_alternativos` (não
     duplica a lógica de juntar os dois, D-B1):
 
-    Fase 1 — variantes puras de regex (`extractors.nomes.variantes_de_busca`,
+    Fase 1 — variantes puras de regex (`extractors.busca.termos.variantes_de_busca`,
     sem I/O de provedor), tentadas em todos os sites em paralelo, cada site
     esgotando sua própria escada.
 
-    Fase 2 — só se a Fase 1 não achou nada em site nenhum e pelo menos um
-    site ainda está disponível: termos de provedor (romaji/inglês), mesma
-    escada por termo (variantes e referência próprias, dedupe contra a Fase
-    1) e mesmo caráter best-effort de `_tentar_termos_de_provedor` (falha ou
-    timeout nunca derruba a busca, devolve o resultado da Fase 1) — só que
-    aqui cada termo busca em paralelo nos sites ainda pendentes (`dominios=`,
-    restringindo a sites que nenhum termo anterior já achou candidato),
-    delegada a `_expandir_termo_de_provedor_em_todas_as_fontes`.
+    Fase 2 — enquanto sobrar site PENDENTE depois da Fase 1 (não
+    `indisponivel` e sem candidato), mesmo que outro site já tenha achado:
+    termos de provedor (romaji/inglês), mesma escada por termo (variantes e
+    referência próprias, dedupe contra a Fase 1) e mesmo caráter best-effort
+    de `_expandir_com_termos_de_provedor` (falha ou timeout nunca derruba a
+    busca, devolve o resultado da Fase 1) — só que aqui cada termo busca em
+    paralelo nos sites ainda pendentes (`dominios=`, restringindo a sites que
+    nenhum termo anterior já achou candidato), delegada a
+    `_expandir_com_termos_de_provedor_em_todas_as_fontes`.
 
     `termo_alternativo`/`dominio_alternativo` sempre `None` aqui — ao
     contrário de `buscar_em_com_variantes` (escopo `padrao`), o resultado
@@ -338,13 +391,19 @@ async def buscar_em_todas_as_fontes_com_titulos_alternativos(
     )
     resultado = _completar_nao_consultados(resultado_por_dominio, None)
 
-    ja_achou = any(fonte.candidatos for fonte in resultado)
-    algum_site_disponivel = any(not fonte.indisponivel for fonte in resultado)
-    if not ja_achou and algum_site_disponivel:
+    # Mesmo critério do `pendentes` de `_expandir_com_termos_de_provedor_em_
+    # todas_as_fontes`: site sem candidato e ainda disponível é trabalho em
+    # aberto pro contrato de UNIÃO, mesmo com outro site já tendo achado. Gate
+    # mais frouxo que esse filtro desperdiça rede; mais estrito pula a Fase 2 e
+    # o site pendente nunca é consultado (bug real, ver docstring de módulo).
+    algum_site_pendente = any(
+        not fonte.indisponivel and not fonte.candidatos for fonte in resultado
+    )
+    if algum_site_pendente:
         slugs_fase1 = {slugificar(v) for v in variantes_puras}
         try:
             expandido = await asyncio.wait_for(
-                _expandir_termo_de_provedor_em_todas_as_fontes(
+                _expandir_com_termos_de_provedor_em_todas_as_fontes(
                     sessionmaker, titulo, resultado, slugs_fase1
                 ),
                 timeout=_TETO_EXPANSAO_S,
@@ -367,18 +426,26 @@ async def buscar_em_todas_as_fontes_com_titulos_alternativos(
     return BuscaEmFontes(fontes=resultado, termo_alternativo=None, dominio_alternativo=None)
 
 
-async def _expandir_termo_de_provedor_em_todas_as_fontes(
+async def _expandir_com_termos_de_provedor_em_todas_as_fontes(
     sessionmaker: _SessionMaker,
     titulo: str,
     resultado_fase1: list[ResultadoDeFonte],
     slugs_fase1: set[str],
 ) -> list[ResultadoDeFonte] | None:
-    """Só chamada quando a Fase 1 (variantes puras, escopo `todas`) não achou
-    nada em site nenhum e pelo menos um site ainda está disponível. Busca
-    romaji/inglês do provedor UMA VEZ (`_termos_alternativos`, reaproveitado
-    da Fase A) e tenta termo por termo (escada própria por termo, mesmo
-    critério de `_tentar_termos_de_provedor`): cada termo gera sua própria
-    escada de variantes (`variantes_de_busca`) filtrada pelo dedupe de
+    """Fase 2 do escopo `todas`, par de `_expandir_com_termos_de_provedor`
+    (escopo `padrao`): mesma estrutura de Fase 2 — `_termos_alternativos` uma
+    vez, escada própria por termo com dedupe contra a Fase 1, fan-out paralelo
+    por site — só mudam o contrato de saída (união de fontes vs. fonte única
+    com desempate por prioridade de `EXTRATORES`) e o critério de elegibilidade
+    de site (`pendentes`, sem candidato de termo anterior, vs. `disponiveis`).
+
+    Só chamada quando sobrou pelo menos um site PENDENTE depois da Fase 1 —
+    mesmo critério do `pendentes` calculado aqui dentro (o chamador não pode
+    ser mais frouxo nem mais estrito que este filtro). Busca romaji/inglês do
+    provedor UMA VEZ (`_termos_alternativos`, reaproveitado da Fase A) e tenta
+    termo por termo (escada própria por termo, mesmo critério de
+    `_expandir_com_termos_de_provedor`): cada termo gera sua própria escada de
+    variantes (`variantes_de_busca`) filtrada pelo dedupe de
     `slugs_fase1`, e busca em paralelo (`buscar_por_site_com_variantes`) só
     nos sites ainda pendentes — os que não estão `indisponivel` e ainda não
     acharam candidato num termo anterior (`dominios=`, evita reconsultar quem
@@ -420,6 +487,9 @@ async def _expandir_termo_de_provedor_em_todas_as_fontes(
     if not algum_termo_achou:
         return None
     return _completar_nao_consultados(por_dominio, None)
+
+
+# --- Compartilhado pelos dois escopos ---
 
 
 def _completar_nao_consultados(
@@ -473,111 +543,3 @@ def _variantes_sem_repetir_fase1(variantes: list[str], slugs_fase1: set[str]) ->
     fases: nunca reconsulta um site com exatamente o mesmo termo de busca que
     a Fase 1 já tentou e não achou."""
     return [variante for variante in variantes if slugificar(variante) not in slugs_fase1]
-
-
-async def enriquecer_capas(
-    sessionmaker: _SessionMaker, resultados: list[ResultadoDeFonte]
-) -> list[ResultadoDeFonte]:
-    """Preenche `capa_url` dos candidatos que vieram sem (`ResultadoBusca.
-    capa_url is None`) consultando `integrations.servico.buscar_por_titulo`.
-    Best-effort: falha de uma consulta (`FalhaDeMetadados`, timeout ou
-    qualquer outra exceção do provedor) nunca propaga daqui pra fora nem
-    derruba os demais candidatos — aquele título simplesmente fica sem capa.
-
-    `sessionmaker` não é usado no corpo hoje (`buscar_por_titulo` não toca o
-    banco) — mantido na assinatura por consistência com as demais funções de
-    `api/servicos/` (todas recebem sessionmaker como 1º parâmetro) e pra não
-    obrigar mudar a assinatura no dia em que este enriquecimento passar a
-    persistir alguma coisa (ex. cache de capa por título).
-    """
-    titulos_pendentes = _titulos_sem_capa(resultados)
-    if not titulos_pendentes:
-        return resultados
-
-    capa_por_titulo = await _consultar_capas(titulos_pendentes)
-    if not capa_por_titulo:
-        return resultados
-
-    return [
-        replace(
-            fonte,
-            candidatos=[_com_capa(candidato, capa_por_titulo) for candidato in fonte.candidatos],
-        )
-        for fonte in resultados
-    ]
-
-
-def _titulos_sem_capa(resultados: list[ResultadoDeFonte]) -> list[str]:
-    """Dedupe por título normalizado (`core/texto.py::slugificar`) — dois
-    candidatos com o mesmo título, do mesmo site ou de sites diferentes, geram
-    só uma consulta a `buscar_por_titulo`."""
-    vistos: set[str] = set()
-    titulos: list[str] = []
-    for fonte in resultados:
-        for candidato in fonte.candidatos:
-            if candidato.capa_url is not None:
-                continue
-            chave = slugificar(candidato.titulo_exibicao)
-            if chave in vistos:
-                continue
-            vistos.add(chave)
-            titulos.append(candidato.titulo_exibicao)
-    return titulos
-
-
-def _com_capa(candidato: ResultadoBusca, capa_por_titulo: dict[str, str]) -> ResultadoBusca:
-    if candidato.capa_url is not None:
-        return candidato
-    capa = capa_por_titulo.get(slugificar(candidato.titulo_exibicao))
-    return candidato if capa is None else replace(candidato, capa_url=capa)
-
-
-async def _consultar_capas(titulos: list[str]) -> dict[str, str]:
-    """Dispara `buscar_por_titulo` para cada título em paralelo, limitado por
-    `_CONCORRENCIA_MAXIMA` e pelo teto de tempo `_TETO_LOTE_S` do lote
-    inteiro. `asyncio.wait` (não `wait_for`) pra aproveitar o que já terminou
-    dentro do prazo em vez de cancelar tudo de uma vez; as tasks que ainda
-    estiverem pendentes quando o prazo bater são canceladas explicitamente, e
-    a cancelação é aguardada antes de devolver — a *task* não some rodando
-    solta. Isso não cobre a chamada HTTP síncrona já em voo dentro do
-    `asyncio.to_thread` de `integrations/servico.py`: cancelamento não
-    interrompe uma thread do OS em andamento (mesma limitação documentada em
-    `extractors/resiliencia.py`), então na pior das hipóteses ela roda até
-    terminar sozinha — só o resultado é descartado, nunca aplicado."""
-    semaforo = asyncio.Semaphore(_CONCORRENCIA_MAXIMA)
-
-    async def _consultar_um(titulo: str) -> tuple[str, str | None]:
-        chave = slugificar(titulo)
-        async with semaforo:
-            try:
-                metadados = await servico_metadados.buscar_por_titulo(titulo)
-            except Exception as excecao:
-                # Captura ampla e intencional: enriquecimento de capa é
-                # best-effort (docstring do módulo) — `FalhaDeMetadados`
-                # (todos os provedores falharam), timeout ou qualquer outro
-                # erro do adapter não pode derrubar os demais títulos do lote.
-                logger.warning(
-                    "enriquecimento de capa best-effort falhou para título %r: %s",
-                    titulo,
-                    excecao,
-                )
-                return chave, None
-        return chave, metadados.capa_url if metadados is not None else None
-
-    tasks = [asyncio.ensure_future(_consultar_um(titulo)) for titulo in titulos]
-    concluidas, pendentes = await asyncio.wait(tasks, timeout=_TETO_LOTE_S)
-    if pendentes:
-        for tarefa in pendentes:
-            tarefa.cancel()
-        # Aguarda a cancelação de fato assentar antes de devolver — sem isto a
-        # *task* asyncio fica solta (não a thread do OS por trás dela, ver
-        # docstring acima). `return_exceptions=True` porque toda pendente aqui
-        # levanta `CancelledError` por construção.
-        await asyncio.gather(*pendentes, return_exceptions=True)
-
-    capa_por_titulo: dict[str, str] = {}
-    for tarefa in concluidas:
-        chave, capa = tarefa.result()
-        if capa:  # filtra None e "" (provedor externo não garante não-vazio)
-            capa_por_titulo[chave] = capa
-    return capa_por_titulo

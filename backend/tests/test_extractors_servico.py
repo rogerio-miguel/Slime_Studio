@@ -4,15 +4,17 @@ a resolução do próximo site usa `FonteAnime` já mapeada no banco (mesmo padr
 de `tests/test_resolucao.py::test_proximo_site_para_prefere_mapeamento_ja_existente`),
 sem precisar de extrator falso nem de `resiliencia.chamar`.
 
-Também cobre `buscar_em_com_variantes` (Fase A, fatia 2 de
-PLANO_PADRONIZACAO_FONTES.md), que precisa de um extrator falso injetado via
-`monkeypatch.setattr(servico, "obter_extrator", ...)` e de `resiliencia.chamar`
-substituído por uma versão que chama a operação direto, mesmo padrão de
-`tests/test_resolucao.py::_resiliencia_sem_cliente_real`.
+Também cobre `extractors/busca/servico.py::buscar_em_com_variantes` (Fase A,
+fatia 2 de PLANO_PADRONIZACAO_FONTES.md), importado aqui como `servico_busca`,
+que precisa de um extrator falso injetado via
+`monkeypatch.setattr(servico_busca, "obter_extrator", ...)` e de
+`resiliencia.chamar` substituído por uma versão que chama a operação direto,
+mesmo padrão de `tests/test_resolucao.py::_resiliencia_sem_cliente_real`.
 
-E `buscar_por_site_com_variantes` (Fase B, fatia 3/4 — camada `extractors/`),
-que injeta extratores falsos via `monkeypatch.setattr(servico, "EXTRATORES",
-...)`/`monkeypatch.setattr(servico, "obter_extrator", ...)` (mesmo padrão de
+E `extractors/busca/servico.py::buscar_por_site_com_variantes` (Fase B, fatia
+3/4), que injeta extratores falsos via
+`monkeypatch.setattr(servico_busca, "EXTRATORES",
+...)`/`monkeypatch.setattr(servico_busca, "obter_extrator", ...)` (mesmo padrão de
 `tests/test_resolucao.py::test_pula_site_em_cooldown` pro cenário de
 cooldown, inserindo `EstadoSite` de verdade no banco) — cobre a garantia
 central da fatia (INV-1', "o site é a unidade atômica, não a rodada de
@@ -55,6 +57,7 @@ from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada
 from db.engine import criar_engine, criar_sessionmaker
 from extractors import download, resiliencia, resolucao, servico
 from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
+from extractors.busca import servico as servico_busca
 from models.anime import Anime
 from models.base import Base
 from models.episodio import Episodio
@@ -829,13 +832,13 @@ async def test_buscar_em_com_variantes_para_na_primeira_variante_com_candidatos(
     _resiliencia_direta(monkeypatch)
     candidato = ResultadoBusca(titulo_exibicao="Anime X", identificador="x", url="https://x/1")
     extrator = _ExtratorDeBuscaFalso(respostas={"Anime X: Sub": [candidato]})
-    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
-    resultado, variante_vencedora = await servico.buscar_em_com_variantes(
+    resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
         sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
-    assert resultado == servico.ResultadoDeFonte(
+    assert resultado == servico_busca.ResultadoDeFonte(
         dominio="site-falso.io", candidatos=[candidato], indisponivel=False, motivo=None
     )
     assert variante_vencedora is None  # variante 0 (título original) venceu
@@ -848,9 +851,9 @@ async def test_buscar_em_com_variantes_devolve_variante_vencedora_quando_nao_e_a
     _resiliencia_direta(monkeypatch)
     candidato = ResultadoBusca(titulo_exibicao="Anime X", identificador="x", url="https://x/1")
     extrator = _ExtratorDeBuscaFalso(respostas={"Anime X": [candidato]})
-    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
-    resultado, variante_vencedora = await servico.buscar_em_com_variantes(
+    resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
         sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
@@ -867,9 +870,9 @@ async def test_buscar_em_com_variantes_falha_de_extracao_aborta_variantes_restan
         falha_na_variante="Anime X: Sub",
         excecao=SiteEmCooldown("site em cooldown", dominio="site-falso.io"),
     )
-    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
-    resultado, variante_vencedora = await servico.buscar_em_com_variantes(
+    resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
         sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
@@ -883,13 +886,13 @@ async def test_buscar_em_com_variantes_falha_de_extracao_aborta_variantes_restan
 async def test_buscar_em_com_variantes_nenhuma_variante_encontra_nada(sessionmaker, monkeypatch):
     _resiliencia_direta(monkeypatch)
     extrator = _ExtratorDeBuscaFalso()
-    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
-    resultado, variante_vencedora = await servico.buscar_em_com_variantes(
+    resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
         sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
-    assert resultado == servico.ResultadoDeFonte(
+    assert resultado == servico_busca.ResultadoDeFonte(
         dominio="site-falso.io", candidatos=[], indisponivel=False, motivo=None
     )
     assert variante_vencedora is None
@@ -912,9 +915,9 @@ async def test_buscar_em_com_variantes_descarta_candidato_que_nao_corresponde_a_
             "Anime X": [candidato_errado_2],
         }
     )
-    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: extrator)
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
-    resultado, variante_vencedora = await servico.buscar_em_com_variantes(
+    resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
         sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
@@ -926,20 +929,44 @@ async def test_buscar_em_com_variantes_descarta_candidato_que_nao_corresponde_a_
     assert extrator.chamadas == ["Anime X: Sub", "Anime X"]
 
 
+async def test_buscar_em_com_variantes_ordena_validos_com_match_exato_primeiro(
+    sessionmaker, monkeypatch
+):
+    """Sonda larga: uma única variante volta com 2 cards que passam por
+    `corresponde_ao_titulo` — o match exato e um mais longo que só compartilha
+    o prefixo. O site os lista na ordem errada; `buscar_em_com_variantes`
+    ordena `validos` por `extractors/busca/correspondencia.py::proximidade_do_titulo` e
+    `candidatos[0]` é o exato (o que a UI mostra e a captura pega)."""
+    _resiliencia_direta(monkeypatch)
+    exato = ResultadoBusca(titulo_exibicao="Naruto", identificador="n", url="https://x/n")
+    mais_longo = ResultadoBusca(
+        titulo_exibicao="Naruto Shippuden", identificador="ns", url="https://x/ns"
+    )
+    extrator = _ExtratorDeBuscaFalso(respostas={"Naruto": [mais_longo, exato]})
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
+
+    resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
+        sessionmaker, "site-falso.io", ["Naruto"], referencia="Naruto"
+    )
+
+    assert resultado.candidatos == [exato, mais_longo]  # reordenado: exato à frente
+    assert variante_vencedora is None
+
+
 def _configurar_extratores(
     monkeypatch: pytest.MonkeyPatch, *extratores: _ExtratorDeBuscaFalso
 ) -> None:
     """Registra `extratores` (cada um com `.dominio` já setado) como
-    `servico.EXTRATORES`/`servico.obter_extrator` — usado pelos testes de
+    `servico_busca.EXTRATORES`/`servico_busca.obter_extrator` — usado pelos testes de
     `buscar_por_site_com_variantes` abaixo, mesmo padrão de
-    `monkeypatch.setattr(servico, "obter_extrator", ...)` já usado pros testes
-    de `buscar_em_com_variantes` acima, mais `monkeypatch.setattr(servico,
+    `monkeypatch.setattr(servico_busca, "obter_extrator", ...)` já usado pros testes
+    de `buscar_em_com_variantes` acima, mais `monkeypatch.setattr(servico_busca,
     "EXTRATORES", ...)` (mesmo padrão de
     `tests/test_resolucao.py::test_pula_site_em_cooldown`) pra controlar o
     `dominios=None` (percorre todo `EXTRATORES`)."""
-    monkeypatch.setattr(servico, "EXTRATORES", tuple(extratores))
+    monkeypatch.setattr(servico_busca, "EXTRATORES", tuple(extratores))
     mapa = {extrator.dominio: extrator for extrator in extratores}
-    monkeypatch.setattr(servico, "obter_extrator", lambda dominio: mapa[dominio])
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: mapa[dominio])
 
 
 async def test_buscar_por_site_com_variantes_cada_site_busca_de_forma_independente(
@@ -957,15 +984,15 @@ async def test_buscar_por_site_com_variantes_cada_site_busca_de_forma_independen
     extrator_b.dominio = "site-b.io"
     _configurar_extratores(monkeypatch, extrator_a, extrator_b)
 
-    resultado = await servico.buscar_por_site_com_variantes(
+    resultado = await servico_busca.buscar_por_site_com_variantes(
         sessionmaker, ["Anime X: Sub", "Anime X"], referencia="Anime X"
     )
 
     assert resultado == {
-        "site-a.io": servico.ResultadoDeFonte(
+        "site-a.io": servico_busca.ResultadoDeFonte(
             dominio="site-a.io", candidatos=[candidato_a], indisponivel=False, motivo=None
         ),
-        "site-b.io": servico.ResultadoDeFonte(
+        "site-b.io": servico_busca.ResultadoDeFonte(
             dominio="site-b.io", candidatos=[candidato_b], indisponivel=False, motivo=None
         ),
     }
@@ -994,13 +1021,13 @@ async def test_buscar_por_site_com_variantes_site_em_cooldown_nao_e_chamado(
         )
         await sessao.commit()
 
-    resultado = await servico.buscar_por_site_com_variantes(
+    resultado = await servico_busca.buscar_por_site_com_variantes(
         sessionmaker, ["Anime X"], referencia="Anime X"
     )
 
     assert resultado["site-cooldown.io"].indisponivel is True
     assert "cooldown" in resultado["site-cooldown.io"].motivo
-    assert resultado["site-disponivel.io"] == servico.ResultadoDeFonte(
+    assert resultado["site-disponivel.io"] == servico_busca.ResultadoDeFonte(
         dominio="site-disponivel.io", candidatos=[candidato], indisponivel=False, motivo=None
     )
     assert extrator_cooldown.chamadas == []  # em cooldown, nunca chegou a ser chamado
@@ -1015,12 +1042,12 @@ async def test_buscar_por_site_com_variantes_excecao_nao_tratada_marca_indisponi
     extrator.dominio = "site-falso.io"
     _configurar_extratores(monkeypatch, extrator)
 
-    resultado = await servico.buscar_por_site_com_variantes(
+    resultado = await servico_busca.buscar_por_site_com_variantes(
         sessionmaker, ["Anime X"], referencia="Anime X"
     )
 
     assert resultado == {
-        "site-falso.io": servico.ResultadoDeFonte(
+        "site-falso.io": servico_busca.ResultadoDeFonte(
             dominio="site-falso.io", candidatos=[], indisponivel=True, motivo=str(excecao)
         ),
     }
@@ -1036,7 +1063,7 @@ async def test_buscar_por_site_com_variantes_dominios_none_cobre_todo_extratores
     extrator_b.dominio = "site-b.io"
     _configurar_extratores(monkeypatch, extrator_a, extrator_b)
 
-    resultado = await servico.buscar_por_site_com_variantes(
+    resultado = await servico_busca.buscar_por_site_com_variantes(
         sessionmaker, ["Anime X"], referencia="Anime X"
     )
 
@@ -1057,7 +1084,7 @@ async def test_buscar_por_site_com_variantes_dominios_explicito_limita_busca(
     extrator_b.dominio = "site-b.io"
     _configurar_extratores(monkeypatch, extrator_a, extrator_b)
 
-    resultado = await servico.buscar_por_site_com_variantes(
+    resultado = await servico_busca.buscar_por_site_com_variantes(
         sessionmaker, ["Anime X"], referencia="Anime X", dominios=["site-a.io"]
     )
 

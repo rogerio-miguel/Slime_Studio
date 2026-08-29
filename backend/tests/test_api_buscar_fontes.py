@@ -1,10 +1,10 @@
 """Testes de `GET /api/animes/buscar-fontes` (`api/rotas/animes.py` ->
 `api/servicos/busca.py::buscar_com_titulos_alternativos` ->
-`extractors/servico.py::buscar_em_com_variantes`). A busca é sequencial por
+`extractors/busca/servico.py::buscar_em_com_variantes`). A busca é sequencial por
 site, em duas fases ordenadas por custo (Fase A, fatia 3 de
 PLANO_PADRONIZACAO_FONTES.md): variantes puras de regex primeiro, termos de
 provedor externo (romaji/inglês) só se nenhum site achar nada com elas.
-`buscar_em_com_variantes` é monkeypatchado em `extractors.servico` (mesmo
+`buscar_em_com_variantes` é monkeypatchado em `extractors.busca.servico` (mesmo
 módulo que a rota chama via `servico_extractors`, então o patch vale pros
 dois nomes) — mesmo padrão de `test_api_animes.py` para resolução de fonte,
 um nível mais alto que `extrator.buscar`/`resiliencia.chamar` (essas duas
@@ -20,7 +20,7 @@ import pytest
 from httpx import AsyncClient
 
 from extractors.base import ResultadoBusca
-from extractors.servico import ResultadoDeFonte
+from extractors.busca.servico import ResultadoDeFonte
 from integrations.base import TitulosDeAnime
 
 
@@ -40,7 +40,7 @@ async def test_buscar_fontes_titulo_vazio_nao_chama_extrator(
     async def _falha_se_chamado(sessionmaker, dominio, variantes, *, referencia):
         raise AssertionError("buscar_em_com_variantes não deveria ser chamado para título vazio")
 
-    monkeypatch.setattr("extractors.servico.buscar_em_com_variantes", _falha_se_chamado)
+    monkeypatch.setattr("extractors.busca.servico.buscar_em_com_variantes", _falha_se_chamado)
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "   "})
 
@@ -66,7 +66,7 @@ async def test_buscar_fontes_falha_de_um_extrator_nao_derruba_resposta(
         return None
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
 
@@ -108,7 +108,7 @@ async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
         return None
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
 
@@ -144,7 +144,7 @@ async def test_buscar_fontes_site_indisponivel_ainda_expande_com_termo_de_proved
         return None
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -172,7 +172,7 @@ async def test_buscar_fontes_registrada_antes_do_catch_all_anime_id(
         return None
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     # As duas fontes disponíveis vêm vazias -> dispara a Fase 2 (expansão por
     # termo de provedor); sem este patch, bateria no AniList/Kitsu de verdade.
@@ -220,7 +220,7 @@ async def test_buscar_fontes_expande_com_titulo_alternativo_quando_termo_digitad
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -254,7 +254,7 @@ async def test_buscar_fontes_escopo_ausente_e_padrao_explicito_sao_identicos(
         return _fonte(dominio), None
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
 
     sem_escopo = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})
@@ -283,7 +283,7 @@ async def test_buscar_fontes_padrao_lista_dominio_nao_consultado_quando_primeiro
         return _fonte(dominio, candidato), None
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})
@@ -324,10 +324,10 @@ async def test_buscar_fontes_escopo_todas_usa_caminho_paralelo_e_preserva_domini
         raise AssertionError("escopo=todas não deveria usar o motor sequencial por site")
 
     monkeypatch.setattr(
-        "extractors.servico.buscar_por_site_com_variantes",
+        "extractors.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
-    monkeypatch.setattr("extractors.servico.buscar_em_com_variantes", _falha_se_chamado)
+    monkeypatch.setattr("extractors.busca.servico.buscar_em_com_variantes", _falha_se_chamado)
 
     resposta = await cliente.get(
         "/api/animes/buscar-fontes", params={"titulo": "naruto", "escopo": "todas"}

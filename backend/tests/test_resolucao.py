@@ -478,6 +478,36 @@ async def test_candidatos_com_match_exato_desambigua_automaticamente(sessionmake
     )
 
 
+async def test_variante_curta_devolve_card_de_outro_anime_nao_resolve_o_site(
+    sessionmaker, monkeypatch
+):
+    """Regressão da escada de prefixos crescentes (`variantes_de_busca` sonda
+    pela 1ª palavra): buscando "Naruto Shippuden", o site só devolve o card
+    "Naruto" — outro anime que compartilha o prefixo. `_desambiguar` aceitaria
+    esse único candidato pelo atalho de item único; `_buscar_variantes` filtra
+    por `corresponde_ao_titulo` antes (card de 1 palavra não valida referência
+    de 2+ palavras) e o site não vira fonte."""
+    extrator = _ExtratorFalso(
+        "animefire.io",
+        candidatos=[
+            ResultadoBusca(titulo_exibicao="Naruto", identificador="naruto", url="http://x/naruto")
+        ],
+    )
+    monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
+    anime = await _criar_anime(sessionmaker, "Naruto Shippuden")
+
+    resultado = await resolucao.resolver_fonte_do_anime(
+        sessionmaker, anime, VersaoEpisodio.LEGENDADO
+    )
+
+    assert resultado == resolucao.VersaoIndisponivel(versao=VersaoEpisodio.LEGENDADO)
+    async with sessionmaker() as sessao:
+        fonte = await sessao.get(
+            FonteAnime, (anime.id, "animefire.io", VersaoDeFonte.NAO_DIFERENCIADA)
+        )
+        assert fonte is None
+
+
 @pytest.mark.parametrize(
     ("versao_pedida", "versao_de_fonte"),
     [
@@ -682,30 +712,35 @@ async def test_site_que_diferencia_confirmacao_necessaria_restrita_a_particao_pe
 ):
     """Partição LEGENDADO é ambígua (2 candidatos, sem match exato); partição
     DUBLADO tem um único candidato — a `ConfirmacaoNecessaria` só deve trazer
-    os candidatos LEGENDADO, sem misturar o DUBLADO."""
+    os candidatos LEGENDADO, sem misturar o DUBLADO.
+
+    Os 3 candidatos correspondem ao título por `corresponde_ao_titulo` (o
+    filtro de `_buscar_variantes` não pré-resolve a ambiguidade), mas nenhum
+    identificador bate exato com o slug do anime — `_desambiguar_por_versao`
+    devolve `None` dentro da partição pedida."""
     candidatos = [
         ResultadoBusca(
-            titulo_exibicao="Slime Datta Ken",
-            identificador="slime-a",
+            titulo_exibicao="Slime Datta Ken 1st Season",
+            identificador="slime-datta-ken-1st-season",
             url="x",
             versao=VersaoEpisodio.LEGENDADO,
         ),
         ResultadoBusca(
-            titulo_exibicao="Slime Datta Ken 2",
-            identificador="slime-b",
+            titulo_exibicao="Slime Datta Ken 2nd Season",
+            identificador="slime-datta-ken-2nd-season",
             url="y",
             versao=VersaoEpisodio.LEGENDADO,
         ),
         ResultadoBusca(
             titulo_exibicao="Slime Datta Ken Dublado",
-            identificador="slime-dublado",
+            identificador="slime-datta-ken-dublado",
             url="z",
             versao=VersaoEpisodio.DUBLADO,
         ),
     ]
     extrator = _ExtratorFalso("animesdrive.online", candidatos=candidatos, diferencia_versao=True)
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
-    anime = await _criar_anime(sessionmaker, "Slime Datta Ken 3")  # não bate com nenhum candidato
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
 
     resultado = await resolucao.resolver_fonte_do_anime(
         sessionmaker, anime, VersaoEpisodio.LEGENDADO
