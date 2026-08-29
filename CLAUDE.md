@@ -79,8 +79,8 @@ Use quando **todas** forem verdadeiras:
 - Segue padrão já estabelecido no projeto — não há decisão de design a tomar.
 - O contexto necessário já está na conversa ou em arquivos referenciados via `@arquivo`.
 
-Nesse caminho a sessão principal executa direto, sem `explorer`, sem `architect` e sem `reviewer`.
-Orquestrar uma tarefa de 3 linhas custa três contextos onde um resolveria.
+Nesse caminho a sessão principal executa direto, sem `explorer` e sem `architect`.
+Orquestrar uma tarefa de 3 linhas custa contextos extras onde um resolveria.
 
 ### Caminho orquestrado
 Qualquer coisa que não passe no teste acima. Sequência:
@@ -94,22 +94,22 @@ Qualquer coisa que não passe no teste acima. Sequência:
    `architect` e pular direto ao `implementer`, o critério objetivo decide, não a cautela.
 3. **`implementer`** — sempre. Recebe o plano do `architect` quando houve um, ou a instrução
    direta quando não houve. Repasse o contexto que você já tem em vez de deixá-lo redescobrir.
+   Não existe um `reviewer` separado no kit: o `implementer` se autorrevisa o próprio diff
+   (edge cases, segurança, validação de entrada) antes de reportar concluído — poupa a chamada
+   extra que seria um segundo subagente recarregando o mesmo contexto do zero.
    Escopo grande demais numa chamada só é o mesmo problema de leitura direta, um nível abaixo:
    "implemente a Fase X inteira" num único `implementer` acumula contexto turno a turno igual ao
    loop principal faria sem delegar (medido neste projeto: um caso real chegou a 354 turnos / 53M
    tokens numa única cadeia). Fatie por unidade natural do trabalho (arquivo, rota, endpoint,
-   componente) e trate cada fatia como uma chamada própria, com o `reviewer` entrando entre elas —
-   não como um pacote só a validar no fim.
-4. **`reviewer`** — sempre neste caminho, sobre o diff.
+   componente) e trate cada fatia como uma chamada própria — não como um pacote só a validar no fim.
 
 ### Falhas e reentrada
 - `implementer` sinalizou escopo ambíguo → volte ao passo 2 (`architect`), não improvise a decisão.
 - `implementer` falhou uma tentativa direta em bug → agora o `architect` é justificado (causa-raiz).
-- `reviewer` apontou problema → volte ao `implementer` com os achados; só re-invoque o `reviewer`
-  se a correção mudou o desenho, não a cada ajuste pontual.
-- Rodada de correção depois do `reviewer` → prefira abrir um `implementer` novo com prompt focado
-  só no diff/achados, em vez de retomar o mesmo agente da implementação original. Retomar recarrega
-  o histórico inteiro a cada vez e é o que faz o custo de uma tarefa grande crescer sem limite.
+- Rodada de correção depois de um `implementer` já concluído → prefira abrir um `implementer` novo
+  com prompt focado só no diff/achado pontual, em vez de retomar o mesmo agente da implementação
+  original. Retomar recarrega o histórico inteiro a cada vez e é o que faz o custo de uma tarefa
+  grande crescer sem limite.
 
 ---
 
@@ -127,4 +127,6 @@ A integração `claude-in-chrome` só deve ser usada para inspeção/depuração
 
 ---
 
-_Gerado pela skill `bootstrap` do kit `claude-toolkit` (versão 0.3.0) em 2026-08-10._
+_Gerado pela skill `bootstrap` do kit `claude-toolkit` (versão 0.3.0) em 2026-08-10.
+Seção 6 (Orquestração) atualizada manualmente em 2026-08-25 para o pipeline sem `reviewer`
+separado (fundido ao `implementer` na v0.7.0 do kit)._
