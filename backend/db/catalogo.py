@@ -179,6 +179,28 @@ async def atualizar_lancamentos_em_lote(
         await sessao.commit()
 
 
+async def atualizar_contagem_na_fonte(
+    sessionmaker: _SessionMaker, anime_id: int, *, total: int, dominio: str
+) -> None:
+    """Grava o resultado de uma sondagem BEM-SUCEDIDA da fonte real
+    (`api/servicos/sondagem.py`): quantos episódios o site expõe e qual site
+    foi. `fonte_verificada_em` recebe `now(UTC)` — é o carimbo que o TTL da
+    próxima sondagem consulta. Semântica separada de `_aplicar_lancamento_no_anime`
+    de propósito: origem (fonte real x AniList) e ciclo de vida diferentes.
+
+    Anime inexistente é no-op silencioso — mesma razão de `atualizar_lancamento`:
+    a linha pode ter sumido entre a sondagem e a escrita.
+    """
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.episodios_na_fonte = total
+        anime.fonte_verificada_dominio = dominio
+        anime.fonte_verificada_em = datetime.now(UTC)
+        await sessao.commit()
+
+
 async def localizar_animes_por_slug(
     sessionmaker: _SessionMaker, slugs: list[str]
 ) -> dict[str, int]:
