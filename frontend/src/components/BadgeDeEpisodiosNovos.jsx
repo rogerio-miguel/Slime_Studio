@@ -1,34 +1,27 @@
-// Pill de contagem de "episódios novos" sobre o card do anime (canto
-// superior ESQUERDO — o superior direito é do botão de remover em
-// AnimeCard.jsx). A origem do número já foi resolvida no backend
-// (`GET /api/animes` → `episodios_novos`): quantos episódios a FONTE real do
-// anime expõe além dos já capturados, sondada em background e servida de
-// cache — o `status_lancamento` da AniList é só o filtro (badge só em anime
-// EM_LANCAMENTO). Aqui a única regra é "tem número positivo → mostra".
-// `quantidade` ausente (card alimentado pelo feed "em alta", que não carrega
-// esse campo), zero, `null` ou negativa não renderiza nada.
+// Aviso "episódio novo na fonte" sobre o card do anime na galeria. Mesmo
+// tratamento visual do título do card (AnimeCard.jsx): texto branco em negrito
+// sobre um degradê preto — só que no TOPO do card (o título é embaixo). Sem
+// pill: o degradê some para transparente, igual ao do título. `pointer-events-
+// none` porque a faixa cobre o terço superior do card e não pode roubar o
+// clique do <Link>/<button> por baixo.
 //
-// `className` sobrescreve só o posicionamento (default: absoluto no canto,
-// pro AnimeCard) — `PaginaDoAnime.jsx` passa "" e posiciona o badge inline,
-// ao lado do <h1>. Acessibilidade: o número visível é `aria-hidden` e o
-// texto real ("3 episódios novos") vai num <span class="sr-only"> —
-// `aria-label` em <span> sem `role` não é anunciado de forma confiável.
-export default function BadgeDeEpisodiosNovos({
-  quantidade,
-  className = 'absolute left-2 top-2 z-10',
-}) {
+// A origem já foi resolvida no backend (`GET /api/animes` → `episodios_novos`):
+// quantos episódios a FONTE real do anime expõe além da fronteira já capturada,
+// sondada em background e servida de cache — o `status_lancamento` da AniList é
+// só o filtro (só anime EM_LANCAMENTO). Aqui a única regra é "número positivo →
+// mostra"; o texto não expõe a quantidade (decisão de produto), só sinaliza a
+// novidade. `quantidade` ausente (card do feed "em alta", que não carrega esse
+// campo), zero, `null` ou negativa não renderiza nada. Usada só na galeria — a
+// página do anime não mostra este aviso.
+export default function BadgeDeEpisodiosNovos({ quantidade }) {
   if (!quantidade || quantidade < 1) return null;
 
-  const plural = quantidade > 1 ? 's' : '';
+  const texto =
+    quantidade > 1 ? 'Novos episódios disponíveis' : 'Novo episódio disponível';
 
   return (
-    <span
-      className={`${className} inline-flex items-center rounded-full bg-neon px-2 py-0.5 text-xs font-semibold text-black`}
-    >
-      <span aria-hidden="true">{quantidade}</span>
-      <span className="sr-only">
-        {quantidade} episódio{plural} novo{plural}
-      </span>
+    <span className="pointer-events-none absolute inset-x-0 top-0 z-10 rounded-t-xl bg-gradient-to-b from-black/90 via-black/50 to-transparent px-4 pb-6 pt-3 text-sm font-semibold leading-snug text-white">
+      {texto}
     </span>
   );
 }

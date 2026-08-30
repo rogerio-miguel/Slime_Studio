@@ -44,6 +44,13 @@ import BadgeDeEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 // baixo; opacidade some por padrão e só aparece no hover do card
 // (`group-hover`) ou no foco do próprio botão (`focus-visible`) — nunca com
 // `hidden`/DOM removido, senão ficaria inacessível por Tab.
+//
+// Elevação no hover/foco (`-translate-y-1`): mora no WRAPPER, não no
+// Link/button. O título e seu degradê são filhos do Link e acompanhariam a
+// animação de qualquer jeito, mas a badge e o botão de remover são irmãos —
+// se o transform ficasse no Link, eles ficariam parados enquanto o resto do
+// card sobe. `focus-within` (não `focus-visible`) porque o foco pode cair no
+// Link OU no botão de remover, e os dois devem elevar o card inteiro.
 export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = false }) {
   const idCatalogado = anime.id ?? anime.anime_id ?? null;
   const capa = anime.capa_path ?? anime.capa_url ?? null;
@@ -55,7 +62,13 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
   // padrão — sem isto, o card de item ainda não catalogado (variante
   // `<button>`) encolhia pro tamanho do título em vez do slot do grid.
   const classes =
-    'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl border border-neon-soft bg-surface p-4 text-left outline-none transition-all duration-200 hover:-translate-y-1 hover:border-neon hover:bg-surface-hover focus-visible:-translate-y-1 focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon';
+    'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl border border-neon-soft bg-surface p-4 text-left outline-none transition-all duration-200 hover:border-neon hover:bg-surface-hover focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon';
+
+  // Elevação no wrapper (ver comentário do bloco acima): assim badge e botão
+  // de remover, que são irmãos do Link/button, sobem junto com o card. Card
+  // desabilitado (`<button disabled>`) não eleva.
+  const wrapperBase = 'group relative transition-transform duration-200';
+  const wrapper = `${wrapperBase} hover:-translate-y-1 focus-within:-translate-y-1`;
 
   const conteudo = (
     <>
@@ -101,7 +114,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
 
   if (idCatalogado != null) {
     return (
-      <div className="group relative">
+      <div className={wrapper}>
         <Link to={`/anime/${idCatalogado}`} className={classes}>
           {conteudo}
         </Link>
@@ -112,7 +125,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
   }
 
   return (
-    <div className="group relative">
+    <div className={desabilitado ? wrapperBase : wrapper}>
       <button
         type="button"
         onClick={aoAtivar}

@@ -98,8 +98,8 @@ async def versoes_de_sondagem_por_anime(
     `versao_confirmada_mais_recente`.
 
     Roda na sessão da request (não abre outra), igual
-    `lancamentos.contar_capturados_por_anime` — `agendar_sondagens` consome o
-    dict pronto, sem I/O. Anime sem linha em `FonteAnime` não aparece no
+    `lancamentos.maior_numero_capturado_por_anime` — `agendar_sondagens` consome
+    o dict pronto, sem I/O. Anime sem linha em `FonteAnime` não aparece no
     resultado.
     """
     lista_ids = list(ids)
@@ -195,10 +195,11 @@ async def _sondar_e_persistir(
     novo.
 
     `total` conta apenas números REGULAR distintos (`ep.numero is not None`,
-    deduplicado): simétrico com `lancamentos.contar_capturados_por_anime`
-    (`COUNT(DISTINCT numero)` com `tipo == REGULAR`) — rótulos não-numéricos
-    ("Especial", "OVA 2") e o mesmo número repetido ("7"/"07") inflariam o badge
-    de forma permanente.
+    deduplicado): mesmo recorte `tipo == REGULAR` de
+    `lancamentos.maior_numero_capturado_por_anime` (o outro lado do cálculo do
+    badge) — rótulos não-numéricos ("Especial", "OVA 2") e o mesmo número
+    repetido ("7"/"07") inflariam a contagem da fonte, e com ela o badge, de
+    forma permanente.
     """
     try:
         async with sessionmaker() as sessao:

@@ -141,9 +141,8 @@ class AnimeDetalheSaida(BaseModel):
     # versao_episodio_da_fonte`). `None` quando o anime não tem nenhuma
     # linha em `FonteAnime` ainda.
     versao_confirmada_mais_recente: VersaoEpisodio | None
-    # Detector de episódios novos (badge no catálogo) — ver `AnimeSaida`.
+    # Estado de lançamento da AniList (1:1 com a coluna homônima).
     status_lancamento: StatusLancamento | None = None
-    episodios_novos: int = 0
 
 
 # Parâmetro `escopo` de `GET /api/animes/buscar-fontes` (D-B1,

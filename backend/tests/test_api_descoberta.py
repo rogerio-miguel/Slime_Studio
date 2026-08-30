@@ -672,8 +672,6 @@ async def test_obter_anime_refresh_lazy_falho_da_anilist_nao_propaga(
     with caplog.at_level("WARNING"):
         resposta = await cliente.get(f"/api/animes/{anime_id}")
         assert resposta.status_code == 200
-        # dado velho preservado no cálculo: 4 na fonte - 0 capturados
-        assert resposta.json()["episodios_novos"] == 4
         # `gather` sem `return_exceptions` — re-levantaria se a corotina propagasse
         await _drenar_refreshs_de_lancamento()
 
