@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Config
 from core.enums import ESTADOS_EM_EXECUCAO, StatusEpisodio
 from core.erros import JobEmExecucao
-from core.midia import diretorio_do_episodio
+from core.midia import diretorio_do_episodio, podar_diretorios_do_anime
 from extractors.download import caminho_raw
 from models.anime import Anime
 from models.episodio import Episodio
@@ -157,7 +157,11 @@ def remover_arquivos_do_episodio(config: Config, anime_slug: str, episodio: Epis
     Pública porque três operações chamam: `remover_episodio`/`remover_anime`
     (linha do banco é apagada em seguida) e `liberar_episodio`/
     `api/servicos/jobs.py::criar_job_site` (linha do `Episodio` sobrevive,
-    só os arquivos em disco somem)."""
+    só os arquivos em disco somem).
+
+    Ao final poda `hls/<slug>` e `raw/<slug>` se ficaram vazios — no laço de
+    `remover_anime` a poda roda a cada episódio e só remove a pasta-mãe quando
+    a última subpasta sai, sem precisar de uma passada extra depois do laço."""
     if episodio.hls_path is not None:
         diretorio_hls = diretorio_do_episodio(
             config.media_root, anime_slug, episodio.numero, episodio.tipo, episodio.versao
@@ -168,3 +172,5 @@ def remover_arquivos_do_episodio(config: Config, anime_slug: str, episodio: Epis
         config.media_root, anime_slug, episodio.numero, episodio.tipo, episodio.versao
     )
     caminho_bruto.unlink(missing_ok=True)
+
+    podar_diretorios_do_anime(config.media_root, anime_slug)
