@@ -10,7 +10,6 @@ import {
   removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
-import BadgeDeEpisodiosNovos from '../components/BadgeDeEpisodiosNovos.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
@@ -459,20 +458,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               />
             )}
             <div>
-              <div className="mb-3 flex flex-wrap items-center gap-3">
-                <h1
-                  ref={focoTitulo}
-                  tabIndex={-1}
-                  className="text-3xl font-semibold text-white outline-none sm:text-4xl md:text-5xl"
-                >
-                  {anime?.titulo ?? `Anime #${animeId}`}
-                  {anime?.ano ? ` (${anime.ano})` : ''}
-                </h1>
-                {/* Inline ao lado do título — o cabeçalho não é `relative` e
-                    posicionar absoluto brigaria com a capa/sinopse. Mesmo
-                    componente do card, só sem o posicionamento de canto. */}
-                <BadgeDeEpisodiosNovos quantidade={anime?.episodios_novos} className="" />
-              </div>
+              <h1
+                ref={focoTitulo}
+                tabIndex={-1}
+                className="mb-3 text-3xl font-semibold text-white outline-none sm:text-4xl md:text-5xl"
+              >
+                {anime?.titulo ?? `Anime #${animeId}`}
+                {anime?.ano ? ` (${anime.ano})` : ''}
+              </h1>
               {anime?.sinopse && (
                 <p className="max-w-2xl text-sm text-ink-muted sm:text-base">{anime.sinopse}</p>
               )}
