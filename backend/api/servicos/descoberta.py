@@ -92,10 +92,14 @@ async def listar_em_alta_com_catalogo(
     return pares
 
 
-def _lancamento_esta_velho(atualizado_em: datetime | None, limite: datetime) -> bool:
-    """`True` quando o carimbo do último refresh de lançamento é nulo ou anterior
-    a `limite`. `ColunaDataHoraUTC` devolve datetime *aware*, mas um valor naive
-    vindo direto do SQLite é normalizado para UTC antes de comparar."""
+def carimbo_esta_velho(atualizado_em: datetime | None, limite: datetime) -> bool:
+    """`True` quando o carimbo `atualizado_em` é nulo ou anterior a `limite`.
+    `ColunaDataHoraUTC` devolve datetime *aware*, mas um valor naive vindo direto
+    do SQLite é normalizado para UTC antes de comparar.
+
+    Pública (sem `_`) porque `api/servicos/sondagem.py` reusa a mesma checagem de
+    TTL para `Anime.fonte_verificada_em` — mesma semântica de "carimbo velho ou
+    ausente", origem do carimbo diferente."""
     if atualizado_em is None:
         return True
     if atualizado_em.tzinfo is None:
@@ -134,7 +138,7 @@ async def _refrescar_lancamentos_do_cruzamento(
         velhos = {
             anime_id: lancamento
             for anime_id, lancamento in do_feed.items()
-            if _lancamento_esta_velho(carimbo_por_id.get(anime_id), limite)
+            if carimbo_esta_velho(carimbo_por_id.get(anime_id), limite)
         }
         await atualizar_lancamentos_em_lote(sessionmaker, velhos)
     except SQLAlchemyError as excecao:
@@ -161,7 +165,7 @@ def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> 
     if anime.status_lancamento not in (StatusLancamento.EM_LANCAMENTO, None):
         return
     limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
-    if not _lancamento_esta_velho(anime.lancamento_atualizado_em, limite):
+    if not carimbo_esta_velho(anime.lancamento_atualizado_em, limite):
         return
 
     try:
