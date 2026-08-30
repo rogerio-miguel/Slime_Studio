@@ -4,19 +4,24 @@ cruzamento do feed "em alta" (`api/servicos/descoberta.py`). Arquivo SQLite
 real (mesmo padrão de `tests/test_fila.py`) — WAL não funciona em `:memory:`.
 """
 
+import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
+from core.enums import StatusLancamento
 from db.catalogo import (
     aplicar_metadados,
+    atualizar_lancamento,
+    atualizar_lancamentos_em_lote,
     localizar_animes_por_anilist_id,
     localizar_animes_por_slug,
 )
 from db.engine import criar_engine, criar_sessionmaker
-from integrations.base import MetadadosDeAnime
+from integrations.base import LancamentoDeAnime, MetadadosDeAnime
 from models.anime import Anime
 from models.base import Base
 
@@ -139,6 +144,228 @@ async def test_aplicar_metadados_rollback_isolado_em_anilist_id_duplicado(
         assert outro.anilist_id == 1
 
     assert "anilist_id" in caplog.text
+
+
+async def test_aplicar_metadados_com_lancamento_grava_campos_de_lancamento(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+    proximo_em = datetime(2026, 10, 1, 18, 30, tzinfo=UTC)
+
+    await aplicar_metadados(
+        sessionmaker,
+        anime_id,
+        MetadadosDeAnime(
+            capa_url="https://img/capa.jpg",
+            sinopse="Sinopse.",
+            anilist_id=10,
+            kitsu_id=None,
+            lancamento=LancamentoDeAnime(
+                status=StatusLancamento.EM_LANCAMENTO,
+                total_episodios=24,
+                proximo_ep_numero=9,
+                proximo_ep_em=proximo_em,
+            ),
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        # Metadado comum entrou...
+        assert anime.capa_path == "https://img/capa.jpg"
+        # ...e o bloco de lançamento também.
+        assert anime.status_lancamento == StatusLancamento.EM_LANCAMENTO
+        assert anime.proximo_ep_numero == 9
+        assert anime.proximo_ep_em == proximo_em
+        assert anime.total_episodios_anilist == 24
+        assert anime.lancamento_atualizado_em is not None
+
+
+async def test_aplicar_metadados_sem_lancamento_nao_toca_colunas_de_lancamento(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(
+        sessionmaker,
+        titulo="Slime",
+        slug="slime",
+        status_lancamento=StatusLancamento.HIATO,
+        proximo_ep_numero=3,
+    )
+
+    await aplicar_metadados(
+        sessionmaker,
+        anime_id,
+        MetadadosDeAnime(
+            capa_url="https://img/capa.jpg", sinopse=None, anilist_id=None, kitsu_id=None
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.capa_path == "https://img/capa.jpg"
+        assert anime.status_lancamento == StatusLancamento.HIATO
+        assert anime.proximo_ep_numero == 3
+        assert anime.lancamento_atualizado_em is None
+
+
+# --- atualizar_lancamento / atualizar_lancamentos_em_lote ---
+
+
+async def test_atualizar_lancamento_grava_campos_em_linha_nova(sessionmaker: _SessionMaker):
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+    proximo_em = datetime(2026, 9, 5, 15, 0, tzinfo=UTC)
+
+    await atualizar_lancamento(
+        sessionmaker,
+        anime_id,
+        LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=24,
+            proximo_ep_numero=7,
+            proximo_ep_em=proximo_em,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.status_lancamento == StatusLancamento.EM_LANCAMENTO
+        assert anime.proximo_ep_numero == 7
+        assert anime.proximo_ep_em == proximo_em
+        assert anime.total_episodios_anilist == 24
+        assert anime.lancamento_atualizado_em is not None
+
+
+async def test_atualizar_lancamento_zera_proximo_ep_na_transicao_para_finalizado(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(
+        sessionmaker,
+        titulo="Slime",
+        slug="slime",
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        proximo_ep_numero=5,
+        proximo_ep_em=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+    )
+
+    await atualizar_lancamento(
+        sessionmaker,
+        anime_id,
+        LancamentoDeAnime(
+            status=StatusLancamento.FINALIZADO,
+            total_episodios=12,
+            proximo_ep_numero=None,
+            proximo_ep_em=None,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        # Sobrescrita real: os None entram, o badge não fica preso no ep 5.
+        assert anime.status_lancamento == StatusLancamento.FINALIZADO
+        assert anime.proximo_ep_numero is None
+        assert anime.proximo_ep_em is None
+        assert anime.total_episodios_anilist == 12
+
+
+async def test_atualizar_lancamento_nao_apaga_total_episodios_conhecido(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(
+        sessionmaker, titulo="Slime", slug="slime", total_episodios_anilist=24
+    )
+
+    await atualizar_lancamento(
+        sessionmaker,
+        anime_id,
+        LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=None,
+            proximo_ep_numero=3,
+            proximo_ep_em=None,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.total_episodios_anilist == 24
+
+
+async def test_atualizar_lancamento_carimba_mesmo_sem_mudanca_de_valor(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+    lancamento = LancamentoDeAnime(
+        status=StatusLancamento.EM_LANCAMENTO,
+        total_episodios=24,
+        proximo_ep_numero=7,
+        proximo_ep_em=datetime(2026, 9, 5, 15, 0, tzinfo=UTC),
+    )
+
+    await atualizar_lancamento(sessionmaker, anime_id, lancamento)
+    async with sessionmaker() as sessao:
+        primeiro = (await sessao.get(Anime, anime_id)).lancamento_atualizado_em
+
+    await asyncio.sleep(0.001)
+    await atualizar_lancamento(sessionmaker, anime_id, lancamento)
+    async with sessionmaker() as sessao:
+        segundo = (await sessao.get(Anime, anime_id)).lancamento_atualizado_em
+
+    assert segundo > primeiro
+
+
+async def test_atualizar_lancamento_anime_inexistente_nao_levanta(sessionmaker: _SessionMaker):
+    await atualizar_lancamento(
+        sessionmaker,
+        999999,
+        LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=None,
+            proximo_ep_numero=1,
+            proximo_ep_em=None,
+        ),
+    )
+
+
+async def test_atualizar_lancamentos_em_lote_aplica_valores_por_anime(sessionmaker: _SessionMaker):
+    id_com_total = await _criar_anime(sessionmaker, titulo="A", slug="a")
+    id_sem_total = await _criar_anime(
+        sessionmaker, titulo="B", slug="b", total_episodios_anilist=13
+    )
+
+    await atualizar_lancamentos_em_lote(
+        sessionmaker,
+        {
+            id_com_total: LancamentoDeAnime(
+                status=StatusLancamento.EM_LANCAMENTO,
+                total_episodios=24,
+                proximo_ep_numero=4,
+                proximo_ep_em=None,
+            ),
+            id_sem_total: LancamentoDeAnime(
+                status=StatusLancamento.FINALIZADO,
+                total_episodios=None,
+                proximo_ep_numero=None,
+                proximo_ep_em=None,
+            ),
+        },
+    )
+
+    async with sessionmaker() as sessao:
+        com_total = await sessao.get(Anime, id_com_total)
+        assert com_total.status_lancamento == StatusLancamento.EM_LANCAMENTO
+        assert com_total.proximo_ep_numero == 4
+        assert com_total.total_episodios_anilist == 24
+        assert com_total.lancamento_atualizado_em is not None
+
+        sem_total = await sessao.get(Anime, id_sem_total)
+        assert sem_total.status_lancamento == StatusLancamento.FINALIZADO
+        assert sem_total.proximo_ep_numero is None
+        assert sem_total.total_episodios_anilist == 13  # preservado
+        assert sem_total.lancamento_atualizado_em is not None
+
+
+async def test_atualizar_lancamentos_em_lote_dict_vazio_nao_levanta(sessionmaker: _SessionMaker):
+    assert await atualizar_lancamentos_em_lote(sessionmaker, {}) is None
 
 
 # --- lookups em lote (cruzamento do feed "em alta") ---

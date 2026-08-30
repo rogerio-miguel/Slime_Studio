@@ -81,6 +81,22 @@ class StatusEpisodio(StrEnum):
     LIBERADO = "liberado"
 
 
+class StatusLancamento(StrEnum):
+    """Estado de lançamento de um `Anime` — espelha `MediaStatus` da AniList.
+
+    Alimenta o detector de episódios novos (badge no catálogo): só animes em
+    `EM_LANCAMENTO` recebem o refresh oportunista de `proximo_ep_*`. Persistido
+    como name (não value), igual aos demais enums de `models/` (`SAEnum(...,
+    native_enum=False)`).
+    """
+
+    EM_LANCAMENTO = "em_lancamento"
+    FINALIZADO = "finalizado"
+    NAO_LANCADO = "nao_lancado"
+    CANCELADO = "cancelado"
+    HIATO = "hiato"
+
+
 # Estados que contam como "em andamento" para fins de reclaim por heartbeat
 # (db/fila.py: reciclar_jobs_orfaos). Um job travado em qualquer um destes
 # estados, com heartbeat velho, volta para `na_fila`.

@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 
-from core.enums import StatusEpisodio, StatusJob, TipoEpisodio, VersaoEpisodio
+from core.enums import StatusEpisodio, StatusJob, StatusLancamento, TipoEpisodio, VersaoEpisodio
 
 # --- jobs (api/rotas/jobs.py) ---
 
@@ -97,6 +97,12 @@ class AnimeSaida(BaseModel):
     ano: int | None
     capa_path: str | None
     criado_em: datetime
+    # Detector de episódios novos (badge no catálogo). Ambos com default: animes
+    # sem refresh de lançamento ainda têm as colunas NULL e a resposta não pode
+    # quebrar. `status_lancamento` sai 1:1 da coluna homônima; `episodios_novos`
+    # é derivado (não é coluna) em `api/servicos/lancamentos.py::episodios_novos`.
+    status_lancamento: StatusLancamento | None = None
+    episodios_novos: int = 0
 
 
 class AnimeEmAltaSaida(BaseModel):
@@ -135,6 +141,9 @@ class AnimeDetalheSaida(BaseModel):
     # versao_episodio_da_fonte`). `None` quando o anime não tem nenhuma
     # linha em `FonteAnime` ainda.
     versao_confirmada_mais_recente: VersaoEpisodio | None
+    # Detector de episódios novos (badge no catálogo) — ver `AnimeSaida`.
+    status_lancamento: StatusLancamento | None = None
+    episodios_novos: int = 0
 
 
 # Parâmetro `escopo` de `GET /api/animes/buscar-fontes` (D-B1,

@@ -7,22 +7,41 @@ traduz para schemas.
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
 from core.texto import slugificar
 from db.catalogo import (
     aplicar_metadados,
+    atualizar_lancamento,
+    atualizar_lancamentos_em_lote,
     localizar_animes_por_anilist_id,
     localizar_animes_por_slug,
 )
 from integrations import servico
 from integrations.base import AnimeEmAlta, MetadadosDeAnime
+from models.anime import Anime
 
 logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
+
+# F4 — refresh oportunista do estado de lançamento. Sem scheduler/cron (decisão
+# de produto): o dado só é atualizado em dois momentos de "carona" — o cruzamento
+# do feed "em alta" (F4a, de graça: o feed já traz o bloco fresco da AniList) e a
+# abertura da página de um anime em lançamento com dado mais velho que isto (F4b,
+# busca lazy fire-and-forget). Compartilhado pelos dois caminhos.
+_TTL_LANCAMENTO_S = 6 * 3600
+
+# Referência forte às buscas lazy de F4b em andamento: (1) deduplica aberturas
+# concorrentes da mesma página e (2) impede o GC de coletar uma `Task`
+# fire-and-forget antes de ela terminar. A entrada sai no `add_done_callback`.
+_refreshs_de_lancamento_em_voo: dict[int, asyncio.Task] = {}
 
 # Teto do enriquecimento best-effort no cadastro manual — a criação do anime
 # é o objetivo primário; este valor é a rede de segurança que garante que o
@@ -68,7 +87,116 @@ async def listar_em_alta_com_catalogo(
         if anime_id is None:
             anime_id = por_slug.get(slugificar(item.titulo_romaji))
         pares.append((item, anime_id))
+
+    await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
     return pares
+
+
+def _lancamento_esta_velho(atualizado_em: datetime | None, limite: datetime) -> bool:
+    """`True` quando o carimbo do último refresh de lançamento é nulo ou anterior
+    a `limite`. `ColunaDataHoraUTC` devolve datetime *aware*, mas um valor naive
+    vindo direto do SQLite é normalizado para UTC antes de comparar."""
+    if atualizado_em is None:
+        return True
+    if atualizado_em.tzinfo is None:
+        atualizado_em = atualizado_em.replace(tzinfo=UTC)
+    return atualizado_em < limite
+
+
+async def _refrescar_lancamentos_do_cruzamento(
+    sessionmaker: _SessionMaker, pares: list[tuple[AnimeEmAlta, int | None]]
+) -> None:
+    """F4a — refresh "de graça": para cada item do feed que já traz `lancamento`
+    e cruzou com um anime catalogado, sobrescreve as colunas de lançamento do
+    anime quando o dado local está velho (> `_TTL_LANCAMENTO_S`) ou ausente. O
+    bloco vem do próprio feed "em alta" — nenhuma chamada de rede extra.
+
+    Best-effort de ponta a ponta: falha de leitura ou de escrita vira `warning` e
+    nunca derruba `GET /api/animes/em-alta` (o cruzamento já foi montado)."""
+    do_feed = {
+        anime_id: item.lancamento
+        for item, anime_id in pares
+        if anime_id is not None and item.lancamento is not None
+    }
+    if not do_feed:
+        return
+
+    try:
+        async with sessionmaker() as sessao:
+            resultado = await sessao.execute(
+                select(Anime.id, Anime.lancamento_atualizado_em).where(
+                    Anime.id.in_(list(do_feed))
+                )
+            )
+            carimbo_por_id = dict(resultado.all())
+
+        limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
+        velhos = {
+            anime_id: lancamento
+            for anime_id, lancamento in do_feed.items()
+            if _lancamento_esta_velho(carimbo_por_id.get(anime_id), limite)
+        }
+        await atualizar_lancamentos_em_lote(sessionmaker, velhos)
+    except SQLAlchemyError as excecao:
+        logger.warning(
+            "refresh oportunista de lançamento no cruzamento do feed falhou "
+            "(%d candidato(s)): %s",
+            len(do_feed),
+            excecao,
+        )
+
+
+def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> None:
+    """F4b — dispara, sem bloquear, uma busca lazy do estado de lançamento à
+    AniList quando a página de um anime em lançamento é aberta com dado velho.
+    `GET /api/animes/{id}` chama e segue: o resultado entra no banco para a
+    próxima leitura, não para esta.
+
+    No-op silencioso (nenhuma destas condições é anormal, então sem log) quando:
+    o anime não tem `anilist_id`; o status não é `EM_LANCAMENTO` nem nulo
+    (`FINALIZADO`/`CANCELADO` não ganham episódios); o dado ainda está dentro do
+    TTL; já há uma busca em voo para este anime; ou não há event loop rodando."""
+    if anime.anilist_id is None:
+        return
+    if anime.status_lancamento not in (StatusLancamento.EM_LANCAMENTO, None):
+        return
+    limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
+    if not _lancamento_esta_velho(anime.lancamento_atualizado_em, limite):
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    anime_id = anime.id
+    if anime_id in _refreshs_de_lancamento_em_voo:
+        return
+
+    anilist_id = anime.anilist_id
+    tarefa = loop.create_task(_buscar_e_persistir_lancamento(sessionmaker, anime_id, anilist_id))
+    _refreshs_de_lancamento_em_voo[anime_id] = tarefa
+    tarefa.add_done_callback(lambda _tarefa: _refreshs_de_lancamento_em_voo.pop(anime_id, None))
+
+
+async def _buscar_e_persistir_lancamento(
+    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int
+) -> None:
+    """Corpo da `Task` fire-and-forget de F4b. Toda exceção esperada (provedor
+    fora do ar, timeout, erro de banco) vira `warning` e morre aqui — nunca
+    propaga para o event loop. `CancelledError` e erros inesperados propagam de
+    propósito."""
+    try:
+        lancamento = await servico.buscar_lancamento_por_anilist_id(anilist_id)
+        if lancamento is not None:
+            await atualizar_lancamento(sessionmaker, anime_id, lancamento)
+    except (FalhaDeMetadados, TimeoutError, SQLAlchemyError) as excecao:
+        logger.warning(
+            "refresh lazy de lançamento falhou para anime_id=%s anilist_id=%s: %s",
+            anime_id,
+            anilist_id,
+            excecao,
+        )
 
 
 async def enriquecer_anime_criado(

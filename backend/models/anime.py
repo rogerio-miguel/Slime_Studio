@@ -2,9 +2,11 @@
 
 from datetime import UTC, datetime
 
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy import Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.enums import StatusLancamento
 from models.base import Base, ColunaDataHoraUTC
 
 
@@ -29,4 +31,21 @@ class Anime(Base):
     total_episodios_anilist: Mapped[int | None] = mapped_column(Integer, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         ColunaDataHoraUTC(), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    # Detector de episódios novos (badge no catálogo). Todas nullable, sem
+    # default: animes já cadastrados ficam NULL até o primeiro refresh de
+    # lançamento — nunca há backfill.
+    status_lancamento: Mapped[StatusLancamento | None] = mapped_column(
+        SAEnum(StatusLancamento, native_enum=False, validate_strings=True), nullable=True
+    )
+    # AniList `nextAiringEpisode`: número do próximo episódio a ir ao ar e
+    # quando. Base do cálculo de "episódios novos"; `proximo_ep_numero` nulo
+    # conta como 0 novos — nunca usa `total_episodios_anilist` como fallback
+    # (durante o lançamento ele é o total planejado, infla o badge).
+    proximo_ep_numero: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    proximo_ep_em: Mapped[datetime | None] = mapped_column(ColunaDataHoraUTC(), nullable=True)
+    # Carimbo do último refresh de lançamento — decide se o refresh lazy ao
+    # abrir a página de um anime `EM_LANCAMENTO` trata o dado como velho.
+    lancamento_atualizado_em: Mapped[datetime | None] = mapped_column(
+        ColunaDataHoraUTC(), nullable=True
     )

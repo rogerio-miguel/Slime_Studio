@@ -30,6 +30,7 @@ from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
 from api.servicos import jobs as servico_jobs
+from api.servicos import lancamentos as servico_lancamentos
 from core.config import Config
 from core.enums import VersaoDeFonte, VersaoEpisodio
 from db.catalogo import obter_ou_criar_anime_id
@@ -155,9 +156,24 @@ async def remover_anime(
 
 
 @router_publico.get("", response_model=list[AnimeSaida])
-async def listar_animes(sessao: AsyncSession = Depends(obter_sessao)) -> list[Anime]:
+async def listar_animes(sessao: AsyncSession = Depends(obter_sessao)) -> list[AnimeSaida]:
     resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
-    return list(resultado.scalars())
+    animes = list(resultado.scalars())
+    capturados = await servico_lancamentos.contar_capturados_por_anime(
+        sessao, [anime.id for anime in animes]
+    )
+    # `status_lancamento` vem do `model_validate` (campo mapeado 1:1 com a
+    # coluna); só `episodios_novos` é derivado e precisa ser injetado à parte.
+    return [
+        AnimeSaida.model_validate(anime).model_copy(
+            update={
+                "episodios_novos": servico_lancamentos.episodios_novos(
+                    anime, capturados.get(anime.id, 0)
+                )
+            }
+        )
+        for anime in animes
+    ]
 
 
 # `/em-alta` precisa vir ANTES de `/{anime_id}` — um `{anime_id}` declarado
@@ -238,11 +254,16 @@ async def buscar_animes_em_fontes(
 
 @router_publico.get("/{anime_id}", response_model=AnimeDetalheSaida)
 async def obter_anime(
-    anime_id: int, sessao: AsyncSession = Depends(obter_sessao)
+    anime_id: int,
+    sessao: AsyncSession = Depends(obter_sessao),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> AnimeDetalheSaida:
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    # F4b: refresh lazy fire-and-forget do estado de lançamento — não aguarda,
+    # só agenda para a próxima leitura (ver `descoberta.agendar_refresh_de_lancamento`).
+    servico_descoberta.agendar_refresh_de_lancamento(sessionmaker, anime)
     resultado = await sessao.execute(
         select(FonteAnime.versao, FonteAnime.resolvido_em).where(FonteAnime.anime_id == anime_id)
     )
@@ -254,6 +275,7 @@ async def obter_anime(
         if mais_recente is not None
         else None
     )
+    capturados = await servico_lancamentos.contar_capturados_por_anime(sessao, [anime_id])
     return AnimeDetalheSaida(
         id=anime.id,
         titulo=anime.titulo,
@@ -264,6 +286,8 @@ async def obter_anime(
         criado_em=anime.criado_em,
         versoes_disponiveis=_versoes_disponiveis(versoes_de_fonte),
         versao_confirmada_mais_recente=versao_confirmada_mais_recente,
+        status_lancamento=anime.status_lancamento,
+        episodios_novos=servico_lancamentos.episodios_novos(anime, capturados.get(anime_id, 0)),
     )
 
 

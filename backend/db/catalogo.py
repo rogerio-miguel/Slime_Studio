@@ -5,8 +5,9 @@ job (ESPECIFICACAO.md §5, Passo 1.3 do plano da Fase 3).
 """
 
 import logging
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -14,7 +15,7 @@ from core.enums import StatusEpisodio, TipoEpisodio, VersaoEpisodio
 from core.erros import EpisodioJaExiste, ErroSlimeStudio
 from core.texto import slugificar
 from db.fila import criar_job
-from integrations.base import MetadadosDeAnime
+from integrations.base import LancamentoDeAnime, MetadadosDeAnime
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -77,6 +78,11 @@ async def aplicar_metadados(
         if anime.kitsu_id is None and metadados.kitsu_id is not None:
             anime.kitsu_id = metadados.kitsu_id
 
+        # Lançamento não é idempotente por campo como o resto: quando o payload
+        # traz o bloco, sobrescreve (mesma sessão, sem reabrir outra).
+        if metadados.lancamento is not None:
+            _aplicar_lancamento_no_anime(anime, metadados.lancamento, datetime.now(UTC))
+
         try:
             await sessao.commit()
         except IntegrityError as excecao:
@@ -87,6 +93,90 @@ async def aplicar_metadados(
                 anime_id,
                 excecao,
             )
+
+
+def _aplicar_lancamento_no_anime(
+    anime: Anime, lancamento: LancamentoDeAnime, agora: datetime
+) -> None:
+    """Escreve os campos de lançamento num `Anime` já carregado — sem I/O, só
+    mutação de atributos. Único lugar com a semântica de SOBRESCRITA (oposta a
+    `aplicar_metadados`, que só preenche nulo); reusado por `atualizar_lancamento`
+    e `aplicar_metadados`.
+
+    - `status_lancamento` / `proximo_ep_numero` / `proximo_ep_em`: gravados SEMPRE,
+      inclusive `None`. A transição EM_LANCAMENTO -> FINALIZADO traz
+      `proximo_ep_numero=None` e a coluna precisa zerar, senão o badge de
+      "episódios novos" fica preso no último valor.
+    - `total_episodios_anilist`: só grava se o provedor informou (não apagar um
+      total já conhecido por causa de um refresh que veio sem o campo).
+    - `lancamento_atualizado_em`: carimbo de "sincronizei agora", não de "algo
+      mudou" — atualizado em toda chamada.
+    """
+    anime.status_lancamento = lancamento.status
+    anime.proximo_ep_numero = lancamento.proximo_ep_numero
+    anime.proximo_ep_em = lancamento.proximo_ep_em
+    if lancamento.total_episodios is not None:
+        anime.total_episodios_anilist = lancamento.total_episodios
+    anime.lancamento_atualizado_em = agora
+
+
+async def atualizar_lancamento(
+    sessionmaker: _SessionMaker, anime_id: int, lancamento: LancamentoDeAnime
+) -> None:
+    """Sobrescreve os campos de lançamento de um `Anime` a partir de um refresh
+    de provedor (`api/servicos/lancamentos.py`). Semântica em
+    `_aplicar_lancamento_no_anime` — NÃO é idempotente por campo.
+
+    Anime inexistente (`anime_id` sem linha) é no-op silencioso: o refresh
+    oportunista não deve falhar porque a linha sumiu entre a leitura e a escrita.
+    """
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        _aplicar_lancamento_no_anime(anime, lancamento, datetime.now(UTC))
+        await sessao.commit()
+
+
+async def atualizar_lancamentos_em_lote(
+    sessionmaker: _SessionMaker, dados: dict[int, LancamentoDeAnime]
+) -> None:
+    """Sobrescreve os campos de lançamento de vários `Anime` num refresh em lote
+    (job periódico de `api/servicos/lancamentos.py`). Mesma semântica de
+    `atualizar_lancamento`, em no máximo duas queries no total — nunca uma por
+    anime.
+
+    O `update(Anime)` com lista de dicts (bulk update by primary key) exige que
+    todos os dicts do lote tenham o MESMO conjunto de chaves. Como
+    `total_episodios_anilist` só pode ser escrito quando o provedor informou o
+    total, os itens são particionados em dois lotes — com e sem
+    `total_episodios` — e cada lote não-vazio vira um `execute`.
+    """
+    if not dados:
+        return
+
+    agora = datetime.now(UTC)
+    com_total: list[dict[str, object]] = []
+    sem_total: list[dict[str, object]] = []
+    for anime_id, lanc in dados.items():
+        linha: dict[str, object] = {
+            "id": anime_id,
+            "status_lancamento": lanc.status,
+            "proximo_ep_numero": lanc.proximo_ep_numero,
+            "proximo_ep_em": lanc.proximo_ep_em,
+            "lancamento_atualizado_em": agora,
+        }
+        if lanc.total_episodios is not None:
+            linha["total_episodios_anilist"] = lanc.total_episodios
+            com_total.append(linha)
+        else:
+            sem_total.append(linha)
+
+    async with sessionmaker() as sessao:
+        for lote in (com_total, sem_total):
+            if lote:
+                await sessao.execute(update(Anime), lote)
+        await sessao.commit()
 
 
 async def localizar_animes_por_slug(
