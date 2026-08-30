@@ -31,6 +31,7 @@ from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
 from api.servicos import jobs as servico_jobs
 from api.servicos import lancamentos as servico_lancamentos
+from api.servicos import sondagem as servico_sondagem
 from core.config import Config
 from core.enums import VersaoDeFonte, VersaoEpisodio
 from db.catalogo import obter_ou_criar_anime_id
@@ -156,12 +157,23 @@ async def remover_anime(
 
 
 @router_publico.get("", response_model=list[AnimeSaida])
-async def listar_animes(sessao: AsyncSession = Depends(obter_sessao)) -> list[AnimeSaida]:
+async def listar_animes(
+    sessao: AsyncSession = Depends(obter_sessao),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[AnimeSaida]:
     resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
     animes = list(resultado.scalars())
-    capturados = await servico_lancamentos.contar_capturados_por_anime(
-        sessao, [anime.id for anime in animes]
-    )
+    ids = [anime.id for anime in animes]
+    capturados = await servico_lancamentos.contar_capturados_por_anime(sessao, ids)
+    # Carona fire-and-forget: sonda a fonte real dos animes em lançamento cuja
+    # contagem está velha/ausente. O resultado entra no banco para a PRÓXIMA
+    # leitura do catálogo, não para esta (`api/servicos/sondagem.py`). Zero
+    # `await` de rede aqui — só a query agregada abaixo e o agendamento síncrono.
+    versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
+    servico_sondagem.agendar_sondagens(sessionmaker, animes, versoes)
+    # Aquece o `status_lancamento` (filtro do badge) dos animes que nunca foram
+    # abertos individualmente — sem isso ficam `NULL` e o badge nunca aparece.
+    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` vem do `model_validate` (campo mapeado 1:1 com a
     # coluna); só `episodios_novos` é derivado e precisa ser injetado à parte.
     return [
@@ -275,6 +287,17 @@ async def obter_anime(
         if mais_recente is not None
         else None
     )
+    # Sondagem oportunista da fonte real — mesma carona fire-and-forget do
+    # `agendar_refresh_de_lancamento` de F4b acima, mas alimentando
+    # `Anime.episodios_na_fonte`. Reusa a linha de `FonteAnime` já lida (sem
+    # `versao_confirmada`/`DESCONHECIDA` da tradução de F4: aqui é
+    # `versao_de_sondagem`, `NAO_DIFERENCIADA -> LEGENDADO`).
+    versoes_de_sondagem = (
+        {anime.id: servico_sondagem.versao_de_sondagem(mais_recente.versao)}
+        if mais_recente is not None
+        else {}
+    )
+    servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
     capturados = await servico_lancamentos.contar_capturados_por_anime(sessao, [anime_id])
     return AnimeDetalheSaida(
         id=anime.id,

@@ -1,11 +1,12 @@
 // Pill de contagem de "episódios novos" sobre o card do anime (canto
 // superior ESQUERDO — o superior direito é do botão de remover em
-// AnimeCard.jsx). A origem do número e o status de lançamento já foram
-// resolvidos no backend (`GET /api/animes` → `episodios_novos`, detector via
-// AniList `nextAiringEpisode`, sem scraping/scheduler); aqui a única regra é
-// "tem número positivo → mostra". `quantidade` ausente (card alimentado pelo
-// feed "em alta", que não carrega esse campo), zero, `null` ou negativa não
-// renderiza nada.
+// AnimeCard.jsx). A origem do número já foi resolvida no backend
+// (`GET /api/animes` → `episodios_novos`): quantos episódios a FONTE real do
+// anime expõe além dos já capturados, sondada em background e servida de
+// cache — o `status_lancamento` da AniList é só o filtro (badge só em anime
+// EM_LANCAMENTO). Aqui a única regra é "tem número positivo → mostra".
+// `quantidade` ausente (card alimentado pelo feed "em alta", que não carrega
+// esse campo), zero, `null` ou negativa não renderiza nada.
 //
 // `className` sobrescreve só o posicionamento (default: absoluto no canto,
 // pro AnimeCard) — `PaginaDoAnime.jsx` passa "" e posiciona o badge inline,

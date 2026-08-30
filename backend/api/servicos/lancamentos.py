@@ -1,10 +1,13 @@
 """Detector de episódios novos (badge no catálogo, ESPECIFICACAO.md §3F).
 
-`episodios_novos` é cálculo puro sobre um `Anime` já carregado;
-`contar_capturados_por_anime` é a leitura agregada que o alimenta em lote (uma
-query para o catálogo inteiro, nunca por anime num loop). Não importa `fastapi`
-nem Pydantic — `api/rotas/animes.py` é quem traduz o resultado para os esquemas
-de saída (regra de dependência da Clean Architecture, CLAUDE.md §1).
+`episodios_novos` é cálculo puro sobre um `Anime` já carregado — compara
+`Anime.episodios_na_fonte` (contagem da fonte real, alimentada por
+`api/servicos/sondagem.py`) com os episódios já capturados localmente;
+`contar_capturados_por_anime` é a leitura agregada que fornece essa segunda
+metade em lote (uma query para o catálogo inteiro, nunca por anime num loop).
+Não importa `fastapi` nem Pydantic — `api/rotas/animes.py` é quem traduz o
+resultado para os esquemas de saída (regra de dependência da Clean
+Architecture, CLAUDE.md §1).
 """
 
 from collections.abc import Iterable
@@ -24,17 +27,20 @@ _STATUS_CAPTURADO = (StatusEpisodio.PRONTO, StatusEpisodio.LIBERADO)
 
 
 def episodios_novos(anime: Anime, capturados: int) -> int:
-    """Nº de episódios já lançados na fonte mas ainda não capturados localmente.
+    """Nº de episódios já disponíveis na fonte real (site) mas ainda não
+    capturados localmente.
 
-    Só faz sentido para anime `EM_LANCAMENTO`. `proximo_ep_numero` é o número do
-    PRÓXIMO ep a ir ao ar, então já lançados = `proximo_ep_numero - 1`.
-    Piso em 0: anime com mais capturados que o exibido (raro) não vira negativo.
+    Só faz sentido para anime `EM_LANCAMENTO`. `episodios_na_fonte` é a
+    contagem da última sondagem bem-sucedida do site
+    (`api/servicos/sondagem.py`); fica `None` enquanto nenhuma sondagem
+    carimbou, e aí o badge é 0. Piso em 0: anime com mais capturados que o
+    exposto pela fonte (raro) não vira negativo.
     """
     if anime.status_lancamento is not StatusLancamento.EM_LANCAMENTO:
         return 0
-    if anime.proximo_ep_numero is None:
+    if anime.episodios_na_fonte is None:
         return 0
-    return max(0, (anime.proximo_ep_numero - 1) - capturados)
+    return max(0, anime.episodios_na_fonte - capturados)
 
 
 async def contar_capturados_por_anime(sessao: AsyncSession, ids: Iterable[int]) -> dict[int, int]:
@@ -44,7 +50,7 @@ async def contar_capturados_por_anime(sessao: AsyncSession, ids: Iterable[int]) 
 
     `COUNT(DISTINCT numero)`: um episódio legendado + dublado são duas linhas mas
     conta como um capturado. `tipo == REGULAR`: OVA/especial/filme têm numeração
-    própria e não entram na comparação com `proximo_ep_numero`.
+    própria e não entram na comparação com `episodios_na_fonte`.
     """
     lista_ids = list(ids)
     if not lista_ids:
