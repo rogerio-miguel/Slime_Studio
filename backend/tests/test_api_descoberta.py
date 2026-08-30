@@ -10,17 +10,20 @@ monkeypatcham uma camada abaixo (`integrations.servico.listar_em_alta` /
 `api/servicos/descoberta.py` rodar de verdade contra o banco de teste.
 """
 
+import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import descoberta as servico_descoberta
-from core.enums import VersaoDeFonte
+from core.enums import StatusLancamento, VersaoDeFonte
 from core.erros import FalhaDeMetadados
 from core.texto import slugificar
-from integrations.base import AnimeEmAlta, MetadadosDeAnime
+from integrations.base import AnimeEmAlta, LancamentoDeAnime, MetadadosDeAnime
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
 
@@ -33,6 +36,37 @@ async def _criar_anime(sessionmaker: _SessionMaker, titulo: str, slug: str, **ca
         sessao.add(anime)
         await sessao.commit()
         return anime.id
+
+
+@pytest.fixture(autouse=True)
+async def _isola_refreshs_de_lancamento():
+    """`descoberta._refreshs_de_lancamento_em_voo` é estado de módulo (dedupe +
+    ref forte das `Task` de F4b). Zera antes e cancela/limpa o que sobrar depois,
+    para nenhum teste vazar `Task` pendente para o próximo."""
+    servico_descoberta._refreshs_de_lancamento_em_voo.clear()
+    yield
+    pendentes = list(servico_descoberta._refreshs_de_lancamento_em_voo.values())
+    for tarefa in pendentes:
+        tarefa.cancel()
+    for tarefa in pendentes:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await tarefa
+    servico_descoberta._refreshs_de_lancamento_em_voo.clear()
+
+
+async def _drenar_refreshs_de_lancamento() -> None:
+    """Aguarda toda `Task` de refresh lazy de F4b em voo terminar. `gather` sem
+    `return_exceptions`: se uma corotina fire-and-forget deixasse escapar uma
+    exceção, este await a re-levanta e o teste falha — é a checagem de que
+    `_buscar_e_persistir_lancamento` nunca propaga."""
+    for _ in range(20):
+        pendentes = [
+            t for t in servico_descoberta._refreshs_de_lancamento_em_voo.values() if not t.done()
+        ]
+        if not pendentes:
+            break
+        await asyncio.gather(*pendentes)
+    await asyncio.sleep(0)
 
 
 async def test_em_alta_propaga_502_se_todos_provedores_falham(
@@ -322,3 +356,300 @@ async def test_criar_anime_enriquecimento_falho_nao_bloqueia_criacao(
 
     assert resposta.status_code == 200
     assert resposta.json()["capa_path"] is None
+
+
+# --- F4a: refresh oportunista no cruzamento do feed "em alta" ---
+#
+# Mockam `integrations.servico.listar_em_alta` (camada abaixo), deixando
+# `listar_em_alta_com_catalogo` -> `_refrescar_lancamentos_do_cruzamento` rodar
+# de verdade contra o banco de teste. O feed já traz `lancamento`; a escrita só
+# deve acontecer quando o dado local está velho (> `_TTL_LANCAMENTO_S`) ou nulo.
+
+
+def _feed_com_lancamento(anilist_id: int, proximo_ep_numero: int) -> AnimeEmAlta:
+    return AnimeEmAlta(
+        titulo_romaji=f"Anime {anilist_id}",
+        titulo_ingles=None,
+        capa_url=None,
+        banner_url=None,
+        anilist_id=anilist_id,
+        lancamento=LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=24,
+            proximo_ep_numero=proximo_ep_numero,
+            proximo_ep_em=None,
+        ),
+    )
+
+
+async def test_em_alta_refresh_oportunista_nao_reescreve_dentro_do_ttl(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Slime Recente",
+        "slime-recente",
+        anilist_id=1,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        proximo_ep_numero=3,
+        lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=1),
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_lancamento(1, proximo_ep_numero=9)]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.proximo_ep_numero == 3  # feed trazia 9, mas o dado local é fresco
+        assert anime.total_episodios_anilist is None
+
+
+@pytest.mark.parametrize(
+    "carimbo",
+    [None, datetime(2020, 1, 1, tzinfo=UTC)],
+    ids=["nulo", "mais-de-6h"],
+)
+async def test_em_alta_refresh_oportunista_reescreve_fora_do_ttl(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    carimbo: datetime | None,
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Slime Velho",
+        "slime-velho",
+        anilist_id=1,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        proximo_ep_numero=3,
+        lancamento_atualizado_em=carimbo,
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_lancamento(1, proximo_ep_numero=9)]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.proximo_ep_numero == 9
+        assert anime.total_episodios_anilist == 24
+        assert anime.status_lancamento == StatusLancamento.EM_LANCAMENTO
+        assert anime.lancamento_atualizado_em is not None
+
+
+async def test_em_alta_refresh_oportunista_so_toca_itens_catalogados_e_com_lancamento(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Item sem `lancamento` no feed e item não catalogado localmente não entram
+    no lote de escrita — só o par (catalogado, com lançamento) fora do TTL."""
+    alvo = await _criar_anime(
+        sessionmaker_api, "Slime Alvo", "slime-alvo", anilist_id=1, proximo_ep_numero=2
+    )
+    sem_lancamento = await _criar_anime(
+        sessionmaker_api, "Slime Sem Bloco", "slime-sem-bloco", anilist_id=2, proximo_ep_numero=2
+    )
+
+    item_sem_bloco = AnimeEmAlta(
+        titulo_romaji="Anime 2",
+        titulo_ingles=None,
+        capa_url=None,
+        banner_url=None,
+        anilist_id=2,
+    )
+    item_nao_catalogado = _feed_com_lancamento(999, proximo_ep_numero=5)
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_lancamento(1, proximo_ep_numero=7), item_sem_bloco, item_nao_catalogado]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        assert (await sessao.get(Anime, alvo)).proximo_ep_numero == 7
+        atualizado_sem_bloco = await sessao.get(Anime, sem_lancamento)
+        assert atualizado_sem_bloco.proximo_ep_numero == 2  # feed não trouxe bloco
+        assert atualizado_sem_bloco.lancamento_atualizado_em is None
+
+
+async def test_em_alta_refresh_oportunista_erro_de_escrita_nao_derruba_home(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    await _criar_anime(
+        sessionmaker_api, "Slime Home", "slime-home", anilist_id=1, proximo_ep_numero=1
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_lancamento(1, proximo_ep_numero=6)]
+
+    async def _escrita_falha(*args, **kwargs):
+        raise SQLAlchemyError("banco indisponível")
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+    monkeypatch.setattr("api.servicos.descoberta.atualizar_lancamentos_em_lote", _escrita_falha)
+
+    with caplog.at_level("WARNING"):
+        resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    assert resposta.json()[0]["anilist_id"] == 1
+    assert "refresh oportunista de lançamento" in caplog.text
+
+
+# --- F4b: refresh lazy fire-and-forget ao abrir a página de um anime ---
+
+
+async def test_obter_anime_agenda_refresh_lazy_fora_do_ttl(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    chamadas: list[int] = []
+    novo = LancamentoDeAnime(
+        status=StatusLancamento.EM_LANCAMENTO,
+        total_episodios=None,
+        proximo_ep_numero=5,
+        proximo_ep_em=None,
+    )
+
+    async def _buscar_fake(anilist_id: int):
+        chamadas.append(anilist_id)
+        return novo
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Slime Lazy",
+        "slime-lazy",
+        anilist_id=77,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        proximo_ep_numero=2,
+        lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=7),
+    )
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+    assert resposta.status_code == 200
+
+    await _drenar_refreshs_de_lancamento()
+
+    assert chamadas == [77]
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.proximo_ep_numero == 5
+
+
+@pytest.mark.parametrize(
+    "campos",
+    [
+        {"anilist_id": None},
+        {"anilist_id": 5, "status_lancamento": StatusLancamento.FINALIZADO},
+        {"anilist_id": 5, "lancamento_atualizado_em": datetime.now(UTC) - timedelta(hours=1)},
+    ],
+    ids=["sem-anilist-id", "status-finalizado", "dentro-do-ttl"],
+)
+async def test_obter_anime_nao_agenda_refresh_lazy_quando_gate_barra(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    campos: dict,
+):
+    chamadas: list[int] = []
+
+    async def _buscar_fake(anilist_id: int):
+        chamadas.append(anilist_id)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    anime_id = await _criar_anime(sessionmaker_api, "Slime Gate", "slime-gate", **campos)
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+    assert resposta.status_code == 200
+
+    await _drenar_refreshs_de_lancamento()
+
+    assert chamadas == []
+    assert servico_descoberta._refreshs_de_lancamento_em_voo == {}
+
+
+async def test_agendar_refresh_lazy_deduplica_chamadas_concorrentes(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    entrou = asyncio.Event()
+    liberar = asyncio.Event()
+    chamadas: list[int] = []
+
+    async def _buscar_fake(anilist_id: int):
+        chamadas.append(anilist_id)
+        entrou.set()
+        await liberar.wait()
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    anime = Anime(
+        titulo="Slime Dedupe",
+        slug="slime-dedupe",
+        anilist_id=88,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+    )
+    anime.id = 4242
+
+    servico_descoberta.agendar_refresh_de_lancamento(sessionmaker_api, anime)
+    servico_descoberta.agendar_refresh_de_lancamento(sessionmaker_api, anime)
+
+    assert len(servico_descoberta._refreshs_de_lancamento_em_voo) == 1
+
+    await asyncio.wait_for(entrou.wait(), timeout=1)
+    assert chamadas == [88]
+
+    liberar.set()
+    await _drenar_refreshs_de_lancamento()
+    assert servico_descoberta._refreshs_de_lancamento_em_voo == {}
+
+
+async def test_obter_anime_refresh_lazy_falho_da_anilist_nao_propaga(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    async def _buscar_fake(anilist_id: int):
+        raise FalhaDeMetadados("aniList fora do ar")
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Slime Falho",
+        "slime-falho",
+        anilist_id=5,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        proximo_ep_numero=4,
+        lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=8),
+    )
+
+    with caplog.at_level("WARNING"):
+        resposta = await cliente.get(f"/api/animes/{anime_id}")
+        assert resposta.status_code == 200
+        # dado velho preservado no cálculo: (4 - 1) - 0 capturados
+        assert resposta.json()["episodios_novos"] == 3
+        # `gather` sem `return_exceptions` — re-levantaria se a corotina propagasse
+        await _drenar_refreshs_de_lancamento()
+
+    assert "refresh lazy de lançamento falhou" in caplog.text
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.proximo_ep_numero == 4  # nada foi sobrescrito

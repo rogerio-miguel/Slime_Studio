@@ -254,11 +254,16 @@ async def buscar_animes_em_fontes(
 
 @router_publico.get("/{anime_id}", response_model=AnimeDetalheSaida)
 async def obter_anime(
-    anime_id: int, sessao: AsyncSession = Depends(obter_sessao)
+    anime_id: int,
+    sessao: AsyncSession = Depends(obter_sessao),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> AnimeDetalheSaida:
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    # F4b: refresh lazy fire-and-forget do estado de lançamento — não aguarda,
+    # só agenda para a próxima leitura (ver `descoberta.agendar_refresh_de_lancamento`).
+    servico_descoberta.agendar_refresh_de_lancamento(sessionmaker, anime)
     resultado = await sessao.execute(
         select(FonteAnime.versao, FonteAnime.resolvido_em).where(FonteAnime.anime_id == anime_id)
     )
