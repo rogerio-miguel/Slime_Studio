@@ -733,3 +733,76 @@ async def test_obter_anime_agenda_sondagem_de_fonte_sem_regredir_refresh_de_lanc
 
     assert lancamentos == [321]
     assert sondagens == [anime_id]
+
+
+# --- F14: listar catálogo aquece `status_lancamento` até um teto por request ---
+
+
+async def test_agendar_refreshs_do_catalogo_limita_ao_teto_priorizando_mais_velhos(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """12 animes elegíveis numa listagem de catálogo disparam no máximo
+    `_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE` buscas à AniList — os de carimbo mais
+    velho primeiro."""
+    chamadas: list[int] = []
+
+    async def _buscar_fake(anilist_id: int):
+        chamadas.append(anilist_id)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    base = datetime(2020, 1, 1, tzinfo=UTC)
+    animes = []
+    for i in range(12):
+        anime = Anime(
+            titulo=f"Slime {i}",
+            slug=f"slime-{i}",
+            anilist_id=1000 + i,
+            status_lancamento=None,
+            lancamento_atualizado_em=base + timedelta(hours=i),
+        )
+        anime.id = 500 + i
+        animes.append(anime)
+
+    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker_api, animes)
+
+    assert len(servico_descoberta._refreshs_de_lancamento_em_voo) == 5
+    await _drenar_refreshs_de_lancamento()
+    assert sorted(chamadas) == [1000, 1001, 1002, 1003, 1004]
+
+
+async def test_agendar_refreshs_do_catalogo_ignora_inelegiveis(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Mesmo gate de `agendar_refresh_de_lancamento`: sem `anilist_id`, status
+    `FINALIZADO` ou carimbo dentro do TTL não disparam."""
+    chamadas: list[int] = []
+
+    async def _buscar_fake(anilist_id: int):
+        chamadas.append(anilist_id)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    def _anime(id_: int, **campos) -> Anime:
+        anime = Anime(titulo=f"a{id_}", slug=f"a{id_}", **campos)
+        anime.id = id_
+        return anime
+
+    animes = [
+        _anime(1, status_lancamento=None),
+        _anime(2, anilist_id=2, status_lancamento=StatusLancamento.FINALIZADO),
+        _anime(
+            3,
+            anilist_id=3,
+            status_lancamento=StatusLancamento.EM_LANCAMENTO,
+            lancamento_atualizado_em=datetime.now(UTC),
+        ),
+        _anime(4, anilist_id=4, status_lancamento=StatusLancamento.EM_LANCAMENTO),
+    ]
+
+    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker_api, animes)
+    await _drenar_refreshs_de_lancamento()
+
+    assert chamadas == [4]

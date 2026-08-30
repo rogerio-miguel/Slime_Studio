@@ -171,6 +171,9 @@ async def listar_animes(
     # `await` de rede aqui — só a query agregada abaixo e o agendamento síncrono.
     versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
     servico_sondagem.agendar_sondagens(sessionmaker, animes, versoes)
+    # Aquece o `status_lancamento` (filtro do badge) dos animes que nunca foram
+    # abertos individualmente — sem isso ficam `NULL` e o badge nunca aparece.
+    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` vem do `model_validate` (campo mapeado 1:1 com a
     # coluna); só `episodios_novos` é derivado e precisa ser injetado à parte.
     return [

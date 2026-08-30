@@ -43,6 +43,14 @@ _TTL_LANCAMENTO_S = 6 * 3600
 # fire-and-forget antes de ela terminar. A entrada sai no `add_done_callback`.
 _refreshs_de_lancamento_em_voo: dict[int, asyncio.Task] = {}
 
+# F14 — teto de animes por listagem de catálogo que disparam busca à AniList
+# para aquecer o `status_lancamento`. Segura o rate limit num catálogo grande;
+# em poucas visitas o catálogo inteiro esquenta.
+_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE = 5
+
+# Sentinel *aware* para ordenar animes sem carimbo antes dos demais.
+_CARIMBO_MINIMO = datetime.min.replace(tzinfo=UTC)
+
 # Teto do enriquecimento best-effort no cadastro manual — a criação do anime
 # é o objetivo primário; este valor é a rede de segurança que garante que o
 # cadastro nunca fica preso esperando um provedor externo responder.
@@ -181,6 +189,28 @@ def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> 
     tarefa = loop.create_task(_buscar_e_persistir_lancamento(sessionmaker, anime_id, anilist_id))
     _refreshs_de_lancamento_em_voo[anime_id] = tarefa
     tarefa.add_done_callback(lambda _tarefa: _refreshs_de_lancamento_em_voo.pop(anime_id, None))
+
+
+def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime]) -> None:
+    """F14 — ao listar o catálogo, aquece o `status_lancamento` dos animes que
+    nunca foram abertos individualmente nem apareceram no feed "em alta" (senão
+    ficam com status `NULL` para sempre e o badge de "episódios novos" nunca
+    aparece, mesmo com contagem de fonte fresca).
+
+    Reusa o gate e o dedupe de `agendar_refresh_de_lancamento`; só limita a
+    `_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE` quantos animes por request disparam
+    busca à AniList, os de carimbo mais velho (ou ausente) primeiro."""
+    limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
+    candidatos = [
+        anime
+        for anime in animes
+        if anime.anilist_id is not None
+        and anime.status_lancamento in (StatusLancamento.EM_LANCAMENTO, None)
+        and carimbo_esta_velho(anime.lancamento_atualizado_em, limite)
+    ]
+    candidatos.sort(key=lambda anime: anime.lancamento_atualizado_em or _CARIMBO_MINIMO)
+    for anime in candidatos[:_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE]:
+        agendar_refresh_de_lancamento(sessionmaker, anime)
 
 
 async def _buscar_e_persistir_lancamento(
