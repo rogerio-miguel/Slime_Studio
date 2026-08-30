@@ -8,6 +8,8 @@ import.
 `tests/test_fila.py` (WAL não funciona em `:memory:`), schema via
 `Base.metadata.create_all` (não Alembic)."""
 
+import asyncio
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -15,9 +17,40 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.main import criar_app
+from api.servicos import sondagem
 from core.config import Config
 from db.engine import criar_engine
 from models.base import Base
+
+
+@pytest.fixture(autouse=True)
+async def _isola_sondagens_de_fonte():
+    """`sondagem._sondagens_em_voo` e `sondagem._semaforo_de_sondagem` são estado
+    de módulo. A partir de F12 as rotas `GET /api/animes` e `GET /api/animes/{id}`
+    agendam sondagens fire-and-forget, então qualquer teste de `test_api_*.py`
+    que bata nelas pode deixar uma `Task` pendente vazar para o event loop do
+    próximo teste ("Task was destroyed but it is pending") — daí o isolamento
+    ficar no conftest, não num único arquivo.
+
+    O dict é zerado antes e o que sobrar é cancelado/drenado depois. O semáforo é
+    recriado por teste: `asyncio.Semaphore` liga-se ao primeiro event loop que o
+    aguarda e o pytest-asyncio dá um loop novo por teste — sem recriar, o 2º
+    teste que o tocasse quebraria com "bound to a different event loop". Em
+    produção o processo tem um loop só, então é acomodação de teste, não bug.
+    """
+    sondagem._sondagens_em_voo.clear()
+    sondagem._semaforo_de_sondagem = asyncio.Semaphore(1)
+    yield
+    # Cancela ANTES de aguardar: uma `Task` fire-and-forget pode estar presa num
+    # `await` que nunca completa (semáforo, `wait_for` de rede). Testes que
+    # querem drenar de verdade chamam o próprio `_drenar_sondagens` antes daqui.
+    pendentes = list(sondagem._sondagens_em_voo.values())
+    for tarefa in pendentes:
+        tarefa.cancel()
+    for tarefa in pendentes:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await tarefa
+    sondagem._sondagens_em_voo.clear()
 
 
 class ClienteFalso:

@@ -9,7 +9,6 @@ que uma corotina fire-and-forget nunca propaga exceção.
 """
 
 import asyncio
-import contextlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -27,26 +26,8 @@ from models.fonte_anime import FonteAnime
 _SessionMaker = async_sessionmaker[AsyncSession]
 _LEG = VersaoEpisodio.LEGENDADO
 
-
-@pytest.fixture(autouse=True)
-async def _isola_sondagens():
-    """`sondagem._sondagens_em_voo` e `sondagem._semaforo_de_sondagem` são estado
-    de módulo. O dict é zerado antes e o que sobrar é cancelado/drenado depois. O
-    semáforo é recriado por teste: `asyncio.Semaphore` liga-se ao primeiro event
-    loop que o aguarda e o pytest-asyncio dá um loop novo por teste — sem
-    recriar, o 2º teste que o tocasse quebraria com "bound to a different event
-    loop". Em produção o processo tem um loop só, então é acomodação de teste,
-    não bug."""
-    sondagem._sondagens_em_voo.clear()
-    sondagem._semaforo_de_sondagem = asyncio.Semaphore(1)
-    yield
-    pendentes = list(sondagem._sondagens_em_voo.values())
-    for tarefa in pendentes:
-        tarefa.cancel()
-    for tarefa in pendentes:
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await tarefa
-    sondagem._sondagens_em_voo.clear()
+# `sondagem._sondagens_em_voo`/`_semaforo_de_sondagem` são isolados por
+# `_isola_sondagens_de_fonte` (autouse) em `tests/conftest.py`.
 
 
 async def _drenar_sondagens() -> None:
@@ -114,6 +95,32 @@ def _espiar_sondagem(
 
     monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
     return chamadas
+
+
+# --- versao_de_sondagem: tradução de UMA versão ---
+
+
+@pytest.mark.parametrize(
+    ("versao_de_fonte", "esperada"),
+    [
+        (VersaoDeFonte.LEGENDADO, VersaoEpisodio.LEGENDADO),
+        (VersaoDeFonte.DUBLADO, VersaoEpisodio.DUBLADO),
+        (VersaoDeFonte.NAO_DIFERENCIADA, VersaoEpisodio.LEGENDADO),
+    ],
+)
+def test_versao_de_sondagem_traduz_cada_versao_de_fonte(
+    versao_de_fonte: VersaoDeFonte, esperada: VersaoEpisodio
+):
+    assert sondagem.versao_de_sondagem(versao_de_fonte) == esperada
+
+
+def test_versao_de_sondagem_nunca_devolve_desconhecida():
+    """`DESCONHECIDA` faria `resolver_fonte_do_anime` levantar `ValueError` —
+    `NAO_DIFERENCIADA` tem de virar `LEGENDADO`, nunca isso."""
+    assert all(
+        sondagem.versao_de_sondagem(vf) is not VersaoEpisodio.DESCONHECIDA
+        for vf in VersaoDeFonte
+    )
 
 
 # --- versoes_de_sondagem_por_anime ---

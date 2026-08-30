@@ -20,6 +20,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import descoberta as servico_descoberta
+from api.servicos import sondagem
+from api.servicos.fontes import EpisodiosRemotosResultado
 from core.enums import StatusLancamento, VersaoDeFonte
 from core.erros import FalhaDeMetadados
 from core.texto import slugificar
@@ -36,6 +38,20 @@ async def _criar_anime(sessionmaker: _SessionMaker, titulo: str, slug: str, **ca
         sessao.add(anime)
         await sessao.commit()
         return anime.id
+
+
+@pytest.fixture(autouse=True)
+def _sondagem_da_fonte_sem_rede(monkeypatch: pytest.MonkeyPatch):
+    """F12: `GET /api/animes/{id}` agenda uma sondagem fire-and-forget da fonte
+    real quando o anime tem `FonteAnime` mapeada. Nenhum teste deste arquivo
+    exercita a fonte de verdade (isso é `tests/test_api_sondagem.py`) — stub para
+    a `Task` nunca tocar extractor/rede. Testes que precisam espiar a chamada
+    re-`setattr`am por cima."""
+
+    async def _fake(sessionmaker, anime, versao):
+        return EpisodiosRemotosResultado(dominio="stub.io", episodios=[])
+
+    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +79,17 @@ async def _drenar_refreshs_de_lancamento() -> None:
         pendentes = [
             t for t in servico_descoberta._refreshs_de_lancamento_em_voo.values() if not t.done()
         ]
+        if not pendentes:
+            break
+        await asyncio.gather(*pendentes)
+    await asyncio.sleep(0)
+
+
+async def _drenar_sondagens() -> None:
+    """Contraparte de `_drenar_refreshs_de_lancamento` para as `Task` de sondagem
+    de F12 (`sondagem._sondagens_em_voo`, isoladas pelo autouse do conftest)."""
+    for _ in range(20):
+        pendentes = [t for t in sondagem._sondagens_em_voo.values() if not t.done()]
         if not pendentes:
             break
         await asyncio.gather(*pendentes)
@@ -638,14 +665,15 @@ async def test_obter_anime_refresh_lazy_falho_da_anilist_nao_propaga(
         anilist_id=5,
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         proximo_ep_numero=4,
+        episodios_na_fonte=4,
         lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=8),
     )
 
     with caplog.at_level("WARNING"):
         resposta = await cliente.get(f"/api/animes/{anime_id}")
         assert resposta.status_code == 200
-        # dado velho preservado no cálculo: (4 - 1) - 0 capturados
-        assert resposta.json()["episodios_novos"] == 3
+        # dado velho preservado no cálculo: 4 na fonte - 0 capturados
+        assert resposta.json()["episodios_novos"] == 4
         # `gather` sem `return_exceptions` — re-levantaria se a corotina propagasse
         await _drenar_refreshs_de_lancamento()
 
@@ -653,3 +681,55 @@ async def test_obter_anime_refresh_lazy_falho_da_anilist_nao_propaga(
     async with sessionmaker_api() as sessao:
         anime = await sessao.get(Anime, anime_id)
         assert anime.proximo_ep_numero == 4  # nada foi sobrescrito
+
+
+async def test_obter_anime_agenda_sondagem_de_fonte_sem_regredir_refresh_de_lancamento(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """F12 não engoliu o `agendar_refresh_de_lancamento` de F4b: abrir a página de
+    um anime em lançamento com `FonteAnime` mapeada e dado velho dispara AS DUAS
+    caronas fire-and-forget."""
+    lancamentos: list[int] = []
+    sondagens: list[int] = []
+
+    async def _buscar_lancamento_fake(anilist_id: int):
+        lancamentos.append(anilist_id)
+        return None
+
+    async def _sondar_fake(sessionmaker, anime, versao):
+        sondagens.append(anime.id)
+        return EpisodiosRemotosResultado(dominio="stub.io", episodios=[])
+
+    monkeypatch.setattr(
+        "integrations.servico.buscar_lancamento_por_anilist_id", _buscar_lancamento_fake
+    )
+    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _sondar_fake)
+
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Slime Coexiste",
+        "slime-coexiste",
+        anilist_id=321,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=8),
+    )
+    async with sessionmaker_api() as sessao:
+        sessao.add(
+            FonteAnime(
+                anime_id=anime_id,
+                site_dominio="site.io",
+                versao=VersaoDeFonte.LEGENDADO,
+                identificador_no_site="x",
+                prioridade=0,
+            )
+        )
+        await sessao.commit()
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+    assert resposta.status_code == 200
+
+    await _drenar_refreshs_de_lancamento()
+    await _drenar_sondagens()
+
+    assert lancamentos == [321]
+    assert sondagens == [anime_id]

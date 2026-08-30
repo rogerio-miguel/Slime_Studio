@@ -69,6 +69,20 @@ _MAPA_VERSAO: dict[VersaoDeFonte, VersaoEpisodio] = {
     VersaoDeFonte.NAO_DIFERENCIADA: VersaoEpisodio.LEGENDADO,
 }
 
+
+def versao_de_sondagem(versao_de_fonte: VersaoDeFonte) -> VersaoEpisodio:
+    """Traduz UMA `VersaoDeFonte` (estado do mapeamento de `FonteAnime`) para a
+    `VersaoEpisodio` a pedir na sondagem — `NAO_DIFERENCIADA -> LEGENDADO`,
+    NUNCA `DESCONHECIDA` (que faria `resolver_fonte_do_anime` levantar
+    `ValueError`). Ver `_MAPA_VERSAO`.
+
+    `versoes_de_sondagem_por_anime` aplica o mesmo mapa em lote; `obter_anime`
+    usa esta função para a linha de `FonteAnime` única que já leu, sem abrir
+    outra query.
+    """
+    return _MAPA_VERSAO[versao_de_fonte]
+
+
 # Sentinel para ordenar animes sem `fonte_verificada_em` antes dos demais —
 # *aware* (UTC) para nunca colidir com "naive vs aware" na comparação de tupla.
 _CARIMBO_MINIMO = datetime.min.replace(tzinfo=UTC)
@@ -105,7 +119,7 @@ async def versoes_de_sondagem_por_anime(
             escolha_por_anime[anime_id] = (resolvido_em, versao)
 
     return {
-        anime_id: _MAPA_VERSAO[versao]
+        anime_id: versao_de_sondagem(versao)
         for anime_id, (_, versao) in escolha_por_anime.items()
     }
 
