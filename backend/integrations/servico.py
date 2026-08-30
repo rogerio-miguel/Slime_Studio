@@ -20,7 +20,14 @@ from collections.abc import Callable
 import requests
 
 from core.erros import FalhaDeMetadados
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
+from integrations.base import (
+    AnimeEmAlta,
+    LancamentoDeAnime,
+    MetadadosDeAnime,
+    ProvedorComLancamento,
+    ProvedorDeMetadados,
+    TitulosDeAnime,
+)
 from integrations.registro import PROVEDORES
 
 logger = logging.getLogger(__name__)
@@ -77,6 +84,50 @@ async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
     return await _buscar_em_cadeia(
         lambda provedor: provedor.buscar_titulos, titulo, descricao="busca de títulos"
     )
+
+
+async def buscar_lancamento_por_anilist_id(anilist_id: int) -> LancamentoDeAnime | None:
+    """Estado de lançamento (status/próximo episódio) de um anime pelo seu id
+    AniList. Só provedores que implementam `ProvedorComLancamento` entram na
+    cadeia (hoje só o AniList — Kitsu não expõe next-airing).
+
+    Mesma semântica de fallback de `_buscar_em_cadeia`: primeira resposta
+    não-`None` vence; um provedor que levanta é logado e a cadeia segue para o
+    próximo; só levanta `FalhaDeMetadados` se todos os provedores capazes
+    falharem de fato. Se nenhum provedor é capaz, devolve `None` (condição
+    estrutural, não "provedores fora do ar"). Sem cache — a frequência do
+    refresh oportunista (F4) é controlada por quem chama.
+    """
+    capazes = [p for p in PROVEDORES if isinstance(p, ProvedorComLancamento)]
+    if not capazes:
+        return None
+
+    algum_respondeu = False
+    ultimo_erro: Exception | None = None
+    for provedor in capazes:
+        try:
+            resultado = await _chamar(
+                provedor, provedor.buscar_lancamento_por_anilist_id, anilist_id
+            )
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.warning(
+                "provedor de metadados %r falhou ao buscar lançamento de anilist_id=%s: %s",
+                provedor.nome,
+                anilist_id,
+                excecao,
+            )
+            ultimo_erro = excecao
+            continue
+
+        algum_respondeu = True
+        if resultado is not None:
+            return resultado
+
+    if algum_respondeu:
+        return None
+    raise FalhaDeMetadados(
+        f"todos os provedores falharam ao buscar lançamento de anilist_id={anilist_id}"
+    ) from ultimo_erro
 
 
 async def _buscar_em_cadeia[T](

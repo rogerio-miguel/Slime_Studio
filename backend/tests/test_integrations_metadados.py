@@ -9,14 +9,23 @@ precisar simular HTTP.
 
 import asyncio
 import time
+from datetime import UTC, datetime
 
 import pytest
 import requests
 
+from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
 from integrations import servico
 from integrations.anilist import AniListProvider
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
+from integrations.base import (
+    AnimeEmAlta,
+    LancamentoDeAnime,
+    MetadadosDeAnime,
+    ProvedorComLancamento,
+    ProvedorDeMetadados,
+    TitulosDeAnime,
+)
 from integrations.kitsu import KitsuProvider
 
 
@@ -141,6 +150,162 @@ def test_anilist_buscar_titulos_media_null_devolve_none(monkeypatch: pytest.Monk
     )
 
     assert AniListProvider().buscar_titulos("titulo inexistente") is None
+
+
+# --- AniListProvider: estado de lançamento (F2 detector de eps novos) ---
+
+
+def test_anilist_extrai_lancamento_completo(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "coverImage": {"extraLarge": "https://img/c.jpg"},
+                "bannerImage": None,
+                "description": "sinopse",
+                "status": "RELEASING",
+                "episodes": 24,
+                "nextAiringEpisode": {"episode": 13, "airingAt": 1_700_000_000},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento == LancamentoDeAnime(
+        status=StatusLancamento.EM_LANCAMENTO,
+        total_episodios=24,
+        proximo_ep_numero=13,
+        proximo_ep_em=datetime.fromtimestamp(1_700_000_000, tz=UTC),
+    )
+    assert lancamento.proximo_ep_em.tzinfo is UTC
+
+
+def test_anilist_lancamento_sem_next_airing(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "description": "x",
+                "status": "FINISHED",
+                "episodes": 12,
+                "nextAiringEpisode": None,
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento == LancamentoDeAnime(
+        status=StatusLancamento.FINALIZADO,
+        total_episodios=12,
+        proximo_ep_numero=None,
+        proximo_ep_em=None,
+    )
+
+
+def test_anilist_lancamento_status_fora_do_mapa(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {"Media": {"id": 21, "description": "x", "status": "SOMETHING_NEW", "episodes": 5}}
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento == LancamentoDeAnime(
+        status=None, total_episodios=5, proximo_ep_numero=None, proximo_ep_em=None
+    )
+
+
+def test_anilist_sem_dados_de_lancamento_deixa_campo_none(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "coverImage": {"extraLarge": "https://img/c.jpg"},
+                "bannerImage": "https://img/b.jpg",
+                "description": "sinopse",
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    assert AniListProvider().buscar_por_titulo("Slime").lancamento is None
+
+
+def test_anilist_listar_em_alta_preenche_lancamento(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Page": {
+                "media": [
+                    {
+                        "id": 1,
+                        "title": {"romaji": "Tensei", "english": None},
+                        "coverImage": {"extraLarge": None},
+                        "bannerImage": None,
+                        "status": "RELEASING",
+                        "episodes": None,
+                        "nextAiringEpisode": {"episode": 7, "airingAt": 1_700_000_000},
+                    }
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    (item,) = AniListProvider().listar_em_alta()
+
+    assert item.lancamento == LancamentoDeAnime(
+        status=StatusLancamento.EM_LANCAMENTO,
+        total_episodios=None,
+        proximo_ep_numero=7,
+        proximo_ep_em=datetime.fromtimestamp(1_700_000_000, tz=UTC),
+    )
+
+
+def test_anilist_buscar_lancamento_por_anilist_id(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Media": {
+                "status": "RELEASING",
+                "episodes": 24,
+                "nextAiringEpisode": {"episode": 13, "airingAt": 1_700_000_000},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_lancamento_por_anilist_id(21)
+
+    assert resultado == LancamentoDeAnime(
+        status=StatusLancamento.EM_LANCAMENTO,
+        total_episodios=24,
+        proximo_ep_numero=13,
+        proximo_ep_em=datetime.fromtimestamp(1_700_000_000, tz=UTC),
+    )
+
+
+def test_anilist_buscar_lancamento_media_null_devolve_none(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post",
+        lambda *a, **k: _RespostaFalsa(corpo={"data": {"Media": None}}),
+    )
+
+    assert AniListProvider().buscar_lancamento_por_anilist_id(999) is None
 
 
 # --- KitsuProvider ---
@@ -289,6 +454,47 @@ def test_kitsu_buscar_titulos_sem_en_jp_cai_para_canonical_title(
     assert resultado == TitulosDeAnime(titulo_romaji="Slime", titulo_ingles=None)
 
 
+def test_kitsu_preenche_lancamento_sem_next_airing(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": [
+            {
+                "id": "42",
+                "attributes": {
+                    "synopsis": "sinopse",
+                    "status": "current",
+                    "episodeCount": 12,
+                    "posterImage": {"original": "https://img/p.jpg"},
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = KitsuProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento == LancamentoDeAnime(
+        status=StatusLancamento.EM_LANCAMENTO,
+        total_episodios=12,
+        proximo_ep_numero=None,
+        proximo_ep_em=None,
+    )
+
+
+def test_kitsu_sem_dados_de_lancamento_deixa_campo_none(monkeypatch: pytest.MonkeyPatch):
+    corpo = {"data": [{"id": "42", "attributes": {"synopsis": "sinopse"}}]}
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    assert KitsuProvider().buscar_por_titulo("Slime").lancamento is None
+
+
+def test_kitsu_nao_e_provedor_com_lancamento():
+    assert not isinstance(KitsuProvider(), ProvedorComLancamento)
+
+
 # --- cadeia de fallback (integrations/servico.py) ---
 
 
@@ -326,6 +532,35 @@ class _ProvedorFake(ProvedorDeMetadados):
         if self._erro is not None:
             raise self._erro
         return self._titulos
+
+
+class _ProvedorComLancamentoFake(ProvedorDeMetadados, ProvedorComLancamento):
+    """Provedor fake que implementa a capability opcional `ProvedorComLancamento`
+    (o `_ProvedorFake` acima não a implementa, para exercitar o filtro
+    `isinstance` de `servico.buscar_lancamento_por_anilist_id`)."""
+
+    def __init__(self, nome: str, *, lancamento=None, erro: Exception | None = None):
+        self._nome = nome
+        self._lancamento = lancamento
+        self._erro = erro
+
+    @property
+    def nome(self) -> str:
+        return self._nome
+
+    def buscar_por_titulo(self, titulo: str):
+        return None
+
+    def listar_em_alta(self):
+        return []
+
+    def buscar_titulos(self, titulo: str):
+        return None
+
+    def buscar_lancamento_por_anilist_id(self, anilist_id: int):
+        if self._erro is not None:
+            raise self._erro
+        return self._lancamento
 
 
 @pytest.fixture(autouse=True)
@@ -495,3 +730,61 @@ async def test_servico_em_alta_concorrencia_compartilha_uma_unica_busca(
 
     assert len(chamadas) == 1
     assert primeira == segunda == [item]
+
+
+# --- servico.buscar_lancamento_por_anilist_id (F2 detector de eps novos) ---
+
+
+async def test_servico_buscar_lancamento_so_consulta_provedor_capaz(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    esperado = LancamentoDeAnime(
+        status=StatusLancamento.EM_LANCAMENTO,
+        total_episodios=24,
+        proximo_ep_numero=13,
+        proximo_ep_em=datetime.fromtimestamp(1_700_000_000, tz=UTC),
+    )
+    anilist = _ProvedorComLancamentoFake("anilist", lancamento=esperado)
+    # `erro` nunca dispara: o filtro `isinstance` pula o Kitsu antes de chamá-lo.
+    kitsu = _ProvedorFake("kitsu", erro=requests.ConnectionError("não deveria ser chamado"))
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    resultado = await servico.buscar_lancamento_por_anilist_id(21)
+
+    assert resultado is esperado
+    assert not isinstance(kitsu, ProvedorComLancamento)
+
+
+async def test_servico_buscar_lancamento_sem_provedor_capaz_devolve_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(servico, "PROVEDORES", (_ProvedorFake("kitsu"),))
+
+    assert await servico.buscar_lancamento_por_anilist_id(21) is None
+
+
+async def test_servico_buscar_lancamento_cai_para_proximo_capaz_em_erro(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    esperado = LancamentoDeAnime(
+        status=StatusLancamento.FINALIZADO,
+        total_episodios=12,
+        proximo_ep_numero=None,
+        proximo_ep_em=None,
+    )
+    falho = _ProvedorComLancamentoFake("a", erro=requests.ConnectionError("falhou"))
+    ok = _ProvedorComLancamentoFake("b", lancamento=esperado)
+    monkeypatch.setattr(servico, "PROVEDORES", (falho, ok))
+
+    assert await servico.buscar_lancamento_por_anilist_id(21) is esperado
+
+
+async def test_servico_buscar_lancamento_levanta_se_todos_capazes_falham(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    falho1 = _ProvedorComLancamentoFake("a", erro=requests.ConnectionError("falhou"))
+    falho2 = _ProvedorComLancamentoFake("b", erro=requests.HTTPError("HTTP 502"))
+    monkeypatch.setattr(servico, "PROVEDORES", (falho1, falho2))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.buscar_lancamento_por_anilist_id(21)

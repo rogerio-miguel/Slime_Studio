@@ -10,6 +10,26 @@ completo precisa vir de `TypeError` na instanciação.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
+
+from core.enums import StatusLancamento
+
+
+@dataclass(frozen=True, slots=True)
+class LancamentoDeAnime:
+    """Estado de lançamento de um anime num provedor — alimenta o detector de
+    episódios novos (`api/servicos/lancamentos.py`).
+
+    Campos nulos são normais: nem todo provedor expõe todos (Kitsu não tem
+    next-airing, AniList pode omitir `episodes` em títulos antigos). `None` em
+    `proximo_ep_numero` vira "0 episódios novos" no cálculo — erra para baixo,
+    nunca infla o badge.
+    """
+
+    status: StatusLancamento | None
+    total_episodios: int | None
+    proximo_ep_numero: int | None  # número do PRÓXIMO episódio a ir ao ar
+    proximo_ep_em: datetime | None  # UTC aware
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +41,7 @@ class MetadadosDeAnime:
     sinopse: str | None
     anilist_id: int | None
     kitsu_id: int | None
+    lancamento: LancamentoDeAnime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +68,7 @@ class AnimeEmAlta:
     capa_url: str | None
     banner_url: str | None
     anilist_id: int | None
+    lancamento: LancamentoDeAnime | None = None
 
 
 class ProvedorDeMetadados(ABC):
@@ -74,3 +96,17 @@ class ProvedorDeMetadados(ABC):
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
         """Títulos do melhor casamento para `titulo`; `None` quando o provedor
         não encontrou nada (mesma convenção de `buscar_por_titulo`)."""
+
+
+class ProvedorComLancamento(ABC):
+    """Capability opcional: só provedores que expõem o estado de lançamento por
+    id AniList a implementam (hoje só `anilist.py` — Kitsu não tem next-airing).
+    `integrations/servico.py::buscar_lancamento_por_anilist_id` filtra
+    `PROVEDORES` por `isinstance(p, ProvedorComLancamento)` antes de consultar.
+    Síncrona pela mesma razão de `ProvedorDeMetadados` (o `to_thread`/timeout
+    mora só no serviço)."""
+
+    @abstractmethod
+    def buscar_lancamento_por_anilist_id(self, anilist_id: int) -> LancamentoDeAnime | None:
+        """Estado de lançamento do anime de id AniList `anilist_id`; `None`
+        quando o provedor não conhece esse id."""

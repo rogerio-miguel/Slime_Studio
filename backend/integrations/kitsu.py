@@ -7,12 +7,27 @@ mora a fronteira de exceção HTTP.
 
 import requests
 
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
+from core.enums import StatusLancamento
+from integrations.base import (
+    AnimeEmAlta,
+    LancamentoDeAnime,
+    MetadadosDeAnime,
+    ProvedorDeMetadados,
+    TitulosDeAnime,
+)
 
 _BASE_URL = "https://kitsu.io/api/edge"
 # Ver `integrations/anilist.py::_TIMEOUT_S` — mesmo raciocínio: estritamente
 # menor que o `wait_for` externo de `integrations/servico.py`.
 _TIMEOUT_S = 6
+
+_STATUS_KITSU: dict[str, StatusLancamento] = {
+    "current": StatusLancamento.EM_LANCAMENTO,
+    "finished": StatusLancamento.FINALIZADO,
+    "tba": StatusLancamento.NAO_LANCADO,
+    "unreleased": StatusLancamento.NAO_LANCADO,
+    "upcoming": StatusLancamento.NAO_LANCADO,
+}
 
 
 class KitsuProvider(ProvedorDeMetadados):
@@ -31,6 +46,7 @@ class KitsuProvider(ProvedorDeMetadados):
             sinopse=_texto_ou_none(atributos.get("synopsis")),
             anilist_id=None,
             kitsu_id=_id_numerico(item.get("id")),
+            lancamento=_extrair_lancamento(atributos),
         )
 
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
@@ -90,9 +106,28 @@ class KitsuProvider(ProvedorDeMetadados):
                     capa_url=_maior_imagem(atributos.get("posterImage")),
                     banner_url=_maior_imagem(atributos.get("coverImage")),
                     anilist_id=None,
+                    lancamento=_extrair_lancamento(atributos),
                 )
             )
         return resultado
+
+
+def _extrair_lancamento(atributos: dict) -> LancamentoDeAnime | None:
+    """Estado de lançamento no Kitsu: só `status` e `episodeCount` são
+    aproveitáveis — a API não expõe next-airing, então `proximo_ep_*` fica
+    sempre `None`. Devolve `None` quando nada é aproveitável, nunca uma
+    dataclass toda-nula."""
+    status = _STATUS_KITSU.get(atributos.get("status"))
+    contagem = atributos.get("episodeCount")
+    total_episodios = contagem if isinstance(contagem, int) else None
+    if status is None and total_episodios is None:
+        return None
+    return LancamentoDeAnime(
+        status=status,
+        total_episodios=total_episodios,
+        proximo_ep_numero=None,
+        proximo_ep_em=None,
+    )
 
 
 def _maior_imagem(imagem: dict | None) -> str | None:

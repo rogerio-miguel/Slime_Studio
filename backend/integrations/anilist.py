@@ -13,10 +13,19 @@ decide o que fazer com isso (cai para o próximo provedor).
 
 import html
 import re
+from datetime import UTC, datetime
 
 import requests
 
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados, TitulosDeAnime
+from core.enums import StatusLancamento
+from integrations.base import (
+    AnimeEmAlta,
+    LancamentoDeAnime,
+    MetadadosDeAnime,
+    ProvedorComLancamento,
+    ProvedorDeMetadados,
+    TitulosDeAnime,
+)
 
 _URL = "https://graphql.anilist.co"
 # Estritamente menor que o `wait_for` externo de
@@ -33,6 +42,9 @@ query ($busca: String) {
     coverImage { extraLarge }
     bannerImage
     description(asHtml: false)
+    status
+    episodes
+    nextAiringEpisode { episode airingAt }
   }
 }
 """
@@ -53,16 +65,37 @@ query {
       title { romaji english }
       coverImage { extraLarge }
       bannerImage
+      status
+      episodes
+      nextAiringEpisode { episode airingAt }
     }
   }
 }
 """
 
+_QUERY_LANCAMENTO = """
+query ($id: Int) {
+  Media(id: $id, type: ANIME) {
+    status
+    episodes
+    nextAiringEpisode { episode airingAt }
+  }
+}
+"""
+
+_STATUS_ANILIST: dict[str, StatusLancamento] = {
+    "RELEASING": StatusLancamento.EM_LANCAMENTO,
+    "FINISHED": StatusLancamento.FINALIZADO,
+    "NOT_YET_RELEASED": StatusLancamento.NAO_LANCADO,
+    "CANCELLED": StatusLancamento.CANCELADO,
+    "HIATUS": StatusLancamento.HIATO,
+}
+
 _REGEX_TAG_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _REGEX_TAG_HTML = re.compile(r"<[^>]+>")
 
 
-class AniListProvider(ProvedorDeMetadados):
+class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
     @property
     def nome(self) -> str:
         return "anilist"
@@ -78,7 +111,15 @@ class AniListProvider(ProvedorDeMetadados):
             sinopse=_sanitizar_sinopse(media.get("description")),
             anilist_id=media.get("id"),
             kitsu_id=None,
+            lancamento=_extrair_lancamento(media),
         )
+
+    def buscar_lancamento_por_anilist_id(self, anilist_id: int) -> LancamentoDeAnime | None:
+        dados = self._executar(_QUERY_LANCAMENTO, {"id": anilist_id})
+        media = dados.get("Media") if isinstance(dados, dict) else None
+        if not isinstance(media, dict):
+            return None
+        return _extrair_lancamento(media)
 
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
         dados = self._executar(_QUERY_TITULOS, {"busca": titulo})
@@ -107,6 +148,7 @@ class AniListProvider(ProvedorDeMetadados):
                 capa_url=(item.get("coverImage") or {}).get("extraLarge"),
                 banner_url=item.get("bannerImage"),
                 anilist_id=item.get("id"),
+                lancamento=_extrair_lancamento(item),
             )
             for item in itens
             if isinstance(item, dict) and item.get("id") is not None
@@ -124,6 +166,41 @@ class AniListProvider(ProvedorDeMetadados):
         if not isinstance(corpo, dict) or "data" not in corpo:
             raise RuntimeError("AniList: resposta sem campo 'data'")
         return corpo.get("data") or {}
+
+
+def _extrair_lancamento(media: dict) -> LancamentoDeAnime | None:
+    """Parser único de estado de lançamento reusado pelos três caminhos que
+    trazem esses campos (`buscar_por_titulo`, `listar_em_alta`,
+    `buscar_lancamento_por_anilist_id`). Devolve `None` quando nada é
+    aproveitável — nunca uma dataclass toda-nula."""
+    status = _STATUS_ANILIST.get(media.get("status"))
+
+    episodes = media.get("episodes")
+    total_episodios = episodes if isinstance(episodes, int) else None
+
+    nae = media.get("nextAiringEpisode")
+    if not isinstance(nae, dict):
+        nae = {}
+    episode = nae.get("episode")
+    proximo_ep_numero = episode if isinstance(episode, int) else None
+    airing_at = nae.get("airingAt")
+    proximo_ep_em = (
+        datetime.fromtimestamp(airing_at, tz=UTC) if isinstance(airing_at, int) else None
+    )
+
+    if (
+        status is None
+        and total_episodios is None
+        and proximo_ep_numero is None
+        and proximo_ep_em is None
+    ):
+        return None
+    return LancamentoDeAnime(
+        status=status,
+        total_episodios=total_episodios,
+        proximo_ep_numero=proximo_ep_numero,
+        proximo_ep_em=proximo_ep_em,
+    )
 
 
 def _texto_ou_none(texto: str | None) -> str | None:
