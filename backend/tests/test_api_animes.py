@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import sondagem
 from api.servicos.fontes import EpisodiosRemotosResultado
-from api.servicos.lancamentos import contar_capturados_por_anime, episodios_novos
+from api.servicos.lancamentos import episodios_novos, maior_numero_capturado_por_anime
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao
 from extractors.base import EpisodioRemoto, ResultadoBusca
@@ -110,42 +110,59 @@ def _anime_em_memoria(**campos) -> Anime:
     return Anime(titulo="X", slug="x", **campos)
 
 
-def test_episodios_novos_em_lancamento_desconta_capturados():
+def test_episodios_novos_conta_acima_da_fronteira_acompanhada():
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=5
+    )
+    # fonte no ep 5, usuário acompanhou até o ep 3 -> 2 novos
+    assert episodios_novos(anime, maior_capturado=3) == 2
+
+
+def test_episodios_novos_ignora_buraco_abaixo_da_fronteira():
+    # regressão: usuário foi direto ao ep 4 (eps 1-3 nunca capturados); a fonte
+    # tem 4 eps -> fronteira 4, badge 0 (contagem de capturados daria 3)
     anime = _anime_em_memoria(
         status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=4
     )
-    # 4 disponíveis na fonte, 2 capturados -> 2 novos
-    assert episodios_novos(anime, capturados=2) == 2
+    assert episodios_novos(anime, maior_capturado=4) == 0
+
+
+def test_episodios_novos_sem_captura_conta_a_fonte_inteira():
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=6
+    )
+    assert episodios_novos(anime, maior_capturado=0) == 6
 
 
 def test_episodios_novos_zero_para_status_diferente_de_em_lancamento():
     anime = _anime_em_memoria(
         status_lancamento=StatusLancamento.FINALIZADO, episodios_na_fonte=12
     )
-    assert episodios_novos(anime, capturados=0) == 0
+    assert episodios_novos(anime, maior_capturado=0) == 0
 
 
 def test_episodios_novos_zero_quando_contagem_da_fonte_nula():
     anime = _anime_em_memoria(
         status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=None
     )
-    assert episodios_novos(anime, capturados=0) == 0
+    assert episodios_novos(anime, maior_capturado=0) == 0
 
 
 def test_episodios_novos_zero_quando_status_nulo_mesmo_com_contagem_da_fonte():
     # filtro estrito: só `EM_LANCAMENTO` ganha badge, nem `None` com contagem
     anime = _anime_em_memoria(status_lancamento=None, episodios_na_fonte=6)
-    assert episodios_novos(anime, capturados=0) == 0
+    assert episodios_novos(anime, maior_capturado=0) == 0
 
 
 def test_episodios_novos_nao_fica_negativo():
+    # fonte largou episódios antigos: episodios_na_fonte abaixo da fronteira
     anime = _anime_em_memoria(
         status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=3
     )
-    assert episodios_novos(anime, capturados=5) == 0
+    assert episodios_novos(anime, maior_capturado=5) == 0
 
 
-# --- detector de episódios novos: contagem em lote + GET /api/animes ---
+# --- detector de episódios novos: fronteira em lote + GET /api/animes ---
 
 
 async def _criar_anime_catalogado(
@@ -229,39 +246,39 @@ async def _capturar_episodio(
         await sessao.commit()
 
 
-async def test_contar_capturados_por_anime_distinct_numero_tipo_e_status(
+async def test_maior_numero_capturado_por_anime_ignora_versao_tipo_e_status(
     sessionmaker_api: _SessionMaker,
 ):
-    anime_id = await _criar_anime_catalogado(sessionmaker_api, "Anime Contagem")
-    # ep 1 legendado + dublado = 2 linhas, 1 capturado
+    anime_id = await _criar_anime_catalogado(sessionmaker_api, "Anime Fronteira")
+    # ep 1 legendado + dublado: duas linhas, mesma fronteira
     await _capturar_episodio(sessionmaker_api, anime_id, numero=1, versao=VersaoEpisodio.LEGENDADO)
     await _capturar_episodio(sessionmaker_api, anime_id, numero=1, versao=VersaoEpisodio.DUBLADO)
     await _capturar_episodio(sessionmaker_api, anime_id, numero=2)
-    # LIBERADO também conta como capturado
+    # ep 3 nunca capturado (buraco); ep 4 LIBERADO leva a fronteira a 4
     await _capturar_episodio(sessionmaker_api, anime_id, numero=4, status=StatusEpisodio.LIBERADO)
-    # PENDENTE ainda não é captura utilizável
-    await _capturar_episodio(sessionmaker_api, anime_id, numero=3, status=StatusEpisodio.PENDENTE)
-    # OVA de mesmo número não conta (numeração própria)
-    await _capturar_episodio(sessionmaker_api, anime_id, numero=1, tipo=TipoEpisodio.OVA)
+    # ep 5 só PENDENTE: não é captura utilizável, não move a fronteira
+    await _capturar_episodio(sessionmaker_api, anime_id, numero=5, status=StatusEpisodio.PENDENTE)
+    # OVA de número maior não conta (numeração própria)
+    await _capturar_episodio(sessionmaker_api, anime_id, numero=9, tipo=TipoEpisodio.OVA)
 
     async with sessionmaker_api() as sessao:
-        contagem = await contar_capturados_por_anime(sessao, [anime_id])
+        fronteira = await maior_numero_capturado_por_anime(sessao, [anime_id])
 
-    assert contagem == {anime_id: 3}  # números REGULAR capturados: 1, 2, 4
+    assert fronteira == {anime_id: 4}  # maior numero REGULAR PRONTO/LIBERADO
 
 
-async def test_contar_capturados_por_anime_lista_vazia(sessionmaker_api: _SessionMaker):
+async def test_maior_numero_capturado_por_anime_lista_vazia(sessionmaker_api: _SessionMaker):
     async with sessionmaker_api() as sessao:
-        assert await contar_capturados_por_anime(sessao, []) == {}
+        assert await maior_numero_capturado_por_anime(sessao, []) == {}
 
 
-async def test_contar_capturados_por_anime_id_ausente_e_zero(sessionmaker_api: _SessionMaker):
+async def test_maior_numero_capturado_por_anime_id_ausente_e_zero(sessionmaker_api: _SessionMaker):
     anime_id = await _criar_anime_catalogado(sessionmaker_api, "Anime Sem Episodio")
 
     async with sessionmaker_api() as sessao:
-        contagem = await contar_capturados_por_anime(sessao, [anime_id])
+        fronteira = await maior_numero_capturado_por_anime(sessao, [anime_id])
 
-    assert contagem == {}
+    assert fronteira == {}
 
 
 async def test_listar_animes_calcula_episodios_novos_por_anime_em_uma_resposta(
@@ -289,10 +306,30 @@ async def test_listar_animes_calcula_episodios_novos_por_anime_em_uma_resposta(
 
     assert resposta.status_code == 200
     por_id = {item["id"]: item for item in resposta.json()}
-    assert por_id[em_lancamento]["episodios_novos"] == 2  # 4 na fonte - 2 capturados
+    assert por_id[em_lancamento]["episodios_novos"] == 2  # 4 na fonte, fronteira no ep 2
     assert por_id[em_lancamento]["status_lancamento"] == "em_lancamento"
     assert por_id[finalizado]["episodios_novos"] == 0  # status != EM_LANCAMENTO
     assert por_id[finalizado]["status_lancamento"] == "finalizado"
+
+
+async def test_listar_animes_badge_zero_quando_usuario_pulou_episodios_antigos(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    """Regressão: usuário foi direto ao ep 4 (eps 1-3 nunca capturados). A fonte
+    tem 4 eps -> badge 0, não 3 (a contagem de capturados daria 3)."""
+    anime_id = await _criar_anime_catalogado(
+        sessionmaker_api,
+        "Anime Pulou Antigos",
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=4,
+    )
+    await _capturar_episodio(sessionmaker_api, anime_id, numero=4)
+
+    resposta = await cliente.get("/api/animes")
+
+    assert resposta.status_code == 200
+    item = next(i for i in resposta.json() if i["id"] == anime_id)
+    assert item["episodios_novos"] == 0
 
 
 async def test_listar_animes_preserva_campos_e_defaults_sem_lancamento(
@@ -312,12 +349,12 @@ async def test_listar_animes_preserva_campos_e_defaults_sem_lancamento(
     assert item["episodios_novos"] == 0
 
 
-async def test_obter_anime_detalhe_inclui_episodios_novos(
+async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     anime_id = await _criar_anime_catalogado(
         sessionmaker_api,
-        "Anime Detalhe Novos",
+        "Anime Detalhe Status",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=3,
     )
@@ -326,8 +363,10 @@ async def test_obter_anime_detalhe_inclui_episodios_novos(
     resposta = await cliente.get(f"/api/animes/{anime_id}")
 
     assert resposta.status_code == 200
-    assert resposta.json()["episodios_novos"] == 2  # 3 na fonte - 1 capturado
     assert resposta.json()["status_lancamento"] == "em_lancamento"
+    # `episodios_novos` é badge só da galeria (`GET /api/animes`) — o detalhe
+    # nunca expõe, mesmo no estado que na galeria daria badge 2.
+    assert "episodios_novos" not in resposta.json()
 
 
 async def test_em_alta_nao_ganha_campos_do_detector(
@@ -397,7 +436,7 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
     primeira = await cliente.get("/api/animes")
     assert primeira.status_code == 200
     item = next(i for i in primeira.json() if i["id"] == anime_id)
-    assert item["episodios_novos"] == 0  # badge desta leitura: 1 na fonte - 1 capturado
+    assert item["episodios_novos"] == 0  # badge desta leitura: 1 na fonte, fronteira no ep 1
 
     await _drenar_sondagens()
     assert chamadas == [(anime_id, VersaoEpisodio.LEGENDADO)]
@@ -408,7 +447,7 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
 
     segunda = await cliente.get("/api/animes")
     item = next(i for i in segunda.json() if i["id"] == anime_id)
-    assert item["episodios_novos"] == 2  # 3 na fonte - 1 capturado
+    assert item["episodios_novos"] == 2  # 3 na fonte, fronteira no ep 1
 
 
 async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(

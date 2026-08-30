@@ -164,7 +164,7 @@ async def listar_animes(
     resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
     animes = list(resultado.scalars())
     ids = [anime.id for anime in animes]
-    capturados = await servico_lancamentos.contar_capturados_por_anime(sessao, ids)
+    maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     # Carona fire-and-forget: sonda a fonte real dos animes em lançamento cuja
     # contagem está velha/ausente. O resultado entra no banco para a PRÓXIMA
     # leitura do catálogo, não para esta (`api/servicos/sondagem.py`). Zero
@@ -180,7 +180,7 @@ async def listar_animes(
         AnimeSaida.model_validate(anime).model_copy(
             update={
                 "episodios_novos": servico_lancamentos.episodios_novos(
-                    anime, capturados.get(anime.id, 0)
+                    anime, maior_capturado.get(anime.id, 0)
                 )
             }
         )
@@ -298,7 +298,6 @@ async def obter_anime(
         else {}
     )
     servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
-    capturados = await servico_lancamentos.contar_capturados_por_anime(sessao, [anime_id])
     return AnimeDetalheSaida(
         id=anime.id,
         titulo=anime.titulo,
@@ -310,7 +309,6 @@ async def obter_anime(
         versoes_disponiveis=_versoes_disponiveis(versoes_de_fonte),
         versao_confirmada_mais_recente=versao_confirmada_mais_recente,
         status_lancamento=anime.status_lancamento,
-        episodios_novos=servico_lancamentos.episodios_novos(anime, capturados.get(anime_id, 0)),
     )
 
 

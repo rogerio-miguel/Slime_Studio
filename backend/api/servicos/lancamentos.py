@@ -2,17 +2,20 @@
 
 `episodios_novos` é cálculo puro sobre um `Anime` já carregado — compara
 `Anime.episodios_na_fonte` (contagem da fonte real, alimentada por
-`api/servicos/sondagem.py`) com os episódios já capturados localmente;
-`contar_capturados_por_anime` é a leitura agregada que fornece essa segunda
-metade em lote (uma query para o catálogo inteiro, nunca por anime num loop).
-Não importa `fastapi` nem Pydantic — `api/rotas/animes.py` é quem traduz o
-resultado para os esquemas de saída (regra de dependência da Clean
+`api/servicos/sondagem.py`) com a fronteira do que o usuário já acompanhou: o
+maior `numero` de episódio REGULAR já capturado/assistido localmente. Usar a
+fronteira em vez da contagem de capturados evita que buracos abaixo do episódio
+mais recente (usuário que pulou episódios antigos) contem como novos.
+`maior_numero_capturado_por_anime` é a leitura agregada que fornece essa
+segunda metade em lote (uma query para o catálogo inteiro, nunca por anime num
+loop). Não importa `fastapi` nem Pydantic — `api/rotas/animes.py` é quem traduz
+o resultado para os esquemas de saída (regra de dependência da Clean
 Architecture, CLAUDE.md §1).
 """
 
 from collections.abc import Iterable
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio
@@ -26,37 +29,45 @@ from models.episodio import Episodio
 _STATUS_CAPTURADO = (StatusEpisodio.PRONTO, StatusEpisodio.LIBERADO)
 
 
-def episodios_novos(anime: Anime, capturados: int) -> int:
-    """Nº de episódios já disponíveis na fonte real (site) mas ainda não
-    capturados localmente.
+def episodios_novos(anime: Anime, maior_capturado: int) -> int:
+    """Nº de episódios já disponíveis na fonte real (site) acima da fronteira do
+    que o usuário acompanhou.
 
     Só faz sentido para anime `EM_LANCAMENTO`. `episodios_na_fonte` é a
     contagem da última sondagem bem-sucedida do site
     (`api/servicos/sondagem.py`); fica `None` enquanto nenhuma sondagem
-    carimbou, e aí o badge é 0. Piso em 0: anime com mais capturados que o
-    exposto pela fonte (raro) não vira negativo.
+    carimbou, e aí o badge é 0. `maior_capturado` é o maior `numero` de
+    episódio REGULAR já capturado/assistido (0 se nenhum) — a comparação é com
+    essa fronteira, não com a contagem de capturados, para que episódios
+    antigos que o usuário pulou não inflem o badge. Piso em 0: fonte que largou
+    episódios antigos (`episodios_na_fonte` abaixo da fronteira) não vira
+    negativo.
     """
     if anime.status_lancamento is not StatusLancamento.EM_LANCAMENTO:
         return 0
     if anime.episodios_na_fonte is None:
         return 0
-    return max(0, anime.episodios_na_fonte - capturados)
+    return max(0, anime.episodios_na_fonte - maior_capturado)
 
 
-async def contar_capturados_por_anime(sessao: AsyncSession, ids: Iterable[int]) -> dict[int, int]:
-    """`{anime_id: nº de episódios REGULAR capturados}` para todos os `ids` numa
-    única query agregada — `GET /api/animes` serializa o catálogo inteiro, um
-    `SELECT` por anime seria N+1. `anime_id` ausente do dict = 0 capturados.
+async def maior_numero_capturado_por_anime(
+    sessao: AsyncSession, ids: Iterable[int]
+) -> dict[int, int]:
+    """`{anime_id: maior numero de episódio REGULAR já capturado}` para todos os
+    `ids` numa única query agregada — `GET /api/animes` serializa o catálogo
+    inteiro, um `SELECT` por anime seria N+1. `anime_id` ausente do dict = 0
+    (nenhum episódio capturado).
 
-    `COUNT(DISTINCT numero)`: um episódio legendado + dublado são duas linhas mas
-    conta como um capturado. `tipo == REGULAR`: OVA/especial/filme têm numeração
+    `MAX(numero)`: a fronteira do que o usuário acompanhou, não quantos
+    episódios tem — buraco abaixo do mais recente (episódio antigo pulado) não
+    conta como pendente. `tipo == REGULAR`: OVA/especial/filme têm numeração
     própria e não entram na comparação com `episodios_na_fonte`.
     """
     lista_ids = list(ids)
     if not lista_ids:
         return {}
     resultado = await sessao.execute(
-        select(Episodio.anime_id, func.count(distinct(Episodio.numero)))
+        select(Episodio.anime_id, func.max(Episodio.numero))
         .where(
             Episodio.anime_id.in_(lista_ids),
             Episodio.tipo == TipoEpisodio.REGULAR,
@@ -64,4 +75,4 @@ async def contar_capturados_por_anime(sessao: AsyncSession, ids: Iterable[int]) 
         )
         .group_by(Episodio.anime_id)
     )
-    return {anime_id: total for anime_id, total in resultado.all()}
+    return {anime_id: maior for anime_id, maior in resultado.all()}
