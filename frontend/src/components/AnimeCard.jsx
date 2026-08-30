@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import BadgeDeEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 
 // Linguagem visual portada de Slime_Shell_Web/AnimeCard.jsx (superfície
 // escura, borda neon, hover translate leve, tag pill, line-clamp-2 no
@@ -91,12 +92,20 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
     </button>
   );
 
+  // Badge não-interativo, sempre visível (ao contrário de `botaoRemover`, que
+  // só aparece no hover) — irmão do Link/button dentro do `group relative`,
+  // nunca aninhado no <a>/<button>. Canto oposto ao de remover. `quantidade`
+  // é `undefined` quando o card vem do feed "em alta" — o guard do
+  // componente já devolve `null` nesse caso.
+  const badgeEpisodiosNovos = <BadgeDeEpisodiosNovos quantidade={anime.episodios_novos} />;
+
   if (idCatalogado != null) {
     return (
       <div className="group relative">
         <Link to={`/anime/${idCatalogado}`} className={classes}>
           {conteudo}
         </Link>
+        {badgeEpisodiosNovos}
         {botaoRemover}
       </div>
     );
@@ -113,6 +122,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
       >
         {conteudo}
       </button>
+      {badgeEpisodiosNovos}
       {botaoRemover}
     </div>
   );
