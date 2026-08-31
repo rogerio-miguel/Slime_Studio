@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Config
 from core.enums import StatusLancamento
 from db.catalogo import (
+    aplicar_lancamento_descoberto_por_titulo,
     aplicar_metadados,
     atualizar_lancamento,
     atualizar_lancamentos_em_lote,
@@ -366,6 +367,105 @@ async def test_atualizar_lancamentos_em_lote_aplica_valores_por_anime(sessionmak
 
 async def test_atualizar_lancamentos_em_lote_dict_vazio_nao_levanta(sessionmaker: _SessionMaker):
     assert await atualizar_lancamentos_em_lote(sessionmaker, {}) is None
+
+
+# --- aplicar_lancamento_descoberto_por_titulo (F14: aquecimento por título) ---
+
+
+async def test_aplicar_lancamento_descoberto_por_titulo_nao_toca_capa_sinopse_kitsu(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+
+    await aplicar_lancamento_descoberto_por_titulo(
+        sessionmaker,
+        anime_id,
+        anilist_id=42,
+        lancamento=LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=12,
+            proximo_ep_numero=5,
+            proximo_ep_em=None,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.anilist_id == 42
+        assert anime.status_lancamento == StatusLancamento.EM_LANCAMENTO
+        assert anime.proximo_ep_numero == 5
+        assert anime.total_episodios_anilist == 12
+        assert anime.lancamento_atualizado_em is not None
+        # match por título é heurístico — estes campos permanentes nunca entram
+        assert anime.capa_path is None
+        assert anime.sinopse is None
+        assert anime.kitsu_id is None
+
+
+async def test_aplicar_lancamento_descoberto_por_titulo_id_duplicado_grava_bloco_e_descarta_id(
+    sessionmaker: _SessionMaker, caplog: pytest.LogCaptureFixture
+):
+    """Regressão do bug de rollback de D2: quando o `anilist_id` já pertence a
+    outra linha, o id é descartado mas o bloco de lançamento persiste mesmo
+    assim (o `except IntegrityError` de `aplicar_metadados` reverteria os dois)."""
+    dono_id = await _criar_anime(sessionmaker, titulo="Dono", slug="dono", anilist_id=7)
+    anime_id = await _criar_anime(sessionmaker, titulo="Irmao Dublado", slug="irmao-dublado")
+
+    with caplog.at_level("WARNING"):
+        await aplicar_lancamento_descoberto_por_titulo(
+            sessionmaker,
+            anime_id,
+            anilist_id=7,
+            lancamento=LancamentoDeAnime(
+                status=StatusLancamento.EM_LANCAMENTO,
+                total_episodios=24,
+                proximo_ep_numero=9,
+                proximo_ep_em=None,
+            ),
+        )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.anilist_id is None  # descartado — id pertence a outro anime
+        assert anime.status_lancamento == StatusLancamento.EM_LANCAMENTO  # bloco persiste
+        assert anime.proximo_ep_numero == 9
+        assert anime.total_episodios_anilist == 24
+        assert anime.lancamento_atualizado_em is not None
+
+        dono = await sessao.get(Anime, dono_id)
+        assert dono.anilist_id == 7  # dono original intacto
+
+    assert "anilist_id" in caplog.text
+
+
+async def test_aplicar_lancamento_descoberto_por_titulo_sem_lancamento_so_carimba(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(
+        sessionmaker,
+        titulo="Slime",
+        slug="slime",
+        status_lancamento=StatusLancamento.HIATO,
+        proximo_ep_numero=3,
+    )
+
+    await aplicar_lancamento_descoberto_por_titulo(
+        sessionmaker, anime_id, anilist_id=None, lancamento=None
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.lancamento_atualizado_em is not None  # cache negativo
+        assert anime.status_lancamento == StatusLancamento.HIATO  # intacto
+        assert anime.proximo_ep_numero == 3
+
+
+async def test_aplicar_lancamento_descoberto_por_titulo_anime_inexistente_nao_levanta(
+    sessionmaker: _SessionMaker,
+):
+    await aplicar_lancamento_descoberto_por_titulo(
+        sessionmaker, 999999, anilist_id=1, lancamento=None
+    )
 
 
 # --- lookups em lote (cruzamento do feed "em alta") ---

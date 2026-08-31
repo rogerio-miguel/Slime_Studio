@@ -37,13 +37,21 @@ class LancamentoDeAnime:
 @dataclass(frozen=True, slots=True)
 class MetadadosDeAnime:
     """Campos de `models/anime.py::Anime` que o cadastro manual não preenche
-    hoje — `integrations/servico.py` decide qual provedor preencheu qual."""
+    hoje — `integrations/servico.py` decide qual provedor preencheu qual.
+
+    `titulo_romaji`/`titulo_ingles` são material de corroboração de match por
+    título (o casamento por título é heurístico — quem consome decide se é bom o
+    bastante), **nunca persistidos**: `Anime.titulo` é o título local, não o do
+    provedor (mesma regra de `TitulosDeAnime`).
+    """
 
     capa_url: str | None
     sinopse: str | None
     anilist_id: int | None
     kitsu_id: int | None
     lancamento: LancamentoDeAnime | None = None
+    titulo_romaji: str | None = None
+    titulo_ingles: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -39,6 +39,7 @@ _QUERY_BUSCA = """
 query ($busca: String) {
   Media(search: $busca, type: ANIME) {
     id
+    title { romaji english }
     coverImage { extraLarge }
     bannerImage
     description(asHtml: false)
@@ -106,12 +107,15 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
         if not isinstance(media, dict):
             return None
 
+        titulo_bruto = media.get("title") or {}
         return MetadadosDeAnime(
             capa_url=(media.get("coverImage") or {}).get("extraLarge"),
             sinopse=_sanitizar_sinopse(media.get("description")),
             anilist_id=media.get("id"),
             kitsu_id=None,
             lancamento=_extrair_lancamento(media),
+            titulo_romaji=_texto_ou_none(titulo_bruto.get("romaji")),
+            titulo_ingles=_texto_ou_none(titulo_bruto.get("english")),
         )
 
     def buscar_lancamento_por_anilist_id(self, anilist_id: int) -> LancamentoDeAnime | None:

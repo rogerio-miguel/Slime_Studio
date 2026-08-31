@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.main import criar_app
-from api.servicos import sondagem
+from api.servicos import descoberta, sondagem
 from core.config import Config
 from db.engine import criar_engine
 from models.base import Base
@@ -51,6 +51,58 @@ async def _isola_sondagens_de_fonte():
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await tarefa
     sondagem._sondagens_em_voo.clear()
+
+
+@pytest.fixture(autouse=True)
+async def _isola_refreshs_de_lancamento():
+    """`descoberta._refreshs_de_lancamento_em_voo` é estado de módulo (dedupe +
+    ref forte das `Task` de F4b/F14 — refresh lazy por id E aquecimento por
+    título). Zera antes e cancela/limpa o que sobrar depois, para nenhum teste
+    vazar `Task` pendente para o próximo.
+
+    Global no conftest (não local a um arquivo): a partir de F14 `GET /api/animes`
+    agenda buscas por título fire-and-forget para animes sem `anilist_id`, então
+    qualquer teste de `test_api_*.py` que bata na listagem pode deixar uma `Task`
+    pendente — mesma razão de `_isola_sondagens_de_fonte` acima.
+    """
+    descoberta._refreshs_de_lancamento_em_voo.clear()
+    yield
+    pendentes = list(descoberta._refreshs_de_lancamento_em_voo.values())
+    # Drena ANTES de cancelar (ao contrário de `_isola_sondagens_de_fonte`, cujas
+    # `Task` podem ficar presas num semáforo/`wait_for` de rede): com os stubs de
+    # rede em vigor estas terminam em ms, e uma `Task` cancelada no meio de um
+    # `await` do aiosqlite deixa a worker thread retomando um loop já fechado
+    # (`PytestUnhandledThreadExceptionWarning`). O que não terminar no tempo
+    # limite ainda é cancelado.
+    if pendentes:
+        with contextlib.suppress(Exception):
+            await asyncio.wait(pendentes, timeout=5)
+    for tarefa in pendentes:
+        tarefa.cancel()
+    for tarefa in pendentes:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await tarefa
+    descoberta._refreshs_de_lancamento_em_voo.clear()
+
+
+@pytest.fixture(autouse=True)
+def _busca_de_metadados_por_titulo_sem_rede(monkeypatch: pytest.MonkeyPatch):
+    """F14: `GET /api/animes` agenda uma busca por título fire-and-forget
+    (`integrations.servico.buscar_por_titulo`, cadeia AniList→Kitsu) para cada
+    anime catalogado sem `anilist_id` e com carimbo velho — exercitado de forma
+    difusa por `test_api_animes.py`. Stub global para a `Task` nunca tocar rede;
+    devolve `None` ("provedor respondeu, não achou"). Testes que querem espiar
+    a chamada re-`setattr`am por cima (mesmo padrão de `_sondagem_da_fonte_sem_rede`
+    em `test_api_descoberta.py`).
+
+    `test_integrations_metadados.py` sobrescreve esta fixture com um no-op: lá o
+    alvo do teste é a própria `servico.buscar_por_titulo`.
+    """
+
+    async def _sem_resultado(titulo):
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _sem_resultado)
 
 
 class ClienteFalso:

@@ -41,12 +41,15 @@ class KitsuProvider(ProvedorDeMetadados):
             return None
 
         atributos = item.get("attributes") or {}
+        titulo_romaji, titulo_ingles = _extrair_titulos(atributos)
         return MetadadosDeAnime(
             capa_url=_maior_imagem(atributos.get("posterImage")),
             sinopse=_texto_ou_none(atributos.get("synopsis")),
             anilist_id=None,
             kitsu_id=_id_numerico(item.get("id")),
             lancamento=_extrair_lancamento(atributos),
+            titulo_romaji=titulo_romaji,
+            titulo_ingles=titulo_ingles,
         )
 
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
@@ -54,14 +57,7 @@ class KitsuProvider(ProvedorDeMetadados):
         if item is None:
             return None
 
-        atributos = item.get("attributes") or {}
-        titulos = atributos.get("titles") or {}
-        # `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em kanji, inútil
-        # pros sites de extração brasileiros (todos indexam romaji/inglês).
-        titulo_romaji = _texto_ou_none(titulos.get("en_jp")) or _texto_ou_none(
-            atributos.get("canonicalTitle")
-        )
-        titulo_ingles = _texto_ou_none(titulos.get("en"))
+        titulo_romaji, titulo_ingles = _extrair_titulos(item.get("attributes") or {})
         if titulo_romaji is None and titulo_ingles is None:
             return None
         return TitulosDeAnime(titulo_romaji=titulo_romaji, titulo_ingles=titulo_ingles)
@@ -128,6 +124,20 @@ def _extrair_lancamento(atributos: dict) -> LancamentoDeAnime | None:
         proximo_ep_numero=None,
         proximo_ep_em=None,
     )
+
+
+def _extrair_titulos(atributos: dict) -> tuple[str | None, str | None]:
+    """`(romaji, inglês)` a partir de `attributes` do Kitsu — extração comum a
+    `buscar_por_titulo` e `buscar_titulos`.
+
+    `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em kanji, inútil pros
+    sites de extração brasileiros (todos indexam romaji/inglês); sem `en_jp`,
+    cai pro `canonicalTitle`, nunca pro kanji.
+    """
+    titulos = atributos.get("titles") or {}
+    romaji = _texto_ou_none(titulos.get("en_jp")) or _texto_ou_none(atributos.get("canonicalTitle"))
+    ingles = _texto_ou_none(titulos.get("en"))
+    return romaji, ingles
 
 
 def _maior_imagem(imagem: dict | None) -> str | None:

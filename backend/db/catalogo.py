@@ -138,6 +138,75 @@ async def atualizar_lancamento(
         await sessao.commit()
 
 
+async def aplicar_lancamento_descoberto_por_titulo(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    *,
+    anilist_id: int | None,
+    lancamento: LancamentoDeAnime | None,
+) -> None:
+    """Persiste o resultado de um aquecimento de lançamento por BUSCA DE TÍTULO
+    (`api/servicos/descoberta._buscar_por_titulo_e_persistir`, F14). Caminho
+    deliberadamente separado de `aplicar_metadados` — não "simplifique"
+    reusando-o:
+
+    - **Nunca toca `capa_path`/`sinopse`/`kitsu_id`.** O match por título é
+      heurístico; capa/sinopse são permanentes e visíveis, um match ruim
+      gravaria lixo difícil de reverter. Só o bloco de lançamento (que o
+      próximo refresh corrige sozinho) e, sob corroboração de slug feita pelo
+      chamador, o `anilist_id`.
+    - **`anilist_id` só entra se ainda estiver livre.** A checagem `SELECT`
+      antes do `commit` evita a `IntegrityError` de `aplicar_metadados`, cujo
+      `rollback` arrastaria junto o bloco de lançamento — dois animes irmãos
+      (dub + leg) podem resolver pro mesmo id `unique=True`. O `except
+      IntegrityError` residual cobre só a corrida TOCTOU (rara, auto-corrige no
+      próximo refresh).
+    - **`lancamento is None` ainda carimba `lancamento_atualizado_em`.** É o
+      cache negativo ("busquei por título, provedor não achou") que impede a
+      listagem de re-buscar o mesmo título a cada request enquanto o TTL vale.
+
+    Anime inexistente é no-op silencioso (mesma regra de `atualizar_lancamento`).
+    """
+    agora = datetime.now(UTC)
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+
+        if anilist_id is not None and anime.anilist_id is None:
+            resultado = await sessao.execute(
+                select(Anime.id).where(Anime.anilist_id == anilist_id)
+            )
+            dono = resultado.scalar_one_or_none()
+            if dono is not None:
+                logger.warning(
+                    "anilist_id=%s descoberto por título já pertence ao anime_id=%s; não "
+                    "gravado em anime_id=%s (só o bloco de lançamento)",
+                    anilist_id,
+                    dono,
+                    anime_id,
+                )
+            else:
+                anime.anilist_id = anilist_id
+
+        if lancamento is not None:
+            _aplicar_lancamento_no_anime(anime, lancamento, agora)
+        else:
+            anime.lancamento_atualizado_em = agora
+
+        try:
+            await sessao.commit()
+        except IntegrityError as excecao:
+            await sessao.rollback()
+            logger.warning(
+                "corrida ao gravar anilist_id=%s descoberto por título (anime_id=%s); "
+                "aquecimento perdido nesta passada: %s",
+                anilist_id,
+                anime_id,
+                excecao,
+            )
+
+
 async def atualizar_lancamentos_em_lote(
     sessionmaker: _SessionMaker, dados: dict[int, LancamentoDeAnime]
 ) -> None:
