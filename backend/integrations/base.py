@@ -21,9 +21,11 @@ class LancamentoDeAnime:
     episódios novos (`api/servicos/lancamentos.py`).
 
     Campos nulos são normais: nem todo provedor expõe todos (Kitsu não tem
-    next-airing, AniList pode omitir `episodes` em títulos antigos). `None` em
-    `proximo_ep_numero` vira "0 episódios novos" no cálculo — erra para baixo,
-    nunca infla o badge.
+    next-airing, AniList pode omitir `episodes` em títulos antigos). O detector
+    de episódios novos (`api/servicos/lancamentos.py`) trata `proximo_ep_em` no
+    futuro como sinal principal de "anime no ar"; sem ele, recai sobre o par
+    `status` + `total_episodios` e, se ambos também faltarem, o badge fica 0 —
+    erra para baixo, nunca infla.
     """
 
     status: StatusLancamento | None

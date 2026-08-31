@@ -11,13 +11,22 @@ segunda metade em lote (uma query para o catálogo inteiro, nunca por anime num
 loop). Não importa `fastapi` nem Pydantic — `api/rotas/animes.py` é quem traduz
 o resultado para os esquemas de saída (regra de dependência da Clean
 Architecture, CLAUDE.md §1).
+
+O badge só aparece quando o anime dá algum sinal de que ainda está no ar — não
+basta o `status_lancamento` herdado (vários animes ficaram `EM_LANCAMENTO` sem
+`proximo_ep_em` vivo nem `total_episodios_anilist` útil, e o badge aparecia à
+toa). O gate exige uma de duas pernas: (1) `proximo_ep_em` no futuro — a AniList
+agendou o próximo episódio; ou (2) `EM_LANCAMENTO` com a contagem da fonte ainda
+atrás de `total_episodios_anilist`. Ver `episodios_novos`.
 """
 
 from collections.abc import Iterable
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.servicos import descoberta
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
@@ -31,10 +40,9 @@ _STATUS_CAPTURADO = (StatusEpisodio.PRONTO, StatusEpisodio.LIBERADO)
 
 def episodios_novos(anime: Anime, maior_capturado: int) -> int:
     """Nº de episódios já disponíveis na fonte real (site) acima da fronteira do
-    que o usuário acompanhou.
+    que o usuário acompanhou — 0 quando o anime não dá sinal de estar no ar.
 
-    Só faz sentido para anime `EM_LANCAMENTO`. `episodios_na_fonte` é a
-    contagem da última sondagem bem-sucedida do site
+    `episodios_na_fonte` é a contagem da última sondagem bem-sucedida do site
     (`api/servicos/sondagem.py`); fica `None` enquanto nenhuma sondagem
     carimbou, e aí o badge é 0. `maior_capturado` é o maior `numero` de
     episódio REGULAR já capturado/assistido (0 se nenhum) — a comparação é com
@@ -42,10 +50,34 @@ def episodios_novos(anime: Anime, maior_capturado: int) -> int:
     antigos que o usuário pulou não inflem o badge. Piso em 0: fonte que largou
     episódios antigos (`episodios_na_fonte` abaixo da fronteira) não vira
     negativo.
+
+    Gate de "ainda no ar" (uma das pernas basta):
+      1. `proximo_ep_em` no futuro — a AniList agendou o próximo episódio.
+      2. `EM_LANCAMENTO` com `total_episodios_anilist` conhecido e a fonte ainda
+         abaixo desse total (rota do Kitsu, que não expõe next-airing).
+    Sem nenhuma perna verdadeira o badge é 0 — `status_lancamento` herdado
+    sozinho não conta.
     """
-    if anime.status_lancamento is not StatusLancamento.EM_LANCAMENTO:
-        return 0
     if anime.episodios_na_fonte is None:
+        return 0
+
+    agora = datetime.now(UTC)
+    # `carimbo_esta_velho` fala de obsolescência, mas negado ele responde "não é
+    # None e é >= agora", ou seja: `proximo_ep_em` está no futuro. De brinde
+    # herda a normalização de datetime naive vindo direto do SQLite, que uma
+    # comparação à mão erraria.
+    proximo_ep_no_futuro = not descoberta.carimbo_esta_velho(anime.proximo_ep_em, agora)
+    fonte_atras_do_total = (
+        anime.status_lancamento is StatusLancamento.EM_LANCAMENTO
+        and anime.total_episodios_anilist is not None
+        and anime.episodios_na_fonte < anime.total_episodios_anilist
+    )
+    # TODO(fase futura): a perna 2 exige `total_episodios_anilist` não-nulo, então
+    # um long-runner que o AniList publica com `episodes: null` fica sem badge na
+    # janela estreita entre `proximo_ep_em` passar e o próximo episódio ser
+    # agendado. Se aparecer na prática, a correção é uma 3ª perna: `EM_LANCAMENTO`
+    # + `total IS NULL` + `proximo_ep_numero > maior_capturado`.
+    if not (proximo_ep_no_futuro or fonte_atras_do_total):
         return 0
     return max(0, anime.episodios_na_fonte - maior_capturado)
 

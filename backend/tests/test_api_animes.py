@@ -110,9 +110,19 @@ def _anime_em_memoria(**campos) -> Anime:
     return Anime(titulo="X", slug="x", **campos)
 
 
+def _futuro() -> datetime:
+    return datetime.now(UTC) + timedelta(days=1)
+
+
+def _passado() -> datetime:
+    return datetime.now(UTC) - timedelta(days=1)
+
+
 def test_episodios_novos_conta_acima_da_fronteira_acompanhada():
     anime = _anime_em_memoria(
-        status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=5
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=5,
+        proximo_ep_em=_futuro(),
     )
     # fonte no ep 5, usuário acompanhou até o ep 3 -> 2 novos
     assert episodios_novos(anime, maior_capturado=3) == 2
@@ -122,14 +132,18 @@ def test_episodios_novos_ignora_buraco_abaixo_da_fronteira():
     # regressão: usuário foi direto ao ep 4 (eps 1-3 nunca capturados); a fonte
     # tem 4 eps -> fronteira 4, badge 0 (contagem de capturados daria 3)
     anime = _anime_em_memoria(
-        status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=4
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=4,
+        proximo_ep_em=_futuro(),
     )
     assert episodios_novos(anime, maior_capturado=4) == 0
 
 
 def test_episodios_novos_sem_captura_conta_a_fonte_inteira():
     anime = _anime_em_memoria(
-        status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=6
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=6,
+        proximo_ep_em=_futuro(),
     )
     assert episodios_novos(anime, maior_capturado=0) == 6
 
@@ -143,13 +157,15 @@ def test_episodios_novos_zero_para_status_diferente_de_em_lancamento():
 
 def test_episodios_novos_zero_quando_contagem_da_fonte_nula():
     anime = _anime_em_memoria(
-        status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=None
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=None,
+        proximo_ep_em=_futuro(),
     )
     assert episodios_novos(anime, maior_capturado=0) == 0
 
 
-def test_episodios_novos_zero_quando_status_nulo_mesmo_com_contagem_da_fonte():
-    # filtro estrito: só `EM_LANCAMENTO` ganha badge, nem `None` com contagem
+def test_episodios_novos_zero_quando_status_nulo_sem_sinal_de_lancamento():
+    # sem `proximo_ep_em` e sem `EM_LANCAMENTO`: nenhuma perna do gate -> 0
     anime = _anime_em_memoria(status_lancamento=None, episodios_na_fonte=6)
     assert episodios_novos(anime, maior_capturado=0) == 0
 
@@ -157,9 +173,82 @@ def test_episodios_novos_zero_quando_status_nulo_mesmo_com_contagem_da_fonte():
 def test_episodios_novos_nao_fica_negativo():
     # fonte largou episódios antigos: episodios_na_fonte abaixo da fronteira
     anime = _anime_em_memoria(
-        status_lancamento=StatusLancamento.EM_LANCAMENTO, episodios_na_fonte=3
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=3,
+        proximo_ep_em=_futuro(),
     )
     assert episodios_novos(anime, maior_capturado=5) == 0
+
+
+def test_episodios_novos_perna_1_proximo_ep_no_futuro_sem_status_nem_total():
+    # sinal principal: a AniList agendou o próximo episódio -> anime no ar,
+    # mesmo sem `status_lancamento` nem `total_episodios_anilist`
+    anime = _anime_em_memoria(
+        status_lancamento=None,
+        total_episodios_anilist=None,
+        episodios_na_fonte=5,
+        proximo_ep_em=_futuro(),
+    )
+    assert episodios_novos(anime, maior_capturado=2) == 3
+
+
+def test_episodios_novos_perna_1_negativa_em_lancamento_herdado_sem_sinal():
+    # caso dos ids 24/29/30: `EM_LANCAMENTO` herdado, `proximo_ep_em` no passado
+    # e sem `total` -> nenhuma perna, badge 0 (a fonte já está na contagem final)
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        total_episodios_anilist=None,
+        episodios_na_fonte=12,
+        proximo_ep_em=_passado(),
+    )
+    assert episodios_novos(anime, maior_capturado=0) == 0
+
+
+def test_episodios_novos_perna_2_fonte_atras_do_total_anilist():
+    # rota Kitsu (sem next-airing): cai no par `EM_LANCAMENTO` + `total`
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        total_episodios_anilist=12,
+        episodios_na_fonte=8,
+        proximo_ep_em=None,
+    )
+    assert episodios_novos(anime, maior_capturado=6) == 2
+
+
+def test_episodios_novos_perna_2_saturada_temporada_completa_ainda_releasing():
+    # fonte já bateu o total do AniList, mas o status segue `EM_LANCAMENTO` -> 0
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        total_episodios_anilist=12,
+        episodios_na_fonte=12,
+        proximo_ep_em=None,
+    )
+    assert episodios_novos(anime, maior_capturado=0) == 0
+
+
+def test_episodios_novos_total_presente_mas_status_finalizado():
+    # `total` não-nulo e fonte abaixo dele, mas status FINALIZADO -> perna 2 exige
+    # `EM_LANCAMENTO`, então 0
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.FINALIZADO,
+        total_episodios_anilist=24,
+        episodios_na_fonte=20,
+        proximo_ep_em=None,
+    )
+    assert episodios_novos(anime, maior_capturado=0) == 0
+
+
+def test_episodios_novos_proximo_ep_em_naive_tratado_como_utc():
+    # SQLite pode devolver o datetime sem tzinfo; `carimbo_esta_velho` normaliza
+    # para UTC antes de comparar -> perna 1 avalia sem levantar `TypeError`
+    naive_futuro = (datetime.now(UTC) + timedelta(days=1)).replace(tzinfo=None)
+    anime = _anime_em_memoria(
+        status_lancamento=None,
+        total_episodios_anilist=None,
+        episodios_na_fonte=4,
+        proximo_ep_em=naive_futuro,
+    )
+    assert episodios_novos(anime, maior_capturado=1) == 3
 
 
 # --- detector de episódios novos: fronteira em lote + GET /api/animes ---
@@ -172,6 +261,8 @@ async def _criar_anime_catalogado(
     status_lancamento: StatusLancamento | None = None,
     episodios_na_fonte: int | None = None,
     fonte_verificada_em: datetime | None = None,
+    proximo_ep_em: datetime | None = None,
+    total_episodios_anilist: int | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         anime = Anime(
@@ -180,6 +271,8 @@ async def _criar_anime_catalogado(
             status_lancamento=status_lancamento,
             episodios_na_fonte=episodios_na_fonte,
             fonte_verificada_em=fonte_verificada_em,
+            proximo_ep_em=proximo_ep_em,
+            total_episodios_anilist=total_episodios_anilist,
         )
         sessao.add(anime)
         await sessao.commit()
@@ -289,6 +382,7 @@ async def test_listar_animes_calcula_episodios_novos_por_anime_em_uma_resposta(
         "Anime Em Lancamento",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=4,
+        proximo_ep_em=_futuro(),
     )
     finalizado = await _criar_anime_catalogado(
         sessionmaker_api,
@@ -322,6 +416,7 @@ async def test_listar_animes_badge_zero_quando_usuario_pulou_episodios_antigos(
         "Anime Pulou Antigos",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=4,
+        proximo_ep_em=_futuro(),
     )
     await _capturar_episodio(sessionmaker_api, anime_id, numero=4)
 
@@ -429,6 +524,7 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
         "Anime Sondavel",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=1,
+        proximo_ep_em=_futuro(),
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
     await _capturar_episodio(sessionmaker_api, anime_id, numero=1)
@@ -482,6 +578,7 @@ async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha
         "Anime Home Blindada",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=5,
+        proximo_ep_em=_futuro(),
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 
