@@ -152,6 +152,47 @@ def test_anilist_buscar_titulos_media_null_devolve_none(monkeypatch: pytest.Monk
     assert AniListProvider().buscar_titulos("titulo inexistente") is None
 
 
+def test_anilist_buscar_por_titulo_traz_titulos_do_provedor(monkeypatch: pytest.MonkeyPatch):
+    """`buscar_por_titulo` também devolve `titulo_romaji`/`titulo_ingles` — material
+    de corroboração de match para o aquecimento de lançamento por título (F14)."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 456,
+                "title": {
+                    "romaji": "Fuufu Ijou, Koibito Miman.",
+                    "english": "More than a Married Couple, but Not Lovers",
+                },
+                "coverImage": {"extraLarge": "https://img/c.jpg"},
+                "bannerImage": None,
+                "description": "sinopse",
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_por_titulo("Fuufu")
+
+    assert resultado.titulo_romaji == "Fuufu Ijou, Koibito Miman."
+    assert resultado.titulo_ingles == "More than a Married Couple, but Not Lovers"
+
+
+def test_anilist_buscar_por_titulo_sem_bloco_title_deixa_titulos_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    corpo = {"data": {"Media": {"id": 1, "description": "x"}}}
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_por_titulo("Slime")
+
+    assert resultado.titulo_romaji is None
+    assert resultado.titulo_ingles is None
+
+
 # --- AniListProvider: estado de lançamento (F2 detector de eps novos) ---
 
 
@@ -343,6 +384,36 @@ def test_kitsu_buscar_por_titulo_nao_encontrado(monkeypatch: pytest.MonkeyPatch)
     )
 
     assert KitsuProvider().buscar_por_titulo("titulo inexistente") is None
+
+
+def test_kitsu_buscar_por_titulo_traz_titulos_do_provedor(monkeypatch: pytest.MonkeyPatch):
+    """Mesma extração de `buscar_titulos` (`en_jp`/`canonicalTitle` -> romaji,
+    `en` -> inglês) — corroboração de match para o aquecimento por título (F14)."""
+    corpo = {
+        "data": [
+            {
+                "id": "42",
+                "attributes": {
+                    "synopsis": "sinopse",
+                    "canonicalTitle": "Slime",
+                    "titles": {
+                        "en_jp": "Tensei Shitara Slime Datta Ken",
+                        "ja_jp": "転生したらスライムだった件",
+                        "en": "That Time I Got Reincarnated as a Slime",
+                    },
+                    "posterImage": {"original": "https://img/p.jpg"},
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = KitsuProvider().buscar_por_titulo("Slime")
+
+    assert resultado.titulo_romaji == "Tensei Shitara Slime Datta Ken"
+    assert resultado.titulo_ingles == "That Time I Got Reincarnated as a Slime"
 
 
 def test_kitsu_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
@@ -568,6 +639,14 @@ def _limpa_cache_em_alta(monkeypatch: pytest.MonkeyPatch):
     """`integrations.servico._cache_em_alta` é estado de módulo — isola cada
     teste para não vazar cache de um teste para o outro."""
     monkeypatch.setattr(servico, "_cache_em_alta", None)
+
+
+@pytest.fixture(autouse=True)
+def _busca_de_metadados_por_titulo_sem_rede():
+    """Sobrescreve o stub global do `conftest.py`: este arquivo exercita a
+    própria `servico.buscar_por_titulo` (com `PROVEDORES` fake, sem rede), então
+    precisa da função real, não do stub que devolve `None`."""
+    yield
 
 
 async def test_servico_cai_para_kitsu_quando_anilist_falha(monkeypatch: pytest.MonkeyPatch):

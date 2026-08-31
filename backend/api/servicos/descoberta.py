@@ -7,6 +7,7 @@ traduz para schemas.
 
 import asyncio
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -17,12 +18,14 @@ from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
 from core.texto import slugificar
 from db.catalogo import (
+    aplicar_lancamento_descoberto_por_titulo,
     aplicar_metadados,
     atualizar_lancamento,
     atualizar_lancamentos_em_lote,
     localizar_animes_por_anilist_id,
     localizar_animes_por_slug,
 )
+from extractors.versao import remover_marcador_de_versao
 from integrations import servico
 from integrations.base import AnimeEmAlta, MetadadosDeAnime
 from models.anime import Anime
@@ -31,22 +34,41 @@ logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
-# F4 — refresh oportunista do estado de lançamento. Sem scheduler/cron (decisão
-# de produto): o dado só é atualizado em dois momentos de "carona" — o cruzamento
-# do feed "em alta" (F4a, de graça: o feed já traz o bloco fresco da AniList) e a
-# abertura da página de um anime em lançamento com dado mais velho que isto (F4b,
-# busca lazy fire-and-forget). Compartilhado pelos dois caminhos.
+# F4/F14 — aquecimento oportunista do estado de lançamento. Sem scheduler/cron
+# (decisão de produto): o dado só é atualizado em três momentos de "carona":
+#   1. o cruzamento do feed "em alta" (F4a, de graça: o feed já traz o bloco
+#      fresco da AniList);
+#   2. a abertura da página de um anime, ou a listagem do catálogo, para animes
+#      COM `anilist_id` e dado mais velho que este TTL (F4b/F14, busca lazy por
+#      id: `servico.buscar_lancamento_por_anilist_id`);
+#   3. a listagem do catálogo, para animes SEM `anilist_id` (F14, busca lazy por
+#      TÍTULO: `servico.buscar_por_titulo`, cadeia AniList→Kitsu) — senão esses
+#      animes ficam com `status_lancamento` NULL para sempre e o badge de
+#      "episódios novos" nunca dispara.
 _TTL_LANCAMENTO_S = 6 * 3600
 
-# Referência forte às buscas lazy de F4b em andamento: (1) deduplica aberturas
-# concorrentes da mesma página e (2) impede o GC de coletar uma `Task`
-# fire-and-forget antes de ela terminar. A entrada sai no `add_done_callback`.
+# Referência forte às buscas lazy em andamento: (1) deduplica aberturas
+# concorrentes da mesma página / passadas do catálogo e (2) impede o GC de
+# coletar uma `Task` fire-and-forget antes de ela terminar. A entrada sai no
+# `add_done_callback`. Compartilhado pelos caminhos 2 e 3 acima — as listas de
+# candidatos de cada um são disjuntas (um anime tem OU não tem `anilist_id`).
 _refreshs_de_lancamento_em_voo: dict[int, asyncio.Task] = {}
 
 # F14 — teto de animes por listagem de catálogo que disparam busca à AniList
 # para aquecer o `status_lancamento`. Segura o rate limit num catálogo grande;
 # em poucas visitas o catálogo inteiro esquenta.
 _MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE = 5
+
+# F14 — teto próprio (e menor) das buscas por TÍTULO por listagem: cada uma
+# custa até 2 round-trips (AniList + fallback Kitsu) contra 1 da busca por id,
+# então tem orçamento independente. Pior caso por listagem: 5 (id) + 2 (título).
+_MAX_BUSCAS_POR_TITULO_POR_LOTE = 2
+
+# Segmento entre parênteses/colchetes no título local — os sites de extração
+# marcam versão assim ("Nome (Dublado)"), fora da fronteira de token que
+# `remover_marcador_de_versao` exige. `_termo_de_busca` remove o segmento
+# inteiro antes de buscar metadados.
+_REGEX_SEGMENTO_PARENTETICO = re.compile(r"[([][^)\]]*[)\]]")
 
 # Sentinel *aware* para ordenar animes sem carimbo antes dos demais.
 _CARIMBO_MINIMO = datetime.min.replace(tzinfo=UTC)
@@ -192,25 +214,54 @@ def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> 
 
 
 def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime]) -> None:
-    """F14 — ao listar o catálogo, aquece o `status_lancamento` dos animes que
-    nunca foram abertos individualmente nem apareceram no feed "em alta" (senão
-    ficam com status `NULL` para sempre e o badge de "episódios novos" nunca
-    aparece, mesmo com contagem de fonte fresca).
+    """F14 — ao listar o catálogo, aquece o `status_lancamento` (filtro do badge
+    de "episódios novos") dos animes que nunca foram abertos individualmente nem
+    apareceram no feed "em alta" — senão ficam com status `NULL` para sempre e o
+    badge nunca aparece, mesmo com contagem de fonte fresca.
 
-    Reusa o gate e o dedupe de `agendar_refresh_de_lancamento`; só limita a
-    `_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE` quantos animes por request disparam
-    busca à AniList, os de carimbo mais velho (ou ausente) primeiro."""
+    Dois orçamentos independentes por request, mesmo gate
+    (`status_lancamento in (EM_LANCAMENTO, None)` + carimbo velho/ausente) e
+    mesma ordenação (carimbo mais velho primeiro):
+
+    - animes COM `anilist_id`: busca lazy por id (`agendar_refresh_de_lancamento`),
+      teto `_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE`.
+    - animes SEM `anilist_id`: busca lazy por TÍTULO (`_agendar_busca_por_titulo`,
+      cadeia AniList→Kitsu), teto `_MAX_BUSCAS_POR_TITULO_POR_LOTE` (menor: custa
+      2 round-trips). Sem esse caminho um anime sem `anilist_id` nunca casado
+      pelo feed ficaria `NULL` para sempre.
+
+    As duas listas de candidatos são disjuntas por construção (`anilist_id` é ou
+    não é `None`), então compartilhar `_refreshs_de_lancamento_em_voo` é seguro.
+    """
     limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
-    candidatos = [
-        anime
-        for anime in animes
-        if anime.anilist_id is not None
-        and anime.status_lancamento in (StatusLancamento.EM_LANCAMENTO, None)
-        and carimbo_esta_velho(anime.lancamento_atualizado_em, limite)
-    ]
-    candidatos.sort(key=lambda anime: anime.lancamento_atualizado_em or _CARIMBO_MINIMO)
-    for anime in candidatos[:_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE]:
+
+    por_id = sorted(
+        (a for a in animes if a.anilist_id is not None and _elegivel_para_aquecimento(a, limite)),
+        key=_ordem_por_carimbo,
+    )
+    for anime in por_id[:_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE]:
         agendar_refresh_de_lancamento(sessionmaker, anime)
+
+    por_titulo = sorted(
+        (a for a in animes if a.anilist_id is None and _elegivel_para_aquecimento(a, limite)),
+        key=_ordem_por_carimbo,
+    )
+    for anime in por_titulo[:_MAX_BUSCAS_POR_TITULO_POR_LOTE]:
+        _agendar_busca_por_titulo(sessionmaker, anime)
+
+
+def _elegivel_para_aquecimento(anime: Anime, limite: datetime) -> bool:
+    """Gate comum aos dois caminhos de `agendar_refreshs_do_catalogo`: status de
+    lançamento que ainda pode ganhar episódios (`EM_LANCAMENTO` ou nulo) e
+    carimbo mais velho que `limite` (ou ausente)."""
+    return anime.status_lancamento in (
+        StatusLancamento.EM_LANCAMENTO,
+        None,
+    ) and carimbo_esta_velho(anime.lancamento_atualizado_em, limite)
+
+
+def _ordem_por_carimbo(anime: Anime) -> datetime:
+    return anime.lancamento_atualizado_em or _CARIMBO_MINIMO
 
 
 async def _buscar_e_persistir_lancamento(
@@ -231,6 +282,111 @@ async def _buscar_e_persistir_lancamento(
             anilist_id,
             excecao,
         )
+
+
+def _agendar_busca_por_titulo(sessionmaker: _SessionMaker, anime: Anime) -> None:
+    """Espelha `agendar_refresh_de_lancamento`, mas para animes SEM `anilist_id`:
+    dispara, sem bloquear, uma `Task` que busca o estado de lançamento por
+    TÍTULO (cadeia AniList→Kitsu). O gate de status/carimbo é do chamador
+    (`agendar_refreshs_do_catalogo`); aqui só o try de event loop, o dedupe no
+    mesmo `_refreshs_de_lancamento_em_voo` (disjunto do caminho por id) e a ref
+    forte contra o GC."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    anime_id = anime.id
+    if anime_id in _refreshs_de_lancamento_em_voo:
+        return
+
+    tarefa = loop.create_task(
+        _buscar_por_titulo_e_persistir(sessionmaker, anime_id, anime.titulo)
+    )
+    _refreshs_de_lancamento_em_voo[anime_id] = tarefa
+    tarefa.add_done_callback(
+        lambda _tarefa, aid=anime_id: _refreshs_de_lancamento_em_voo.pop(aid, None)
+    )
+
+
+async def _buscar_por_titulo_e_persistir(
+    sessionmaker: _SessionMaker, anime_id: int, titulo: str
+) -> None:
+    """Corpo da `Task` fire-and-forget de aquecimento por título (F14, caminho 3
+    da nota de bloco no topo do módulo). Busca o lançamento na cadeia
+    AniList→Kitsu e persiste via `aplicar_lancamento_descoberto_por_titulo` —
+    que grava o cache negativo (`lancamento_atualizado_em`) mesmo quando o
+    provedor respondeu sem achar (`metadados is None`).
+
+    `anilist_id` só é persistido sob corroboração de slug (D4 do plano): o id é
+    `unique`, grudento e sem UI de correção — um id errado bloqueia o anime
+    certo. O bloco de lançamento errado, ao contrário, se autocorrige no próximo
+    refresh.
+
+    Toda exceção esperada vira `warning` e NÃO carimba (mesma filosofia de
+    `sondagem._sondar_e_persistir`: só o sucesso carimba); `CancelledError` e
+    erros inesperados propagam de propósito.
+    """
+    termo = _termo_de_busca(titulo)
+    try:
+        metadados = await asyncio.wait_for(
+            servico.buscar_por_titulo(termo), timeout=_TETO_ENRIQUECIMENTO_S
+        )
+        await aplicar_lancamento_descoberto_por_titulo(
+            sessionmaker,
+            anime_id,
+            anilist_id=_anilist_id_corroborado(termo, metadados),
+            lancamento=metadados.lancamento if metadados is not None else None,
+        )
+    except (FalhaDeMetadados, TimeoutError, SQLAlchemyError) as excecao:
+        logger.warning(
+            "aquecimento de lançamento por título falhou para anime_id=%s termo=%r: %s",
+            anime_id,
+            termo,
+            excecao,
+        )
+
+
+def _anilist_id_corroborado(termo: str, metadados: MetadadosDeAnime | None) -> int | None:
+    """D4 do plano: só devolve o `anilist_id` do provedor se o slug do `termo`
+    de busca casar com o slug do `titulo_romaji` OU do `titulo_ingles`
+    retornado. Sem corroboração o id fica `None` (grava-se só o bloco de
+    lançamento) — um `anilist_id` errado é `unique` e sem tela de correção."""
+    if metadados is None or metadados.anilist_id is None:
+        return None
+    slug_termo = slugificar(termo)
+    slugs_provedor = {
+        slugificar(t) for t in (metadados.titulo_romaji, metadados.titulo_ingles) if t
+    }
+    if slug_termo in slugs_provedor:
+        return metadados.anilist_id
+    logger.info(
+        "anilist_id=%s não corroborado: termo=%r vs romaji=%r / ingles=%r — grava só o bloco",
+        metadados.anilist_id,
+        termo,
+        metadados.titulo_romaji,
+        metadados.titulo_ingles,
+    )
+    return None
+
+
+def _termo_de_busca(titulo: str) -> str:
+    """Normaliza o título local antes da busca de metadados. Os sites de
+    extração marcam versão de duas formas: entre parênteses ("Nome (Dublado)")
+    e como token solto ("Nome Dublado"). A primeira fica FORA da fronteira de
+    token de `remover_marcador_de_versao`, então os segmentos entre `()`/`[]`
+    são removidos inteiros aqui (sem desembrulhar — "(Ko)" viraria "ko" solto e
+    pioraria o match); `remover_marcador_de_versao` cuida das formas sem
+    parênteses. Título que ficaria vazio volta cru.
+
+    `remover_marcador_de_versao` é domínio puro de `extractors/versao.py` (sem
+    HTTP/framework) — reuso pontual da regra de fronteira de token, não a
+    mistura de famílias de adapter que o CLAUDE.md §1 proíbe (`api/servicos/
+    sondagem.py` importa de `extractors/` pelo mesmo motivo).
+    """
+    sem_parenteses = _REGEX_SEGMENTO_PARENTETICO.sub(" ", titulo)
+    termo = remover_marcador_de_versao(sem_parenteses)
+    return termo or titulo
 
 
 async def enriquecer_anime_criado(

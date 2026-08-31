@@ -11,7 +11,6 @@ monkeypatcham uma camada abaixo (`integrations.servico.listar_em_alta` /
 """
 
 import asyncio
-import contextlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -52,22 +51,6 @@ def _sondagem_da_fonte_sem_rede(monkeypatch: pytest.MonkeyPatch):
         return EpisodiosRemotosResultado(dominio="stub.io", episodios=[])
 
     monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
-
-
-@pytest.fixture(autouse=True)
-async def _isola_refreshs_de_lancamento():
-    """`descoberta._refreshs_de_lancamento_em_voo` é estado de módulo (dedupe +
-    ref forte das `Task` de F4b). Zera antes e cancela/limpa o que sobrar depois,
-    para nenhum teste vazar `Task` pendente para o próximo."""
-    servico_descoberta._refreshs_de_lancamento_em_voo.clear()
-    yield
-    pendentes = list(servico_descoberta._refreshs_de_lancamento_em_voo.values())
-    for tarefa in pendentes:
-        tarefa.cancel()
-    for tarefa in pendentes:
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await tarefa
-    servico_descoberta._refreshs_de_lancamento_em_voo.clear()
 
 
 async def _drenar_refreshs_de_lancamento() -> None:
@@ -804,3 +787,299 @@ async def test_agendar_refreshs_do_catalogo_ignora_inelegiveis(
     await _drenar_refreshs_de_lancamento()
 
     assert chamadas == [4]
+
+
+# --- F14: aquecimento por TÍTULO dos animes sem `anilist_id` ---
+
+
+async def test_agendar_refreshs_do_catalogo_busca_por_titulo_tem_teto_proprio(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Orçamentos independentes: animes sem `anilist_id` disparam no máximo
+    `_MAX_BUSCAS_POR_TITULO_POR_LOTE` buscas por título (as de carimbo mais
+    velho) E os 5 por id disparam na MESMA passada."""
+    por_titulo: list[str] = []
+    por_id: list[int] = []
+
+    async def _buscar_por_titulo_fake(termo: str):
+        por_titulo.append(termo)
+        return None
+
+    async def _buscar_por_id_fake(anilist_id: int):
+        por_id.append(anilist_id)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
+    monkeypatch.setattr(
+        "integrations.servico.buscar_lancamento_por_anilist_id", _buscar_por_id_fake
+    )
+
+    base = datetime(2020, 1, 1, tzinfo=UTC)
+    animes: list[Anime] = []
+    for i in range(6):
+        anime = Anime(
+            titulo=f"Anime Sem Anilist {i}",
+            slug=f"anime-sem-anilist-{i}",
+            status_lancamento=None,
+            lancamento_atualizado_em=base + timedelta(hours=i),
+        )
+        anime.id = 700 + i
+        animes.append(anime)
+    for i in range(8):
+        anime = Anime(
+            titulo=f"Anime Com Anilist {i}",
+            slug=f"anime-com-anilist-{i}",
+            anilist_id=2000 + i,
+            status_lancamento=None,
+            lancamento_atualizado_em=base + timedelta(hours=i),
+        )
+        anime.id = 800 + i
+        animes.append(anime)
+
+    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker_api, animes)
+    await _drenar_refreshs_de_lancamento()
+
+    assert por_titulo == ["Anime Sem Anilist 0", "Anime Sem Anilist 1"]
+    assert sorted(por_id) == [2000, 2001, 2002, 2003, 2004]
+
+
+async def test_listar_animes_aquece_por_titulo_hit_corroborado_persiste_id_e_bloco(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    titulo = "Hanaori-san wa Tensei shitemo Kenka ga Shitai"
+    anime_id = await _criar_anime(
+        sessionmaker_api, titulo, slugificar(titulo), status_lancamento=None
+    )
+
+    async def _buscar_fake(termo: str):
+        return MetadadosDeAnime(
+            capa_url="https://img/x.jpg",
+            sinopse="NAO DEVE PERSISTIR",
+            anilist_id=987,
+            kitsu_id=555,
+            titulo_romaji=titulo,
+            titulo_ingles=None,
+            lancamento=LancamentoDeAnime(
+                status=StatusLancamento.EM_LANCAMENTO,
+                total_episodios=12,
+                proximo_ep_numero=5,
+                proximo_ep_em=None,
+            ),
+        )
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    resposta = await cliente.get("/api/animes")
+    assert resposta.status_code == 200
+    await _drenar_refreshs_de_lancamento()
+
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.anilist_id == 987  # slug do termo == slug do romaji -> corrobora
+        assert anime.status_lancamento == StatusLancamento.EM_LANCAMENTO
+        assert anime.proximo_ep_numero == 5
+        assert anime.total_episodios_anilist == 12
+        assert anime.lancamento_atualizado_em is not None
+        # match por título é heurístico — capa/sinopse/kitsu_id nunca entram
+        assert anime.capa_path is None
+        assert anime.sinopse is None
+        assert anime.kitsu_id is None
+
+
+async def test_listar_animes_aquece_por_titulo_sem_corroboracao_nao_grava_anilist_id(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Meu Anime Local", "meu-anime-local", status_lancamento=None
+    )
+
+    async def _buscar_fake(termo: str):
+        return MetadadosDeAnime(
+            capa_url=None,
+            sinopse=None,
+            anilist_id=111,
+            kitsu_id=None,
+            titulo_romaji="Titulo Totalmente Diferente",
+            titulo_ingles="Another Unrelated Title",
+            lancamento=LancamentoDeAnime(
+                status=StatusLancamento.EM_LANCAMENTO,
+                total_episodios=None,
+                proximo_ep_numero=3,
+                proximo_ep_em=None,
+            ),
+        )
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    resposta = await cliente.get("/api/animes")
+    assert resposta.status_code == 200
+    await _drenar_refreshs_de_lancamento()
+
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.anilist_id is None  # romaji/inglês divergentes -> não grava
+        assert anime.status_lancamento == StatusLancamento.EM_LANCAMENTO  # bloco persiste
+        assert anime.proximo_ep_numero == 3
+        assert anime.lancamento_atualizado_em is not None  # carimbo escrito
+
+
+async def test_listar_animes_aquece_por_titulo_remove_marcador_de_versao_do_termo(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    titulo_local = "Fuufu Ijou, Koibito Miman. (Dublado)"
+    romaji = "Fuufu Ijou, Koibito Miman."
+    anime_id = await _criar_anime(
+        sessionmaker_api, titulo_local, slugificar(titulo_local), status_lancamento=None
+    )
+    termos: list[str] = []
+
+    async def _buscar_fake(termo: str):
+        termos.append(termo)
+        return MetadadosDeAnime(
+            capa_url=None,
+            sinopse=None,
+            anilist_id=321,
+            kitsu_id=None,
+            titulo_romaji=romaji,
+            titulo_ingles=None,
+            lancamento=LancamentoDeAnime(
+                status=StatusLancamento.EM_LANCAMENTO,
+                total_episodios=12,
+                proximo_ep_numero=7,
+                proximo_ep_em=None,
+            ),
+        )
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    resposta = await cliente.get("/api/animes")
+    assert resposta.status_code == 200
+    await _drenar_refreshs_de_lancamento()
+
+    assert termos == [romaji]  # "(Dublado)" removido antes de consultar o provedor
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.anilist_id == 321  # slug(termo) == slug(romaji) -> corrobora
+
+
+async def test_listar_animes_aquece_por_titulo_cache_negativo_bloqueia_rebusca_no_ttl(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Nunca Achado", "nunca-achado", status_lancamento=None
+    )
+    chamadas: list[str] = []
+
+    async def _buscar_fake(termo: str):
+        chamadas.append(termo)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    primeira = await cliente.get("/api/animes")
+    assert primeira.status_code == 200
+    await _drenar_refreshs_de_lancamento()
+
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.lancamento_atualizado_em is not None  # cache negativo carimbado
+        assert anime.status_lancamento is None  # nada foi achado
+
+    segunda = await cliente.get("/api/animes")
+    assert segunda.status_code == 200
+    await _drenar_refreshs_de_lancamento()
+
+    assert chamadas == ["Nunca Achado"]  # 2ª passada não re-busca (dentro do TTL)
+
+
+async def test_listar_animes_aquece_por_titulo_falha_de_provedor_nao_carimba(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Provedor Fora Do Ar", "provedor-fora-do-ar", status_lancamento=None
+    )
+    chamadas: list[str] = []
+
+    async def _buscar_fake(termo: str):
+        chamadas.append(termo)
+        raise FalhaDeMetadados("todos os provedores de metadados falharam")
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    with caplog.at_level("WARNING"):
+        primeira = await cliente.get("/api/animes")
+        assert primeira.status_code == 200
+        # `gather` sem `return_exceptions` — re-levantaria se a corotina propagasse
+        await _drenar_refreshs_de_lancamento()
+
+    assert "aquecimento de lançamento por título falhou" in caplog.text
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.lancamento_atualizado_em is None  # falha não carimba
+
+    segunda = await cliente.get("/api/animes")
+    assert segunda.status_code == 200
+    await _drenar_refreshs_de_lancamento()
+    assert chamadas == ["Provedor Fora Do Ar", "Provedor Fora Do Ar"]  # tenta de novo
+
+
+async def test_agendar_refreshs_do_catalogo_por_titulo_respeita_o_gate(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Sem `anilist_id` mas `FINALIZADO`, ou dentro do TTL: não dispara busca
+    por título."""
+    chamadas: list[str] = []
+
+    async def _buscar_fake(termo: str):
+        chamadas.append(termo)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    def _anime(id_: int, **campos) -> Anime:
+        anime = Anime(titulo=f"Titulo {id_}", slug=f"titulo-{id_}", **campos)
+        anime.id = id_
+        return anime
+
+    animes = [
+        _anime(1, status_lancamento=StatusLancamento.FINALIZADO),
+        _anime(
+            2,
+            status_lancamento=StatusLancamento.EM_LANCAMENTO,
+            lancamento_atualizado_em=datetime.now(UTC),
+        ),
+        _anime(3, status_lancamento=None),
+    ]
+
+    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker_api, animes)
+    await _drenar_refreshs_de_lancamento()
+
+    assert chamadas == ["Titulo 3"]
+
+
+async def test_obter_anime_sem_anilist_id_nao_dispara_busca_por_titulo(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """D5: o aquecimento por título é só da galeria (`GET /api/animes`). A página
+    do anime (`GET /api/animes/{id}`) nunca dispara busca por título."""
+    chamadas: list[str] = []
+
+    async def _buscar_fake(termo: str):
+        chamadas.append(termo)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    anime_id = await _criar_anime(
+        sessionmaker_api, "So Na Galeria", "so-na-galeria", status_lancamento=None
+    )
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+    assert resposta.status_code == 200
+    await _drenar_refreshs_de_lancamento()
+
+    assert chamadas == []
+    assert servico_descoberta._refreshs_de_lancamento_em_voo == {}
