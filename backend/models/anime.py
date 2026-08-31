@@ -42,9 +42,11 @@ class Anime(Base):
         SAEnum(StatusLancamento, native_enum=False, validate_strings=True), nullable=True
     )
     # AniList `nextAiringEpisode`: número do próximo episódio a ir ao ar e
-    # quando. Dado exibível ("próximo ep em X dias") — NÃO alimenta o cálculo
-    # de "episódios novos", que compara `episodios_na_fonte` com o maior número
-    # de episódio já capturado (a fronteira do que o usuário acompanhou).
+    # quando. `proximo_ep_em` no futuro é o sinal PRINCIPAL do detector de
+    # "episódios novos" (perna 1 de
+    # `api/servicos/lancamentos.py::episodios_novos`): anime realmente no ar tem
+    # o próximo episódio agendado. `proximo_ep_numero` segue só como dado
+    # exibível ("próximo ep em X dias").
     proximo_ep_numero: Mapped[int | None] = mapped_column(Integer, nullable=True)
     proximo_ep_em: Mapped[datetime | None] = mapped_column(ColunaDataHoraUTC(), nullable=True)
     # Carimbo do último refresh de lançamento — decide se o refresh lazy ao
@@ -54,8 +56,11 @@ class Anime(Base):
     )
     # Sondagem da fonte real (`api.servicos.sondagem`): quantos episódios
     # regulares distintos o site que o usuário usa neste anime expõe hoje.
-    # `episodios_novos = max(0, episodios_na_fonte - maior_numero_capturado)`, só
-    # quando `status_lancamento is EM_LANCAMENTO`. `fonte_verificada_em` é carimbado
+    # `episodios_novos = max(0, episodios_na_fonte - maior_numero_capturado)`,
+    # desde que o anime passe no gate de sinal de lançamento
+    # (`api/servicos/lancamentos.py::episodios_novos`: `proximo_ep_em` no futuro,
+    # ou `EM_LANCAMENTO` com a fonte ainda atrás de `total_episodios_anilist`).
+    # `fonte_verificada_em` é carimbado
     # SÓ em sondagem bem-sucedida (falha de site não mexe em nada) e decide o
     # TTL; `fonte_verificada_dominio` guarda qual site produziu a contagem
     # (proveniência — divergência de contagem por fonte errada é o modo de
