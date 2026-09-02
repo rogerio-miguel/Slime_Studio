@@ -84,10 +84,12 @@ class StatusEpisodio(StrEnum):
 class StatusLancamento(StrEnum):
     """Estado de lançamento de um `Anime` — espelha `MediaStatus` da AniList.
 
-    Alimenta o detector de episódios novos (badge no catálogo): só animes em
-    `EM_LANCAMENTO` recebem o refresh oportunista de `proximo_ep_*`. Persistido
-    como name (não value), igual aos demais enums de `models/` (`SAEnum(...,
-    native_enum=False)`).
+    Alimenta o detector de episódios novos (badge no catálogo): animes em
+    `EM_LANCAMENTO` ou `NAO_LANCADO` recebem o refresh oportunista de
+    `proximo_ep_*` (`NAO_LANCADO` para não congelar a data de estreia de um
+    bookmark de "Próximas estreias" — ver `api/servicos/descoberta.py`).
+    Persistido como name (não value), igual aos demais enums de `models/`
+    (`SAEnum(..., native_enum=False)`).
     """
 
     EM_LANCAMENTO = "em_lancamento"

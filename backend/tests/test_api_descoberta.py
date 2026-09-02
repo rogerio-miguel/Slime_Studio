@@ -718,6 +718,37 @@ async def test_obter_anime_agenda_refresh_lazy_fora_do_ttl(
         assert anime.proximo_ep_numero == 5
 
 
+async def test_obter_anime_agenda_refresh_lazy_para_status_nao_lancado(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """O gate de `agendar_refresh_de_lancamento` também aceita `NAO_LANCADO`:
+    abrir a página de um bookmark de estreia com `anilist_id` e dado velho
+    agenda a busca lazy por id (antes só `EM_LANCAMENTO`/nulo passavam)."""
+    chamadas: list[int] = []
+
+    async def _buscar_fake(anilist_id: int):
+        chamadas.append(anilist_id)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Slime Estreia Futura",
+        "slime-estreia-futura",
+        anilist_id=99,
+        status_lancamento=StatusLancamento.NAO_LANCADO,
+        lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=7),
+    )
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+    assert resposta.status_code == 200
+
+    await _drenar_refreshs_de_lancamento()
+
+    assert chamadas == [99]
+
+
 @pytest.mark.parametrize(
     "campos",
     [
@@ -945,6 +976,42 @@ async def test_agendar_refreshs_do_catalogo_ignora_inelegiveis(
     await _drenar_refreshs_de_lancamento()
 
     assert chamadas == [4]
+
+
+async def test_agendar_refreshs_do_catalogo_aquece_status_nao_lancado(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """`NAO_LANCADO` entrou no gate de `_elegivel_para_aquecimento`: um bookmark
+    de "Próximas estreias" com `anilist_id` e carimbo velho/ausente dispara a
+    busca lazy por id — sem isso a data de estreia congelaria e o anime nunca
+    transicionaria para `EM_LANCAMENTO`."""
+    chamadas: list[int] = []
+
+    async def _buscar_fake(anilist_id: int):
+        chamadas.append(anilist_id)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_lancamento_por_anilist_id", _buscar_fake)
+
+    def _anime(id_: int, **campos) -> Anime:
+        anime = Anime(titulo=f"Estreia {id_}", slug=f"estreia-{id_}", **campos)
+        anime.id = id_
+        return anime
+
+    animes = [
+        _anime(1, anilist_id=11, status_lancamento=StatusLancamento.NAO_LANCADO),
+        _anime(
+            2,
+            anilist_id=22,
+            status_lancamento=StatusLancamento.NAO_LANCADO,
+            lancamento_atualizado_em=datetime(2020, 1, 1, tzinfo=UTC),
+        ),
+    ]
+
+    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker_api, animes)
+    await _drenar_refreshs_de_lancamento()
+
+    assert sorted(chamadas) == [11, 22]
 
 
 # --- F14: aquecimento por TÍTULO dos animes sem `anilist_id` ---

@@ -166,6 +166,7 @@ async def listar_animes(
     animes = list(resultado.scalars())
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
+    com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
     # Carona fire-and-forget: sonda a fonte real dos animes em lançamento cuja
     # contagem está velha/ausente. O resultado entra no banco para a PRÓXIMA
     # leitura do catálogo, não para esta (`api/servicos/sondagem.py`). Zero
@@ -175,14 +176,16 @@ async def listar_animes(
     # Aquece o `status_lancamento` (filtro do badge) dos animes que nunca foram
     # abertos individualmente — sem isso ficam `NULL` e o badge nunca aparece.
     servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
-    # `status_lancamento` vem do `model_validate` (campo mapeado 1:1 com a
-    # coluna); só `episodios_novos` é derivado e precisa ser injetado à parte.
+    # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
+    # mapeados 1:1 com colunas de `Anime`); `episodios_novos` e `tem_episodios`
+    # são derivados e precisam ser injetados à parte.
     return [
         AnimeSaida.model_validate(anime).model_copy(
             update={
                 "episodios_novos": servico_lancamentos.episodios_novos(
                     anime, maior_capturado.get(anime.id, 0)
-                )
+                ),
+                "tem_episodios": anime.id in com_episodios,
             }
         )
         for anime in animes

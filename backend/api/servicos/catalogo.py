@@ -1,12 +1,14 @@
 """Remoção de catálogo (anime/episódio) — apaga linha e arquivos em disco juntos
-(HLS + raw) — e cálculo de uso de disco por mídia (ESPECIFICACAO.md §5, Passo 5
-do plano da Fase 3).
+(HLS + raw) —, cálculo de uso de disco por mídia (ESPECIFICACAO.md §5, Passo 5 do
+plano da Fase 3) e leitura agregada de presença de episódios para o catálogo.
 
-Sessão própria por operação (mesmo padrão de `db/fila.py`) — não importa
-`fastapi`.
+Sessão própria por operação de escrita (mesmo padrão de `db/fila.py`) — não
+importa `fastapi`. `ids_com_episodios` é a exceção: roda na sessão da request,
+como as leituras agregadas de `lancamentos.py`/`sondagem.py`.
 """
 
 import shutil
+from collections.abc import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -147,6 +149,29 @@ async def uso_de_disco(sessionmaker: _SessionMaker, config: Config) -> tuple[int
         resultado = await sessao.execute(select(Episodio.tamanho_bytes))
         usado_por_midia = sum(tamanho for (tamanho,) in resultado if tamanho is not None)
     return uso.total, uso.free, usado_por_midia
+
+
+async def ids_com_episodios(sessao: AsyncSession, ids: Iterable[int]) -> set[int]:
+    """`{anime_id}` dos animes com ao menos uma linha em `Episodio`, numa única
+    query agregada — `GET /api/animes` serializa o catálogo inteiro, um `SELECT`
+    por anime seria N+1. Roda na sessão da request, igual
+    `lancamentos.maior_numero_capturado_por_anime`. Guard de lista vazia porque
+    `IN ()` é inválido no SQLite.
+
+    Não reaproveita `maior_numero_capturado_por_anime` de propósito: aquela
+    filtra `tipo == REGULAR` + `status in (PRONTO, LIBERADO)` e devolve
+    `MAX(numero)` — "episódio 0" fica indistinguível de "nenhum episódio" e uma
+    captura em andamento (`PENDENTE`) some do resultado. Aqui o rótulo de estreia
+    do card de bookmark só quer saber se existe QUALQUER linha de `Episodio`, sem
+    filtro de tipo/status.
+    """
+    lista_ids = list(ids)
+    if not lista_ids:
+        return set()
+    resultado = await sessao.execute(
+        select(Episodio.anime_id).where(Episodio.anime_id.in_(lista_ids)).distinct()
+    )
+    return set(resultado.scalars())
 
 
 def remover_arquivos_do_episodio(config: Config, anime_slug: str, episodio: Episodio) -> None:

@@ -14,6 +14,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import sondagem
+from api.servicos.catalogo import ids_com_episodios
 from api.servicos.fontes import EpisodiosRemotosResultado
 from api.servicos.lancamentos import episodios_novos, maior_numero_capturado_por_anime
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
@@ -374,6 +375,36 @@ async def test_maior_numero_capturado_por_anime_id_ausente_e_zero(sessionmaker_a
     assert fronteira == {}
 
 
+# --- rótulo de estreia do card de bookmark: catalogo.ids_com_episodios ---
+
+
+async def test_ids_com_episodios_lista_vazia_devolve_set_vazio(sessionmaker_api: _SessionMaker):
+    # Guard de lista vazia (`IN ()` inválido no SQLite): retorna antes de tocar
+    # o banco.
+    async with sessionmaker_api() as sessao:
+        assert await ids_com_episodios(sessao, []) == set()
+
+
+async def test_ids_com_episodios_conta_qualquer_linha_sem_filtrar_status(
+    sessionmaker_api: _SessionMaker,
+):
+    # Ao contrário de `maior_numero_capturado_por_anime`, não filtra tipo/status:
+    # uma captura só `PENDENTE` conta como "tem episódio".
+    com_pendente = await _criar_anime_catalogado(sessionmaker_api, "Anime Pendente Cru")
+    com_pronto = await _criar_anime_catalogado(sessionmaker_api, "Anime Pronto Cru")
+    sem_nada = await _criar_anime_catalogado(sessionmaker_api, "Anime Sem Nada Cru")
+
+    await _capturar_episodio(
+        sessionmaker_api, com_pendente, numero=1, status=StatusEpisodio.PENDENTE
+    )
+    await _capturar_episodio(sessionmaker_api, com_pronto, numero=1)
+
+    async with sessionmaker_api() as sessao:
+        resultado = await ids_com_episodios(sessao, [com_pendente, com_pronto, sem_nada])
+
+    assert resultado == {com_pendente, com_pronto}
+
+
 async def test_listar_animes_calcula_episodios_novos_por_anime_em_uma_resposta(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
@@ -442,6 +473,42 @@ async def test_listar_animes_preserva_campos_e_defaults_sem_lancamento(
     assert "criado_em" in item
     assert item["status_lancamento"] is None
     assert item["episodios_novos"] == 0
+
+
+async def test_listar_animes_expoe_tem_episodios_e_proximo_ep_em_numa_resposta(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    """`tem_episodios` conta QUALQUER linha de `Episodio` (rótulo de estreia do
+    card de bookmark) — sem o filtro tipo/status de `maior_numero_capturado`: um
+    episódio só `PENDENTE` (captura em andamento) e um episódio `numero=0` — as
+    duas armadilhas — contam. `proximo_ep_em` sai serializado 1:1 da coluna
+    homônima (ISO string), ou `None` quando ausente, na mesma resposta."""
+    quando = datetime(2027, 1, 15, 12, 0, tzinfo=UTC)
+    so_pendente = await _criar_anime_catalogado(
+        sessionmaker_api, "Anime So Pendente", proximo_ep_em=quando
+    )
+    sem_episodio = await _criar_anime_catalogado(sessionmaker_api, "Anime Sem Episodio Algum")
+    so_numero_zero = await _criar_anime_catalogado(sessionmaker_api, "Anime So Numero Zero")
+
+    await _capturar_episodio(
+        sessionmaker_api, so_pendente, numero=1, status=StatusEpisodio.PENDENTE
+    )
+    await _capturar_episodio(sessionmaker_api, so_numero_zero, numero=0)
+
+    resposta = await cliente.get("/api/animes")
+
+    assert resposta.status_code == 200
+    por_id = {item["id"]: item for item in resposta.json()}
+
+    assert por_id[so_pendente]["tem_episodios"] is True
+    proximo_ep_em_bruto = por_id[so_pendente]["proximo_ep_em"]
+    assert proximo_ep_em_bruto is not None
+    assert datetime.fromisoformat(proximo_ep_em_bruto) == quando
+
+    assert por_id[sem_episodio]["tem_episodios"] is False
+    assert por_id[sem_episodio]["proximo_ep_em"] is None
+
+    assert por_id[so_numero_zero]["tem_episodios"] is True
 
 
 async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(

@@ -212,12 +212,18 @@ def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> 
     próxima leitura, não para esta.
 
     No-op silencioso (nenhuma destas condições é anormal, então sem log) quando:
-    o anime não tem `anilist_id`; o status não é `EM_LANCAMENTO` nem nulo
-    (`FINALIZADO`/`CANCELADO` não ganham episódios); o dado ainda está dentro do
-    TTL; já há uma busca em voo para este anime; ou não há event loop rodando."""
+    o anime não tem `anilist_id`; o status não é `EM_LANCAMENTO`, `NAO_LANCADO`
+    nem nulo (`FINALIZADO`/`CANCELADO` não ganham episódios; `NAO_LANCADO` ainda
+    vai estrear e precisa seguir sendo reconsultado até virar `EM_LANCAMENTO`); o
+    dado ainda está dentro do TTL; já há uma busca em voo para este anime; ou não
+    há event loop rodando."""
     if anime.anilist_id is None:
         return
-    if anime.status_lancamento not in (StatusLancamento.EM_LANCAMENTO, None):
+    if anime.status_lancamento not in (
+        StatusLancamento.EM_LANCAMENTO,
+        StatusLancamento.NAO_LANCADO,
+        None,
+    ):
         return
     limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
     if not carimbo_esta_velho(anime.lancamento_atualizado_em, limite):
@@ -245,8 +251,8 @@ def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime
     badge nunca aparece, mesmo com contagem de fonte fresca.
 
     Dois orçamentos independentes por request, mesmo gate
-    (`status_lancamento in (EM_LANCAMENTO, None)` + carimbo velho/ausente) e
-    mesma ordenação (carimbo mais velho primeiro):
+    (`status_lancamento in (EM_LANCAMENTO, NAO_LANCADO, None)` + carimbo
+    velho/ausente) e mesma ordenação (carimbo mais velho primeiro):
 
     - animes COM `anilist_id`: busca lazy por id (`agendar_refresh_de_lancamento`),
       teto `_MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE`.
@@ -277,10 +283,18 @@ def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime
 
 def _elegivel_para_aquecimento(anime: Anime, limite: datetime) -> bool:
     """Gate comum aos dois caminhos de `agendar_refreshs_do_catalogo`: status de
-    lançamento que ainda pode ganhar episódios (`EM_LANCAMENTO` ou nulo) e
-    carimbo mais velho que `limite` (ou ausente)."""
+    lançamento que ainda pode ganhar episódios (`EM_LANCAMENTO`, `NAO_LANCADO`
+    ou nulo) e carimbo mais velho que `limite` (ou ausente).
+
+    `NAO_LANCADO` entra na tupla porque um bookmark de "Próximas estreias" nasce
+    com `status_lancamento` NULL, é aquecido uma única vez para `NAO_LANCADO` +
+    `proximo_ep_em` e — sem ele aqui — nunca mais seria reconsultado: a data de
+    estreia congelaria e o anime jamais transicionaria para `EM_LANCAMENTO` ao
+    estrear. Mesmo motivo no gate de `agendar_refresh_de_lancamento` (esses
+    bookmarks têm `anilist_id`, então passam pela busca lazy por id)."""
     return anime.status_lancamento in (
         StatusLancamento.EM_LANCAMENTO,
+        StatusLancamento.NAO_LANCADO,
         None,
     ) and carimbo_esta_velho(anime.lancamento_atualizado_em, limite)
 
