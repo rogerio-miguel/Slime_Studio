@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 # é cancelável pelo `wait_for`).
 _TIMEOUT_POR_PROVEDOR_S: float = 8
 _TTL_EM_ALTA_S = 3600
+# Roster de temporada muda devagar (estreias/adiamentos, não trending diário) —
+# TTL mais folgado que o de "em alta".
+_TTL_PROXIMA_TEMPORADA_S = 6 * 3600
 
 # Exceções esperadas de um provedor (rede, HTTP >=400 incluindo 429, timeout
 # de `wait_for`, ou formato de resposta inesperado que o adapter sinaliza com
@@ -66,6 +69,11 @@ _cache_em_alta: tuple[float, list[AnimeEmAlta]] | None = None
 # buscas reais aos provedores em paralelo, agravando o risco de rate-limit
 # do AniList (§9 do documento de especificação).
 _lock_em_alta = asyncio.Lock()
+
+# `(expira_em_monotonic, itens)` — `None` até o primeiro sucesso. Cache/lock
+# próprios (independentes dos de "em alta"): é outro feed, outro TTL.
+_cache_proxima_temporada: tuple[float, list[AnimeEmAlta]] | None = None
+_lock_proxima_temporada = asyncio.Lock()
 
 
 async def buscar_por_titulo(titulo: str) -> MetadadosDeAnime | None:
@@ -215,6 +223,50 @@ async def listar_em_alta() -> list[AnimeEmAlta]:
 
         raise FalhaDeMetadados(
             "todos os provedores de metadados falharam ao listar 'em alta'"
+        ) from ultimo_erro
+
+
+async def listar_proxima_temporada() -> list[AnimeEmAlta]:
+    """Feed "próxima temporada", cacheado em memória por
+    `_TTL_PROXIMA_TEMPORADA_S`. Mesma mecânica de `listar_em_alta` (cache/lock
+    próprios, double-checked locking, cadeia de fallback): propaga
+    `FalhaDeMetadados` se todos os provedores falharem — nunca devolve `[]`
+    silenciosamente para não confundir "temporada ainda sem anúncios" com
+    "provedores fora do ar" (CLAUDE.md: erro nunca silencioso)."""
+    global _cache_proxima_temporada
+
+    if _cache_proxima_temporada is not None:
+        expira_em, itens = _cache_proxima_temporada
+        if time.monotonic() < expira_em:
+            return itens
+
+    async with _lock_proxima_temporada:
+        if _cache_proxima_temporada is not None:
+            expira_em, itens = _cache_proxima_temporada
+            if time.monotonic() < expira_em:
+                return itens
+
+        ultimo_erro: Exception | None = None
+        for provedor in PROVEDORES:
+            try:
+                itens = await _chamar(provedor, provedor.listar_proxima_temporada)
+            except _ERROS_DE_PROVEDOR as excecao:
+                logger.warning(
+                    "provedor de metadados %r falhou ao listar 'próxima temporada': %s",
+                    provedor.nome,
+                    excecao,
+                )
+                ultimo_erro = excecao
+                continue
+
+            _cache_proxima_temporada = (
+                time.monotonic() + _TTL_PROXIMA_TEMPORADA_S,
+                itens,
+            )
+            return itens
+
+        raise FalhaDeMetadados(
+            "todos os provedores de metadados falharam ao listar 'próxima temporada'"
         ) from ultimo_erro
 
 

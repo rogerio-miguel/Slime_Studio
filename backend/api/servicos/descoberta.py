@@ -89,18 +89,45 @@ async def listar_em_alta_com_catalogo(
     sessionmaker: _SessionMaker,
 ) -> list[tuple[AnimeEmAlta, int | None]]:
     """Feed "em alta" (`integrations.servico.listar_em_alta`) pareado com
-    `Anime.id` local, quando o anime já está catalogado. Propaga
-    `FalhaDeMetadados` se os provedores falharem — a rota pública nunca deve
-    devolver `[]` como se fosse "sem lançamentos" quando na verdade os
-    provedores estão fora do ar.
+    `Anime.id` local (`_cruzar_com_catalogo`), quando o anime já está
+    catalogado. Propaga `FalhaDeMetadados` se os provedores falharem — a rota
+    pública nunca deve devolver `[]` como se fosse "sem lançamentos" quando na
+    verdade os provedores estão fora do ar.
 
-    Prioridade de cruzamento: `anilist_id` primeiro (único, sem
-    falso-negativo por subtítulo/pontuação divergente), slug do título
-    romaji como *fallback* só para os itens sem match por `anilist_id` —
-    necessário porque o Kitsu (provedor de fallback) não carrega
-    `anilist_id`."""
+    Extra em relação a `listar_proxima_temporada_com_catalogo`: dispara o
+    refresh oportunista de lançamento (F4a) — o feed "em alta" já traz o bloco
+    fresco da AniList e o anime cruzado costuma estar em lançamento."""
     itens = await servico.listar_em_alta()
+    pares = await _cruzar_com_catalogo(sessionmaker, itens)
+    await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
+    return pares
 
+
+async def listar_proxima_temporada_com_catalogo(
+    sessionmaker: _SessionMaker,
+) -> list[tuple[AnimeEmAlta, int | None]]:
+    """Feed "próxima temporada" (`integrations.servico.listar_proxima_temporada`)
+    pareado com `Anime.id` local, quando o anime já está catalogado. Propaga
+    `FalhaDeMetadados` se os provedores falharem — mesma razão de
+    `listar_em_alta_com_catalogo`: a rota pública nunca devolve `[]` como se
+    fosse "temporada vazia" quando os provedores estão fora do ar.
+
+    Sem o refresh oportunista de lançamento de `listar_em_alta_com_catalogo`
+    (F4a): animes que ainda não estrearam raramente estão catalogados, e o
+    bloco de lançamento de um título não-lançado muda pouco — o cruzamento
+    seco basta."""
+    itens = await servico.listar_proxima_temporada()
+    return await _cruzar_com_catalogo(sessionmaker, itens)
+
+
+async def _cruzar_com_catalogo(
+    sessionmaker: _SessionMaker, itens: list[AnimeEmAlta]
+) -> list[tuple[AnimeEmAlta, int | None]]:
+    """Pareia cada item de um feed de descoberta com `Anime.id` local.
+    Prioridade: `anilist_id` primeiro (único, sem falso-negativo por
+    subtítulo/pontuação divergente); slug do título romaji como fallback só
+    para os itens sem match por `anilist_id` — necessário porque o Kitsu
+    (provedor de fallback) não carrega `anilist_id`."""
     anilist_ids = [item.anilist_id for item in itens if item.anilist_id is not None]
     por_anilist_id = await localizar_animes_por_anilist_id(sessionmaker, anilist_ids)
 
@@ -117,8 +144,6 @@ async def listar_em_alta_com_catalogo(
         if anime_id is None:
             anime_id = por_slug.get(slugificar(item.titulo_romaji))
         pares.append((item, anime_id))
-
-    await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
     return pares
 
 

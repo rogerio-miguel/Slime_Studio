@@ -39,6 +39,7 @@ from extractors.base import ResultadoBusca
 from extractors.registro import EXTRATORES
 from extractors.resolucao import confirmar_fonte
 from extractors.versao import inferir_versao
+from integrations.base import AnimeEmAlta
 from models.anime import Anime
 from models.episodio import Episodio
 from models.fonte_anime import FonteAnime
@@ -196,17 +197,37 @@ async def listar_animes_em_alta(
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeEmAltaSaida]:
     pares = await servico_descoberta.listar_em_alta_com_catalogo(sessionmaker)
-    return [
-        AnimeEmAltaSaida(
-            titulo_romaji=item.titulo_romaji,
-            titulo_ingles=item.titulo_ingles,
-            capa_url=item.capa_url,
-            banner_url=item.banner_url,
-            anilist_id=item.anilist_id,
-            anime_id=anime_id,
-        )
-        for item, anime_id in pares
-    ]
+    return [_para_saida_em_alta(item, anime_id) for item, anime_id in pares]
+
+
+# `/proxima-temporada` — mesma armadilha de ordem de `/em-alta`: precisa vir
+# ANTES de `/{anime_id}`, senão casaria com `anime_id="proxima-temporada"`.
+@router_publico.get("/proxima-temporada", response_model=list[AnimeEmAltaSaida])
+async def listar_animes_proxima_temporada(
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[AnimeEmAltaSaida]:
+    pares = await servico_descoberta.listar_proxima_temporada_com_catalogo(sessionmaker)
+    return [_para_saida_em_alta(item, anime_id) for item, anime_id in pares]
+
+
+def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaSaida:
+    """Traduz um item do feed (`integrations.base.AnimeEmAlta`) já cruzado com o
+    catálogo para o schema HTTP. `item.lancamento` pode ser `None` (nem todo item
+    do feed traz bloco) — os três escalares de lançamento caem para `None`."""
+    lanc = item.lancamento
+    return AnimeEmAltaSaida(
+        titulo_romaji=item.titulo_romaji,
+        titulo_ingles=item.titulo_ingles,
+        capa_url=item.capa_url,
+        banner_url=item.banner_url,
+        anilist_id=item.anilist_id,
+        anime_id=anime_id,
+        ano_estreia=item.ano_estreia,
+        generos=list(item.generos),
+        status_lancamento=lanc.status if lanc else None,
+        proximo_ep_numero=lanc.proximo_ep_numero if lanc else None,
+        proximo_ep_em=lanc.proximo_ep_em if lanc else None,
+    )
 
 
 # `/buscar-fontes` precisa vir ANTES de `/{anime_id}` — mesma armadilha de
