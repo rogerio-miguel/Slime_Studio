@@ -2,11 +2,11 @@ import { useId } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import logo from '../assets/logo2.png';
 
-// Navbar fixa (z-20, sempre acima do vídeo hero e do conteúdo revelado) —
-// opacidade e `inert` controlados pela fase do scrub (paginas/Inicio.jsx via
-// inicio/useScrubDeVideo.js): invisível e inalcançável por teclado até
+// Navbar fixa (z-20, sempre acima do vídeo de intro e do conteúdo revelado) —
+// opacidade e `inert` controlados pela fase da intro (paginas/Inicio.jsx via
+// inicio/useIntroPorVideo.js): invisível e inalcançável por teclado até
 // `revelado`, mesma fase que dispara o fade-in do `main` (paginas/Inicio.jsx)
-// — navbar e conteúdo aparecem juntos, ao final da animação.
+// — navbar e conteúdo aparecem juntos, ao final do vídeo.
 //
 // Gêneros/Favoritos: decisão do usuário sobre dados faltantes — não existe
 // gêneros/favoritos no modelo hoje, então ficam visíveis mas desabilitados
@@ -30,7 +30,7 @@ export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSub
     <nav
       aria-label="Principal"
       inert={fase !== 'revelado'}
-      className={`fixed inset-x-0 top-0 z-20 flex h-20 items-center justify-between gap-6 bg-surface/70 px-6 backdrop-blur-sm transition-opacity duration-700 ease-out md:px-10 ${
+      className={`fixed inset-x-0 top-0 z-20 flex h-20 items-center justify-between gap-6 bg-surface/40 px-6 backdrop-blur-sm transition-opacity duration-700 ease-out md:px-10 ${
         visivel ? 'opacity-100' : 'opacity-0'
       }`}
     >
