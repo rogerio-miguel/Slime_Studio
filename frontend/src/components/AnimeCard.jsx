@@ -11,7 +11,7 @@ import BadgeDeEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 // Proporção: pôster retrato 2:3 (`aspect-[2/3]`), não paisagem como no Shell
 // — as imagens aqui são capa de provedor (AniList/Kitsu), não screenshot de
 // episódio. O card não define largura própria: quem chama decide (o slot da
-// faixa em `inicio/FaixaDeAnimes.jsx`, ou o grid de `paginas/Galeria.jsx`).
+// fileira em `inicio/FileiraDeCards.jsx`, ou o grid de `paginas/Galeria.jsx`).
 //
 // Capa: a decisão de "MVP sem capa" foi revertida (Fase 3). O card renderiza
 // `<img>` quando existir `anime.capa_path` (catálogo local) ou
@@ -42,16 +42,46 @@ import BadgeDeEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 // `classes`, `group-hover` nunca casaria com o botão) — botão posicionado
 // absoluto sobre a capa. `stopPropagation` evita ativar o Link/button por
 // baixo; opacidade some por padrão e só aparece no hover do card
-// (`group-hover`) ou no foco do próprio botão (`focus-visible`) — nunca com
-// `hidden`/DOM removido, senão ficaria inacessível por Tab.
+// (`group-hover/card`) ou no foco do próprio botão (`focus-visible`) — nunca
+// com `hidden`/DOM removido, senão ficaria inacessível por Tab.
 //
-// Elevação no hover/foco (`-translate-y-1`): mora no WRAPPER, não no
-// Link/button. O título e seu degradê são filhos do Link e acompanhariam a
-// animação de qualquer jeito, mas a badge e o botão de remover são irmãos —
-// se o transform ficasse no Link, eles ficariam parados enquanto o resto do
-// card sobe. `focus-within` (não `focus-visible`) porque o foco pode cair no
-// Link OU no botão de remover, e os dois devem elevar o card inteiro.
-export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = false }) {
+// Hover/foco (mecânica do Disney+): o card CRESCE em escala no lugar
+// (`scale-105`, `transition-transform duration-300 ease-out`) — os irmãos na
+// grade não se mexem, ele cresce por cima (`hover:z-10 focus-within:z-10`,
+// senão o card seguinte no DOM cobre a borda direita do card ampliado). Mora
+// no WRAPPER, não no Link/button: título e degradê acompanhariam de qualquer
+// jeito, mas a badge e o botão de remover são irmãos e ficariam parados se o
+// transform estivesse no Link. `focus-within` (não `focus-visible`) porque o
+// foco pode cair no Link OU no botão de remover, e os dois devem ampliar o
+// card inteiro. `motion-reduce:transition-none` corta a animação (o `scale`
+// ainda aplica, só não anima).
+//
+// Borda neon (4px, cantos `rounded-xl`/12px, acende por cor no hover E no
+// foco): overlay `aria-hidden` `absolute inset-0`, ÚLTIMO filho de `conteudo`
+// — não `border`/`ring` no Link. `border` real encolheria o content-box e
+// deixaria uma moldura de `bg-surface` sempre visível ao redor da capa; um
+// `ring` no Link ficaria ATRÁS dos filhos `absolute inset-0` (por causa do
+// `overflow-hidden`) e só apareceria nas frestas — mesmo problema resolvido
+// no overlay de borda de `inicio/CarrosselDestaques.jsx`.
+// `group-focus-within/card:border-neon` é o indicador de foco de teclado: o
+// Link/button ficou com `outline-none` e sem `focus-visible:ring`. Card
+// desabilitado não renderiza o overlay (`{!desabilitado && …}`) e usa
+// `wrapperBase` (sem `hover:`/`focus-within:`) — não cresce nem acende.
+// Grupo NOMEADO `group/card` (não `group` puro) — ver comentário em
+// `wrapperBase` abaixo: a fileira horizontal tem `group` próprio.
+//
+// `sobreposicao` (opcional): nó renderizado como IRMÃO do Link/button, DENTRO
+// do `wrapper` — então cresce junto no `scale` do hover (ao contrário de um
+// wrapper externo, que ficaria estático por cima do card). Usado pelo numeral
+// grande da fileira "Top 10" (paginas/Inicio.jsx); posicionamento
+// (`absolute`/`z`) e `aria-hidden` são responsabilidade de quem passa.
+export default function AnimeCard({
+  anime,
+  aoAtivar,
+  aoRemover,
+  desabilitado = false,
+  sobreposicao,
+}) {
   const idCatalogado = anime.id ?? anime.anime_id ?? null;
   const capa = anime.capa_path ?? anime.capa_url ?? null;
   const titulo = anime.titulo ?? anime.titulo_romaji;
@@ -62,13 +92,18 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
   // padrão — sem isto, o card de item ainda não catalogado (variante
   // `<button>`) encolhia pro tamanho do título em vez do slot do grid.
   const classes =
-    'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl border border-neon-soft bg-surface p-4 text-left outline-none transition-all duration-200 hover:border-neon hover:bg-surface-hover focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon';
+    'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left outline-none transition-all duration-200 hover:bg-surface-hover';
 
-  // Elevação no wrapper (ver comentário do bloco acima): assim badge e botão
-  // de remover, que são irmãos do Link/button, sobem junto com o card. Card
-  // desabilitado (`<button disabled>`) não eleva.
-  const wrapperBase = 'group relative transition-transform duration-200';
-  const wrapper = `${wrapperBase} hover:-translate-y-1 focus-within:-translate-y-1`;
+  // Escala no wrapper (ver bloco de comentário acima): assim a badge e o botão
+  // de remover, irmãos do Link/button, crescem junto com o card. Card
+  // desabilitado (`<button disabled>`) não escala.
+  // `group/card` (grupo NOMEADO, não `group` puro): a fileira horizontal
+  // (inicio/FileiraDeCards.jsx) envolve a trilha inteira num `group` próprio
+  // pra revelar as setas — com `group` puro aqui, `group-hover:` da borda/
+  // título casaria com QUALQUER ancestral `.group` e acenderia todos os cards
+  // da fileira de uma vez ao passar o mouse em qualquer ponto dela.
+  const wrapperBase = 'group/card relative transition-transform duration-300 ease-out motion-reduce:transition-none';
+  const wrapper = `${wrapperBase} hover:z-10 hover:scale-105 focus-within:z-10 focus-within:scale-105`;
 
   const conteudo = (
     <>
@@ -77,14 +112,24 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
           <img
             src={capa}
             alt=""
+            loading="lazy"
             className="absolute inset-0 h-full w-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
         </>
       )}
-      <h2 className="relative mt-auto line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover:text-neon lg:text-base">
+      <h2 className="relative mt-auto line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
         {titulo}
       </h2>
+      {/* Borda neon: overlay por CIMA da capa/degradê (ver bloco de comentário
+          no topo). Card desabilitado não recebe o overlay — nem cresce nem
+          acende. */}
+      {!desabilitado && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-xl border-4 border-transparent transition-colors duration-300 ease-out group-hover/card:border-neon group-focus-within/card:border-neon motion-reduce:transition-none"
+        />
+      )}
     </>
   );
 
@@ -97,7 +142,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
         aoRemover();
       }}
       aria-label={`Remover ${titulo} do catálogo`}
-      className="absolute right-2 top-2 z-10 rounded-full bg-black/70 p-1.5 text-white opacity-0 outline-none transition-all duration-200 hover:bg-red-950/80 hover:text-red-400 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-neon group-hover:opacity-100"
+      className="absolute right-2 top-2 z-10 rounded-full bg-black/70 p-1.5 text-white opacity-0 outline-none transition-all duration-200 hover:bg-red-950/80 hover:text-red-400 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-neon group-hover/card:opacity-100"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -120,6 +165,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
         </Link>
         {badgeEpisodiosNovos}
         {botaoRemover}
+        {sobreposicao}
       </div>
     );
   }
@@ -137,6 +183,7 @@ export default function AnimeCard({ anime, aoAtivar, aoRemover, desabilitado = f
       </button>
       {badgeEpisodiosNovos}
       {botaoRemover}
+      {sobreposicao}
     </div>
   );
 }
