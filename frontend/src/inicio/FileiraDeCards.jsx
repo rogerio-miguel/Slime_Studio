@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { SOMBRA_SLIDE_ATIVO } from './CarrosselDestaques.jsx';
+import {
+  CLASSE_GUTTER,
+  CLASSES_POR_PAGINA,
+  FLEX_BASIS_SLOT,
+  PADDING_TITULO,
+} from './tamanhoDeCard.js';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 
 // Fileira horizontal de cards no estilo "prateleira" do Disney+ (título +
@@ -11,13 +17,15 @@ import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 // `scrollBy` (sem CSS scroll-snap, sem auto-avanço, sem timer). Espelha a API
 // de render-prop de GradeRotativa: quem chama passa o pool (`itens`) +
 // `renderItem(item, indice)` e `chaveDoItem(item)`; o guard de lista vazia
-// mora aqui (retorna `null`), o chamador não repete.
+// mora aqui (retorna `null`), o chamador não repete. A irmã que quebra linha
+// em vez de rolar é GradeDeCatalogo.jsx.
 //
-// Geometria medida ao vivo no Disney+ (viewport 1920): pôster 2:3, dois
-// tamanhos (`tamanho="grande"` ~336×502 / `"pequeno"` ~277×414 — ver
-// `CLASSES_POR_PAGINA`); o respiro entre cards vem do `p-[10px]` de cada slot
-// (a trilha NÃO tem `gap`); gutter de 3.7% de cada lado onde moram as setas;
-// passo de clique = uma página cheia.
+// Vocabulário de tamanho de card (`CLASSES_POR_PAGINA`, `CLASSE_GUTTER`,
+// `FLEX_BASIS_SLOT`, `PADDING_TITULO`) e a geometria medida no Disney+ moram
+// em ./tamanhoDeCard.js — fonte única compartilhada com GradeDeCatalogo pra os
+// cards saírem do mesmo tamanho. `--por-pagina` vem por breakpoint das classes
+// de `CLASSES_POR_PAGINA[tamanho]`; o `flex-basis` correspondente vai no
+// `style` inline (a `/` colide com o modificador de opacidade do Tailwind v4).
 //
 // Cada card leva a MESMA drop shadow do slide ativo do billboard
 // (`SOMBRA_SLIDE_ATIVO`, importada de CarrosselDestaques.jsx — fonte única) —
@@ -27,22 +35,6 @@ import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 // `scale` do hover, igual ao billboard. Só aparece de fato sobre o fundo
 // `#17171b` do `<main>` (paginas/Inicio.jsx) — sobre um preto mais fechado
 // some.
-//
-// `--por-pagina` fica nas CLASSES da trilha (um valor por breakpoint), não
-// numa prop numérica: prop viraria classe interpolada e o Tailwind não extrai
-// valor dinâmico. A prop `tamanho` seleciona entre DUAS strings de classe
-// literais (`CLASSES_POR_PAGINA`), as duas presentes no fonte pro Tailwind
-// extrair. O `flex-basis` correspondente vai no `style` inline porque
-// `100% / var(--por-pagina)` tem `/`, que colide com o modificador de opacidade
-// do Tailwind v4 (mesma armadilha do `--slide-gap` em CarrosselDestaques.jsx).
-//
-//   - `grande`  (default): pôster ~336px, 5 por página no desktop — fileiras de
-//                catálogo (Próximas estreias, Top 10, gênero).
-//   - `pequeno`: pôster ~277px, 6 por página — "Continuar assistindo".
-const CLASSES_POR_PAGINA = {
-  grande: '[--por-pagina:2] sm:[--por-pagina:3] md:[--por-pagina:3] lg:[--por-pagina:4] xl:[--por-pagina:5]',
-  pequeno: '[--por-pagina:2] sm:[--por-pagina:3] md:[--por-pagina:4] lg:[--por-pagina:5] xl:[--por-pagina:6]',
-};
 
 export default function FileiraDeCards({
   titulo,
@@ -125,12 +117,12 @@ export default function FileiraDeCards({
   return (
     <section aria-labelledby={idTitulo}>
       {/* Sem `margin-bottom`: o respiro até os cards vem do `pt` da trilha.
-          `padding-inline: calc(3.7% + 10px)` alinha o título com a borda do
-          CARD interno (gutter de 3.7% + os 10px de padding do slot). Calc no
+          `PADDING_TITULO` (./tamanhoDeCard.js) alinha o título com a borda do
+          CARD interno (gutter de 3.7% + os 10px de padding do slot); vai no
           `style` pelo mesmo motivo do `flex-basis` abaixo. */}
       <h2
         id={idTitulo}
-        style={{ paddingInline: 'calc(3.7% + 10px)' }}
+        style={{ paddingInline: PADDING_TITULO }}
         className="text-[22px] font-bold text-[#dbdcde]"
       >
         {titulo}
@@ -157,7 +149,7 @@ export default function FileiraDeCards({
           ref={trilhaRef}
           id={idTrilha}
           onScroll={medirLimites}
-          className={`flex overflow-x-auto px-[3.7%] pt-[22px] pb-[44px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+          className={`flex overflow-x-auto ${CLASSE_GUTTER} pt-[22px] pb-[44px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
             CLASSES_POR_PAGINA[tamanho] ?? CLASSES_POR_PAGINA.grande
           }`}
         >
@@ -171,7 +163,7 @@ export default function FileiraDeCards({
             <li
               key={chaveDoItem(item)}
               className="relative shrink-0 grow-0 p-[10px] hover:z-10 focus-within:z-10"
-              style={{ flexBasis: 'calc(100% / var(--por-pagina))' }}
+              style={{ flexBasis: FLEX_BASIS_SLOT }}
             >
               {/* Wrapper só da sombra: traça o retângulo `rounded-xl` (mesmo
                   raio do AnimeCard) exatamente na borda do card. Não pode

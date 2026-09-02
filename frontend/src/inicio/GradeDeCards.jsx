@@ -94,7 +94,12 @@ export function SlotDeCard({ indice, ativa = true, children }) {
     <div
       style={{
         transitionDelay: `${indice * ATRASO_POR_INDICE_MS}ms`,
-        maxWidth: 'var(--largura-max-card)',
+        // Fallback 100%: a grade de catálogo que quebra linha
+        // (GradeDeCatalogo.jsx) não define `--largura-max-card` — a largura do
+        // card vem do slot flex — e sem o fallback o `maxWidth` seria uma
+        // declaração inválida em computed-value time. Onde a var é definida
+        // hoje (grids 2D de Galeria/Inicio) nada muda.
+        maxWidth: 'var(--largura-max-card, 100%)',
       }}
       className={`mx-auto w-full transition-[opacity,scale] duration-700 ease-out motion-reduce:opacity-100 motion-reduce:scale-100 motion-reduce:transition-none ${
         visivel ? 'scale-100 opacity-100' : 'scale-[0.8] opacity-0'
