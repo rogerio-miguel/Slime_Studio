@@ -9,6 +9,11 @@
 :root {
   --bar-height: 4rem;
   --bar-height-fullscreen: 5rem;
+  /* Distância do .frame às bordas laterais da tela — um valor por modo,
+     independentes. 0 = encosta na borda (comportamento anterior). A regra
+     `:fullscreen .frame` abaixo troca pra a variante -fullscreen. */
+  --frame-inset-lateral: 4rem;
+  --frame-inset-lateral-fullscreen: 0rem;
   /* Bleed do #ambient-glow: só tem efeito visível pra cima/baixo — o .frame
      toca as bordas laterais da tela, então o bleed lateral vaza direto pra
      fora da viewport (cortado pelo overflow:hidden de
@@ -111,8 +116,9 @@ body.pagina-player {
   height: 100vh;
   background: #000;
 }
-/* Sem aspect-ratio: a caixa ocupa 100% da largura (toca as bordas laterais
-   da tela nos dois modos) e a altura vem de --bar-height — mesma fórmula
+/* Sem aspect-ratio: a caixa ocupa 100% da largura menos --frame-inset-lateral
+   em cada lado (0 por padrão / sempre 0 em fullscreen) e a altura vem de
+   --bar-height — mesma fórmula
    em janela e fullscreen, só a variável muda (regra `:fullscreen .frame`
    abaixo troca pra --bar-height-fullscreen), pra dar dois tamanhos de
    barra independentes. dvh funciona nos dois modos (fullscreen força
@@ -122,7 +128,9 @@ body.pagina-player {
    toda, sem pillarbox/letterbox e sem recorte (trade-off aceito: leve
    distorção pra não sobrar borda nas laterais). */
 .frame {
-  width: 100%;
+  /* Centrado pelo flex do .fullscreen-stage (align/justify center) quando a
+     largura é menor que 100% — sem margin-inline explícito. */
+  width: calc(100% - 2 * var(--frame-inset-lateral));
   height: calc(100dvh - 2 * var(--bar-height));
   background: #000;
   position: relative;
@@ -137,12 +145,13 @@ body.pagina-player {
      #ambient-glow acima). */
   isolation: isolate;
 }
-/* Único ponto que difere entre os dois modos: a altura troca de var pra
-   permitir barra de tamanho diferente em fullscreen. Largura continua
-   100% (herdado de .frame acima, não repetido aqui). */
+/* Diferença entre os dois modos: altura e inset lateral trocam pras
+   variantes -fullscreen, pra dar barra e margem lateral independentes por
+   modo. */
 .fullscreen-stage:fullscreen .frame,
 .fullscreen-stage:-webkit-full-screen .frame {
   height: calc(100dvh - 2 * var(--bar-height-fullscreen));
+  width: calc(100% - 2 * var(--frame-inset-lateral-fullscreen));
 }
 .frame video {
   position: absolute;
