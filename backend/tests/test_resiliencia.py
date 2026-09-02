@@ -288,3 +288,21 @@ async def test_chamar_loga_falha_apos_escalar_e_navegador_tambem_falhar(
     assert "operacao=testar" in caplog.text
     assert "escalou=True" in caplog.text
     assert "duracao_s=" in caplog.text
+
+
+def test_ttl_sessao_usa_o_padrao_sem_env(monkeypatch):
+    monkeypatch.delenv("SLIME_SESSAO_TTL_S", raising=False)
+    assert resiliencia._ttl_sessao_s() == resiliencia._TTL_SESSAO_S_PADRAO
+
+
+def test_ttl_sessao_respeita_env_valida(monkeypatch):
+    monkeypatch.setenv("SLIME_SESSAO_TTL_S", "3600")
+    assert resiliencia._ttl_sessao_s() == 3600
+
+
+@pytest.mark.parametrize("valor", ["", "abc", "0", "-10", "1.5"])
+def test_ttl_sessao_cai_no_padrao_com_env_invalida(monkeypatch, caplog, valor):
+    monkeypatch.setenv("SLIME_SESSAO_TTL_S", valor)
+    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+        assert resiliencia._ttl_sessao_s() == resiliencia._TTL_SESSAO_S_PADRAO
+    assert "SLIME_SESSAO_TTL_S" in caplog.text

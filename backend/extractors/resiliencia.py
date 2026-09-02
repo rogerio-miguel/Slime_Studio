@@ -13,6 +13,7 @@ exige ou quando a sessão cacheada é rejeitada.
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -63,15 +64,46 @@ _TETO_ESPERA_S = 45
 # o timeout interno da captura/orçamento, não este `wait_for`.
 _TETO_ESPERA_NAVEGADOR_S = 225
 
-# TTL da sessão cacheada após sucesso. Agora que o navegador em modo visível
-# resolve o Turnstile de verdade (fatia A/B de 2026-09-02), o cookie cacheado é
-# um `cf_clearance` real, cujo tempo de vida típico do Cloudflare fica na faixa
-# de ~30min–1h. Arredondado pra baixo por assimetria de custo: TTL curto demais
-# custa no máximo uma escalada extra pro navegador; TTL longo demais manda
-# `cf_clearance` **expirado** pro Cloudflare, pior que não mandar cookie nenhum.
-# Replay do `cf_clearance` num cliente leve (`requests`/`cloudscraper` → HTTP
-# 200) foi observado funcionando em 2026-09-02, ainda não confirmado estável.
-_TTL_SESSAO_S = 30 * 60
+# TTL (segundos) da sessão cacheada após sucesso. Agora que o navegador em modo
+# visível resolve o Turnstile de verdade (fatia A/B de 2026-09-02), o cookie
+# cacheado é um `cf_clearance` real. O prazo que importa é a janela server-side
+# do Cloudflare ("Challenge Passage", default 30min, invisível pra nós) — não a
+# expiração do próprio cookie, que o Cloudflare emite longa (medido: ~180 dias).
+# Arredondado pra baixo por assimetria de custo: TTL curto demais custa no máximo
+# uma escalada extra pro navegador (~5s, uma vez por janela); TTL longo demais faz
+# *toda* requisição leve mandar `cf_clearance` expirado → 403 → escala assim
+# mesmo, o pior dos dois mundos. Sobrescrevível por `SLIME_SESSAO_TTL_S` para
+# afinar contra os logs sem recompilar: suba o valor e observe se aparece
+# `SessaoRejeitada` no cliente leve antes da hora (janela real menor que o TTL).
+_TTL_SESSAO_S_PADRAO = 30 * 60
+_VARIAVEL_TTL_SESSAO = "SLIME_SESSAO_TTL_S"
+
+
+def _ttl_sessao_s() -> int:
+    """TTL da sessão cacheada, de `SLIME_SESSAO_TTL_S` se definida e válida
+    (inteiro positivo de segundos), senão `_TTL_SESSAO_S_PADRAO`."""
+    bruto = os.environ.get(_VARIAVEL_TTL_SESSAO)
+    if bruto is None:
+        return _TTL_SESSAO_S_PADRAO
+    try:
+        valor = int(bruto)
+    except ValueError:
+        logger.warning(
+            "%s=%r não é um inteiro — usando o padrão de %ds",
+            _VARIAVEL_TTL_SESSAO,
+            bruto,
+            _TTL_SESSAO_S_PADRAO,
+        )
+        return _TTL_SESSAO_S_PADRAO
+    if valor <= 0:
+        logger.warning(
+            "%s=%d não é positivo — usando o padrão de %ds",
+            _VARIAVEL_TTL_SESSAO,
+            valor,
+            _TTL_SESSAO_S_PADRAO,
+        )
+        return _TTL_SESSAO_S_PADRAO
+    return valor
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +200,7 @@ async def chamar[T](
 
     await circuit_breaker.registrar_sucesso(sessionmaker, dominio)
     await sessao_cache.salvar(
-        sessionmaker, dominio, execucao.cookies, execucao.user_agent, ttl_s=_TTL_SESSAO_S
+        sessionmaker, dominio, execucao.cookies, execucao.user_agent, ttl_s=_ttl_sessao_s()
     )
     logger.info(
         "chamada concluída: dominio=%s operacao=%s cliente=%s escalou=%s duracao_s=%.3f",
