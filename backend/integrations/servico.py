@@ -28,7 +28,7 @@ from integrations.base import (
     ProvedorDeMetadados,
     TitulosDeAnime,
 )
-from integrations.registro import PROVEDORES
+from integrations.registro import PROVEDORES, PROVEDORES_DE_FEED
 
 logger = logging.getLogger(__name__)
 
@@ -183,8 +183,9 @@ async def _buscar_em_cadeia[T](
 
 async def listar_em_alta() -> list[AnimeEmAlta]:
     """Feed "lançamentos em alta", cacheado em memória por `_TTL_EM_ALTA_S`.
-    Propaga `FalhaDeMetadados` se todos os provedores falharem — nunca
-    devolve `[]` silenciosamente para não confundir "sem lançamentos" com
+    Percorre só `PROVEDORES_DE_FEED` (AniList; Kitsu de fora — ver o comentário
+    da tupla em `registro.py`). Propaga `FalhaDeMetadados` se todos falharem —
+    nunca devolve `[]` silenciosamente para não confundir "sem lançamentos" com
     "provedores fora do ar" (CLAUDE.md: erro nunca silencioso).
 
     Checagem de cache em duas etapas (double-checked locking): a primeira,
@@ -206,7 +207,7 @@ async def listar_em_alta() -> list[AnimeEmAlta]:
                 return itens
 
         ultimo_erro: Exception | None = None
-        for provedor in PROVEDORES:
+        for provedor in PROVEDORES_DE_FEED:
             try:
                 itens = await _chamar(provedor, provedor.listar_em_alta)
             except _ERROS_DE_PROVEDOR as excecao:
@@ -229,10 +230,10 @@ async def listar_em_alta() -> list[AnimeEmAlta]:
 async def listar_proxima_temporada() -> list[AnimeEmAlta]:
     """Feed "próxima temporada", cacheado em memória por
     `_TTL_PROXIMA_TEMPORADA_S`. Mesma mecânica de `listar_em_alta` (cache/lock
-    próprios, double-checked locking, cadeia de fallback): propaga
-    `FalhaDeMetadados` se todos os provedores falharem — nunca devolve `[]`
-    silenciosamente para não confundir "temporada ainda sem anúncios" com
-    "provedores fora do ar" (CLAUDE.md: erro nunca silencioso)."""
+    próprios, double-checked locking, só `PROVEDORES_DE_FEED`): propaga
+    `FalhaDeMetadados` se todos falharem — nunca devolve `[]` silenciosamente
+    para não confundir "temporada ainda sem anúncios" com "provedores fora do
+    ar" (CLAUDE.md: erro nunca silencioso)."""
     global _cache_proxima_temporada
 
     if _cache_proxima_temporada is not None:
@@ -247,7 +248,7 @@ async def listar_proxima_temporada() -> list[AnimeEmAlta]:
                 return itens
 
         ultimo_erro: Exception | None = None
-        for provedor in PROVEDORES:
+        for provedor in PROVEDORES_DE_FEED:
             try:
                 itens = await _chamar(provedor, provedor.listar_proxima_temporada)
             except _ERROS_DE_PROVEDOR as excecao:
