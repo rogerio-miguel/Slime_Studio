@@ -97,12 +97,21 @@ async def test_em_alta_cruza_com_anime_existente_no_catalogo_local(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Tensei Shitara Slime Datta Ken", "tensei")
 
+    quando = datetime(2026, 9, 5, 12, 0, tzinfo=UTC)
     item = AnimeEmAlta(
         titulo_romaji="Tensei",
         titulo_ingles="That Time I Got Reincarnated as a Slime",
         capa_url="https://img/1.jpg",
         banner_url="https://img/1-banner.jpg",
         anilist_id=1,
+        ano_estreia=2018,
+        generos=("Action", "Fantasy"),
+        lancamento=LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=100,
+            proximo_ep_numero=55,
+            proximo_ep_em=quando,
+        ),
     )
 
     async def _listar_fake(sessionmaker):
@@ -113,16 +122,22 @@ async def test_em_alta_cruza_com_anime_existente_no_catalogo_local(
     resposta = await cliente.get("/api/animes/em-alta")
 
     assert resposta.status_code == 200
-    assert resposta.json() == [
-        {
-            "titulo_romaji": "Tensei",
-            "titulo_ingles": "That Time I Got Reincarnated as a Slime",
-            "capa_url": "https://img/1.jpg",
-            "banner_url": "https://img/1-banner.jpg",
-            "anilist_id": 1,
-            "anime_id": anime_id,
-        }
-    ]
+    corpo = resposta.json()
+    assert len(corpo) == 1
+    item_json = corpo[0]
+    assert datetime.fromisoformat(item_json.pop("proximo_ep_em")) == quando
+    assert item_json == {
+        "titulo_romaji": "Tensei",
+        "titulo_ingles": "That Time I Got Reincarnated as a Slime",
+        "capa_url": "https://img/1.jpg",
+        "banner_url": "https://img/1-banner.jpg",
+        "anilist_id": 1,
+        "anime_id": anime_id,
+        "ano_estreia": 2018,
+        "generos": ["Action", "Fantasy"],
+        "status_lancamento": "em_lancamento",
+        "proximo_ep_numero": 55,
+    }
 
 
 async def test_em_alta_sem_correspondencia_local_devolve_anime_id_none(
@@ -145,6 +160,36 @@ async def test_em_alta_sem_correspondencia_local_devolve_anime_id_none(
 
     assert resposta.status_code == 200
     assert resposta.json()[0]["anime_id"] is None
+
+
+async def test_em_alta_item_sem_lancamento_ecoa_defaults_do_carrossel(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Item do feed sem bloco `lancamento` e sem gêneros/ano (caminho degradado
+    Kitsu): a resposta ainda traz os campos do carrossel, nos defaults — nunca
+    `null` para `generos`, e os três escalares de lançamento `null`."""
+    item = AnimeEmAlta(
+        titulo_romaji="Sem Bloco De Lancamento",
+        titulo_ingles=None,
+        capa_url=None,
+        banner_url=None,
+        anilist_id=42,
+    )
+
+    async def _listar_fake(sessionmaker):
+        return [(item, None)]
+
+    monkeypatch.setattr("api.servicos.descoberta.listar_em_alta_com_catalogo", _listar_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()[0]
+    assert corpo["ano_estreia"] is None
+    assert corpo["generos"] == []
+    assert corpo["status_lancamento"] is None
+    assert corpo["proximo_ep_numero"] is None
+    assert corpo["proximo_ep_em"] is None
 
 
 async def test_ordem_de_rotas_em_alta_nao_e_interpretado_como_anime_id(
@@ -304,6 +349,119 @@ async def test_listar_em_alta_com_catalogo_prioriza_anilist_id_sobre_slug(
     pares = await servico_descoberta.listar_em_alta_com_catalogo(sessionmaker_api)
 
     assert pares == [(item, anime_id)]
+
+
+# --- GET /api/animes/proxima-temporada ---
+
+
+async def test_proxima_temporada_propaga_502_se_todos_provedores_falham(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    async def _fake(sessionmaker):
+        raise FalhaDeMetadados("todos os provedores de metadados falharam")
+
+    monkeypatch.setattr(
+        "api.servicos.descoberta.listar_proxima_temporada_com_catalogo", _fake
+    )
+
+    resposta = await cliente.get("/api/animes/proxima-temporada")
+
+    assert resposta.status_code == 502
+
+
+async def test_proxima_temporada_cruzamento_real_por_anilist_id(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Título Local", "titulo-local", anilist_id=777
+    )
+    item = AnimeEmAlta(
+        titulo_romaji="Próxima Estreia",
+        titulo_ingles=None,
+        capa_url="https://img/p.jpg",
+        banner_url=None,
+        anilist_id=777,
+        ano_estreia=2027,
+        generos=("Drama",),
+        lancamento=LancamentoDeAnime(
+            status=StatusLancamento.NAO_LANCADO,
+            total_episodios=None,
+            proximo_ep_numero=None,
+            proximo_ep_em=None,
+        ),
+    )
+
+    async def _listar_fake():
+        return [item]
+
+    monkeypatch.setattr("integrations.servico.listar_proxima_temporada", _listar_fake)
+
+    resposta = await cliente.get("/api/animes/proxima-temporada")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert len(corpo) == 1
+    assert corpo[0]["anime_id"] == anime_id
+    assert corpo[0]["status_lancamento"] == "nao_lancado"
+    assert corpo[0]["generos"] == ["Drama"]
+
+
+async def test_proxima_temporada_sem_correspondencia_local_devolve_anime_id_none(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    item = AnimeEmAlta(
+        titulo_romaji="Nada Catalogado",
+        titulo_ingles=None,
+        capa_url=None,
+        banner_url=None,
+        anilist_id=404,
+    )
+
+    async def _listar_fake():
+        return [item]
+
+    monkeypatch.setattr("integrations.servico.listar_proxima_temporada", _listar_fake)
+
+    resposta = await cliente.get("/api/animes/proxima-temporada")
+
+    assert resposta.status_code == 200
+    assert resposta.json()[0]["anime_id"] is None
+
+
+async def test_proxima_temporada_nao_faz_refresh_oportunista_de_lancamento(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Diferença central em relação a `/api/animes/em-alta`: mesmo com um item
+    catalogado e dado local bem velho, o cruzamento seco NÃO sobrescreve as
+    colunas de lançamento (nenhuma chamada a `atualizar_lancamentos_em_lote`)."""
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Prox Catalogado",
+        "prox-catalogado",
+        anilist_id=1,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        proximo_ep_numero=3,
+        lancamento_atualizado_em=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+
+    async def _listar_fake():
+        return [_feed_com_lancamento(1, proximo_ep_numero=9)]
+
+    async def _escrita_proibida(*args, **kwargs):
+        raise AssertionError("proxima-temporada não deve escrever lançamento do catálogo")
+
+    monkeypatch.setattr("integrations.servico.listar_proxima_temporada", _listar_fake)
+    monkeypatch.setattr(
+        "api.servicos.descoberta.atualizar_lancamentos_em_lote", _escrita_proibida
+    )
+
+    resposta = await cliente.get("/api/animes/proxima-temporada")
+
+    assert resposta.status_code == 200
+    assert resposta.json()[0]["anime_id"] == anime_id
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.proximo_ep_numero == 3  # feed trazia 9, mas não há refresh aqui
 
 
 # --- POST /api/admin/animes: enriquecimento best-effort ---

@@ -62,12 +62,9 @@ export const ATRASO_POR_INDICE_MS = 60;
 export const DURACAO_ENTRADA_MS = 700;
 
 // Slot de um card do grid — dono da transição de entrada/saída (opacity-0
-// scale-[0.8] ↔ opacity-100 scale-100, "surge do meio"). Mesma dupla
-// opacidade+escala partindo de 0.8 usada na logo do hero
-// (inicio/useScrubDeVideo.js, `_LOGO_ESCALA_INICIO`) — card cresce a
+// scale-[0.8] ↔ opacity-100 scale-100, "surge do meio"). O card cresce a
 // partir do próprio centro (transform-origin default) em vez do scale-95
-// quase imperceptível de antes, ecoando o "emergir de dentro da cena" da
-// logo. `indice` pode ser a posição no grid ou qualquer índice estável —
+// quase imperceptível de antes. `indice` pode ser a posição no grid ou qualquer índice estável —
 // quem chama decide via `key` se quer retrigger (key nova a cada troca) ou
 // persistência (key estável por item, ex. id do anime).
 //

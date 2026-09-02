@@ -66,6 +66,28 @@ query {
       title { romaji english }
       coverImage { extraLarge }
       bannerImage
+      genres
+      seasonYear
+      startDate { year }
+      status
+      episodes
+      nextAiringEpisode { episode airingAt }
+    }
+  }
+}
+"""
+
+_QUERY_PROXIMA_TEMPORADA = """
+query ($estacao: MediaSeason, $ano: Int) {
+  Page(page: 1, perPage: 50) {
+    media(season: $estacao, seasonYear: $ano, type: ANIME, sort: POPULARITY_DESC) {
+      id
+      title { romaji english }
+      coverImage { extraLarge }
+      bannerImage
+      genres
+      seasonYear
+      startDate { year }
       status
       episodes
       nextAiringEpisode { episode airingAt }
@@ -139,24 +161,12 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
         return TitulosDeAnime(titulo_romaji=titulo_romaji, titulo_ingles=titulo_ingles)
 
     def listar_em_alta(self) -> list[AnimeEmAlta]:
-        dados = self._executar(_QUERY_EM_ALTA, {})
-        pagina = dados.get("Page") if isinstance(dados, dict) else None
-        itens = pagina.get("media") if isinstance(pagina, dict) else None
-        if not isinstance(itens, list):
-            raise RuntimeError("AniList: resposta de 'em alta' com formato inesperado")
+        return _pagina_para_animes_em_alta(self._executar(_QUERY_EM_ALTA, {}), "em alta")
 
-        return [
-            AnimeEmAlta(
-                titulo_romaji=(item.get("title") or {}).get("romaji") or "",
-                titulo_ingles=(item.get("title") or {}).get("english"),
-                capa_url=(item.get("coverImage") or {}).get("extraLarge"),
-                banner_url=item.get("bannerImage"),
-                anilist_id=item.get("id"),
-                lancamento=_extrair_lancamento(item),
-            )
-            for item in itens
-            if isinstance(item, dict) and item.get("id") is not None
-        ]
+    def listar_proxima_temporada(self) -> list[AnimeEmAlta]:
+        estacao, ano = _proxima_temporada(datetime.now(UTC))
+        dados = self._executar(_QUERY_PROXIMA_TEMPORADA, {"estacao": estacao, "ano": ano})
+        return _pagina_para_animes_em_alta(dados, "próxima temporada")
 
     def _executar(self, query: str, variaveis: dict) -> dict:
         resposta = requests.post(
@@ -170,6 +180,46 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
         if not isinstance(corpo, dict) or "data" not in corpo:
             raise RuntimeError("AniList: resposta sem campo 'data'")
         return corpo.get("data") or {}
+
+
+_ESTACOES_ANILIST = ("WINTER", "SPRING", "SUMMER", "FALL")
+
+
+def _proxima_temporada(agora: datetime) -> tuple[str, int]:
+    """`(estação, ano)` da temporada seguinte à de `agora` — `WINTER` (meses
+    1-3), `SPRING` (4-6), `SUMMER` (7-9), `FALL` (10-12). A AniList não tem um
+    enum `NEXT_SEASON`, então o cálculo é aqui. Na virada `FALL -> WINTER` o ano
+    também avança."""
+    indice_prox = ((agora.month - 1) // 3 + 1) % 4
+    ano = agora.year + (1 if indice_prox == 0 else 0)
+    return _ESTACOES_ANILIST[indice_prox], ano
+
+
+def _pagina_para_animes_em_alta(dados: dict, contexto: str) -> list[AnimeEmAlta]:
+    """Parser único de `Page.media` reusado por `listar_em_alta` e
+    `listar_proxima_temporada` (mesmos campos nas duas queries). `contexto` só
+    entra na mensagem de erro para diferenciar qual feed veio malformado."""
+    pagina = dados.get("Page") if isinstance(dados, dict) else None
+    itens = pagina.get("media") if isinstance(pagina, dict) else None
+    if not isinstance(itens, list):
+        raise RuntimeError(f"AniList: resposta de {contexto!r} com formato inesperado")
+
+    return [
+        AnimeEmAlta(
+            titulo_romaji=(item.get("title") or {}).get("romaji") or "",
+            titulo_ingles=(item.get("title") or {}).get("english"),
+            capa_url=(item.get("coverImage") or {}).get("extraLarge"),
+            banner_url=item.get("bannerImage"),
+            anilist_id=item.get("id"),
+            ano_estreia=_extrair_ano(item),
+            generos=tuple(
+                g for g in (item.get("genres") or []) if isinstance(g, str) and g.strip()
+            ),
+            lancamento=_extrair_lancamento(item),
+        )
+        for item in itens
+        if isinstance(item, dict) and item.get("id") is not None
+    ]
 
 
 def _extrair_lancamento(media: dict) -> LancamentoDeAnime | None:
@@ -205,6 +255,19 @@ def _extrair_lancamento(media: dict) -> LancamentoDeAnime | None:
         proximo_ep_numero=proximo_ep_numero,
         proximo_ep_em=proximo_ep_em,
     )
+
+
+def _extrair_ano(media: dict) -> int | None:
+    """Ano de estreia: `seasonYear` quando o AniList o expõe, senão
+    `startDate.year`. Mesmo estilo defensivo (`isinstance(..., int)`) de
+    `_extrair_lancamento` — `startDate` pode vir ausente ou `None`."""
+    ano = media.get("seasonYear")
+    if isinstance(ano, int):
+        return ano
+    inicio = media.get("startDate")
+    if isinstance(inicio, dict) and isinstance(inicio.get("year"), int):
+        return inicio["year"]
+    return None
 
 
 def _texto_ou_none(texto: str | None) -> str | None:

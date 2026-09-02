@@ -80,32 +80,55 @@ class KitsuProvider(ProvedorDeMetadados):
         # itens) — 20 é o teto real de `/trending/anime` no Kitsu (ao
         # contrário de `/anime`, que aceita páginas maiores); pedir mais que
         # isso não traz mais itens.
-        resposta = requests.get(
-            f"{_BASE_URL}/trending/anime", params={"page[limit]": 20}, timeout=_TIMEOUT_S
+        itens = self._buscar_lista("trending/anime", {"page[limit]": 20}, "em alta")
+        return _itens_para_animes_em_alta(itens)
+
+    def listar_proxima_temporada(self) -> list[AnimeEmAlta]:
+        # Fallback degradado: o Kitsu não tem enum de "próxima temporada". Em vez
+        # de recalcular estação/ano (o cálculo mora em `anilist._proxima_temporada`),
+        # aproxima com `filter[status]=upcoming` ordenado por popularidade —
+        # itens ainda não lançados, o suficiente para o feed quando a AniList cai.
+        itens = self._buscar_lista(
+            "anime",
+            {"filter[status]": "upcoming", "sort": "-userCount", "page[limit]": 20},
+            "próxima temporada",
         )
+        return _itens_para_animes_em_alta(itens)
+
+    def _buscar_lista(self, caminho: str, params: dict, contexto: str) -> list:
+        resposta = requests.get(f"{_BASE_URL}/{caminho}", params=params, timeout=_TIMEOUT_S)
         resposta.raise_for_status()
 
         itens = resposta.json().get("data")
         if not isinstance(itens, list):
-            raise RuntimeError("Kitsu: resposta de 'em alta' com formato inesperado")
+            raise RuntimeError(f"Kitsu: resposta de {contexto!r} com formato inesperado")
+        return itens
 
-        resultado = []
-        for item in itens:
-            atributos = item.get("attributes") or {}
-            titulos = atributos.get("titles") or {}
-            resultado.append(
-                AnimeEmAlta(
-                    # `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em
-                    # kanji (mesmo cuidado de `buscar_titulos`, acima).
-                    titulo_romaji=titulos.get("en_jp") or atributos.get("canonicalTitle") or "",
-                    titulo_ingles=titulos.get("en"),
-                    capa_url=_maior_imagem(atributos.get("posterImage")),
-                    banner_url=_maior_imagem(atributos.get("coverImage")),
-                    anilist_id=None,
-                    lancamento=_extrair_lancamento(atributos),
-                )
+
+def _itens_para_animes_em_alta(itens: list) -> list[AnimeEmAlta]:
+    """Parser único de `data` reusado por `listar_em_alta` e
+    `listar_proxima_temporada` — nenhum dos dois endpoints (`/trending/anime`,
+    `/anime`) expõe gêneros nem ano de estreia, que ficam nos defaults do
+    dataclass (caminho degradado)."""
+    resultado = []
+    for item in itens:
+        atributos = item.get("attributes") or {}
+        titulos = atributos.get("titles") or {}
+        resultado.append(
+            AnimeEmAlta(
+                # `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em kanji
+                # (mesmo cuidado de `buscar_titulos`).
+                titulo_romaji=titulos.get("en_jp") or atributos.get("canonicalTitle") or "",
+                titulo_ingles=titulos.get("en"),
+                capa_url=_maior_imagem(atributos.get("posterImage")),
+                banner_url=_maior_imagem(atributos.get("coverImage")),
+                anilist_id=None,
+                ano_estreia=None,
+                generos=(),
+                lancamento=_extrair_lancamento(atributos),
             )
-        return resultado
+        )
+    return resultado
 
 
 def _extrair_lancamento(atributos: dict) -> LancamentoDeAnime | None:

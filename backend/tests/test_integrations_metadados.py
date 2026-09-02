@@ -17,7 +17,7 @@ import requests
 from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
 from integrations import servico
-from integrations.anilist import AniListProvider
+from integrations.anilist import AniListProvider, _proxima_temporada
 from integrations.base import (
     AnimeEmAlta,
     LancamentoDeAnime,
@@ -99,6 +99,9 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
                         "title": {"romaji": "Tensei", "english": "Reincarnated"},
                         "coverImage": {"extraLarge": "https://img/1.jpg"},
                         "bannerImage": "https://img/1-banner.jpg",
+                        "genres": ["Action", "Fantasy"],
+                        "seasonYear": 2021,
+                        "startDate": {"year": 2021},
                     }
                 ]
             }
@@ -117,8 +120,146 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
             capa_url="https://img/1.jpg",
             banner_url="https://img/1-banner.jpg",
             anilist_id=1,
+            ano_estreia=2021,
+            generos=("Action", "Fantasy"),
         )
     ]
+
+
+def test_anilist_listar_em_alta_ano_cai_para_start_date(monkeypatch: pytest.MonkeyPatch):
+    """`seasonYear` nulo → usa `startDate.year`; `genres` nulo → `generos` vazio."""
+    corpo = {
+        "data": {
+            "Page": {
+                "media": [
+                    {
+                        "id": 1,
+                        "title": {"romaji": "Tensei", "english": None},
+                        "coverImage": {"extraLarge": None},
+                        "bannerImage": None,
+                        "genres": None,
+                        "seasonYear": None,
+                        "startDate": {"year": 2024},
+                    }
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    (item,) = AniListProvider().listar_em_alta()
+
+    assert item.ano_estreia == 2024
+    assert item.generos == ()
+
+
+def test_anilist_listar_em_alta_sem_ano_nem_generos(monkeypatch: pytest.MonkeyPatch):
+    """`seasonYear` e `startDate` ausentes (`startDate` pode vir `None` inteiro,
+    não só `.year` nulo) → `ano_estreia` None; sem `genres` → `generos` vazio."""
+    corpo = {
+        "data": {
+            "Page": {
+                "media": [
+                    {
+                        "id": 1,
+                        "title": {"romaji": "Tensei", "english": None},
+                        "coverImage": {"extraLarge": None},
+                        "bannerImage": None,
+                        "startDate": None,
+                    }
+                ]
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    (item,) = AniListProvider().listar_em_alta()
+
+    assert item.ano_estreia is None
+    assert item.generos == ()
+
+
+@pytest.mark.parametrize(
+    ("agora", "esperado"),
+    [
+        (datetime(2026, 2, 15, tzinfo=UTC), ("SPRING", 2026)),
+        (datetime(2026, 5, 15, tzinfo=UTC), ("SUMMER", 2026)),
+        (datetime(2026, 8, 15, tzinfo=UTC), ("FALL", 2026)),
+        (datetime(2026, 11, 1, tzinfo=UTC), ("WINTER", 2027)),
+        (datetime(2026, 12, 31, tzinfo=UTC), ("WINTER", 2027)),
+    ],
+    ids=["winter->spring", "spring->summer", "summer->fall", "fall->winter", "ano-vira"],
+)
+def test_anilist_proxima_temporada_estacao_e_ano(agora: datetime, esperado: tuple[str, int]):
+    assert _proxima_temporada(agora) == esperado
+
+
+def test_anilist_listar_proxima_temporada(monkeypatch: pytest.MonkeyPatch):
+    """Parsing idêntico ao de `listar_em_alta`; as variáveis da query vêm de
+    `_proxima_temporada` (aqui congelada)."""
+    corpo = {
+        "data": {
+            "Page": {
+                "media": [
+                    {
+                        "id": 5,
+                        "title": {"romaji": "Estreia", "english": "Premiere"},
+                        "coverImage": {"extraLarge": "https://img/5.jpg"},
+                        "bannerImage": "https://img/5-banner.jpg",
+                        "genres": ["Drama"],
+                        "seasonYear": 2027,
+                        "startDate": {"year": 2027},
+                        "status": "NOT_YET_RELEASED",
+                        "episodes": None,
+                        "nextAiringEpisode": None,
+                    }
+                ]
+            }
+        }
+    }
+    capturado = {}
+
+    def _post(*a, **k):
+        capturado.update(k["json"])
+        return _RespostaFalsa(corpo=corpo)
+
+    monkeypatch.setattr("integrations.anilist.requests.post", _post)
+    monkeypatch.setattr("integrations.anilist._proxima_temporada", lambda _agora: ("SPRING", 2099))
+
+    resultado = AniListProvider().listar_proxima_temporada()
+
+    assert capturado["variables"] == {"estacao": "SPRING", "ano": 2099}
+    assert resultado == [
+        AnimeEmAlta(
+            titulo_romaji="Estreia",
+            titulo_ingles="Premiere",
+            capa_url="https://img/5.jpg",
+            banner_url="https://img/5-banner.jpg",
+            anilist_id=5,
+            ano_estreia=2027,
+            generos=("Drama",),
+            lancamento=LancamentoDeAnime(
+                status=StatusLancamento.NAO_LANCADO,
+                total_episodios=None,
+                proximo_ep_numero=None,
+                proximo_ep_em=None,
+            ),
+        )
+    ]
+
+
+def test_anilist_listar_proxima_temporada_formato_inesperado(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post",
+        lambda *a, **k: _RespostaFalsa(corpo={"data": {"Page": {}}}),
+    )
+
+    with pytest.raises(RuntimeError):
+        AniListProvider().listar_proxima_temporada()
 
 
 def test_anilist_buscar_titulos(monkeypatch: pytest.MonkeyPatch):
@@ -450,6 +591,58 @@ def test_kitsu_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
             anilist_id=None,
         )
     ]
+    # Kitsu (caminho degradado) não preenche ano/gêneros — ficam nos defaults.
+    assert resultado[0].ano_estreia is None
+    assert resultado[0].generos == ()
+
+
+def test_kitsu_listar_proxima_temporada(monkeypatch: pytest.MonkeyPatch):
+    """Fallback degradado: consulta `/anime?filter[status]=upcoming` (o Kitsu não
+    tem enum de temporada) e devolve o mesmo formato de `listar_em_alta`, sem
+    ano/gêneros."""
+    corpo = {
+        "data": [
+            {
+                "attributes": {
+                    "canonicalTitle": "Estreia",
+                    "titles": {"en_jp": "Estreia JP", "en": "Premiere"},
+                    "status": "upcoming",
+                    "posterImage": {"original": "https://img/p.jpg"},
+                    "coverImage": {"original": "https://img/c.jpg"},
+                }
+            }
+        ]
+    }
+    capturado = {}
+
+    def _get(*a, **k):
+        capturado["url"] = a[0] if a else k.get("url")
+        capturado["params"] = k.get("params")
+        return _RespostaFalsa(corpo=corpo)
+
+    monkeypatch.setattr("integrations.kitsu.requests.get", _get)
+
+    resultado = KitsuProvider().listar_proxima_temporada()
+
+    assert capturado["url"].endswith("/anime")
+    assert capturado["params"]["filter[status]"] == "upcoming"
+    assert resultado == [
+        AnimeEmAlta(
+            titulo_romaji="Estreia JP",
+            titulo_ingles="Premiere",
+            capa_url="https://img/p.jpg",
+            banner_url="https://img/c.jpg",
+            anilist_id=None,
+            lancamento=LancamentoDeAnime(
+                status=StatusLancamento.NAO_LANCADO,
+                total_episodios=None,
+                proximo_ep_numero=None,
+                proximo_ep_em=None,
+            ),
+        )
+    ]
+    assert resultado[0].ano_estreia is None
+    assert resultado[0].generos == ()
 
 
 def test_kitsu_buscar_titulos_usa_en_jp_e_en(monkeypatch: pytest.MonkeyPatch):
@@ -576,12 +769,14 @@ class _ProvedorFake(ProvedorDeMetadados):
         *,
         metadados=None,
         em_alta=None,
+        proxima_temporada=None,
         titulos=None,
         erro: Exception | None = None,
     ):
         self._nome = nome
         self._metadados = metadados
         self._em_alta = em_alta or []
+        self._proxima_temporada = proxima_temporada or []
         self._titulos = titulos
         self._erro = erro
 
@@ -598,6 +793,11 @@ class _ProvedorFake(ProvedorDeMetadados):
         if self._erro is not None:
             raise self._erro
         return self._em_alta
+
+    def listar_proxima_temporada(self):
+        if self._erro is not None:
+            raise self._erro
+        return self._proxima_temporada
 
     def buscar_titulos(self, titulo: str):
         if self._erro is not None:
@@ -625,6 +825,9 @@ class _ProvedorComLancamentoFake(ProvedorDeMetadados, ProvedorComLancamento):
     def listar_em_alta(self):
         return []
 
+    def listar_proxima_temporada(self):
+        return []
+
     def buscar_titulos(self, titulo: str):
         return None
 
@@ -635,10 +838,12 @@ class _ProvedorComLancamentoFake(ProvedorDeMetadados, ProvedorComLancamento):
 
 
 @pytest.fixture(autouse=True)
-def _limpa_cache_em_alta(monkeypatch: pytest.MonkeyPatch):
-    """`integrations.servico._cache_em_alta` é estado de módulo — isola cada
-    teste para não vazar cache de um teste para o outro."""
+def _limpa_caches_de_feed(monkeypatch: pytest.MonkeyPatch):
+    """`integrations.servico._cache_em_alta` e `._cache_proxima_temporada` são
+    estado de módulo — isola cada teste para não vazar cache de um teste para o
+    outro."""
     monkeypatch.setattr(servico, "_cache_em_alta", None)
+    monkeypatch.setattr(servico, "_cache_proxima_temporada", None)
 
 
 @pytest.fixture(autouse=True)
@@ -731,6 +936,9 @@ async def test_servico_timeout_de_provedor_cai_para_o_proximo(monkeypatch: pytes
         def listar_em_alta(self):
             return []
 
+        def listar_proxima_temporada(self):
+            return []
+
         def buscar_titulos(self, titulo: str):
             return None
 
@@ -800,6 +1008,9 @@ async def test_servico_em_alta_concorrencia_compartilha_uma_unica_busca(
             time.sleep(0.05)
             return [item]
 
+        def listar_proxima_temporada(self):
+            return []
+
         def buscar_titulos(self, titulo: str):
             return None
 
@@ -809,6 +1020,76 @@ async def test_servico_em_alta_concorrencia_compartilha_uma_unica_busca(
 
     assert len(chamadas) == 1
     assert primeira == segunda == [item]
+
+
+# --- servico.listar_proxima_temporada (espelha listar_em_alta) ---
+
+
+def _item_prox(anilist_id: int = 1) -> AnimeEmAlta:
+    return AnimeEmAlta(
+        titulo_romaji="Prox",
+        titulo_ingles=None,
+        capa_url=None,
+        banner_url=None,
+        anilist_id=anilist_id,
+    )
+
+
+async def test_servico_proxima_temporada_cai_para_kitsu_quando_anilist_falha(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    esperado = [_item_prox(7)]
+    anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
+    kitsu = _ProvedorFake("kitsu", proxima_temporada=esperado)
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    resultado = await servico.listar_proxima_temporada()
+
+    assert resultado == esperado
+
+
+async def test_servico_proxima_temporada_propaga_falha_de_metadados_se_todos_falham(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
+    kitsu = _ProvedorFake("kitsu", erro=requests.ConnectionError("falhou"))
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.listar_proxima_temporada()
+
+
+async def test_servico_proxima_temporada_usa_cache_dentro_do_ttl(monkeypatch: pytest.MonkeyPatch):
+    chamadas = []
+    item = _item_prox()
+
+    def _listar():
+        chamadas.append(1)
+        return [item]
+
+    anilist = _ProvedorFake("anilist")
+    anilist.listar_proxima_temporada = _listar
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
+
+    primeira = await servico.listar_proxima_temporada()
+    segunda = await servico.listar_proxima_temporada()
+
+    assert len(chamadas) == 1
+    assert primeira == segunda == [item]
+
+
+async def test_servico_proxima_temporada_cache_independente_do_em_alta(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Os dois feeds têm cache/lock próprios — um cache-hit de "em alta" não
+    serve o de "próxima temporada" nem vice-versa."""
+    em_alta = [_item_prox(10)]
+    prox = [_item_prox(20)]
+    provedor = _ProvedorFake("anilist", em_alta=em_alta, proxima_temporada=prox)
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    assert await servico.listar_em_alta() == em_alta
+    assert await servico.listar_proxima_temporada() == prox
 
 
 # --- servico.buscar_lancamento_por_anilist_id (F2 detector de eps novos) ---

@@ -11,6 +11,10 @@ export function listarAnimesEmAlta() {
   return requisitar('/api/animes/em-alta');
 }
 
+export function listarProximaTemporada() {
+  return requisitar('/api/animes/proxima-temporada');
+}
+
 export function obterAnime(animeId) {
   return requisitar(`/api/animes/${animeId}`);
 }

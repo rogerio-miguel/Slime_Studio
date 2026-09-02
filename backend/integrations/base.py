@@ -66,11 +66,17 @@ class TitulosDeAnime:
 
 @dataclass(frozen=True, slots=True)
 class AnimeEmAlta:
-    """Item do feed "lançamentos em alta" (`status: RELEASING, sort:
-    TRENDING_DESC` no AniList — decisão de produto, não "temporada estrita").
+    """Item de um feed de descoberta de metadados — "lançamentos em alta"
+    (`status: RELEASING, sort: TRENDING_DESC` no AniList) e "próxima temporada"
+    (`season`/`seasonYear` da estação seguinte) compartilham este formato.
 
     `anilist_id` é opcional: o provedor de fallback (Kitsu) não tem
     conhecimento do id AniList do item, só o seu próprio.
+
+    `ano_estreia`/`generos` só o AniList preenche; no caminho degradado (Kitsu)
+    ficam nos defaults — `None` para o ano (não há inteiro que signifique
+    "desconhecido"), tupla vazia para os gêneros ("sem gêneros" e "lista vazia"
+    são a mesma coisa para quem renderiza).
     """
 
     titulo_romaji: str
@@ -78,6 +84,8 @@ class AnimeEmAlta:
     capa_url: str | None
     banner_url: str | None
     anilist_id: int | None
+    ano_estreia: int | None = None
+    generos: tuple[str, ...] = ()
     lancamento: LancamentoDeAnime | None = None
 
 
@@ -101,6 +109,11 @@ class ProvedorDeMetadados(ABC):
     @abstractmethod
     def listar_em_alta(self) -> list[AnimeEmAlta]:
         """Lista animes em lançamento (`RELEASING`) ordenados por trending."""
+
+    @abstractmethod
+    def listar_proxima_temporada(self) -> list[AnimeEmAlta]:
+        """Lista animes da próxima estação (a maioria ainda `NOT_YET_RELEASED`),
+        ordenados por popularidade — mesmo formato de `listar_em_alta`."""
 
     @abstractmethod
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:

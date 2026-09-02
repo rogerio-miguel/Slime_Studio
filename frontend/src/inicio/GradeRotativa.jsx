@@ -56,7 +56,7 @@ function useColunasResponsivas() {
 // presa a 1 viewport e cresce com a página normalmente.
 //
 // `ativa` só faz o gate de quando o timer PODE começar (ex.: a fase
-// "revelado" de useScrubDeVideo) — opacidade/visibilidade da seção como um
+// "revelado" de useIntroPorVideo) — opacidade/visibilidade da seção como um
 // todo já vem do fade-in de <main> em paginas/Inicio.jsx, este componente
 // não duplica isso.
 //
@@ -173,7 +173,7 @@ export default function GradeRotativa({
       // grade batia com o fim do campo de busca.
       className="flex flex-col justify-center-safe px-6 pb-2 md:px-10"
     >
-      <h2 id={idTitulo} className="mb-4 mt-10 text-2xl font-semibold text-white">
+      <h2 id={idTitulo} className="mb-4 text-2xl font-semibold text-white">
         {titulo}
       </h2>
 

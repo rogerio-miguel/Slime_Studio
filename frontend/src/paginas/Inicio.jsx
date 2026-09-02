@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   buscarEmFontes,
@@ -6,30 +6,43 @@ import {
   criarAnime,
   listarAnimes,
   listarAnimesEmAlta,
+  listarContinuarAssistindo,
+  listarProximaTemporada,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
+import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
 import CenarioDeEntrada from '../inicio/CenarioDeEntrada.jsx';
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
 // só não é renderizado por enquanto.
+import CarrosselDestaques from '../inicio/CarrosselDestaques.jsx';
+import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
+import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
+import { topDaTemporada } from '../inicio/fileiras.js';
 import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeDeCards.jsx';
-import GradeRotativa from '../inicio/GradeRotativa.jsx';
-import { ALTURA_INTRO_VH, useScrubDeVideo } from '../inicio/useScrubDeVideo.js';
+import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 
-// Rota "/" — hero cinematográfico controlado por scroll: o vídeo
-// (inicio/CenarioDeEntrada.jsx) avança proporcionalmente ao scroll através
-// de um spacer transparente de 300vh; ao final, a interface principal do
-// streaming (navbar + grade "Destaques da temporada") aparece suavemente.
-// Ver inicio/useScrubDeVideo.js para o mecanismo de scrub e as 3 fases
-// (entrada/chegando/revelado).
+// Rota "/" — introdução cinematográfica tocada por vídeo: fundo preto sólido
+// com o vídeo da logo (inicio/CenarioDeEntrada.jsx) tocando uma vez; ao
+// terminar, a interface principal do streaming (navbar + carrossel hero
+// "Destaques da temporada") aparece suavemente (fade de opacidade). O hook
+// inicio/useIntroPorVideo.js só deriva as 2 fases (entrada/revelado).
 //
-// Conteúdo: por padrão só o feed do provedor externo (`GET /api/animes/em-alta`)
-// — "Seu catálogo" como seção fixa foi retirado da Inicio a pedido do
-// usuário; o catálogo local continua acessível por inteiro em
-// `paginas/Galeria.jsx` (rota "/animes", linkada na navbar), inclusive com o
-// botão de remover. `DestaquePrincipal` também não está nesta ordem (pivot
+// Conteúdo (branch `!buscando`): o carrossel hero seguido das fileiras
+// horizontais (inicio/FileiraDeCards.jsx), nesta ordem — "Próximas estreias",
+// "Continuar assistindo", "Top 10 da semana". "Top 10" é recorte puro do feed
+// `GET /api/animes/em-alta` (inicio/fileiras.js); "Próximas estreias" vem do
+// feed próprio `GET /api/animes/proxima-temporada` (próxima temporada da
+// AniList — o feed "em alta" só traz o que já está no ar); "Continuar
+// assistindo" de `GET /api/episodios/continuar-assistindo`. Cada fileira some
+// sozinha quando sua lista está vazia (guard no próprio FileiraDeCards). As
+// fileiras por gênero (`fileirasPorGenero` em fileiras.js) saíram da Home e
+// ainda não têm página nova — a função segue exportada, o render não.
+// "Seu catálogo" segue FORA da Inicio de propósito — o catálogo local (listar,
+// abrir, remover) mora inteiro em `paginas/Galeria.jsx` (rota "/animes",
+// linkada na navbar). `DestaquePrincipal` também não está nesta ordem (pivot
 // de produto anterior) — ver import comentado abaixo.
 //
 // Busca ao vivo (navbar, controlada aqui): digitar substitui inteiramente
@@ -46,43 +59,37 @@ import { ALTURA_INTRO_VH, useScrubDeVideo } from '../inicio/useScrubDeVideo.js';
 export default function Inicio() {
   const navigate = useNavigate();
   const idResultadosFontes = useId();
-  const videoRef = useRef(null);
-  const logoRef = useRef(null);
-  const { fase, movimentoReduzido, pularIntroducao } = useScrubDeVideo(videoRef, logoRef);
+  const { fase, movimentoReduzido, revelar } = useIntroPorVideo();
   const location = useLocation();
-  // Contador (não bool) pra um segundo clique na logo — já revelado, mesmo
-  // `location.state` de antes já foi limpo — ainda disparar o efeito abaixo
-  // (que reage a mudança de valor, não só de truthiness).
-  const [pedidoScrollFinal, setPedidoScrollFinal] = useState(0);
 
   // Clique na logo (BarraDeNavegacao.jsx) navega pra "/" com
-  // `state.revelado` — em vez de reiniciar a animação de entrada do zero,
-  // pula direto pro estado final (mesmo mecanismo do botão "Pular
-  // introdução") e depois desce até o final real da página (efeito abaixo,
-  // que espera "Destaques da temporada" carregar). `replace` limpa o state
-  // depois de consumido, senão um refresh ou "voltar" do navegador
-  // reexecutaria o pulo.
+  // `state.revelado` — em vez de reiniciar a introdução do zero, pula
+  // direto pro estado final (mesmo mecanismo do botão "Pular introdução").
+  // `replace` limpa o state depois de consumido, senão um refresh ou
+  // "voltar" do navegador reexecutaria o pulo.
   useEffect(() => {
     if (location.state?.revelado) {
-      pularIntroducao();
-      setPedidoScrollFinal((n) => n + 1);
+      revelar();
       navigate('.', { replace: true, state: null });
     }
-  }, [location.state, pularIntroducao, navigate]);
+  }, [location.state, revelar, navigate]);
 
   const emAlta = useRecurso(listarAnimesEmAlta, []);
   const catalogo = useRecurso(listarAnimes, []);
+  // Prateleira "Continuar assistindo" — independente do feed `em-alta`
+  // (posição em episódio já capturado). Mesma exibição silenciosa da
+  // Galeria: em carregando/erro/vazio a fileira simplesmente não aparece.
+  const continuando = useRecurso(listarContinuarAssistindo, []);
+  // "Próximas estreias" — feed próprio da próxima temporada da AniList (não
+  // sai do feed `em-alta`, que só lista o que já está no ar). Mesma exibição
+  // silenciosa: em carregando/erro/vazio a fileira não aparece.
+  const proximaTemporada = useRecurso(listarProximaTemporada, []);
 
-  // Completa o pulo pedido acima: desce até o final real do documento, não
-  // só o início do conteúdo revelado (onde `pularIntroducao` para). Depende
-  // de `emAlta.carregando` porque é a grade "Destaques da temporada" que
-  // define a altura final da página — um clique que chega antes do fetch
-  // terminar rolaria pra uma altura ainda provisória; ao terminar de
-  // carregar, este efeito roda de novo e corrige pro final de verdade.
-  useEffect(() => {
-    if (pedidoScrollFinal === 0) return;
-    window.scrollTo(0, document.documentElement.scrollHeight);
-  }, [pedidoScrollFinal, emAlta.carregando]);
+  // "Top 10" — recorte puro do feed `em-alta` (inicio/fileiras.js). `?? []`
+  // porque `emAlta.dados` é `null` até a primeira resposta. (As fileiras por
+  // gênero — `fileirasPorGenero`, ainda exportada de fileiras.js — saíram da
+  // Home; vão pra uma página própria.)
+  const top10 = useMemo(() => topDaTemporada(emAlta.dados ?? []), [emAlta.dados]);
 
   const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
   const [erroMaterializacao, setErroMaterializacao] = useState(null);
@@ -223,21 +230,69 @@ export default function Inicio() {
     [materializar]
   );
 
+  // "Próximas estreias": os cards NÃO navegam. O anime da próxima temporada
+  // ainda não existe em nenhuma fonte extratora — abrir `/anime/:id` levaria a
+  // uma página sem episódios e com resolução de fonte fadada a falhar. O botão
+  // "Salvar" materializa no catálogo local (`POST /api/admin/animes`,
+  // get-or-create por slug) como bookmark. `estreiasSalvas` guarda as chaves
+  // salvas nesta sessão pra virar o botão na hora: o feed cru é cacheado no
+  // servidor (TTL 6h), então sem isso o card só refletiria `anime_id` num
+  // reload posterior.
+  const [estreiasSalvas, setEstreiasSalvas] = useState(() => new Set());
+  const [chaveSalvandoEstreia, setChaveSalvandoEstreia] = useState(null);
+
+  const salvarEstreia = useCallback(
+    async (item) => {
+      const chave = item.anilist_id ?? item.titulo_romaji;
+      if (chaveSalvandoEstreia != null) return;
+      setChaveSalvandoEstreia(chave);
+      setErroMaterializacao(null);
+      try {
+        await criarAnime({
+          titulo: item.titulo_romaji,
+          anilistId: item.anilist_id ?? undefined,
+          capaUrl: item.capa_url ?? item.banner_url ?? undefined,
+        });
+        setEstreiasSalvas((atual) => new Set(atual).add(chave));
+      } catch (erroCapturado) {
+        console.error('falha ao salvar estreia no catálogo', erroCapturado);
+        setErroMaterializacao('Não foi possível salvar este anime — tente novamente.');
+      } finally {
+        setChaveSalvandoEstreia(null);
+      }
+    },
+    [chaveSalvandoEstreia]
+  );
+
+  // renderItem/chaveDoItem da fileira "Top 10", alimentada pelo feed `em-alta` —
+  // mesmo contrato que a busca em fontes já usa: card de item ainda não
+  // catalogado que materializa e navega ao ativar; todos ficam desabilitados
+  // enquanto uma materialização está em voo. `sobreposicao` (opcional) vai pro
+  // AnimeCard como irmão do card DENTRO do wrapper, pra crescer junto no hover
+  // — é por onde entra o numeral do Top 10.
+  const chaveDoItemDoFeed = (item) => item.anilist_id ?? item.titulo_romaji;
+  const renderCardDoFeed = (item, sobreposicao) => (
+    <AnimeCard
+      anime={item}
+      aoAtivar={() => materializarEIrPara(item)}
+      desabilitado={chaveEmMaterializacao != null}
+      sobreposicao={sobreposicao}
+    />
+  );
+
   return (
     <>
       {fase !== 'revelado' && (
         <button
           type="button"
-          onClick={pularIntroducao}
+          onClick={revelar}
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-30 focus:rounded-md focus:border focus:border-neon-soft focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-neon focus:outline-none focus-visible:ring-2 focus-visible:ring-neon"
         >
           Pular introdução
         </button>
       )}
 
-      <CenarioDeEntrada videoRef={videoRef} logoRef={logoRef} fase={fase} />
-
-      <div aria-hidden="true" style={{ height: movimentoReduzido ? 0 : `${ALTURA_INTRO_VH}vh` }} />
+      <CenarioDeEntrada fase={fase} movimentoReduzido={movimentoReduzido} aoTerminar={revelar} />
 
       <BarraDeNavegacao
         fase={fase}
@@ -248,30 +303,20 @@ export default function Inicio() {
 
       <main
         inert={fase !== 'revelado'}
-        // `min-h-screen`: sem isto, trocar a grade "Destaques da temporada"
-        // (alta) pela seção de resultados de busca (curta, às vezes só uma
-        // linha de "nenhum anime encontrado") encolhe a altura total do
-        // documento. Se encolher abaixo do limiar de scroll que
-        // useScrubDeVideo.js usa pra decidir a fase ("revelado" a partir de
-        // 300vh, ver ALTURA_INTRO_VH), o navegador força um clamp de
-        // `scrollY` pra caber no novo max — o que dispara um evento de
-        // `scroll` sintético e derruba `fase` de volta pra "chegando", que
-        // esconde <main> e reexibe o hero/logo por trás. Documento curto
-        // demais também torna esse estado irrecuperável por scroll manual
-        // (não dá pra rolar além do que existe), daí só reload resolvia.
-        // `min-h-screen` garante que a altura de <main> nunca cai abaixo de
-        // 1 viewport, então o limiar de 300vh continua sempre alcançável.
-        className={`relative z-10 min-h-screen pt-24 transition-opacity duration-700 ease-out ${
+        // `min-h-screen`: evita uma página curta demais (ex. resultado de
+        // busca vazio) quando ainda não há conteúdo suficiente pra preencher
+        // 1 viewport.
+        // `bg-[#17171b]`: cor exata do `body` do Disney+ (medida ao vivo). É
+        // ela que faz a sombra do card do carrossel aparecer — sobre um preto
+        // mais fechado (ex. `bg-surface/70`) a sombra 69% preta some.
+        className={`relative z-10 min-h-screen bg-[#17171b] pt-22 transition-opacity duration-700 ease-out ${
           fase === 'revelado' ? 'opacity-100' : 'opacity-0'
         }`}
       >
         {buscando ? (
           // `pb-20`: só aqui, não em <main> — este bloco rola normalmente e
-          // precisa de respiro no fim. GradeRotativa (branch abaixo) já
-          // calcula a própria altura pra caber exatamente em 1 viewport
-          // (ver GradeRotativa.jsx); um pb-20 em <main> criava scroll
-          // sobrando além do ponto de encaixe e arrastava o título da seção
-          // pra debaixo da navbar fixa quando rolado até o fim da página.
+          // precisa de respiro no fim (o branch de destaques abaixo põe o
+          // próprio respiro na <section> que envolve o carrossel).
           <section aria-label="Resultados da busca" className="px-6 pb-20 md:px-10">
             <h2 className="mb-4 mt-20 text-2xl font-semibold text-white">
               Resultados para “{termoBusca.trim()}”
@@ -438,11 +483,6 @@ export default function Inicio() {
             )}
             {!emAlta.carregando && !emAlta.erro && (
               <>
-                {/* Caber entre a navbar e o fim da viewport, centralizada, sem
-                    estourar por baixo da navbar fixa: responsabilidade da
-                    própria GradeRotativa (prop `encaixarNaTela`) — evita
-                    duplicar o número mágico do `pt-24` de <main> (6rem) em dois
-                    arquivos. */}
                 {erroMaterializacao && (
                   <div role="alert" className="px-4 pb-8 sm:px-6 lg:px-8">
                     <p className="text-sm text-red-400">{erroMaterializacao}</p>
@@ -450,27 +490,83 @@ export default function Inicio() {
                 )}
 
                 {(emAlta.dados ?? []).length > 0 && (
-                  // `ativa` faz o gate de quando o timer de rotação PODE
-                  // começar (ver GradeRotativa.jsx): a fase só vira
-                  // "revelado" quando <main> deixa de estar inert/opacity-0
-                  // — sem esse gate, a grade podia começar a trocar de lote
-                  // enquanto ainda está invisível por trás da introdução.
-                  <GradeRotativa
-                    titulo="Destaques da temporada"
-                    itens={emAlta.dados}
-                    ativa={fase === 'revelado'}
+                  // `pt-4`: só o respiro vertical do topo. Sem `pb-*` aqui —
+                  // o espaçamento até a primeira fileira (e o do fim da
+                  // página) vem do `<div>` que envolve as fileiras abaixo;
+                  // um `pb` aqui somaria respiro duplo. Sem padding
+                  // horizontal nem `max-w` de propósito — o carrossel é
+                  // full-bleed (encosta nas bordas da viewport, como a área
+                  // do carrossel do Disney+); os estados de carregando/erro
+                  // do feed acima seguem na coluna `max-w-6xl`.
+                  <section className="pt-4">
+                    {/* `ativa`: gate do auto-avanço do carrossel (ver
+                        CarrosselDestaques.jsx) — a fase só vira "revelado"
+                        quando <main> deixa de estar inert/opacity-0; sem o
+                        gate o carrossel trocaria de slide enquanto ainda
+                        invisível atrás da introdução. */}
+                    <CarrosselDestaques
+                      itens={emAlta.dados}
+                      ativa={fase === 'revelado'}
+                      aoMaterializar={materializarEIrPara}
+                      materializando={chaveEmMaterializacao != null}
+                    />
+                  </section>
+                )}
+
+                {/* Fileiras horizontais abaixo do hero. `pb-20`: respiro do
+                    fim da página (não vai em <main>). `space-y-10`: separa
+                    as prateleiras entre si. Cada <FileiraDeCards> some
+                    sozinha quando sua lista está vazia — nenhum guard aqui. */}
+                <div className="space-y-10 pb-20">
+                  <FileiraDeCards
+                    titulo="Próximas estreias"
+                    itens={proximaTemporada.dados}
+                    chaveDoItem={chaveDoItemDoFeed}
                     renderItem={(item) => {
-                      const chave = item.anilist_id ?? item.titulo_romaji;
+                      const chave = chaveDoItemDoFeed(item);
                       return (
-                        <AnimeCard
-                          anime={item}
-                          aoAtivar={() => materializarEIrPara(item)}
-                          desabilitado={chaveEmMaterializacao === chave}
+                        <CartaoDeEstreia
+                          item={item}
+                          salvo={item.anime_id != null || estreiasSalvas.has(chave)}
+                          salvando={chaveSalvandoEstreia === chave}
+                          aoSalvar={() => salvarEstreia(item)}
                         />
                       );
                     }}
                   />
-                )}
+
+                  <FileiraDeCards
+                    titulo="Continuar assistindo"
+                    itens={continuando.dados}
+                    tamanho="pequeno"
+                    chaveDoItem={(item) => item.episodio_id}
+                    renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
+                  />
+
+                  <FileiraDeCards
+                    titulo="Top 10 da semana"
+                    itens={top10}
+                    chaveDoItem={chaveDoItemDoFeed}
+                    // Numeral grande estilo Netflix/Disney+ DENTRO do card:
+                    // canto superior esquerdo, sobre a arte (`z-10`), com
+                    // sombra forte pra legibilidade (o topo do pôster não tem
+                    // o degradê que o rodapé tem). `aria-hidden`/
+                    // `pointer-events-none`: decorativo, não rouba o clique.
+                    // Vai como `sobreposicao` do AnimeCard (irmão do card
+                    // dentro do wrapper) pra crescer junto no `scale` do hover.
+                    renderItem={(item, indice) =>
+                      renderCardDoFeed(
+                        item,
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute left-2 top-0 z-10 select-none font-black leading-none text-white text-[3.5rem] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[4.5rem] lg:text-[5.5rem]"
+                        >
+                          {indice + 1}
+                        </span>
+                      )
+                    }
+                  />
+                </div>
               </>
             )}
 

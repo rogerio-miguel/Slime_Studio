@@ -464,9 +464,13 @@ async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(
     assert "episodios_novos" not in resposta.json()
 
 
-async def test_em_alta_nao_ganha_campos_do_detector(
+async def test_em_alta_nao_expoe_o_badge_episodios_novos(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
+    """`episodios_novos` é badge derivado só da galeria (`GET /api/animes`) — o
+    feed "em alta" nunca o expõe. `status_lancamento` (e o resto do trio de
+    lançamento), ao contrário, entrou no feed a partir da B2 para a tagline do
+    carrossel; aqui o item não traz bloco, então sai `null`."""
     item = AnimeEmAlta(
         titulo_romaji="Em Alta",
         titulo_ingles=None,
@@ -485,7 +489,47 @@ async def test_em_alta_nao_ganha_campos_do_detector(
     assert resposta.status_code == 200
     corpo = resposta.json()[0]
     assert "episodios_novos" not in corpo
-    assert "status_lancamento" not in corpo
+    assert corpo["status_lancamento"] is None
+
+
+async def test_proxima_temporada_shape_e_ordem_de_rotas(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """`GET /api/animes/proxima-temporada` resolve para a rota do feed (não é
+    lido como `anime_id="proxima-temporada"` por `/{anime_id}`) e devolve o
+    shape de `AnimeEmAltaSaida`."""
+    item = AnimeEmAlta(
+        titulo_romaji="Próxima Estreia",
+        titulo_ingles="Next Premiere",
+        capa_url="https://img/p.jpg",
+        banner_url=None,
+        anilist_id=1,
+    )
+
+    async def _listar_fake(sessionmaker):
+        return [(item, None)]
+
+    monkeypatch.setattr(
+        "api.servicos.descoberta.listar_proxima_temporada_com_catalogo", _listar_fake
+    )
+
+    resposta = await cliente.get("/api/animes/proxima-temporada")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()[0]
+    assert corpo == {
+        "titulo_romaji": "Próxima Estreia",
+        "titulo_ingles": "Next Premiere",
+        "capa_url": "https://img/p.jpg",
+        "banner_url": None,
+        "anilist_id": 1,
+        "anime_id": None,
+        "ano_estreia": None,
+        "generos": [],
+        "status_lancamento": None,
+        "proximo_ep_numero": None,
+        "proximo_ep_em": None,
+    }
 
 
 # --- F12: GET /api/animes* agenda sondagem fire-and-forget da fonte real ---

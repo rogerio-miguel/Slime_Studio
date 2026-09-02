@@ -17,7 +17,7 @@ import { VIDEOS_LOCAIS } from '../videosLocais.js';
 // nesta página.
 //
 // Navbar renderizada com `fase="revelado"` fixo (mesma prop que
-// `paginas/Inicio.jsx` deriva de `useScrubDeVideo`, aqui não há scrub —
+// `paginas/Inicio.jsx` deriva de `useIntroPorVideo`, aqui não há intro —
 // a navbar já nasce totalmente visível/interativa). Busca é local: mesmo
 // padrão de `termoBusca`/filtro em memória de `paginas/Inicio.jsx`, sem
 // `?q=` na URL nem `aoSubmeterBusca` — esta página não busca em fontes

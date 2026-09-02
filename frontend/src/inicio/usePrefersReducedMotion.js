@@ -4,7 +4,7 @@ const _CONSULTA = '(prefers-reduced-motion: reduce)';
 
 // Detecta `prefers-reduced-motion: reduce` e acompanha mudança em runtime
 // (usuário pode alternar a preferência do SO com a página aberta). Extraído
-// de useScrubDeVideo.js na Fase 4 (pivot da home) pra ser reaproveitado por
+// de useIntroPorVideo.js na Fase 4 (pivot da home) pra ser reaproveitado por
 // GradeRotativa.jsx sem duplicar a mesma lógica de matchMedia duas vezes.
 export function usePrefersReducedMotion() {
   const [reduzido, setReduzido] = useState(() => window.matchMedia(_CONSULTA).matches);
