@@ -1,17 +1,33 @@
-// Card da fileira "Próximas estreias" (paginas/Inicio.jsx). Ao contrário de
-// AnimeCard, NÃO navega: o anime da próxima temporada ainda não existe em
-// nenhuma fonte extratora, então abrir `/anime/:id` levaria a uma página sem
-// episódios e com resolução de fonte fadada a falhar. O card é inerte; a única
-// ação é o botão "Salvar", que materializa o anime no catálogo local
-// (`POST /api/admin/animes`, get-or-create por slug) como bookmark/watchlist —
-// quando o anime estrear de verdade e aparecer num site, a página dele passa a
-// resolver fonte normalmente.
+import BotaoRemoverDoCatalogo from '../components/BotaoRemoverDoCatalogo.jsx';
+
+// Card de anime que ainda NÃO estreou. Dois usos:
+//   1. Fileira "Próximas estreias" da Home (paginas/Inicio.jsx) — item do feed
+//      `GET /api/animes/proxima-temporada`, com `aoSalvar` pra materializar o
+//      anime no catálogo local (`POST /api/admin/animes`, get-or-create por
+//      slug) como bookmark/watchlist.
+//   2. Cards de anime não-estreado no catálogo (paginas/Galeria.jsx) — já
+//      materializado; a Galeria passa `aoRemover` e nunca `aoSalvar`.
+// A Galeria reusa ESTE card em vez de AnimeCard justamente porque o anime ainda
+// não estreou: AnimeCard navega pra `/anime/:id`, que aqui levaria a uma página
+// sem episódios e com resolução de fonte fadada a falhar. Este card é inerte de
+// propósito — sem `<Link>`/`onClick`/`tabIndex`/`role` (card focável sem ação é
+// armadilha de teclado). Quando o anime estrear de verdade e aparecer num site,
+// a página dele passa a resolver fonte normalmente.
+//
+// Área de ação (pill "No catálogo" / botão "Salvar") só renderiza com
+// `aoSalvar`; o botão de remover só com `aoRemover`. A ausência do handler é o
+// sinal — sem prop booleana.
+//
+// Risco conhecido (não corrigir agora): um bookmark recém-salvo pode nascer sem
+// `status_lancamento`/`proximo_ep_em`/`ano` (o enriquecimento é
+// best-effort/assíncrono) e cair no rótulo genérico "Estreia em breve" até o
+// próximo carregamento.
 //
 // Mesma mecânica visual de hover/foco do AnimeCard/CartaoContinuarAssistindo
 // (Disney+): escala no wrapper + borda neon de 4px via overlay, grupo NOMEADO
 // `group/card` (a fileira horizontal tem `group/fileira` próprio pras setas).
-// A borda acende no `focus-within` porque o único foco possível aqui é o do
-// botão "Salvar".
+// A borda acende no `focus-within` — o foco pode cair no botão "Salvar" ou no
+// botão de remover.
 
 // Instâncias únicas de módulo — recriar `Intl.*` por render é caro.
 const fmtDia = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'long' });
@@ -42,19 +58,22 @@ function textoDeEstreia(item) {
     const mesmoAno = data.getFullYear() === new Date().getFullYear();
     return `Novo episódio ${(mesmoAno ? fmtDia : fmtDiaAno).format(data)}`;
   }
-  if (item.ano_estreia) return `Estreia em ${item.ano_estreia}`;
+  const ano = item.ano_estreia ?? item.ano;
+  if (ano) return `Estreia em ${ano}`;
   return 'Estreia em breve';
 }
 
-export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar }) {
-  const titulo = item.titulo_romaji || item.titulo_ingles || 'Sem título';
+export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRemover }) {
+  const titulo =
+    item.titulo || item.titulo_romaji || item.titulo_ingles || 'Sem título';
+  const capa = item.capa_url ?? item.capa_path ?? null;
 
   return (
     <div className="group/card relative transition-transform duration-300 ease-out motion-reduce:transition-none hover:z-10 hover:scale-105 focus-within:z-10 focus-within:scale-105">
       <div className="relative flex aspect-[2/3] w-full flex-col justify-end overflow-hidden rounded-xl bg-surface">
-        {item.capa_url && (
+        {capa && (
           <img
-            src={item.capa_url}
+            src={capa}
             alt=""
             loading="lazy"
             className="absolute inset-0 h-full w-full object-cover"
@@ -68,25 +87,27 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar }) {
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white lg:text-base">
             {titulo}
           </h3>
-          {salvo ? (
-            <span className="inline-flex items-center gap-1 rounded-md border border-neon-soft px-3 py-1.5 text-xs font-semibold text-ink-muted">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3.5 w-3.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
-              </svg>
-              No catálogo
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={aoSalvar}
-              disabled={salvando}
-              aria-label={`Salvar ${titulo} no catálogo`}
-              className="inline-flex items-center gap-1 rounded-md border border-neon-soft bg-black/40 px-3 py-1.5 text-xs font-semibold text-neon outline-none transition-colors hover:border-neon hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {salvando ? 'Salvando…' : '+ Salvar'}
-            </button>
-          )}
+          {aoSalvar &&
+            (salvo ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-neon-soft px-3 py-1.5 text-xs font-semibold text-ink-muted">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-3.5 w-3.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m5 13 4 4L19 7" />
+                </svg>
+                No catálogo
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={aoSalvar}
+                disabled={salvando}
+                aria-label={`Salvar ${titulo} no catálogo`}
+                className="inline-flex items-center gap-1 rounded-md border border-neon-soft bg-black/40 px-3 py-1.5 text-xs font-semibold text-neon outline-none transition-colors hover:border-neon hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {salvando ? 'Salvando…' : '+ Salvar'}
+              </button>
+            ))}
         </div>
+        {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
         {/* Borda neon: overlay por cima da capa/degradê (mesma técnica do
             AnimeCard e do CarrosselDestaques). */}
         <div

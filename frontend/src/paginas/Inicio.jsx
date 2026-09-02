@@ -21,7 +21,8 @@ import CarrosselDestaques from '../inicio/CarrosselDestaques.jsx';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { topDaTemporada } from '../inicio/fileiras.js';
-import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeDeCards.jsx';
+import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
+import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 
 // Rota "/" — introdução cinematográfica tocada por vídeo: fundo preto sólido
@@ -316,107 +317,133 @@ export default function Inicio() {
         {buscando ? (
           // `pb-20`: só aqui, não em <main> — este bloco rola normalmente e
           // precisa de respiro no fim (o branch de destaques abaixo põe o
-          // próprio respiro na <section> que envolve o carrossel).
-          <section aria-label="Resultados da busca" className="px-6 pb-20 md:px-10">
-            <h2 className="mb-4 mt-20 text-2xl font-semibold text-white">
+          // próprio respiro na <section> que envolve o carrossel). Sem `px`
+          // horizontal: as <GradeDeCatalogo> aplicam o gutter de 3.7% medindo
+          // a viewport inteira (igual às fileiras da Home) — um `px` aqui
+          // encolheria esse container e os cards sairiam mais estreitos. Os
+          // títulos e textos de estado recuperam o alinhamento com a borda do
+          // card via `paddingInline: PADDING_TITULO` (gutter 3.7% + 10px do
+          // slot), mesmo tratamento de paginas/Galeria.jsx.
+          <section aria-label="Resultados da busca" className="pb-20">
+            <h2
+              style={{ paddingInline: PADDING_TITULO }}
+              className="mt-20 text-2xl font-semibold text-white"
+            >
               Resultados para “{termoBusca.trim()}”
             </h2>
-            {catalogo.carregando && (
-              <p className="text-sm text-ink-muted">Carregando catálogo…</p>
-            )}
-            {catalogo.erro && (
-              <div
-                role="alert"
-                className="mb-6 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-              >
-                Não foi possível carregar o catálogo.{' '}
-                <button type="button" onClick={catalogo.recarregar} className="underline">
-                  Tentar novamente
-                </button>
-              </div>
-            )}
-            {!catalogo.carregando && !catalogo.erro && animesFiltrados.length === 0 && (
-              <p className="text-sm text-ink-muted">
-                Nenhum anime encontrado para “{termoBusca.trim()}”.
-              </p>
-            )}
-            {!catalogo.carregando && !catalogo.erro && animesFiltrados.length > 0 && (
-              <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
-                {animesFiltrados.map((anime, indice) => (
-                  <SlotDeCard key={anime.id} indice={indice}>
-                    <AnimeCard anime={anime} />
-                  </SlotDeCard>
-                ))}
-              </div>
-            )}
-
-            <section aria-labelledby={idResultadosFontes}>
-              <h2 id={idResultadosFontes} className="mb-4 mt-12 text-2xl font-semibold text-white">
-                Resultados em outras fontes
-              </h2>
-              {erroMaterializacao && (
-                <div role="alert" className="mb-4">
-                  <p className="text-sm text-red-400">{erroMaterializacao}</p>
-                </div>
+            {/* Estados transitórios do catálogo local — condições inalteradas.
+                O wrapper só repõe o `paddingInline` que antes vinha do `px` da
+                <section>; cada mensagem leva o próprio `mt-[22px]` (mesmo
+                respiro título->conteúdo que a grade traz no `pt-[22px]`). */}
+            <div style={{ paddingInline: PADDING_TITULO }}>
+              {catalogo.carregando && (
+                <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
               )}
-              {termoBuscaSubmetido === '' && (
-                <p className="text-sm text-ink-muted">Aperte Enter para buscar em outras fontes.</p>
-              )}
-              {termoBuscaSubmetido !== '' && resultadosDeFonteDesatualizados && (
-                <p className="text-sm text-ink-muted">
-                  Aperte Enter para atualizar os resultados em outras fontes.
-                </p>
-              )}
-              {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.carregando && (
-                <p className="text-sm text-ink-muted">Buscando em outras fontes…</p>
-              )}
-              {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.erro && (
+              {catalogo.erro && (
                 <div
                   role="alert"
-                  className="mb-6 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+                  className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
                 >
-                  Não foi possível buscar em outras fontes.{' '}
-                  <button type="button" onClick={buscaEmFontes.recarregar} className="underline">
+                  Não foi possível carregar o catálogo.{' '}
+                  <button type="button" onClick={catalogo.recarregar} className="underline">
                     Tentar novamente
                   </button>
                 </div>
               )}
-              {termoBuscaSubmetido !== '' &&
-                !resultadosDeFonteDesatualizados &&
-                !buscaEmFontes.carregando &&
-                !buscaEmFontes.erro &&
-                resultadosFontes.length === 0 &&
-                todasFontesIndisponiveis && (
+              {!catalogo.carregando && !catalogo.erro && animesFiltrados.length === 0 && (
+                <p className="mt-[22px] text-sm text-ink-muted">
+                  Nenhum anime encontrado para “{termoBusca.trim()}”.
+                </p>
+              )}
+            </div>
+            {!catalogo.carregando && !catalogo.erro && animesFiltrados.length > 0 && (
+              <GradeDeCatalogo
+                itens={animesFiltrados}
+                tamanho="pequeno"
+                chaveDoItem={(anime) => anime.id}
+                renderItem={(anime) => <AnimeCard anime={anime} />}
+              />
+            )}
+
+            <section aria-labelledby={idResultadosFontes}>
+              <h2
+                id={idResultadosFontes}
+                style={{ paddingInline: PADDING_TITULO }}
+                className="mt-12 text-2xl font-semibold text-white"
+              >
+                Resultados em outras fontes
+              </h2>
+              {/* Textos de estado da busca em fontes — condições inalteradas.
+                  Wrapper só pra repor o `paddingInline`; cada mensagem leva o
+                  próprio `mt-[22px]`. A grade de resultados fica FORA deste
+                  wrapper (o `paddingInline` dobraria o gutter dos cards). */}
+              <div style={{ paddingInline: PADDING_TITULO }}>
+                {erroMaterializacao && (
+                  <div role="alert" className="mt-[22px]">
+                    <p className="text-sm text-red-400">{erroMaterializacao}</p>
+                  </div>
+                )}
+                {termoBuscaSubmetido === '' && (
+                  <p className="mt-[22px] text-sm text-ink-muted">
+                    Aperte Enter para buscar em outras fontes.
+                  </p>
+                )}
+                {termoBuscaSubmetido !== '' && resultadosDeFonteDesatualizados && (
+                  <p className="mt-[22px] text-sm text-ink-muted">
+                    Aperte Enter para atualizar os resultados em outras fontes.
+                  </p>
+                )}
+                {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.carregando && (
+                  <p className="mt-[22px] text-sm text-ink-muted">Buscando em outras fontes…</p>
+                )}
+                {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.erro && (
                   <div
                     role="alert"
-                    className="mb-6 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+                    className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
                   >
-                    <p>
-                      Nenhuma fonte está disponível agora
-                      {fontesIndisponiveis.some((fonte) => fonte.motivo)
-                        ? ': ' +
-                          fontesIndisponiveis
-                            .map((fonte) =>
-                              fonte.motivo ? `${fonte.dominio} (${fonte.motivo})` : fonte.dominio
-                            )
-                            .join('; ')
-                        : '.'}
-                    </p>
+                    Não foi possível buscar em outras fontes.{' '}
                     <button type="button" onClick={buscaEmFontes.recarregar} className="underline">
                       Tentar novamente
                     </button>
                   </div>
                 )}
-              {termoBuscaSubmetido !== '' &&
-                !resultadosDeFonteDesatualizados &&
-                !buscaEmFontes.carregando &&
-                !buscaEmFontes.erro &&
-                resultadosFontes.length === 0 &&
-                !todasFontesIndisponiveis && (
-                  <p className="text-sm text-ink-muted">
-                    Nenhum anime encontrado em outras fontes para “{termoBuscaSubmetido}”.
-                  </p>
-                )}
+                {termoBuscaSubmetido !== '' &&
+                  !resultadosDeFonteDesatualizados &&
+                  !buscaEmFontes.carregando &&
+                  !buscaEmFontes.erro &&
+                  resultadosFontes.length === 0 &&
+                  todasFontesIndisponiveis && (
+                    <div
+                      role="alert"
+                      className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+                    >
+                      <p>
+                        Nenhuma fonte está disponível agora
+                        {fontesIndisponiveis.some((fonte) => fonte.motivo)
+                          ? ': ' +
+                            fontesIndisponiveis
+                              .map((fonte) =>
+                                fonte.motivo ? `${fonte.dominio} (${fonte.motivo})` : fonte.dominio
+                              )
+                              .join('; ')
+                          : '.'}
+                      </p>
+                      <button type="button" onClick={buscaEmFontes.recarregar} className="underline">
+                        Tentar novamente
+                      </button>
+                    </div>
+                  )}
+                {termoBuscaSubmetido !== '' &&
+                  !resultadosDeFonteDesatualizados &&
+                  !buscaEmFontes.carregando &&
+                  !buscaEmFontes.erro &&
+                  resultadosFontes.length === 0 &&
+                  !todasFontesIndisponiveis && (
+                    <p className="mt-[22px] text-sm text-ink-muted">
+                      Nenhum anime encontrado em outras fontes para “{termoBuscaSubmetido}”.
+                    </p>
+                  )}
+              </div>
               {termoBuscaSubmetido !== '' &&
                 !resultadosDeFonteDesatualizados &&
                 !buscaEmFontes.carregando &&
@@ -424,7 +451,10 @@ export default function Inicio() {
                 resultadosFontes.length > 0 && (
                   <>
                     {(termoAlternativo || dominioAlternativo) && (
-                      <p className="mb-4 text-sm text-ink-muted">
+                      <p
+                        style={{ paddingInline: PADDING_TITULO }}
+                        className="mt-[22px] text-sm text-ink-muted"
+                      >
                         {termoAlternativo ? (
                           <>
                             Nenhum resultado para “{termoBuscaSubmetido}”. Mostrando resultados
@@ -436,23 +466,29 @@ export default function Inicio() {
                         )}
                       </p>
                     )}
-                    <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
-                      {resultadosFontes.map((resultado, indice) => {
+                    <GradeDeCatalogo
+                      itens={resultadosFontes}
+                      tamanho="pequeno"
+                      chaveDoItem={(resultado) => `${resultado.dominio}:${resultado.identificador}`}
+                      renderItem={(resultado) => {
                         const chave = `${resultado.dominio}:${resultado.identificador}`;
                         return (
-                          <SlotDeCard key={chave} indice={indice}>
+                          <>
                             <AnimeCard
                               anime={{ titulo: resultado.titulo_exibicao, capa_url: resultado.capa_url }}
                               aoAtivar={() => materializarFonteEIrPara(resultado)}
                               desabilitado={chaveEmMaterializacao === chave}
                             />
                             <p className="mt-1 text-xs text-ink-muted">{resultado.dominio}</p>
-                          </SlotDeCard>
+                          </>
                         );
-                      })}
-                    </div>
+                      }}
+                    />
                     {fontesIndisponiveis.length > 0 && (
-                      <p className="mt-4 text-xs text-ink-muted">
+                      <p
+                        style={{ paddingInline: PADDING_TITULO }}
+                        className="mt-4 text-xs text-ink-muted"
+                      >
                         Não foi possível consultar:{' '}
                         {fontesIndisponiveis.map((fonte) => fonte.dominio).join(', ')}.
                       </p>

@@ -4,20 +4,33 @@ import { Link } from 'react-router-dom';
 // CartaoContinuarAssistindo.jsx pra não reaproveitar AnimeCard.jsx: alvo de
 // navegação é o player direto (`/assistir-local/:slug`, ver
 // paginas/PaginaDoPlayerLocal.jsx), não a página do anime, e não há
-// `anime.id`/capa de provedor aqui — é só `videosLocais.js`. Sem capa: o
-// arquivo local não carrega imagem nenhuma, então cai sempre no layout
-// tipográfico (borda neon, título ancorado embaixo) que AnimeCard.jsx já usa
-// como fallback pra "sem capa" — mesmas classes, sem duplicar a decisão
-// visual.
+// `anime.id`/capa de provedor aqui — é só `videosLocais.js`.
+//
+// Sem capa: o arquivo local não carrega imagem nenhuma, então usa o mesmo
+// layout tipográfico do fallback "sem capa" de AnimeCard.jsx — e a MESMA
+// mecânica de hover/foco (Disney+) dos outros cards do catálogo: escala no
+// wrapper `group/card` (`hover:scale-105` + `focus-within:scale-105`,
+// `hover:z-10` pra crescer por cima dos vizinhos) e borda neon de 4px via
+// overlay `aria-hidden` que acende no hover/foco, em vez de `border` real
+// sempre visível. Classes copiadas de AnimeCard.jsx pra ficar pixel-idêntico.
 export default function CartaoDeVideoLocal({ video }) {
   return (
-    <Link
-      to={`/assistir-local/${video.slug}`}
-      className="relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl border border-neon-soft bg-surface p-4 text-left outline-none transition-all duration-200 hover:-translate-y-1 hover:border-neon hover:bg-surface-hover focus-visible:-translate-y-1 focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
-    >
-      <h2 className="mt-auto line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors hover:text-neon lg:text-base">
-        {video.titulo}
-      </h2>
-    </Link>
+    <div className="group/card relative transition-transform duration-300 ease-out motion-reduce:transition-none hover:z-10 hover:scale-105 focus-within:z-10 focus-within:scale-105">
+      <Link
+        to={`/assistir-local/${video.slug}`}
+        className="relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left outline-none transition-all duration-200 hover:bg-surface-hover"
+      >
+        <h2 className="relative mt-auto line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
+          {video.titulo}
+        </h2>
+        {/* Borda neon: overlay por cima do conteúdo (mesma técnica do
+            AnimeCard e do CarrosselDestaques) — `border` real encolheria o
+            content-box e deixaria uma moldura sempre visível ao redor. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 rounded-xl border-4 border-transparent transition-colors duration-300 ease-out group-hover/card:border-neon group-focus-within/card:border-neon motion-reduce:transition-none"
+        />
+      </Link>
+    </div>
   );
 }
