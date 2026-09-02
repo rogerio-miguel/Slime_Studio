@@ -3,7 +3,7 @@
 Clean Architecture, CLAUDE.md §1).
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
@@ -100,16 +100,17 @@ class AnimeSaida(BaseModel):
     # Detector de episódios novos (badge no catálogo) e rótulo de estreia do card
     # de bookmark no catálogo (rota `/animes` do frontend). Todos com default:
     # animes sem refresh de lançamento têm as colunas NULL e a resposta não pode
-    # quebrar. `status_lancamento` e `proximo_ep_em` saem 1:1 das colunas
-    # homônimas de `Anime` (via `model_validate`); `episodios_novos` e
+    # quebrar. `status_lancamento`, `proximo_ep_em` e `estreia_em` saem 1:1 das
+    # colunas homônimas de `Anime` (via `model_validate`); `episodios_novos` e
     # `tem_episodios` são derivados (não são colunas) e injetados na rota —
     # `episodios_novos` por `api/servicos/lancamentos.py::episodios_novos`,
     # `tem_episodios` por `api/servicos/catalogo.py::ids_com_episodios`.
-    # `proximo_ep_em` alimenta o rótulo de estreia do card de bookmark, não só o
-    # detector de badge.
+    # `proximo_ep_em` e `estreia_em` alimentam o rótulo de estreia do card de
+    # bookmark, não só o detector de badge.
     status_lancamento: StatusLancamento | None = None
     episodios_novos: int = 0
     proximo_ep_em: datetime | None = None
+    estreia_em: date | None = None
     tem_episodios: bool = False
 
 

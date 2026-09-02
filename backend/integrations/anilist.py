@@ -13,7 +13,7 @@ decide o que fazer com isso (cai para o próximo provedor).
 
 import html
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import requests
 
@@ -45,6 +45,8 @@ query ($busca: String) {
     description(asHtml: false)
     status
     episodes
+    seasonYear
+    startDate { year month day }
     nextAiringEpisode { episode airingAt }
   }
 }
@@ -101,6 +103,8 @@ query ($id: Int) {
   Media(id: $id, type: ANIME) {
     status
     episodes
+    seasonYear
+    startDate { year month day }
     nextAiringEpisode { episode airingAt }
   }
 }
@@ -242,11 +246,16 @@ def _extrair_lancamento(media: dict) -> LancamentoDeAnime | None:
         datetime.fromtimestamp(airing_at, tz=UTC) if isinstance(airing_at, int) else None
     )
 
+    ano_estreia = _extrair_ano(media)
+    estreia_em = _extrair_estreia(media)
+
     if (
         status is None
         and total_episodios is None
         and proximo_ep_numero is None
         and proximo_ep_em is None
+        and estreia_em is None
+        and ano_estreia is None
     ):
         return None
     return LancamentoDeAnime(
@@ -254,6 +263,8 @@ def _extrair_lancamento(media: dict) -> LancamentoDeAnime | None:
         total_episodios=total_episodios,
         proximo_ep_numero=proximo_ep_numero,
         proximo_ep_em=proximo_ep_em,
+        estreia_em=estreia_em,
+        ano_estreia=ano_estreia,
     )
 
 
@@ -268,6 +279,23 @@ def _extrair_ano(media: dict) -> int | None:
     if isinstance(inicio, dict) and isinstance(inicio.get("year"), int):
         return inicio["year"]
     return None
+
+
+def _extrair_estreia(media: dict) -> date | None:
+    """Data de estreia COMPLETA de `startDate` — só quando `year`, `month` e
+    `day` vieram os três como int (a AniList devolve `startDate` parcial para
+    títulos ainda sem grade fechada). Mesmo estilo defensivo de `_extrair_ano`;
+    `date(...)` inválida (mês/dia impossível) também vira `None`."""
+    inicio = media.get("startDate")
+    if not isinstance(inicio, dict):
+        return None
+    ano, mes, dia = inicio.get("year"), inicio.get("month"), inicio.get("day")
+    if not (isinstance(ano, int) and isinstance(mes, int) and isinstance(dia, int)):
+        return None
+    try:
+        return date(ano, mes, dia)
+    except ValueError:
+        return None
 
 
 def _texto_ou_none(texto: str | None) -> str | None:

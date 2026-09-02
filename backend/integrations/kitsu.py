@@ -5,6 +5,9 @@ Síncrono via `requests`; ver `integrations/anilist.py` para a nota sobre onde
 mora a fronteira de exceção HTTP.
 """
 
+import re
+from datetime import date
+
 import requests
 
 from core.enums import StatusLancamento
@@ -20,6 +23,8 @@ _BASE_URL = "https://kitsu.io/api/edge"
 # Ver `integrations/anilist.py::_TIMEOUT_S` — mesmo raciocínio: estritamente
 # menor que o `wait_for` externo de `integrations/servico.py`.
 _TIMEOUT_S = 6
+
+_REGEX_DATA_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _STATUS_KITSU: dict[str, StatusLancamento] = {
     "current": StatusLancamento.EM_LANCAMENTO,
@@ -132,21 +137,48 @@ def _itens_para_animes_em_alta(itens: list) -> list[AnimeEmAlta]:
 
 
 def _extrair_lancamento(atributos: dict) -> LancamentoDeAnime | None:
-    """Estado de lançamento no Kitsu: só `status` e `episodeCount` são
-    aproveitáveis — a API não expõe next-airing, então `proximo_ep_*` fica
-    sempre `None`. Devolve `None` quando nada é aproveitável, nunca uma
+    """Estado de lançamento no Kitsu: `status`, `episodeCount` e `startDate` são
+    os únicos aproveitáveis — a API não expõe next-airing, então `proximo_ep_*`
+    fica sempre `None`. Devolve `None` quando nada é aproveitável, nunca uma
     dataclass toda-nula."""
     status = _STATUS_KITSU.get(atributos.get("status"))
     contagem = atributos.get("episodeCount")
     total_episodios = contagem if isinstance(contagem, int) else None
-    if status is None and total_episodios is None:
+    estreia_em, ano_estreia = _extrair_estreia(atributos.get("startDate"))
+    if (
+        status is None
+        and total_episodios is None
+        and estreia_em is None
+        and ano_estreia is None
+    ):
         return None
     return LancamentoDeAnime(
         status=status,
         total_episodios=total_episodios,
         proximo_ep_numero=None,
         proximo_ep_em=None,
+        estreia_em=estreia_em,
+        ano_estreia=ano_estreia,
     )
+
+
+def _extrair_estreia(inicio: object) -> tuple[date | None, int | None]:
+    """`(estreia_em, ano_estreia)` a partir de `attributes.startDate` do Kitsu.
+    Defensivo: só uma string ISO `YYYY-MM-DD` válida rende a data completa;
+    formato parcial (`YYYY` ou `YYYY-MM`) ou data impossível rende só o ano;
+    qualquer outra coisa, `(None, None)`."""
+    if not isinstance(inicio, str):
+        return None, None
+    texto = inicio.strip()
+    if _REGEX_DATA_ISO.match(texto):
+        try:
+            completa = date.fromisoformat(texto)
+        except ValueError:
+            pass
+        else:
+            return completa, completa.year
+    prefixo = texto[:4]
+    return (None, int(prefixo)) if prefixo.isdigit() else (None, None)
 
 
 def _extrair_titulos(atributos: dict) -> tuple[str | None, str | None]:

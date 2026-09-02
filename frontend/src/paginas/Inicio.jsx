@@ -501,7 +501,7 @@ export default function Inicio() {
           <>
             {emAlta.carregando && (
               <p className="mx-auto max-w-6xl px-6 pb-16 pt-10 text-sm text-ink-muted">
-                Carregando catálogo…
+                Carregando destaques da temporada…
               </p>
             )}
             {emAlta.erro && (
@@ -510,101 +510,102 @@ export default function Inicio() {
                   role="alert"
                   className="rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
                 >
-                  Não foi possível carregar o catálogo.{' '}
+                  Não foi possível carregar os destaques da temporada.{' '}
                   <button type="button" onClick={emAlta.recarregar} className="underline">
                     Tentar novamente
                   </button>
                 </div>
               </div>
             )}
-            {!emAlta.carregando && !emAlta.erro && (
-              <>
-                {erroMaterializacao && (
-                  <div role="alert" className="px-4 pb-8 sm:px-6 lg:px-8">
-                    <p className="text-sm text-red-400">{erroMaterializacao}</p>
-                  </div>
-                )}
-
-                {(emAlta.dados ?? []).length > 0 && (
-                  // `pt-4`: só o respiro vertical do topo. Sem `pb-*` aqui —
-                  // o espaçamento até a primeira fileira (e o do fim da
-                  // página) vem do `<div>` que envolve as fileiras abaixo;
-                  // um `pb` aqui somaria respiro duplo. Sem padding
-                  // horizontal nem `max-w` de propósito — o carrossel é
-                  // full-bleed (encosta nas bordas da viewport, como a área
-                  // do carrossel do Disney+); os estados de carregando/erro
-                  // do feed acima seguem na coluna `max-w-6xl`.
-                  <section className="pt-4">
-                    {/* `ativa`: gate do auto-avanço do carrossel (ver
-                        CarrosselDestaques.jsx) — a fase só vira "revelado"
-                        quando <main> deixa de estar inert/opacity-0; sem o
-                        gate o carrossel trocaria de slide enquanto ainda
-                        invisível atrás da introdução. */}
-                    <CarrosselDestaques
-                      itens={emAlta.dados}
-                      ativa={fase === 'revelado'}
-                      aoMaterializar={materializarEIrPara}
-                      materializando={chaveEmMaterializacao != null}
-                    />
-                  </section>
-                )}
-
-                {/* Fileiras horizontais abaixo do hero. `pb-20`: respiro do
-                    fim da página (não vai em <main>). `space-y-10`: separa
-                    as prateleiras entre si. Cada <FileiraDeCards> some
-                    sozinha quando sua lista está vazia — nenhum guard aqui. */}
-                <div className="space-y-10 pb-20">
-                  <FileiraDeCards
-                    titulo="Próximas estreias"
-                    itens={proximaTemporada.dados}
-                    chaveDoItem={chaveDoItemDoFeed}
-                    renderItem={(item) => {
-                      const chave = chaveDoItemDoFeed(item);
-                      return (
-                        <CartaoDeEstreia
-                          item={item}
-                          salvo={item.anime_id != null || estreiasSalvas.has(chave)}
-                          salvando={chaveSalvandoEstreia === chave}
-                          aoSalvar={() => salvarEstreia(item)}
-                        />
-                      );
-                    }}
-                  />
-
-                  <FileiraDeCards
-                    titulo="Continuar assistindo"
-                    itens={continuando.dados}
-                    tamanho="pequeno"
-                    chaveDoItem={(item) => item.episodio_id}
-                    renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
-                  />
-
-                  <FileiraDeCards
-                    titulo="Top 10 da semana"
-                    itens={top10}
-                    chaveDoItem={chaveDoItemDoFeed}
-                    // Numeral grande estilo Netflix/Disney+ DENTRO do card:
-                    // canto superior esquerdo, sobre a arte (`z-10`), com
-                    // sombra forte pra legibilidade (o topo do pôster não tem
-                    // o degradê que o rodapé tem). `aria-hidden`/
-                    // `pointer-events-none`: decorativo, não rouba o clique.
-                    // Vai como `sobreposicao` do AnimeCard (irmão do card
-                    // dentro do wrapper) pra crescer junto no `scale` do hover.
-                    renderItem={(item, indice) =>
-                      renderCardDoFeed(
-                        item,
-                        <span
-                          aria-hidden="true"
-                          className="pointer-events-none absolute left-2 top-0 z-10 select-none font-black leading-none text-white text-[3.5rem] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[4.5rem] lg:text-[5.5rem]"
-                        >
-                          {indice + 1}
-                        </span>
-                      )
-                    }
-                  />
-                </div>
-              </>
+            {erroMaterializacao && (
+              <div role="alert" className="px-4 pb-8 sm:px-6 lg:px-8">
+                <p className="text-sm text-red-400">{erroMaterializacao}</p>
+              </div>
             )}
+
+            {!emAlta.carregando && !emAlta.erro && (emAlta.dados ?? []).length > 0 && (
+              // `pt-4`: só o respiro vertical do topo. Sem `pb-*` aqui — o
+              // espaçamento até a primeira fileira (e o do fim da página) vem
+              // do `<div>` que envolve as fileiras abaixo. Sem padding
+              // horizontal nem `max-w` de propósito — o carrossel é full-bleed
+              // (encosta nas bordas da viewport, como a área do carrossel do
+              // Disney+); os estados de carregando/erro do feed seguem na
+              // coluna `max-w-6xl`.
+              <section className="pt-4">
+                {/* `ativa`: gate do auto-avanço do carrossel (ver
+                    CarrosselDestaques.jsx) — a fase só vira "revelado"
+                    quando <main> deixa de estar inert/opacity-0; sem o
+                    gate o carrossel trocaria de slide enquanto ainda
+                    invisível atrás da introdução. */}
+                <CarrosselDestaques
+                  itens={emAlta.dados}
+                  ativa={fase === 'revelado'}
+                  aoMaterializar={materializarEIrPara}
+                  materializando={chaveEmMaterializacao != null}
+                />
+              </section>
+            )}
+
+            {/* Fileiras horizontais abaixo do hero — FORA do guard de `emAlta`.
+                "Continuar assistindo" vem de dados locais
+                (`GET /api/episodios/continuar-assistindo`) e não pode sumir
+                quando a AniList cai. "Próximas estreias" (feed próprio) e
+                "Top 10" (recorte de `em-alta`) se auto-escondem quando suas
+                listas chegam vazias — feed indisponível vira fileira ausente,
+                não erro. `pb-20`: respiro do fim da página. `space-y-10`:
+                separa as prateleiras. `pt-4`: respiro do topo quando o
+                carrossel não está presente (com carrossel, soma ao `pt-4`
+                dele — gap aceitável). */}
+            <div className="space-y-10 pb-20 pt-4">
+              <FileiraDeCards
+                titulo="Próximas estreias"
+                itens={proximaTemporada.dados}
+                chaveDoItem={chaveDoItemDoFeed}
+                renderItem={(item) => {
+                  const chave = chaveDoItemDoFeed(item);
+                  return (
+                    <CartaoDeEstreia
+                      item={item}
+                      salvo={item.anime_id != null || estreiasSalvas.has(chave)}
+                      salvando={chaveSalvandoEstreia === chave}
+                      aoSalvar={() => salvarEstreia(item)}
+                    />
+                  );
+                }}
+              />
+
+              <FileiraDeCards
+                titulo="Continuar assistindo"
+                itens={continuando.dados}
+                tamanho="pequeno"
+                chaveDoItem={(item) => item.episodio_id}
+                renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
+              />
+
+              <FileiraDeCards
+                titulo="Top 10 da semana"
+                itens={top10}
+                chaveDoItem={chaveDoItemDoFeed}
+                // Numeral grande estilo Netflix/Disney+ DENTRO do card:
+                // canto superior esquerdo, sobre a arte (`z-10`), com
+                // sombra forte pra legibilidade (o topo do pôster não tem
+                // o degradê que o rodapé tem). `aria-hidden`/
+                // `pointer-events-none`: decorativo, não rouba o clique.
+                // Vai como `sobreposicao` do AnimeCard (irmão do card
+                // dentro do wrapper) pra crescer junto no `scale` do hover.
+                renderItem={(item, indice) =>
+                  renderCardDoFeed(
+                    item,
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute left-2 top-0 z-10 select-none font-black leading-none text-white text-[3.5rem] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[4.5rem] lg:text-[5.5rem]"
+                    >
+                      {indice + 1}
+                    </span>
+                  )
+                }
+              />
+            </div>
 
           </>
         )}

@@ -9,7 +9,7 @@ precisar simular HTTP.
 
 import asyncio
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 import requests
@@ -122,6 +122,15 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
             anilist_id=1,
             ano_estreia=2021,
             generos=("Action", "Fantasy"),
+            # `seasonYear` presente sem status/next-airing: `_extrair_lancamento`
+            # ainda devolve bloco com só o `ano_estreia` preenchido.
+            lancamento=LancamentoDeAnime(
+                status=None,
+                total_episodios=None,
+                proximo_ep_numero=None,
+                proximo_ep_em=None,
+                ano_estreia=2021,
+            ),
         )
     ]
 
@@ -247,6 +256,9 @@ def test_anilist_listar_proxima_temporada(monkeypatch: pytest.MonkeyPatch):
                 total_episodios=None,
                 proximo_ep_numero=None,
                 proximo_ep_em=None,
+                # `startDate` só com `year` -> `estreia_em` None; `ano_estreia`
+                # cai no `seasonYear`.
+                ano_estreia=2027,
             ),
         )
     ]
@@ -423,6 +435,123 @@ def test_anilist_sem_dados_de_lancamento_deixa_campo_none(monkeypatch: pytest.Mo
     )
 
     assert AniListProvider().buscar_por_titulo("Slime").lancamento is None
+
+
+def test_anilist_lancamento_estreia_completa(monkeypatch: pytest.MonkeyPatch):
+    """`startDate` com os três componentes -> `estreia_em` data completa e
+    `ano_estreia` do `seasonYear`."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "description": "x",
+                "status": "NOT_YET_RELEASED",
+                "seasonYear": 2027,
+                "startDate": {"year": 2027, "month": 4, "day": 9},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento == LancamentoDeAnime(
+        status=StatusLancamento.NAO_LANCADO,
+        total_episodios=None,
+        proximo_ep_numero=None,
+        proximo_ep_em=None,
+        estreia_em=date(2027, 4, 9),
+        ano_estreia=2027,
+    )
+
+
+def test_anilist_lancamento_estreia_parcial_so_ano(monkeypatch: pytest.MonkeyPatch):
+    """`startDate` só com `year` (sem `month`/`day`) e sem `seasonYear`:
+    `estreia_em` fica None, `ano_estreia` cai no `startDate.year`."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "description": "x",
+                "status": "NOT_YET_RELEASED",
+                "startDate": {"year": 2028, "month": None, "day": None},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento.estreia_em is None
+    assert lancamento.ano_estreia == 2028
+
+
+def test_anilist_lancamento_estreia_ausente(monkeypatch: pytest.MonkeyPatch):
+    """Sem `startDate` nem `seasonYear`, mas com `status`: bloco existe, os dois
+    campos de estreia ficam None."""
+    corpo = {
+        "data": {
+            "Media": {"id": 21, "description": "x", "status": "RELEASING", "startDate": None}
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento.estreia_em is None
+    assert lancamento.ano_estreia is None
+
+
+def test_anilist_lancamento_estreia_data_impossivel_vira_none(monkeypatch: pytest.MonkeyPatch):
+    """`startDate` com mês/dia impossíveis (30 de fevereiro): `date(...)` levanta
+    `ValueError` e `estreia_em` cai para None — `ano_estreia` sobrevive."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "description": "x",
+                "status": "NOT_YET_RELEASED",
+                "startDate": {"year": 2027, "month": 2, "day": 30},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento.estreia_em is None
+    assert lancamento.ano_estreia == 2027
+
+
+def test_anilist_lancamento_so_estreia_ainda_devolve_bloco(monkeypatch: pytest.MonkeyPatch):
+    """Guard: mesmo sem status/episodes/next-airing, um `startDate` completo
+    basta para `_extrair_lancamento` devolver bloco em vez de None."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "description": "x",
+                "startDate": {"year": 2027, "month": 4, "day": 9},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = AniListProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento is not None
+    assert lancamento.status is None
+    assert lancamento.estreia_em == date(2027, 4, 9)
 
 
 def test_anilist_listar_em_alta_preenche_lancamento(monkeypatch: pytest.MonkeyPatch):
@@ -755,6 +884,115 @@ def test_kitsu_sem_dados_de_lancamento_deixa_campo_none(monkeypatch: pytest.Monk
     assert KitsuProvider().buscar_por_titulo("Slime").lancamento is None
 
 
+def test_kitsu_lancamento_start_date_completo(monkeypatch: pytest.MonkeyPatch):
+    """`attributes.startDate` ISO `YYYY-MM-DD` completo -> `estreia_em` data
+    completa e `ano_estreia` do mesmo ano."""
+    corpo = {
+        "data": [
+            {
+                "id": "42",
+                "attributes": {
+                    "synopsis": "sinopse",
+                    "status": "upcoming",
+                    "startDate": "2027-04-15",
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = KitsuProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento == LancamentoDeAnime(
+        status=StatusLancamento.NAO_LANCADO,
+        total_episodios=None,
+        proximo_ep_numero=None,
+        proximo_ep_em=None,
+        estreia_em=date(2027, 4, 15),
+        ano_estreia=2027,
+    )
+
+
+def test_kitsu_lancamento_start_date_parcial_so_ano(monkeypatch: pytest.MonkeyPatch):
+    """`startDate` só com o ano (`"2028"`) -> `estreia_em` None, `ano_estreia`
+    do prefixo."""
+    corpo = {
+        "data": [
+            {
+                "id": "42",
+                "attributes": {"synopsis": "s", "status": "upcoming", "startDate": "2028"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = KitsuProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento.estreia_em is None
+    assert lancamento.ano_estreia == 2028
+
+
+def test_kitsu_lancamento_start_date_impossivel_cai_para_ano(monkeypatch: pytest.MonkeyPatch):
+    """Formato `YYYY-MM-DD` mas data inválida (30 de fevereiro): `estreia_em`
+    None, `ano_estreia` ainda extraído do prefixo."""
+    corpo = {
+        "data": [
+            {
+                "id": "42",
+                "attributes": {
+                    "synopsis": "s",
+                    "status": "upcoming",
+                    "startDate": "2027-02-30",
+                },
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = KitsuProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento.estreia_em is None
+    assert lancamento.ano_estreia == 2027
+
+
+def test_kitsu_lancamento_start_date_ausente_com_status(monkeypatch: pytest.MonkeyPatch):
+    """Sem `startDate`, mas com `status`: bloco existe, campos de estreia None."""
+    corpo = {
+        "data": [{"id": "42", "attributes": {"synopsis": "s", "status": "current"}}]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = KitsuProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento.estreia_em is None
+    assert lancamento.ano_estreia is None
+
+
+def test_kitsu_lancamento_so_start_date_ainda_devolve_bloco(monkeypatch: pytest.MonkeyPatch):
+    """Guard: `startDate` sozinho (sem `status`/`episodeCount`) já basta para
+    `_extrair_lancamento` devolver bloco em vez de None."""
+    corpo = {
+        "data": [{"id": "42", "attributes": {"synopsis": "s", "startDate": "2027-04-15"}}]
+    }
+    monkeypatch.setattr(
+        "integrations.kitsu.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    lancamento = KitsuProvider().buscar_por_titulo("Slime").lancamento
+
+    assert lancamento is not None
+    assert lancamento.status is None
+    assert lancamento.estreia_em == date(2027, 4, 15)
+
+
 def test_kitsu_nao_e_provedor_com_lancamento():
     assert not isinstance(KitsuProvider(), ProvedorComLancamento)
 
@@ -956,7 +1194,31 @@ async def test_servico_em_alta_propaga_falha_de_metadados_se_todos_falham(
     monkeypatch: pytest.MonkeyPatch,
 ):
     anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
-    kitsu = _ProvedorFake("kitsu", erro=requests.ConnectionError("falhou"))
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (anilist,))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.listar_em_alta()
+
+
+async def test_servico_em_alta_nao_cai_para_kitsu_quando_anilist_falha(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Kitsu não entra em `PROVEDORES_DE_FEED` (ver `registro.PROVEDORES_DE_FEED`)
+    — o feed "em alta" propaga o erro em vez de servir o trending all-time."""
+    anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
+    kitsu = _ProvedorFake(
+        "kitsu",
+        em_alta=[
+            AnimeEmAlta(
+                titulo_romaji="One Piece",
+                titulo_ingles=None,
+                capa_url=None,
+                banner_url=None,
+                anilist_id=21,
+            )
+        ],
+    )
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (anilist,))
     monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
 
     with pytest.raises(FalhaDeMetadados):
@@ -975,7 +1237,7 @@ async def test_servico_em_alta_usa_cache_dentro_do_ttl(monkeypatch: pytest.Monke
 
     anilist = _ProvedorFake("anilist")
     anilist.listar_em_alta = _listar
-    monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (anilist,))
 
     primeira = await servico.listar_em_alta()
     segunda = await servico.listar_em_alta()
@@ -1014,7 +1276,7 @@ async def test_servico_em_alta_concorrencia_compartilha_uma_unica_busca(
         def buscar_titulos(self, titulo: str):
             return None
 
-    monkeypatch.setattr(servico, "PROVEDORES", (_ProvedorLento(),))
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (_ProvedorLento(),))
 
     primeira, segunda = await asyncio.gather(servico.listar_em_alta(), servico.listar_em_alta())
 
@@ -1035,25 +1297,26 @@ def _item_prox(anilist_id: int = 1) -> AnimeEmAlta:
     )
 
 
-async def test_servico_proxima_temporada_cai_para_kitsu_quando_anilist_falha(
+async def test_servico_proxima_temporada_nao_cai_para_kitsu_quando_anilist_falha(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    esperado = [_item_prox(7)]
+    """Kitsu não entra em `PROVEDORES_DE_FEED`: seu feed é popularidade de todos
+    os tempos, não a temporada. Com a AniList fora, o feed propaga o erro em vez
+    de servir conteúdo enganoso (ver `registro.PROVEDORES_DE_FEED`)."""
     anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
-    kitsu = _ProvedorFake("kitsu", proxima_temporada=esperado)
+    kitsu = _ProvedorFake("kitsu", proxima_temporada=[_item_prox(7)])
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (anilist,))
     monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
 
-    resultado = await servico.listar_proxima_temporada()
-
-    assert resultado == esperado
+    with pytest.raises(FalhaDeMetadados):
+        await servico.listar_proxima_temporada()
 
 
 async def test_servico_proxima_temporada_propaga_falha_de_metadados_se_todos_falham(
     monkeypatch: pytest.MonkeyPatch,
 ):
     anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
-    kitsu = _ProvedorFake("kitsu", erro=requests.ConnectionError("falhou"))
-    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (anilist,))
 
     with pytest.raises(FalhaDeMetadados):
         await servico.listar_proxima_temporada()
@@ -1069,7 +1332,7 @@ async def test_servico_proxima_temporada_usa_cache_dentro_do_ttl(monkeypatch: py
 
     anilist = _ProvedorFake("anilist")
     anilist.listar_proxima_temporada = _listar
-    monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (anilist,))
 
     primeira = await servico.listar_proxima_temporada()
     segunda = await servico.listar_proxima_temporada()
@@ -1086,7 +1349,7 @@ async def test_servico_proxima_temporada_cache_independente_do_em_alta(
     em_alta = [_item_prox(10)]
     prox = [_item_prox(20)]
     provedor = _ProvedorFake("anilist", em_alta=em_alta, proxima_temporada=prox)
-    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (provedor,))
 
     assert await servico.listar_em_alta() == em_alta
     assert await servico.listar_proxima_temporada() == prox

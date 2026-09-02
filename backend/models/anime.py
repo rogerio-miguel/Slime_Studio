@@ -1,9 +1,9 @@
 """Modelo `Anime` — cada linha é uma temporada (ESPECIFICACAO.md §4/§3F)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
+from sqlalchemy import Date, Integer, String
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.enums import StatusLancamento
@@ -49,6 +49,10 @@ class Anime(Base):
     # exibível ("próximo ep em X dias").
     proximo_ep_numero: Mapped[int | None] = mapped_column(Integer, nullable=True)
     proximo_ep_em: Mapped[datetime | None] = mapped_column(ColunaDataHoraUTC(), nullable=True)
+    # Data de estreia (AniList `startDate`) — só gravada quando ano+mês+dia
+    # vieram completos; alimenta o rótulo do card de bookmark no catálogo
+    # (`CartaoDeEstreia`, rota `/animes` do frontend). Date pura, sem tz.
+    estreia_em: Mapped[date | None] = mapped_column(Date, nullable=True)
     # Carimbo do último refresh de lançamento — decide se o refresh lazy ao
     # abrir a página de um anime `EM_LANCAMENTO` trata o dado como velho.
     lancamento_atualizado_em: Mapped[datetime | None] = mapped_column(

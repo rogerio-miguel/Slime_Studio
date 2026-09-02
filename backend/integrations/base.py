@@ -10,7 +10,7 @@ completo precisa vir de `TypeError` na instanciação.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 from core.enums import StatusLancamento
 
@@ -32,6 +32,10 @@ class LancamentoDeAnime:
     total_episodios: int | None
     proximo_ep_numero: int | None  # número do PRÓXIMO episódio a ir ao ar
     proximo_ep_em: datetime | None  # UTC aware
+    # `startDate` completa da AniList (ano+mês+dia); None quando parcial ou ausente.
+    estreia_em: date | None = None
+    # Ano de estreia (`startDate.year` ou `seasonYear`) — fallback de `estreia_em`.
+    ano_estreia: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

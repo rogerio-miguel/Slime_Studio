@@ -103,20 +103,28 @@ def _aplicar_lancamento_no_anime(
     `aplicar_metadados`, que só preenche nulo); reusado por `atualizar_lancamento`
     e `aplicar_metadados`.
 
-    - `status_lancamento` / `proximo_ep_numero` / `proximo_ep_em`: gravados SEMPRE,
-      inclusive `None`. A transição EM_LANCAMENTO -> FINALIZADO traz
-      `proximo_ep_numero=None` e a coluna precisa zerar, senão o badge de
+    - `status_lancamento` / `proximo_ep_numero` / `proximo_ep_em` / `estreia_em`:
+      gravados SEMPRE, inclusive `None`. A transição EM_LANCAMENTO -> FINALIZADO
+      traz `proximo_ep_numero=None` e a coluna precisa zerar, senão o badge de
       "episódios novos" fica preso no último valor.
     - `total_episodios_anilist`: só grava se o provedor informou (não apagar um
       total já conhecido por causa de um refresh que veio sem o campo).
+    - `ano`: EXCEÇÃO à semântica de sobrescrita desta função — preenchimento
+      só-quando-nulo, igual a `aplicar_metadados`. `ano` é metadado de catálogo,
+      não estado de lançamento; um bookmark de "Próximas estreias" nasce sem ele
+      e sem esta linha o card de bookmark cai no rótulo genérico "Estreia em
+      breve".
     - `lancamento_atualizado_em`: carimbo de "sincronizei agora", não de "algo
       mudou" — atualizado em toda chamada.
     """
     anime.status_lancamento = lancamento.status
     anime.proximo_ep_numero = lancamento.proximo_ep_numero
     anime.proximo_ep_em = lancamento.proximo_ep_em
+    anime.estreia_em = lancamento.estreia_em
     if lancamento.total_episodios is not None:
         anime.total_episodios_anilist = lancamento.total_episodios
+    if anime.ano is None and lancamento.ano_estreia is not None:
+        anime.ano = lancamento.ano_estreia
     anime.lancamento_atualizado_em = agora
 
 

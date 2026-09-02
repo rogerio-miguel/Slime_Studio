@@ -7,7 +7,7 @@ Cobre também o detector de episódios novos (`api/servicos/lancamentos.py` +
 `GET /api/animes` / `GET /api/animes/{id}`)."""
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -263,6 +263,7 @@ async def _criar_anime_catalogado(
     episodios_na_fonte: int | None = None,
     fonte_verificada_em: datetime | None = None,
     proximo_ep_em: datetime | None = None,
+    estreia_em: date | None = None,
     total_episodios_anilist: int | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
@@ -273,6 +274,7 @@ async def _criar_anime_catalogado(
             episodios_na_fonte=episodios_na_fonte,
             fonte_verificada_em=fonte_verificada_em,
             proximo_ep_em=proximo_ep_em,
+            estreia_em=estreia_em,
             total_episodios_anilist=total_episodios_anilist,
         )
         sessao.add(anime)
@@ -509,6 +511,29 @@ async def test_listar_animes_expoe_tem_episodios_e_proximo_ep_em_numa_resposta(
     assert por_id[sem_episodio]["proximo_ep_em"] is None
 
     assert por_id[so_numero_zero]["tem_episodios"] is True
+
+
+async def test_listar_animes_expoe_estreia_em_de_bookmark_nao_lancado(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    """Bookmark de "Próximas estreias" (`NAO_LANCADO`, sem `proximo_ep_em` ainda)
+    com `estreia_em` no futuro: a coluna sai serializada 1:1 (ISO `YYYY-MM-DD`)
+    em `GET /api/animes` para o card de bookmark montar o rótulo de data exata."""
+    estreia = date(2027, 4, 15)
+    com_estreia = await _criar_anime_catalogado(
+        sessionmaker_api,
+        "Anime Com Estreia",
+        status_lancamento=StatusLancamento.NAO_LANCADO,
+        estreia_em=estreia,
+    )
+    sem_estreia = await _criar_anime_catalogado(sessionmaker_api, "Anime Sem Estreia Col")
+
+    resposta = await cliente.get("/api/animes")
+
+    assert resposta.status_code == 200
+    por_id = {item["id"]: item for item in resposta.json()}
+    assert por_id[com_estreia]["estreia_em"] == "2027-04-15"
+    assert por_id[sem_estreia]["estreia_em"] is None
 
 
 async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(
