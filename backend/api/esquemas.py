@@ -97,12 +97,20 @@ class AnimeSaida(BaseModel):
     ano: int | None
     capa_path: str | None
     criado_em: datetime
-    # Detector de episódios novos (badge no catálogo). Ambos com default: animes
-    # sem refresh de lançamento ainda têm as colunas NULL e a resposta não pode
-    # quebrar. `status_lancamento` sai 1:1 da coluna homônima; `episodios_novos`
-    # é derivado (não é coluna) em `api/servicos/lancamentos.py::episodios_novos`.
+    # Detector de episódios novos (badge no catálogo) e rótulo de estreia do card
+    # de bookmark no catálogo (rota `/animes` do frontend). Todos com default:
+    # animes sem refresh de lançamento têm as colunas NULL e a resposta não pode
+    # quebrar. `status_lancamento` e `proximo_ep_em` saem 1:1 das colunas
+    # homônimas de `Anime` (via `model_validate`); `episodios_novos` e
+    # `tem_episodios` são derivados (não são colunas) e injetados na rota —
+    # `episodios_novos` por `api/servicos/lancamentos.py::episodios_novos`,
+    # `tem_episodios` por `api/servicos/catalogo.py::ids_com_episodios`.
+    # `proximo_ep_em` alimenta o rótulo de estreia do card de bookmark, não só o
+    # detector de badge.
     status_lancamento: StatusLancamento | None = None
     episodios_novos: int = 0
+    proximo_ep_em: datetime | None = None
+    tem_episodios: bool = False
 
 
 class AnimeEmAltaSaida(BaseModel):

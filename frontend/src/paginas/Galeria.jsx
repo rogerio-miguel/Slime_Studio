@@ -1,14 +1,15 @@
 import { useCallback, useId, useMemo, useState } from 'react';
 import { ErroDeApi } from '../api/cliente.js';
-import { listarAnimes, listarContinuarAssistindo, removerAnime } from '../api/recursos.js';
+import { listarAnimes, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
-import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
 import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
-import { COLUNAS_GRID, estiloLarguraMaxCard, SlotDeCard } from '../inicio/GradeDeCards.jsx';
+import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
+import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
+import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
 
 // Rota "/animes" — catálogo completo. Sem cadastro manual aqui: o catálogo
@@ -25,23 +26,23 @@ import { VIDEOS_LOCAIS } from '../videosLocais.js';
 // aceita query param de busca e a lista é pequena o bastante, uso pessoal,
 // pra não justificar um endpoint novo).
 //
-// `<main>` sem `max-w`: `COLUNAS_GRID` (`inicio/GradeDeCards.jsx`) fixa a
-// contagem de colunas por breakpoint de VIEWPORT, não de container — um
-// `max-w-5xl` aqui encolheria as tracks abaixo de `--largura-max-card` nos
-// breakpoints maiores, e os cards sairiam menores que os de "Destaques da
-// temporada" no mesmo viewport. Mesmo `px-6 md:px-10` de
-// `paginas/Inicio.jsx`, sem teto de largura, pra ficar pixel-idêntico.
+// `<main>` sem padding horizontal e sem `max-w`: as duas grades
+// (`inicio/GradeDeCatalogo.jsx`) já aplicam o gutter de 3.7% de cada lado
+// (via `CLASSE_GUTTER`) medindo a viewport inteira, exatamente como as
+// fileiras da Home (`inicio/FileiraDeCards.jsx`). Um `px` no `<main>`
+// encolheria o container que o gutter mede e os cards sairiam mais
+// estreitos que os da fileira "pequeno" da Home no mesmo viewport — o
+// alinhamento título/card e o tamanho de card dependem de os dois medirem
+// o mesmo container. Os títulos e os estados transitórios recuperam o
+// alinhamento via `paddingInline: PADDING_TITULO` (gutter 3.7% + 10px do
+// slot), não via `px` no `<main>`.
 export default function Galeria() {
-  const idContinuarAssistindo = useId();
+  const idMeuCatalogo = useId();
   const idVideosLocais = useId();
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
   const { dados: animes, carregando, erro, recarregar } = useRecurso(listarAnimes, []);
-  // Seção "Continuar assistindo" — movida da Home (paginas/Inicio.jsx) pra
-  // cá: mesma condição silenciosa de exibição que já existia lá (some em
-  // loading/erro, some sem progresso salvo), sem UI nova de erro/loading.
-  const continuarAssistindo = useRecurso(listarContinuarAssistindo, []);
   const animesFiltrados = useMemo(
     () =>
       termoBuscaNormalizado
@@ -85,77 +86,101 @@ export default function Galeria() {
   return (
     <>
       <BarraDeNavegacao fase="revelado" termoBusca={termoBusca} aoMudarBusca={setTermoBusca} />
-      <main className="px-6 pb-10 pt-24 md:px-10">
-
-        {!continuarAssistindo.carregando &&
-          !continuarAssistindo.erro &&
-          (continuarAssistindo.dados ?? []).length > 0 && (
-            <section aria-labelledby={idContinuarAssistindo} className="mb-8">
-              <h2 id={idContinuarAssistindo} className="mb-4 text-2xl font-semibold text-white">
-                Continuar assistindo
-              </h2>
-              <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
-                {continuarAssistindo.dados.map((item, indice) => (
-                  <SlotDeCard key={item.episodio_id} indice={indice}>
-                    <CartaoContinuarAssistindo item={item} />
-                  </SlotDeCard>
-                ))}
-              </div>
-            </section>
-          )}
-
-        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <h1 ref={focoTitulo} tabIndex={-1} className="text-2xl font-semibold text-white outline-none">
+      {/* `bg-[#17171b]` + `min-h-screen`: mesmo par de classes do `<main>` de
+          paginas/Inicio.jsx (fonte da verdade lá — cor exata do `body` do
+          Disney+). É esse fundo que faz a drop shadow dos cards da grade
+          aparecer; sobre um preto mais fechado a sombra 69% preta some.
+          `min-h-screen` evita o fundo não cobrir a viewport quando o catálogo
+          é curto. */}
+      <main className="min-h-screen bg-[#17171b] pb-10 pt-24">
+        <section aria-labelledby={idMeuCatalogo}>
+          {/* Sem `mb`: o respiro até os cards vem do `pt-[22px]` interno de
+              GradeDeCatalogo, igual às fileiras da Home. `paddingInline`
+              (não `px` no <main>) alinha o texto com a borda do CARD —
+              gutter 3.7% + os 10px do slot da grade. */}
+          <h1
+            ref={focoTitulo}
+            tabIndex={-1}
+            id={idMeuCatalogo}
+            style={{ paddingInline: PADDING_TITULO }}
+            className="text-2xl font-semibold text-white outline-none"
+          >
             Meu Catálogo
           </h1>
-        </header>
 
-        {carregando && <p className="text-sm text-ink-muted">Carregando catálogo…</p>}
-        {erro && (
-          <div
-            role="alert"
-            className="mb-6 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-          >
-            Não foi possível carregar o catálogo.{' '}
-            <button type="button" onClick={recarregar} className="underline">
-              Tentar novamente
-            </button>
+          {/* Estados transitórios (carregando / erro / catálogo vazio / busca
+              sem resultado) — condições inalteradas. O wrapper só repõe o
+              `paddingInline` que antes vinha do `px` do <main>; cada mensagem
+              leva o próprio `mt-[22px]` (mesmo respiro título->conteúdo da
+              grade). Altura zero quando nada aparece. */}
+          <div style={{ paddingInline: PADDING_TITULO }}>
+            {carregando && (
+              <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
+            )}
+            {erro && (
+              <div
+                role="alert"
+                className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+              >
+                Não foi possível carregar o catálogo.{' '}
+                <button type="button" onClick={recarregar} className="underline">
+                  Tentar novamente
+                </button>
+              </div>
+            )}
+            {!carregando && !erro && animes?.length === 0 && (
+              <p className="mt-[22px] text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
+            )}
+            {!carregando && !erro && animes?.length > 0 && animesFiltrados.length === 0 && (
+              <p className="mt-[22px] text-sm text-ink-muted">
+                Nenhum anime encontrado para “{termoBusca.trim()}”.
+              </p>
+            )}
           </div>
-        )}
-        {!carregando && !erro && animes?.length === 0 && (
-          <p className="text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
-        )}
-        {!carregando && !erro && animes?.length > 0 && animesFiltrados.length === 0 && (
-          <p className="text-sm text-ink-muted">Nenhum anime encontrado para “{termoBusca.trim()}”.</p>
-        )}
 
-        <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
-          {animesFiltrados?.map((anime, indice) => (
-            <SlotDeCard key={anime.id} indice={indice}>
-              <AnimeCard anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
-            </SlotDeCard>
-          ))}
-        </div>
+          {/* Card inerte de estreia (CartaoDeEstreia) SÓ quando o anime
+              realmente ainda não estreou (`status_lancamento === 'nao_lancado'`)
+              E não tem episódio capturado. Todo o resto — já com episódio, ou
+              já lançado mas sem captura, ou com fonte pendente nas extratoras —
+              usa AnimeCard navegável: um anime já lançado sem captura precisa
+              chegar na PaginaDoAnime pra resolver fonte / enfileirar captura;
+              só o bookmark de "Próximas estreias" é beco sem saída proposital. */}
+          <GradeDeCatalogo
+            itens={animesFiltrados}
+            tamanho="pequeno"
+            chaveDoItem={(anime) => anime.id}
+            renderItem={(anime) =>
+              !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
+                <CartaoDeEstreia item={anime} aoRemover={() => setAnimeParaRemover(anime)} />
+              ) : (
+                <AnimeCard anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
+              )
+            }
+          />
+        </section>
 
         {/* Vídeos locais (videosLocais.js) — arquivos já em disco (public/
             videos-locais/), fora do catálogo/backend por completo: card
             leva direto pro player (`/assistir-local/:slug`), sem passar
             por materialização/captura. Depois da grade principal — não é
-            catálogo de verdade, é um apêndice de arquivos soltos. Some
-            quando a lista está vazia, mesma condição silenciosa de
-            "Continuar assistindo" acima. */}
+            catálogo de verdade, é um apêndice de arquivos soltos. Guard
+            `length > 0` aqui na <section> (não só na grade): sem ele a
+            <section>/<h2> apareceriam com a grade vazia. */}
         {VIDEOS_LOCAIS.length > 0 && (
           <section aria-labelledby={idVideosLocais} className="mt-10">
-            <h2 id={idVideosLocais} className="mb-4 text-2xl font-semibold text-white">
+            <h2
+              id={idVideosLocais}
+              style={{ paddingInline: PADDING_TITULO }}
+              className="text-2xl font-semibold text-white"
+            >
               Vídeos locais
             </h2>
-            <div style={estiloLarguraMaxCard} className={`grid gap-6 ${COLUNAS_GRID}`}>
-              {VIDEOS_LOCAIS.map((video, indice) => (
-                <SlotDeCard key={video.slug} indice={indice}>
-                  <CartaoDeVideoLocal video={video} />
-                </SlotDeCard>
-              ))}
-            </div>
+            <GradeDeCatalogo
+              itens={VIDEOS_LOCAIS}
+              tamanho="pequeno"
+              chaveDoItem={(video) => video.slug}
+              renderItem={(video) => <CartaoDeVideoLocal video={video} />}
+            />
           </section>
         )}
 

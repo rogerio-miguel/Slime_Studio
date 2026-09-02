@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import BadgeDeEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
+import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 
 // Linguagem visual portada de Slime_Shell_Web/AnimeCard.jsx (superfície
 // escura, borda neon, hover translate leve, tag pill, line-clamp-2 no
@@ -34,16 +35,13 @@ import BadgeDeEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 // em `components/BarraDeNavegacao.jsx` pros itens "Em breve".
 //
 // `aoRemover` (opcional, sem argumentos — quem chama já sabe qual anime via
-// closure): quando presente, renderiza um botão de remover como IRMÃO do
-// Link/button (nunca aninhado — button dentro de <a>/<button> é inválido) via
-// wrapper `group relative` — o `group` mora no wrapper, não no `classes` do
-// Link/button, justamente pra cobrir os dois como descendentes (o botão de
-// remover é irmão do Link/button, não filho dele; se `group` ficasse só no
-// `classes`, `group-hover` nunca casaria com o botão) — botão posicionado
-// absoluto sobre a capa. `stopPropagation` evita ativar o Link/button por
-// baixo; opacidade some por padrão e só aparece no hover do card
-// (`group-hover/card`) ou no foco do próprio botão (`focus-visible`) — nunca
-// com `hidden`/DOM removido, senão ficaria inacessível por Tab.
+// closure): quando presente, renderiza `<BotaoRemoverDoCatalogo>` como IRMÃO
+// do Link/button, nunca aninhado (button dentro de <a>/<button> é inválido).
+// Mecânica de opacidade/hover/foco e o SVG do X vivem em
+// `components/BotaoRemoverDoCatalogo.jsx`. O `group/card` mora no WRAPPER, não
+// no `classes` do Link/button: o botão de remover é irmão do Link/button, então
+// se `group/card` ficasse só no `classes` o `group-hover/card:` do botão nunca
+// casaria.
 //
 // Hover/foco (mecânica do Disney+): o card CRESCE em escala no lugar
 // (`scale-105`, `transition-transform duration-300 ease-out`) — os irmãos na
@@ -133,24 +131,7 @@ export default function AnimeCard({
     </>
   );
 
-  const botaoRemover = aoRemover && (
-    <button
-      type="button"
-      onClick={(evento) => {
-        evento.preventDefault();
-        evento.stopPropagation();
-        aoRemover();
-      }}
-      aria-label={`Remover ${titulo} do catálogo`}
-      className="absolute right-2 top-2 z-10 rounded-full bg-black/70 p-1.5 text-white opacity-0 outline-none transition-all duration-200 hover:bg-red-950/80 hover:text-red-400 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-neon group-hover/card:opacity-100"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-      </svg>
-    </button>
-  );
-
-  // Badge não-interativo, sempre visível (ao contrário de `botaoRemover`, que
+  // Badge não-interativo, sempre visível (ao contrário do botão de remover, que
   // só aparece no hover) — irmão do Link/button dentro do `group relative`,
   // nunca aninhado no <a>/<button>. Canto oposto ao de remover. `quantidade`
   // é `undefined` quando o card vem do feed "em alta" — o guard do
@@ -164,7 +145,7 @@ export default function AnimeCard({
           {conteudo}
         </Link>
         {badgeEpisodiosNovos}
-        {botaoRemover}
+        {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
         {sobreposicao}
       </div>
     );
@@ -182,7 +163,7 @@ export default function AnimeCard({
         {conteudo}
       </button>
       {badgeEpisodiosNovos}
-      {botaoRemover}
+      {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
       {sobreposicao}
     </div>
   );
