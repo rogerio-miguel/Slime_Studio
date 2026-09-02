@@ -13,6 +13,11 @@ manual, nunca CI.
 Título de referência do AnimeFire: "One Piece" (`one-piece`) — série longa em
 exibição, baixo risco de sumir do catálogo e virar fixture instável. Mesmo
 título usado como referência do AnimesDrive, pelo mesmo motivo.
+
+Desde a Fatia D do bypass de Cloudflare, `ClienteNavegador()` sobe o Chromium em
+**janela visível** por padrão (só GUI + UA nativo limpa o Turnstile) — rode este
+diagnóstico num ambiente gráfico, ou force `SLIME_NAVEGADOR_HEADLESS=1` (ciente
+de que headless não resolve o desafio).
 """
 
 import pytest

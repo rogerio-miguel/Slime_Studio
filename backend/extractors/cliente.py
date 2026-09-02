@@ -17,6 +17,7 @@ subclasse) — nenhum chamador precisa saber o que é `requests.Timeout`.
 import logging
 import os
 import shutil
+import sys
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -31,9 +32,22 @@ logger = logging.getLogger(__name__)
 
 # Marcadores de desafio Cloudflare ainda em curso (ESPECIFICACAO.md §9, linha do
 # risco "sessão de bypass expirada"): header `cf-mitigated`, `<title>Just a
-# moment` e o parâmetro `cf_chl_opt` do script de verificação.
+# moment`, o parâmetro `cf_chl_opt` do script de verificação e o caminho
+# `/cdn-cgi/challenge-platform/` do loader do desafio. Este último é marcador
+# estrutural, idioma-independente: o título localizado ("Um momento…", observado
+# no AnimesDrive em 2026-09-02) não casa com `"Just a moment"`. Não incluir
+# `"turnstile"` solto — genérico demais, com risco de falso positivo em página
+# legítima que só usa o widget de Turnstile num formulário.
 _MARCADOR_HEADER_CLOUDFLARE = "cf-mitigated"
-_MARCADORES_CORPO_CLOUDFLARE = ("Just a moment", "cf_chl_opt")
+_MARCADORES_CORPO_CLOUDFLARE = (
+    "Just a moment",
+    "cf_chl_opt",
+    "/cdn-cgi/challenge-platform/",
+)
+
+
+def _tem_marcador_de_desafio(html: str) -> bool:
+    return any(marcador in html for marcador in _MARCADORES_CORPO_CLOUDFLARE)
 
 
 class ClienteDeSite(Protocol):
@@ -140,6 +154,10 @@ class ClienteLeve:
 # plumbar Config até aqui só por causa de um caminho de binário acoplaria a
 # camada de extração ao bootstrap da aplicação.
 _VARIAVEL_BINARIO_NAVEGADOR = "SLIME_NAVEGADOR_BIN"
+# Modo de exibição do navegador: `SLIME_NAVEGADOR_HEADLESS` força (ver
+# `_modo_headless`). Mesma razão de não passar por `core/config.py` que o
+# binário acima.
+_VARIAVEL_HEADLESS = "SLIME_NAVEGADOR_HEADLESS"
 _BINARIOS_DE_NAVEGADOR = (
     "google-chrome",
     "google-chrome-stable",
@@ -148,13 +166,60 @@ _BINARIOS_DE_NAVEGADOR = (
     "brave-browser",
     "microsoft-edge",
 )
-# UA de Chrome desktop real. Necessário: com o UA padrão do modo headless
+# UA de Chrome desktop real, aplicado **só no caminho headless**
+# (`_user_agent_override`). Necessário lá: com o UA padrão do headless
 # (`HeadlessChrome/...`) o player de terceiros do AnimesDrive interrompe o fluxo
 # antes de pedir a mídia — confirmado ao vivo em 2026-08-17.
+#
+# Em modo visível esse override fica desligado de propósito: `set_user_agent()`
+# troca só o header `User-Agent` e não alinha os client hints `Sec-CH-UA`, e essa
+# inconsistência é sinal de bot pro Turnstile do Cloudflare. Confirmado ao vivo
+# em 2026-09-02 que só a combinação GUI + UA nativo do binário limpa o desafio.
 _USER_AGENT_NAVEGADOR = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
     " Chrome/150.0.0.0 Safari/537.36"
 )
+
+
+def _modo_headless() -> bool:
+    """Decide se o Chromium sobe headless. Três estados:
+
+    - `SLIME_NAVEGADOR_HEADLESS` setada força o modo: `"0"`/`"false"`/`"nao"`/
+      `"não"` (case-insensitive) = visível; qualquer outro valor não-vazio =
+      headless.
+    - Não setada, em Linux sem `DISPLAY` nem `WAYLAND_DISPLAY`: headless (não há
+      alternativa), com aviso — o auto-solve do desafio Cloudflare não funciona
+      headless e toda operação de navegador vai falhar em site com Turnstile.
+    - Caso contrário (há display, ou não é Linux): visível — é o default, porque
+      só GUI + UA nativo limpa o Turnstile (ver `_USER_AGENT_NAVEGADOR`).
+    """
+    forcado = os.environ.get(_VARIAVEL_HEADLESS, "").strip()
+    if forcado:
+        return forcado.lower() not in ("0", "false", "nao", "não")
+
+    sem_display = (
+        sys.platform == "linux"
+        and not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+    )
+    if sem_display:
+        logger.warning(
+            "sem servidor de display (DISPLAY/WAYLAND_DISPLAY) — o navegador vai"
+            " rodar headless; nesse modo o bypass de desafio Cloudflare não"
+            " funciona e operações de navegador vão falhar em sites com Turnstile."
+            " Rode num ambiente gráfico ou defina %s=1 para silenciar este aviso.",
+            _VARIAVEL_HEADLESS,
+        )
+        return True
+    return False
+
+
+def _user_agent_override(headless: bool) -> str | None:
+    """UA a forçar via `set_user_agent`, ou `None` para deixar o binário usar o
+    dele. Só o caminho headless precisa forçar (ver `_USER_AGENT_NAVEGADOR`)."""
+    return _USER_AGENT_NAVEGADOR if headless else None
+
+
 _ARGUMENTOS_NAVEGADOR = (
     # Sem isso o player só busca a mídia depois de um gesto de usuário aceito
     # pela política de autoplay — com ele, a captura resolve em ~3s em vez de
@@ -187,6 +252,10 @@ _TIMEOUT_CONFERENCIA_S = 10
 # Espera curta pelo botão de troca de servidor/qualidade: pode renderizar um
 # instante depois do load da página.
 _ESPERA_ELEMENTO_S = 5
+# Espera pelo auto-solve de um desafio Cloudflare (Turnstile) em modo visível.
+# Medido em ~2,5s no AnimesDrive em 2026-09-02; o teto é largo pro caso lento.
+_ESPERA_DESAFIO_S = 20
+_INTERVALO_DESAFIO_S = 0.5
 # Localiza o maior elemento de player visível e devolve o centro dele, já
 # rolado para dentro da viewport. Maior área (não o primeiro `<iframe>`) porque
 # páginas de episódio carregam iframes de 1x1 px de rastreamento/anúncio.
@@ -217,11 +286,16 @@ class ClienteNavegador:
     (`extractors/resiliencia.py`), não o contrário.
     """
 
-    def __init__(self, *, headless: bool = True) -> None:
+    def __init__(self, *, headless: bool | None = None) -> None:
         # Nada de subir Chromium no `__init__`: `resiliencia.chamar` constrói o
         # cliente antes de saber se a operação vai mesmo usá-lo, e o processo
         # precisa nascer e morrer na mesma thread do `asyncio.to_thread`.
-        self._headless = headless
+        #
+        # `headless=None` (default) resolve o modo do ambiente em
+        # `_modo_headless()` — `resiliencia.py` instancia sem argumento e não
+        # deve saber se há servidor de display.
+        self._headless = _modo_headless() if headless is None else headless
+        self._user_agent: str | None = None
         self._pagina = None
 
     def obter_html(self, url: str, *, timeout_s: int) -> str:
@@ -231,9 +305,7 @@ class ClienteNavegador:
 
         if status == 404:
             raise FonteNaoEncontrada(f"não encontrado: {url}")
-        if status in (403, 503) or any(
-            marcador in html for marcador in _MARCADORES_CORPO_CLOUDFLARE
-        ):
+        if status in (403, 503) or _tem_marcador_de_desafio(html):
             # Não escala pra navegador (já é o navegador) — `resiliencia.chamar`
             # trata `SessaoRejeitada` vinda daqui como falha final.
             raise SessaoRejeitada(f"sessão rejeitada (desafio Cloudflare) em {url}")
@@ -282,6 +354,17 @@ class ClienteNavegador:
         pagina.listen.start(True)
         try:
             pagina.get(url_pagina, retry=0, timeout=timeout_s)
+            houve_desafio = self._aguardar_desafio_cloudflare(
+                pagina, limite=min(time.monotonic() + _ESPERA_DESAFIO_S, limite)
+            )
+            if houve_desafio and self._ainda_em_desafio(pagina):
+                # Interstitial de desafio que não limpou: sem este corte a captura
+                # gastaria a janela inteira clicando na interstitial e falharia com
+                # "nenhuma URL de mídia utilizável", mensagem enganosa pro que
+                # aconteceu de fato.
+                raise SessaoRejeitada(
+                    f"sessão rejeitada (desafio Cloudflare) em {url_pagina}"
+                )
             if seletor_para_ativar:
                 self._ativar_servidor(pagina, seletor_para_ativar)
                 pagina.listen.stop()
@@ -326,7 +409,28 @@ class ClienteNavegador:
         return self._pagina.cookies().as_dict()
 
     def user_agent(self) -> str:
-        return _USER_AGENT_NAVEGADOR
+        # O UA reportado aqui precisa bater com o `cf_clearance` colhido:
+        # `resiliencia.py` grava este valor no `sessao_cache` e o `ClienteLeve`
+        # seguinte reusa o par cookie+UA — UA divergente invalida o cookie no
+        # Cloudflare. `animesdrive.py`/`animefire.py` também montam o cabeçalho de
+        # `responde()` com ele, contra host que valida hotlink. Em modo visível o
+        # binário usa o UA nativo dele, não a constante — por isso lê do DOM.
+        if self._user_agent is not None:
+            return self._user_agent
+        if self._pagina is None:
+            return _USER_AGENT_NAVEGADOR
+
+        from DrissionPage.errors import BaseError
+
+        try:
+            do_dom = self._pagina.run_js("return navigator.userAgent")
+        except BaseError as excecao:
+            logger.warning(
+                "navegador: falha ao ler o UA real do DOM (%s) — usando o UA padrão", excecao
+            )
+            do_dom = None
+        self._user_agent = do_dom if isinstance(do_dom, str) and do_dom else _USER_AGENT_NAVEGADOR
+        return self._user_agent
 
     def fechar(self) -> None:
         if self._pagina is None:
@@ -353,7 +457,9 @@ class ClienteNavegador:
         opcoes.headless(self._headless)
         opcoes.incognito(True)
         opcoes.mute(True)
-        opcoes.set_user_agent(_USER_AGENT_NAVEGADOR)
+        ua = _user_agent_override(self._headless)
+        if ua is not None:
+            opcoes.set_user_agent(ua)
         for argumento in _ARGUMENTOS_NAVEGADOR:
             opcoes.set_argument(argumento)
 
@@ -384,8 +490,9 @@ class ClienteNavegador:
 
     def _navegar(self, pagina, url: str, *, timeout_s: int) -> int | None:
         """Navega e devolve o status HTTP do documento (`None` se a resposta não
-        foi observada) — é o que dá a `ClienteNavegador` a mesma distinção de
-        404/desafio que `ClienteLeve` faz pelo `status_code`."""
+        foi observada, ou se um desafio Cloudflare foi interceptado) — é o que dá
+        a `ClienteNavegador` a mesma distinção de 404/desafio que `ClienteLeve`
+        faz pelo `status_code`."""
         from DrissionPage.errors import BaseError
 
         pagina.listen.start(url, method="GET")
@@ -397,12 +504,72 @@ class ClienteNavegador:
                 f"falha de navegação em {url}: {excecao}", permite_retentativa=True
             ) from excecao
         finally:
+            # `listen` para aqui: a espera de desafio abaixo lê o DOM, não a rede.
             pagina.listen.stop()
+
+        if self._aguardar_desafio_cloudflare(
+            pagina, limite=time.monotonic() + _ESPERA_DESAFIO_S
+        ):
+            # O pacote observado acima é o 403 da própria interstitial de desafio,
+            # não o 200 da página real que o Cloudflare recarrega após o
+            # auto-solve. Zerar o status ("não observado") joga a decisão 100% pro
+            # corpo em `obter_html`, confiável nos dois desfechos: limpo → sem
+            # marcador → devolve HTML; sujo → marcador → `SessaoRejeitada`.
+            return None
 
         if not pacote or pacote.response is None:
             logger.info("navegador não observou a resposta de %s — seguindo pelo corpo", url)
             return None
         return pacote.response.status
+
+    def _aguardar_desafio_cloudflare(self, pagina, *, limite: float) -> bool:
+        """Se a página carregou numa interstitial de desafio Cloudflare
+        (Turnstile), espera o auto-solve do navegador até `limite` (deadline
+        monotônico absoluto, não duração). Só limpa em modo visível — headless
+        fica em loop infinito no desafio (confirmado ao vivo em 2026-09-02).
+
+        Devolve `True` se HAVIA marcador de desafio na primeira leitura do DOM,
+        tenha limpado ou não dentro do prazo — quem decide o que fazer com uma
+        página ainda suja é o chamador, relendo o corpo. `False` = sem desafio, o
+        caminho normal, que paga só uma leitura de DOM.
+        """
+        from DrissionPage.errors import BaseError
+
+        try:
+            inicio = time.monotonic()
+            if not _tem_marcador_de_desafio(pagina.html):
+                return False
+
+            while time.monotonic() < limite:
+                time.sleep(_INTERVALO_DESAFIO_S)
+                if not _tem_marcador_de_desafio(pagina.html):
+                    logger.info(
+                        "navegador: desafio Cloudflare limpou em %.1fs",
+                        time.monotonic() - inicio,
+                    )
+                    return True
+            logger.warning(
+                "navegador: desafio Cloudflare ainda presente após %.1fs —"
+                " provável bloqueio real (ou navegador headless sem GUI)",
+                time.monotonic() - inicio,
+            )
+            return True
+        except BaseError as excecao:
+            # Leitura de DOM falhou no meio da espera: trata como "houve desafio e
+            # não deu pra confirmar a limpeza" — o chamador relê o corpo e decide.
+            logger.warning("navegador: erro ao observar desafio Cloudflare: %s", excecao)
+            return True
+
+    def _ainda_em_desafio(self, pagina) -> bool:
+        """Relê o DOM e diz se o marcador de desafio segue lá. Erro de leitura
+        conta como "ainda em desafio": página que não dá pra inspecionar é
+        inutilizável do mesmo jeito."""
+        from DrissionPage.errors import BaseError
+
+        try:
+            return _tem_marcador_de_desafio(pagina.html)
+        except BaseError:
+            return True
 
     def _esperar_pacote_de_midia(
         self, pagina, hosts_ignorados: tuple[str, ...], vistas: set[str], *, limite: float
@@ -496,5 +663,4 @@ def _cabecalhos_da_requisicao(pacote, user_agent_padrao: str) -> dict[str, str]:
 def _eh_desafio_cloudflare(resposta: requests.Response) -> bool:
     if _MARCADOR_HEADER_CLOUDFLARE in resposta.headers:
         return True
-    corpo = resposta.text
-    return any(marcador in corpo for marcador in _MARCADORES_CORPO_CLOUDFLARE)
+    return _tem_marcador_de_desafio(resposta.text)

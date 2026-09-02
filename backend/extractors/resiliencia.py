@@ -47,24 +47,31 @@ _TETO_ESPERA_S = 45
 # largo cobre o caso patológico (overlay de anúncio engolindo cliques, ou
 # vários candidatos falhando em sequência), não o caso normal.
 #
-# Conta: ~20s (cold start do Chromium + `obter_html`) + `_ORCAMENTO_CAPTURAS_S`
-# de 120s (teto de relógio de parede pro conjunto de tentativas de servidor) +
-# ~40s de overshoot (cada `capturar_midia` confere o limite no topo do loop e
-# ainda pode gastar uma rodada de 2,5s mais uma conferência HTTP de 10s depois
-# disso, × até 3 tentativas) ≈ 180s, mais margem pra nunca ser o primeiro a
-# estourar em condição normal. O caminho de um candidato só (ou o modo legado,
-# sem seletor de qualidade) continua fechando em ~123s, bem abaixo do teto —
-# sem regressão pro comportamento anterior a este orçamento.
+# Conta: ~20s (cold start do Chromium + `obter_html`) + até 20s de espera pelo
+# auto-solve do Turnstile no `obter_html` (`_ESPERA_DESAFIO_S` de `cliente.py`;
+# ~2,5s no caso bom, medido em 2026-09-02, mas com teto largo pro caso lento) +
+# `_ORCAMENTO_CAPTURAS_S` de 120s (teto de relógio de parede pro conjunto de
+# tentativas de servidor) + ~40s de overshoot (cada `capturar_midia` confere o
+# limite no topo do loop e ainda pode gastar uma rodada de 2,5s mais uma
+# conferência HTTP de 10s depois disso, × até 3 tentativas) ≈ 200s, mais margem
+# pra nunca ser o primeiro a estourar em condição normal. O caminho de um
+# candidato só (ou o modo legado, sem seletor de qualidade) continua fechando em
+# ~143s, bem abaixo do teto — sem regressão pro comportamento anterior a este
+# orçamento.
 #
 # Continua sendo rede de segurança: quem estoura primeiro em condição normal é
 # o timeout interno da captura/orçamento, não este `wait_for`.
-_TETO_ESPERA_NAVEGADOR_S = 195
+_TETO_ESPERA_NAVEGADOR_S = 225
 
-# TTL da sessão cacheada após sucesso via cliente leve. Estimativa conservadora
-# até termos dados reais de expiração do `cf_clearance` (só o cliente de
-# navegador resolve desafio de verdade; a sessão do cliente leve é sessão sem
-# cookie de desafio).
-_TTL_SESSAO_S = 6 * 3600
+# TTL da sessão cacheada após sucesso. Agora que o navegador em modo visível
+# resolve o Turnstile de verdade (fatia A/B de 2026-09-02), o cookie cacheado é
+# um `cf_clearance` real, cujo tempo de vida típico do Cloudflare fica na faixa
+# de ~30min–1h. Arredondado pra baixo por assimetria de custo: TTL curto demais
+# custa no máximo uma escalada extra pro navegador; TTL longo demais manda
+# `cf_clearance` **expirado** pro Cloudflare, pior que não mandar cookie nenhum.
+# Replay do `cf_clearance` num cliente leve (`requests`/`cloudscraper` → HTTP
+# 200) foi observado funcionando em 2026-09-02, ainda não confirmado estável.
+_TTL_SESSAO_S = 30 * 60
 
 
 @dataclass(frozen=True, slots=True)
