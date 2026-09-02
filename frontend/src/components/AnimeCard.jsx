@@ -48,8 +48,8 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // grade não se mexem, ele cresce por cima (`hover:z-10 focus-within:z-10`,
 // senão o card seguinte no DOM cobre a borda direita do card ampliado). Mora
 // no WRAPPER, não no Link/button: título e degradê acompanhariam de qualquer
-// jeito, mas a badge e o botão de remover são irmãos e ficariam parados se o
-// transform estivesse no Link. `focus-within` (não `focus-visible`) porque o
+// jeito, mas o botão de remover é irmão e ficaria parado se o transform
+// estivesse no Link. `focus-within` (não `focus-visible`) porque o
 // foco pode cair no Link OU no botão de remover, e os dois devem ampliar o
 // card inteiro. `motion-reduce:transition-none` corta a animação (o `scale`
 // ainda aplica, só não anima).
@@ -92,9 +92,9 @@ export default function AnimeCard({
   const classes =
     'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left outline-none transition-all duration-200 hover:bg-surface-hover';
 
-  // Escala no wrapper (ver bloco de comentário acima): assim a badge e o botão
-  // de remover, irmãos do Link/button, crescem junto com o card. Card
-  // desabilitado (`<button disabled>`) não escala.
+  // Escala no wrapper (ver bloco de comentário acima): assim o botão de remover,
+  // irmão do Link/button, cresce junto com o card. Card desabilitado
+  // (`<button disabled>`) não escala.
   // `group/card` (grupo NOMEADO, não `group` puro): a fileira horizontal
   // (inicio/FileiraDeCards.jsx) envolve a trilha inteira num `group` próprio
   // pra revelar as setas — com `group` puro aqui, `group-hover:` da borda/
@@ -116,9 +116,17 @@ export default function AnimeCard({
           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
         </>
       )}
-      <h2 className="relative mt-auto line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
-        {titulo}
-      </h2>
+      {/* Bloco de baixo: kicker "episódio novo" (quando houver) logo acima do
+          título, no padrão da linha de estreia de inicio/CartaoDeEstreia.jsx.
+          `mt-auto` migrou do <h2> pra cá pra empurrar o par inteiro pro rodapé
+          do card. `quantidade` é `undefined` no card do feed "em alta" — o
+          guard de BadgeDeEpisodiosNovos devolve `null` nesse caso. */}
+      <div className="relative mt-auto flex flex-col gap-1">
+        <BadgeDeEpisodiosNovos quantidade={anime.episodios_novos} />
+        <h2 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
+          {titulo}
+        </h2>
+      </div>
       {/* Borda neon: overlay por CIMA da capa/degradê (ver bloco de comentário
           no topo). Card desabilitado não recebe o overlay — nem cresce nem
           acende. */}
@@ -131,20 +139,12 @@ export default function AnimeCard({
     </>
   );
 
-  // Badge não-interativo, sempre visível (ao contrário do botão de remover, que
-  // só aparece no hover) — irmão do Link/button dentro do `group relative`,
-  // nunca aninhado no <a>/<button>. Canto oposto ao de remover. `quantidade`
-  // é `undefined` quando o card vem do feed "em alta" — o guard do
-  // componente já devolve `null` nesse caso.
-  const badgeEpisodiosNovos = <BadgeDeEpisodiosNovos quantidade={anime.episodios_novos} />;
-
   if (idCatalogado != null) {
     return (
       <div className={wrapper}>
         <Link to={`/anime/${idCatalogado}`} className={classes}>
           {conteudo}
         </Link>
-        {badgeEpisodiosNovos}
         {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
         {sobreposicao}
       </div>
@@ -162,7 +162,6 @@ export default function AnimeCard({
       >
         {conteudo}
       </button>
-      {badgeEpisodiosNovos}
       {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
       {sobreposicao}
     </div>

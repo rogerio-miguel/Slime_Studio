@@ -5,7 +5,7 @@ real (mesmo padrão de `tests/test_fila.py`) — WAL não funciona em `:memory:`
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -289,6 +289,83 @@ async def test_atualizar_lancamento_nao_apaga_total_episodios_conhecido(
     async with sessionmaker() as sessao:
         anime = await sessao.get(Anime, anime_id)
         assert anime.total_episodios_anilist == 24
+
+
+async def test_atualizar_lancamento_grava_estreia_em_e_preenche_ano_nulo(
+    sessionmaker: _SessionMaker,
+):
+    """Bookmark de "Próximas estreias": nasce sem `ano`. O refresh de lançamento
+    grava `estreia_em` (sobrescrita) e preenche `ano` a partir de `ano_estreia`
+    (exceção só-quando-nulo)."""
+    anime_id = await _criar_anime(sessionmaker, titulo="Estreia", slug="estreia")
+
+    await atualizar_lancamento(
+        sessionmaker,
+        anime_id,
+        LancamentoDeAnime(
+            status=StatusLancamento.NAO_LANCADO,
+            total_episodios=None,
+            proximo_ep_numero=None,
+            proximo_ep_em=None,
+            estreia_em=date(2027, 4, 15),
+            ano_estreia=2027,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.estreia_em == date(2027, 4, 15)
+        assert anime.ano == 2027
+
+
+async def test_atualizar_lancamento_nao_sobrescreve_ano_ja_setado(sessionmaker: _SessionMaker):
+    """`ano` já preenchido (cadastro manual) não é tocado pelo `ano_estreia` do
+    provedor — `estreia_em`, que é estado de lançamento, entra normalmente."""
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime", ano=2018)
+
+    await atualizar_lancamento(
+        sessionmaker,
+        anime_id,
+        LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=12,
+            proximo_ep_numero=3,
+            proximo_ep_em=None,
+            estreia_em=date(2024, 1, 6),
+            ano_estreia=2024,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.ano == 2018  # preservado
+        assert anime.estreia_em == date(2024, 1, 6)
+
+
+async def test_atualizar_lancamento_estreia_em_none_zera_a_coluna(sessionmaker: _SessionMaker):
+    """`estreia_em` segue a semântica de SOBRESCRITA do resto do bloco: um
+    refresh sem data (provedor deixou de expor `startDate` completo) zera a
+    coluna, não a mantém presa no último valor."""
+    anime_id = await _criar_anime(
+        sessionmaker, titulo="Slime", slug="slime", estreia_em=date(2027, 4, 15)
+    )
+
+    await atualizar_lancamento(
+        sessionmaker,
+        anime_id,
+        LancamentoDeAnime(
+            status=StatusLancamento.EM_LANCAMENTO,
+            total_episodios=12,
+            proximo_ep_numero=1,
+            proximo_ep_em=None,
+            estreia_em=None,
+            ano_estreia=None,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.estreia_em is None
 
 
 async def test_atualizar_lancamento_carimba_mesmo_sem_mudanca_de_valor(

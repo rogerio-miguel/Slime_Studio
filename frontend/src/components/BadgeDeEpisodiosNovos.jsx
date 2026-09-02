@@ -1,9 +1,8 @@
-// Aviso "episódio novo na fonte" sobre o card do anime na galeria. Mesmo
-// tratamento visual do título do card (AnimeCard.jsx): texto branco em negrito
-// sobre um degradê preto — só que no TOPO do card (o título é embaixo). Sem
-// pill: o degradê some para transparente, igual ao do título. `pointer-events-
-// none` porque a faixa cobre o terço superior do card e não pode roubar o
-// clique do <Link>/<button> por baixo.
+// Aviso "episódio novo na fonte" logo ACIMA do título do card na galeria —
+// mesmo tratamento visual da linha de estreia de `inicio/CartaoDeEstreia.jsx`
+// (texto curto em caixa alta, neon, kicker sobre o título). Renderizado dentro
+// do fluxo flex do card (não mais como faixa sobreposta no topo), então não
+// precisa de `pointer-events-none` nem de degradê próprio.
 //
 // A origem já foi resolvida no backend (`GET /api/animes` → `episodios_novos`):
 // quantos episódios a FONTE real do anime expõe além da fronteira já capturada,
@@ -20,8 +19,8 @@ export default function BadgeDeEpisodiosNovos({ quantidade }) {
     quantidade > 1 ? 'Novos episódios disponíveis' : 'Novo episódio disponível';
 
   return (
-    <span className="pointer-events-none absolute inset-x-0 top-0 z-10 rounded-t-xl bg-gradient-to-b from-black/90 via-black/50 to-transparent px-4 pb-6 pt-3 text-sm font-semibold leading-snug text-white">
+    <p className="text-xs font-semibold uppercase tracking-wide text-neon">
       {texto}
-    </span>
+    </p>
   );
 }

@@ -19,9 +19,10 @@ import BotaoRemoverDoCatalogo from '../components/BotaoRemoverDoCatalogo.jsx';
 // sinal — sem prop booleana.
 //
 // Risco conhecido (não corrigir agora): um bookmark recém-salvo pode nascer sem
-// `status_lancamento`/`proximo_ep_em`/`ano` (o enriquecimento é
-// best-effort/assíncrono) e cair no rótulo genérico "Estreia em breve" até o
-// próximo carregamento.
+// nenhum sinal de data (`estreia_em`/`proximo_ep_em`/`ano` todos ausentes — o
+// enriquecimento é best-effort/assíncrono) e cair no rótulo genérico "Estreia
+// em breve" até o próximo carregamento. Assim que o warm de lançamento roda,
+// `estreia_em` (data completa da AniList) ou pelo menos `ano` passam a existir.
 //
 // Mesma mecânica visual de hover/foco do AnimeCard/CartaoContinuarAssistindo
 // (Disney+): escala no wrapper + borda neon de 4px via overlay, grupo NOMEADO
@@ -37,14 +38,17 @@ const fmtDiaAno = new Intl.DateTimeFormat('pt-BR', {
   year: 'numeric',
 });
 
-// Linha de estreia derivada do item do feed `GET /api/animes/proxima-temporada`
-// (`AnimeEmAltaSaida`). Ordem importa — para no primeiro match.
+// Linha de estreia derivada do item — feed `GET /api/animes/proxima-temporada`
+// (`AnimeEmAltaSaida`) na Home, ou `GET /api/animes` (`AnimeSaida`) na Galeria.
+// Ordem importa — para no primeiro match.
 //   1. `proximo_ep_em` no futuro: para NOT_YET_RELEASED é o ar do episódio 1 =
 //      data de estreia exata (com ano só quando difere do atual).
 //   2. já em lançamento com próximo ep datado: "Novo episódio ..." (raro nesta
 //      fileira, mas o feed pode trazer título que estreou adiantado).
-//   3. só `ano_estreia` (Kitsu degradado, ou AniList sem grade ainda): o ano.
-//   4. nada aproveitável: rótulo genérico.
+//   3. `estreia_em` no futuro (`AnimeSaida`, catálogo): data completa da AniList
+//      (`startDate`), disponível ~semanas antes de `proximo_ep_em` ser agendado.
+//   4. só `ano_estreia`/`ano` (Kitsu degradado, ou AniList sem grade ainda): o ano.
+//   5. nada aproveitável: rótulo genérico.
 function textoDeEstreia(item) {
   const epEm = item.proximo_ep_em;
   const data = epEm ? new Date(epEm) : null;
@@ -57,6 +61,16 @@ function textoDeEstreia(item) {
   if (futuro) {
     const mesmoAno = data.getFullYear() === new Date().getFullYear();
     return `Novo episódio ${(mesmoAno ? fmtDia : fmtDiaAno).format(data)}`;
+  }
+  // `estreia_em`: string ISO `YYYY-MM-DD` de `GET /api/animes`. Parse com sufixo
+  // `T00:00:00` pra cair na meia-noite LOCAL, não UTC (`new Date('2026-01-15')`
+  // é UTC e em UTC-3 mostraria 14/01).
+  if (item.estreia_em) {
+    const estreia = new Date(`${item.estreia_em}T00:00:00`);
+    if (!Number.isNaN(estreia.getTime()) && estreia > new Date()) {
+      const mesmoAno = estreia.getFullYear() === new Date().getFullYear();
+      return `Estreia ${(mesmoAno ? fmtDia : fmtDiaAno).format(estreia)}`;
+    }
   }
   const ano = item.ano_estreia ?? item.ano;
   if (ano) return `Estreia em ${ano}`;
