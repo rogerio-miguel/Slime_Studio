@@ -95,7 +95,7 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/45 to-transparent" />
         <div className="relative flex flex-col items-start gap-2 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-neon">
+          <p className="text-xs font-semibold uppercase tracking-wide text-white">
             {textoDeEstreia(item)}
           </p>
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white lg:text-base">
