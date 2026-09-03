@@ -1,16 +1,25 @@
 """Registro dos extratores disponíveis (ESPECIFICACAO.md §3A) — ordem da tupla é
 ordem de prioridade de fallback (`extractors/resolucao.py`).
 
-AnimeFire primeiro (padrão), AnimesDrive em seguida — ordem fixada em
-ESPECIFICACAO.md §3A item 2.
+Ordem: AnimeFire (padrão) → MeusAnimes → AnimesDrive. A base histórica é
+ESPECIFICACAO.md §3A item 2 ("AnimeFire primeiro, AnimesDrive em seguida"); o
+MeusAnimes entra no meio porque não tem challenge de Cloudflare (cliente leve
+alcança busca/listagem/mídia, ao contrário do AnimesDrive) e resolve mídia 100%
+por HTTP — mas com teto de 720p, então é fonte intermediária, não substituta do
+AnimeFire.
 """
 
 from core.erros import ErroSlimeStudio
 from extractors.animefire import AnimeFireProvider
 from extractors.animesdrive import AnimesDriveProvider
 from extractors.base import ExtratorDeSite
+from extractors.meusanimes import MeusAnimesProvider
 
-EXTRATORES: tuple[ExtratorDeSite, ...] = (AnimeFireProvider(), AnimesDriveProvider())
+EXTRATORES: tuple[ExtratorDeSite, ...] = (
+    AnimeFireProvider(),
+    MeusAnimesProvider(),
+    AnimesDriveProvider(),
+)
 
 _POR_DOMINIO: dict[str, ExtratorDeSite] = {extrator.dominio: extrator for extrator in EXTRATORES}
 
