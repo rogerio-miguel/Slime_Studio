@@ -473,14 +473,12 @@ export default function Inicio() {
                       renderItem={(resultado) => {
                         const chave = `${resultado.dominio}:${resultado.identificador}`;
                         return (
-                          <>
-                            <AnimeCard
-                              anime={{ titulo: resultado.titulo_exibicao, capa_url: resultado.capa_url }}
-                              aoAtivar={() => materializarFonteEIrPara(resultado)}
-                              desabilitado={chaveEmMaterializacao === chave}
-                            />
-                            <p className="mt-1 text-xs text-ink-muted">{resultado.dominio}</p>
-                          </>
+                          <AnimeCard
+                            anime={{ titulo: resultado.titulo_exibicao, capa_url: resultado.capa_url }}
+                            aoAtivar={() => materializarFonteEIrPara(resultado)}
+                            desabilitado={chaveEmMaterializacao === chave}
+                            fonte={resultado.dominio}
+                          />
                         );
                       }}
                     />

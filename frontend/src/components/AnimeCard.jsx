@@ -73,12 +73,18 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // wrapper externo, que ficaria estático por cima do card). Usado pelo numeral
 // grande da fileira "Top 10" (paginas/Inicio.jsx); posicionamento
 // (`absolute`/`z`) e `aria-hidden` são responsabilidade de quem passa.
+//
+// `fonte` (opcional): kicker curto acima do título, no mesmo bloco de rodapé do
+// badge/título (padrão da linha de estreia de inicio/CartaoDeEstreia.jsx). Usado
+// pelos resultados de "outras fontes" da busca (paginas/Inicio.jsx) pra mostrar
+// o domínio do site de extração dentro do card, sobre o degradê.
 export default function AnimeCard({
   anime,
   aoAtivar,
   aoRemover,
   desabilitado = false,
   sobreposicao,
+  fonte,
 }) {
   const idCatalogado = anime.id ?? anime.anime_id ?? null;
   const capa = anime.capa_path ?? anime.capa_url ?? null;
@@ -122,6 +128,11 @@ export default function AnimeCard({
           do card. `quantidade` é `undefined` no card do feed "em alta" — o
           guard de BadgeDeEpisodiosNovos devolve `null` nesse caso. */}
       <div className="relative mt-auto flex flex-col gap-1">
+        {fonte && (
+          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">
+            {fonte}
+          </p>
+        )}
         <BadgeDeEpisodiosNovos quantidade={anime.episodios_novos} />
         <h2 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
           {titulo}
