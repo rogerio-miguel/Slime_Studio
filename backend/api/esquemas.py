@@ -103,10 +103,11 @@ class AnimeSaida(BaseModel):
     # quebrar. `status_lancamento`, `proximo_ep_em` e `estreia_em` saem 1:1 das
     # colunas homônimas de `Anime` (via `model_validate`); `episodios_novos` e
     # `tem_episodios` são derivados (não são colunas) e injetados na rota —
-    # `episodios_novos` por `api/servicos/lancamentos.py::episodios_novos`,
+    # `episodios_novos` por `api/servicos/lancamentos.py::episodios_novos`
+    # (gate: só `status_lancamento == EM_LANCAMENTO`),
     # `tem_episodios` por `api/servicos/catalogo.py::ids_com_episodios`.
     # `proximo_ep_em` e `estreia_em` alimentam o rótulo de estreia do card de
-    # bookmark, não só o detector de badge.
+    # bookmark (e `proximo_ep_em`, a tagline do carrossel) — não o detector de badge.
     status_lancamento: StatusLancamento | None = None
     episodios_novos: int = 0
     proximo_ep_em: datetime | None = None
