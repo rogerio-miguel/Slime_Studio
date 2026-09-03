@@ -25,6 +25,7 @@ import pytest
 from extractors.animefire import AnimeFireProvider
 from extractors.animesdrive import AnimesDriveProvider
 from extractors.cliente import ClienteLeve, ClienteNavegador
+from extractors.meusanimes import MeusAnimesProvider
 
 pytestmark = pytest.mark.rede
 
@@ -81,6 +82,29 @@ def test_animesdrive_resolve_midia_com_navegador():
         midia = provider.resolver_midia(navegador, _EPISODIO_REFERENCIA_COM_PLAYER)
     finally:
         navegador.fechar()
+
+    assert midia.url.startswith("http")
+    assert midia.cabecalhos["User-Agent"]
+
+
+def test_meusanimes_localiza_link_de_um_episodio_real():
+    """Cadeia inteira por `ClienteLeve` (sem navegador): busca → listagem →
+    `get-video.php` → token do Blogger → `extractors/blogger.py` (POST
+    `batchexecute`) → URL de vídeo do googlevideo. Referência "One Piece"
+    (dublado — entrada de catálogo própria no MeusAnimes), pelo mesmo motivo dos
+    outros smokes: série longa, baixo risco de sumir do catálogo."""
+    provider = MeusAnimesProvider()
+    cliente = ClienteLeve()
+    try:
+        resultados = provider.buscar(cliente, "One Piece")
+        alvo = next(r for r in resultados if r.identificador == "one-piece-dublado")
+
+        episodios = provider.listar_episodios(cliente, alvo.identificador)
+        assert len(episodios) > 100
+
+        midia = provider.resolver_midia(cliente, episodios[0].url)
+    finally:
+        cliente.fechar()
 
     assert midia.url.startswith("http")
     assert midia.cabecalhos["User-Agent"]
