@@ -47,6 +47,10 @@ class EpisodioRemoto:
     # `None` quando o site não diferencia versão ou nenhum marcador foi
     # detectado nesse episódio específico.
     versao: VersaoEpisodio | None = None
+    # URL da thumbnail do episódio na fonte (ou `None` quando o site não expõe
+    # thumb pra esse episódio). String crua — nunca baixada pra disco; a fatia de
+    # API serve via proxy `/api/thumb`.
+    thumb_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

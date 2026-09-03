@@ -140,7 +140,11 @@ async def listar_episodios_remotos_do_anime(
     return EpisodiosRemotosSaida(
         dominio=resultado.dominio,
         episodios=[
-            EpisodioRemotoSaida(rotulo=episodio.rotulo, numero=episodio.numero)
+            EpisodioRemotoSaida(
+                rotulo=episodio.rotulo,
+                numero=episodio.numero,
+                thumb_url=episodio.thumb_url,
+            )
             for episodio in resultado.episodios
         ],
     )

@@ -213,8 +213,19 @@ class AnimesDriveProvider(ExtratorDeSite):
             # `int(numero)`: "7" e "07" não são necessariamente o mesmo episódio,
             # e colapsar os dois por valor inteiro perderia um episódio de
             # verdade (extractors/base.py::EpisodioRemoto).
+            tags_a = soup.select(_SELETOR_LISTA_EPISODIOS)
+            # Cada card do #episodes tem dois <a> com o mesmo href: um envolve a
+            # <img> da thumb, o outro é o texto. Pareia thumb por href pra
+            # reanexar no episódio já deduplicado.
+            thumb_por_href = {
+                tag_a["href"]: urllib.parse.urljoin(self.BASE_URL, tag_img["src"].strip())
+                for tag_a in tags_a
+                if (tag_img := tag_a.find("img", src=True)) is not None
+                and tag_img["src"].strip()
+            }
+
             por_slug: dict[str, dict[str, EpisodioRemoto]] = {}
-            for tag_a in soup.select(_SELETOR_LISTA_EPISODIOS):
+            for tag_a in tags_a:
                 href = tag_a["href"]
                 match = _REGEX_EPISODIO.match(urllib.parse.urlparse(href).path)
                 if match is None:
@@ -240,7 +251,9 @@ class AnimesDriveProvider(ExtratorDeSite):
                             identificador,
                         )
                     continue
-                por_rotulo[rotulo] = EpisodioRemoto(rotulo=rotulo, numero=numero, url=href)
+                por_rotulo[rotulo] = EpisodioRemoto(
+                    rotulo=rotulo, numero=numero, url=href, thumb_url=thumb_por_href.get(href)
+                )
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(
                 f"estrutura da listagem de episódios do AnimesDrive mudou: {excecao}",
@@ -268,6 +281,7 @@ class AnimesDriveProvider(ExtratorDeSite):
                         numero=episodio.numero,
                         url=episodio.url,
                         versao=inferir_versao("", slug) or VersaoEpisodio.LEGENDADO,
+                        thumb_url=episodio.thumb_url,
                     )
                     for slug in (slug_a, slug_b)
                     for episodio in por_slug[slug].values()

@@ -259,12 +259,17 @@ class EpisodioRemotoSaida(BaseModel):
     `url` aqui (uso só server-side); a grade prontos/não capturados do frontend
     cruza `numero` com `EpisodioSaida.numero` de `GET /api/animes/{id}/episodios`.
     `numero` é `None` quando `rotulo` não é puramente numérico (ex. "Especial")
-    — o episódio ainda aparece na listagem, só não é capturável ainda."""
+    — o episódio ainda aparece na listagem, só não é capturável ainda.
+
+    `thumb_url` é a URL crua da thumbnail do episódio na fonte (`None` quando o
+    site não expõe) — nunca baixada aqui; o frontend a serve via o proxy
+    `GET /api/thumb` (`api/rotas/thumb.py`), que embute o `Referer` de hotlink."""
 
     model_config = ConfigDict(from_attributes=True)
 
     rotulo: str
     numero: int | None
+    thumb_url: str | None = None
 
 
 class EpisodiosRemotosSaida(BaseModel):
@@ -297,6 +302,10 @@ class EpisodioSaida(BaseModel):
     versao: VersaoEpisodio
     status: StatusEpisodio
     site_origem: str
+    # URL da thumbnail do episódio na fonte, gravada na captura a partir de
+    # `EpisodioRemoto.thumb_url` (URL string, mesma convenção de `Anime.capa_path`
+    # — nunca caminho em disco). Servida ao navegador via `GET /api/thumb`.
+    capa_path: str | None = None
     hls_path: str | None
     renditions_disponiveis: list[str] | None
     duracao_s: int | None

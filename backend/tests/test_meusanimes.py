@@ -174,6 +174,14 @@ def test_buscar_erro_de_parsing_inesperado_vira_estrutura_do_site_mudou(
 # --- listar_episodios ------------------------------------------------------------
 
 
+def _thumb_fake(href: str) -> str:
+    """Thumb determinística a partir da cauda do href (`...-episodio-2/` → `ep2`)
+    — o markup real do tema põe `<div class="imagen"><img src=...>` dentro de
+    cada `<li>` de episódio."""
+    cauda = href.rstrip("/").rsplit("-", 1)[-1]
+    return f"https://meusanimes.blog/wp-content/uploads/ep{cauda}-300x170.jpg"
+
+
 def _pagina_de_temporadas(*temporadas: list[str]) -> str:
     """Envelopa cada temporada (lista de hrefs de episódio) num `div.se-c`
     dentro de `#seasons` — a estrutura real do tema DooPlay de onde
@@ -181,7 +189,9 @@ def _pagina_de_temporadas(*temporadas: list[str]) -> str:
     blocos = []
     for indice, hrefs in enumerate(temporadas, start=1):
         itens = "".join(
-            f"<li class='mark-1'><div class='numerando'>{indice} - {i}</div>"
+            f"<li class='mark-1'>"
+            f"<div class='imagen'><img src='{_thumb_fake(href)}'></div>"
+            f"<div class='numerando'>{indice} - {i}</div>"
             f"<div class='episodiotitle'><a href='{href}'>Episódio {i}</a>"
             f"<span class='date'>Oct. 02, 2018</span></div></li>"
             for i, href in enumerate(hrefs, start=1)
@@ -215,16 +225,19 @@ def test_listar_episodios_uma_temporada_ordena_e_extrai_numero_do_path(extrator,
             rotulo="1",
             numero=1,
             url=f"https://meusanimes.blog/e/{identificador}-1-episodio-1/",
+            thumb_url="https://meusanimes.blog/wp-content/uploads/ep1-300x170.jpg",
         ),
         EpisodioRemoto(
             rotulo="2",
             numero=2,
             url=f"https://meusanimes.blog/e/{identificador}-1-episodio-2/",
+            thumb_url="https://meusanimes.blog/wp-content/uploads/ep2-300x170.jpg",
         ),
         EpisodioRemoto(
             rotulo="3",
             numero=3,
             url=f"https://meusanimes.blog/e/{identificador}-1-episodio-3/",
+            thumb_url="https://meusanimes.blog/wp-content/uploads/ep3-300x170.jpg",
         ),
     ]
 
@@ -293,6 +306,30 @@ def test_listar_episodios_deduplica_por_url_repetida(extrator, cliente_falso):
         "https://meusanimes.blog/e/bleach-1-episodio-1/",
         "https://meusanimes.blog/e/bleach-1-episodio-2/",
     ]
+
+
+def test_listar_episodios_extrai_thumb_do_li_e_none_quando_ausente(extrator, cliente_falso):
+    """O `<img>` de `.imagen` dentro do `<li>` vira `thumb_url` (src cru, já
+    absoluto no site real); `<li>` sem `.imagen` → `thumb_url=None`."""
+    identificador = "bleach"
+    thumb = "https://meusanimes.blog/wp/x-300x170.jpg"
+    html = (
+        "<div id='seasons'><div class='se-c'><div class='se-a'><ul class='episodios'>"
+        "<li class='mark-1'>"
+        f"<div class='imagen'><img src='{thumb}'></div>"
+        "<div class='episodiotitle'>"
+        "<a href='https://meusanimes.blog/e/bleach-1-episodio-1/'>Episódio 1</a></div></li>"
+        "<li class='mark-1'>"
+        "<div class='episodiotitle'>"
+        "<a href='https://meusanimes.blog/e/bleach-1-episodio-2/'>Episódio 2</a></div></li>"
+        "</ul></div></div></div>"
+    )
+    url_anime = f"{extrator.BASE_URL}/a/{identificador}/"
+    cliente = cliente_falso(html_por_url={url_anime: html})
+
+    episodios = extrator.listar_episodios(cliente, identificador)
+
+    assert [(e.numero, e.thumb_url) for e in episodios] == [(1, thumb), (2, None)]
 
 
 def test_listar_episodios_sem_bloco_seasons_levanta_estrutura_do_site_mudou(

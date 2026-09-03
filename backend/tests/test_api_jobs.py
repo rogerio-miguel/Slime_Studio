@@ -62,6 +62,7 @@ async def _criar_episodio_existente(
     versao: VersaoEpisodio = VersaoEpisodio.DESCONHECIDA,
     site_origem: str = "local",
     hls_path: str | None = None,
+    capa_path: str | None = None,
     assistido_em: datetime | None = None,
     progresso_s: int | None = None,
 ) -> int:
@@ -75,6 +76,7 @@ async def _criar_episodio_existente(
             site_origem=site_origem,
             status=status,
             hls_path=hls_path,
+            capa_path=capa_path,
             tamanho_bytes=123 if hls_path else None,
             assistido_em=assistido_em,
             progresso_s=progresso_s,
@@ -374,6 +376,89 @@ async def test_criar_job_modo_site_reaproveita_episodio_de_fonte_diferente(
             await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
         ).scalars().all()
     assert len(todos) == 1
+
+
+async def test_criar_job_modo_site_persiste_thumb_da_fonte_em_capa_path(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`EpisodioRemoto.thumb_url` da fonte resolvida é gravada em
+    `Episodio.capa_path` (URL string, mesma convenção de `Anime.capa_path`)."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Com Thumb")
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [
+            EpisodioRemoto(
+                rotulo="1",
+                numero=1,
+                url="https://x/ep1",
+                thumb_url="https://animefire.io/img/video/42/1.webp",
+            )
+        ]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/jobs",
+        json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
+    )
+
+    assert resposta.status_code == 201
+    async with sessionmaker_api() as sessao:
+        episodio = (
+            await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
+        ).scalar_one()
+    assert episodio.capa_path == "https://animefire.io/img/video/42/1.webp"
+
+
+async def test_criar_job_modo_site_recaptura_sem_thumb_preserva_capa_path(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Recaptura numa fonte que não expõe thumb (`EpisodioRemoto.thumb_url is
+    None`) não apaga a `capa_path` já gravada — merge só-quando-não-nulo, mesma
+    semântica de `total_episodios` em `db/catalogo.py`."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Recaptura Sem Thumb")
+    episodio_id = await _criar_episodio_existente(
+        sessionmaker_api,
+        anime_id,
+        status=StatusEpisodio.LIBERADO,
+        site_origem="animefire.io",
+        capa_path="https://animefire.io/img/video/42/1.webp",
+    )
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/jobs",
+        json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
+    )
+
+    assert resposta.status_code == 201
+    async with sessionmaker_api() as sessao:
+        episodio = await sessao.get(Episodio, episodio_id)
+    assert episodio.capa_path == "https://animefire.io/img/video/42/1.webp"
 
 
 async def test_criar_job_modo_site_recaptura_com_job_ativo_409(

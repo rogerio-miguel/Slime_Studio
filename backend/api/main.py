@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from api.eventos import Assinantes, MonitorDeFila
-from api.rotas import animes, episodios, jobs, saude, sites, ws
+from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
@@ -75,6 +75,7 @@ def criar_app(config: Config) -> FastAPI:
     app.include_router(animes.router_publico)
     app.include_router(episodios.router)
     app.include_router(episodios.router_admin)
+    app.include_router(thumb.router)
     app.include_router(sites.router)
     app.include_router(ws.router)
 

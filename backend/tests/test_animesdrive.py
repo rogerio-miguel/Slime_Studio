@@ -243,7 +243,10 @@ def test_listar_episodios_deduplica_ordena_e_inclui_rotulo_nao_numerico(extrator
     """`episodios.html` tem o episódio 3 duplicado (thumbnail + título, mesmo
     href — dedup por rótulo) e um rótulo não numérico ("especial"), que não é
     mais descartado: entra no fim da lista com `numero=None` (decisão do
-    produto: sem seção "especial" separada, só não capturável ainda)."""
+    produto: sem seção "especial" separada, só não capturável ainda).
+
+    A thumb do card (`<img src="/thumbN.jpg">`, no `<a>` irmão do título) é
+    reanexada absolutizada; o card "especial" não tem `<img>` → `thumb_url=None`."""
     identificador = "tensei-shitara-slime-datta-ken"
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: _ler_fixture("episodios.html")})
@@ -255,16 +258,19 @@ def test_listar_episodios_deduplica_ordena_e_inclui_rotulo_nao_numerico(extrator
             rotulo="1",
             numero=1,
             url="https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-1",
+            thumb_url="https://animesdrive.cloud/thumb1.jpg",
         ),
         EpisodioRemoto(
             rotulo="2",
             numero=2,
             url="https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-2",
+            thumb_url="https://animesdrive.cloud/thumb2.jpg",
         ),
         EpisodioRemoto(
             rotulo="3",
             numero=3,
             url="https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-episodio-3",
+            thumb_url="https://animesdrive.cloud/thumb3.jpg",
         ),
         EpisodioRemoto(
             rotulo="especial",
@@ -273,6 +279,7 @@ def test_listar_episodios_deduplica_ordena_e_inclui_rotulo_nao_numerico(extrator
                 "https://animesdrive.cloud/episodio/"
                 "tensei-shitara-slime-datta-ken-episodio-especial"
             ),
+            thumb_url=None,
         ),
     ]
 

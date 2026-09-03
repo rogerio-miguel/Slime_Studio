@@ -185,6 +185,7 @@ async def criar_job_site(
             url_fonte=correspondente.url,
             site_origem=resultado.dominio,
             numero_fonte=correspondente.numero,
+            capa_path=correspondente.thumb_url,
             duracao_esperada_s=duracao_esperada_s,
         )
 
@@ -196,6 +197,7 @@ async def criar_job_site(
         versao=versao_do_episodio,
         url_fonte=correspondente.url,
         site_origem=resultado.dominio,
+        capa_path=correspondente.thumb_url,
         duracao_esperada_s=duracao_esperada_s,
     )
 
@@ -228,6 +230,7 @@ async def _reaproveitar_episodio_para_recaptura(
     url_fonte: str,
     site_origem: str,
     numero_fonte: int | None,
+    capa_path: str | None,
     duracao_esperada_s: int | None,
 ) -> int:
     """D2 — episódio já cadastrado sob a mesma identidade, `LIBERADO` (Feature
@@ -240,6 +243,10 @@ async def _reaproveitar_episodio_para_recaptura(
     pode vir de outra fonte/duração, uma posição de retomada antiga não tem
     relação nenhuma com ele (senão o episódio reapareceria em "continuar
     assistindo" numa posição sem sentido).
+
+    `capa_path` (thumb da fonte) só é gravada quando não-nula — mesma semântica
+    de `db/catalogo.py::_aplicar_lancamento_no_anime` para `total_episodios`:
+    uma recaptura numa fonte que não expõe thumb não apaga a que já havia.
 
     Levanta `JobEmExecucao` se já existir um `Job` ativo para este episódio —
     mesma checagem/motivo de `api/servicos/catalogo.py::remover_episodio`/
@@ -269,6 +276,8 @@ async def _reaproveitar_episodio_para_recaptura(
         episodio.url_fonte = url_fonte
         episodio.site_origem = site_origem
         episodio.numero_fonte = numero_fonte
+        if capa_path is not None:
+            episodio.capa_path = capa_path
         await sessao.commit()
     return await criar_job_na_fila(sessionmaker, episodio_id, duracao_esperada_s)
 

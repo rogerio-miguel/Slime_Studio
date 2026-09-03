@@ -323,6 +323,7 @@ async def criar_episodio_e_job(
     url_fonte: str,
     site_origem: str,
     titulo_episodio: str | None = None,
+    capa_path: str | None = None,
     duracao_esperada_s: int | None = None,
 ) -> int:
     """Cria o `Episodio` e, em seguida, o `Job` (via `db.fila.criar_job`) — duas
@@ -344,6 +345,7 @@ async def criar_episodio_e_job(
         url_fonte=url_fonte,
         site_origem=site_origem,
         titulo_episodio=titulo_episodio,
+        capa_path=capa_path,
     )
     return await criar_job(sessionmaker, episodio_id, duracao_esperada_s)
 
@@ -358,6 +360,7 @@ async def _inserir_episodio(
     url_fonte: str,
     site_origem: str,
     titulo_episodio: str | None,
+    capa_path: str | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         episodio = Episodio(
@@ -368,6 +371,7 @@ async def _inserir_episodio(
             versao=versao,
             url_fonte=url_fonte,
             site_origem=site_origem,
+            capa_path=capa_path,
             status=StatusEpisodio.PENDENTE,
         )
         sessao.add(episodio)

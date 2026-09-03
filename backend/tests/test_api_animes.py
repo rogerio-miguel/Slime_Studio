@@ -53,7 +53,12 @@ async def test_listar_episodios_remotos_caminho_feliz(
 
     async def _listar_fake(sessionmaker, dominio, identificador):
         return [
-            EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1"),
+            EpisodioRemoto(
+                rotulo="1",
+                numero=1,
+                url="https://x/ep1",
+                thumb_url="https://animefire.io/img/video/42/1.webp",
+            ),
             EpisodioRemoto(rotulo="2", numero=2, url="https://x/ep2"),
             EpisodioRemoto(rotulo="especial", numero=None, url="https://x/ep-especial"),
         ]
@@ -67,9 +72,9 @@ async def test_listar_episodios_remotos_caminho_feliz(
     assert resposta.json() == {
         "dominio": "animefire.io",
         "episodios": [
-            {"rotulo": "1", "numero": 1},
-            {"rotulo": "2", "numero": 2},
-            {"rotulo": "especial", "numero": None},
+            {"rotulo": "1", "numero": 1, "thumb_url": "https://animefire.io/img/video/42/1.webp"},
+            {"rotulo": "2", "numero": 2, "thumb_url": None},
+            {"rotulo": "especial", "numero": None, "thumb_url": None},
         ],
     }
 

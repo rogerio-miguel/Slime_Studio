@@ -260,6 +260,15 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             colisao: false,
             episodio,
             episodioDescartado,
+            // Thumb do episódio: preferir a do episódio já capturado
+            // (`capa_path`, gravada na captura), depois a do descartado por
+            // fonte/versão, e só então a da listagem remota atual. `null`
+            // quando nenhuma fonte tem imagem — `LinhaDeEpisodio` omite a img.
+            thumb:
+              episodio?.capa_path ??
+              episodioDescartado?.capa_path ??
+              remotosDoNumero[0]?.thumb_url ??
+              null,
           },
         ];
       }
@@ -270,6 +279,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         colisao: true,
         episodio: null,
         episodioDescartado,
+        thumb: remoto.thumb_url ?? null,
       }));
     });
 
@@ -279,6 +289,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
       rotulo: remoto.rotulo,
       colisao: false,
       episodio: null,
+      thumb: remoto.thumb_url ?? null,
     }));
 
     return [...linhasNumericas, ...linhasSemNumero];
@@ -551,7 +562,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         )}
 
         <div className="flex flex-col gap-2">
-          {linhas.map(({ chave, numero, rotulo, colisao, episodio, episodioDescartado }) => {
+          {linhas.map(({ chave, numero, rotulo, colisao, episodio, episodioDescartado, thumb }) => {
             const job = episodio ? jobsPorEpisodio.get(episodio.id) : null;
             return (
               <LinhaDeEpisodio
@@ -561,6 +572,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                 colisao={colisao}
                 episodio={episodio}
                 episodioDescartado={episodioDescartado}
+                thumb={thumb}
                 // `remotos.dados?.dominio` já é o mesmo valor usado na linha
                 // "Episódios resolvidos via {…}" acima — reusado direto aqui
                 // em vez de expor pelo `useMemo` de `linhas`, que não precisa
