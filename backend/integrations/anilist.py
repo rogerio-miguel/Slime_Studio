@@ -66,7 +66,7 @@ query {
     media(status: RELEASING, type: ANIME, sort: TRENDING_DESC) {
       id
       title { romaji english }
-      coverImage { extraLarge }
+      coverImage { extraLarge color }
       bannerImage
       genres
       seasonYear
@@ -85,7 +85,7 @@ query ($estacao: MediaSeason, $ano: Int) {
     media(season: $estacao, seasonYear: $ano, type: ANIME, sort: POPULARITY_DESC) {
       id
       title { romaji english }
-      coverImage { extraLarge }
+      coverImage { extraLarge color }
       bannerImage
       genres
       seasonYear
@@ -213,6 +213,7 @@ def _pagina_para_animes_em_alta(dados: dict, contexto: str) -> list[AnimeEmAlta]
             titulo_romaji=(item.get("title") or {}).get("romaji") or "",
             titulo_ingles=(item.get("title") or {}).get("english"),
             capa_url=(item.get("coverImage") or {}).get("extraLarge"),
+            capa_cor=(item.get("coverImage") or {}).get("color"),
             banner_url=item.get("bannerImage"),
             anilist_id=item.get("id"),
             ano_estreia=_extrair_ano(item),

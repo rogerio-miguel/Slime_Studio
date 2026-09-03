@@ -531,6 +531,7 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
         capa_url="https://img/p.jpg",
         banner_url=None,
         anilist_id=1,
+        capa_cor="#e4a15d",
     )
 
     async def _listar_fake(sessionmaker):
@@ -553,6 +554,7 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
         "anime_id": None,
         "ano_estreia": None,
         "generos": [],
+        "capa_cor": "#e4a15d",
         "status_lancamento": None,
         "proximo_ep_numero": None,
         "proximo_ep_em": None,

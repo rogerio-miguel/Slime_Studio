@@ -106,6 +106,7 @@ async def test_em_alta_cruza_com_anime_existente_no_catalogo_local(
         anilist_id=1,
         ano_estreia=2018,
         generos=("Action", "Fantasy"),
+        capa_cor="#1a2b3c",
         lancamento=LancamentoDeAnime(
             status=StatusLancamento.EM_LANCAMENTO,
             total_episodios=100,
@@ -135,6 +136,7 @@ async def test_em_alta_cruza_com_anime_existente_no_catalogo_local(
         "anime_id": anime_id,
         "ano_estreia": 2018,
         "generos": ["Action", "Fantasy"],
+        "capa_cor": "#1a2b3c",
         "status_lancamento": "em_lancamento",
         "proximo_ep_numero": 55,
     }
@@ -165,9 +167,10 @@ async def test_em_alta_sem_correspondencia_local_devolve_anime_id_none(
 async def test_em_alta_item_sem_lancamento_ecoa_defaults_do_carrossel(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    """Item do feed sem bloco `lancamento` e sem gêneros/ano (caminho degradado
-    Kitsu): a resposta ainda traz os campos do carrossel, nos defaults — nunca
-    `null` para `generos`, e os três escalares de lançamento `null`."""
+    """Item do feed sem bloco `lancamento` e sem gêneros/ano/cor (caminho
+    degradado Kitsu): a resposta ainda traz os campos do carrossel, nos defaults
+    — nunca `null` para `generos`, e `capa_cor` + os três escalares de
+    lançamento `null`."""
     item = AnimeEmAlta(
         titulo_romaji="Sem Bloco De Lancamento",
         titulo_ingles=None,
@@ -187,6 +190,7 @@ async def test_em_alta_item_sem_lancamento_ecoa_defaults_do_carrossel(
     corpo = resposta.json()[0]
     assert corpo["ano_estreia"] is None
     assert corpo["generos"] == []
+    assert corpo["capa_cor"] is None
     assert corpo["status_lancamento"] is None
     assert corpo["proximo_ep_numero"] is None
     assert corpo["proximo_ep_em"] is None

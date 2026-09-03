@@ -97,7 +97,7 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
                     {
                         "id": 1,
                         "title": {"romaji": "Tensei", "english": "Reincarnated"},
-                        "coverImage": {"extraLarge": "https://img/1.jpg"},
+                        "coverImage": {"extraLarge": "https://img/1.jpg", "color": "#e4a15d"},
                         "bannerImage": "https://img/1-banner.jpg",
                         "genres": ["Action", "Fantasy"],
                         "seasonYear": 2021,
@@ -118,6 +118,7 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
             titulo_romaji="Tensei",
             titulo_ingles="Reincarnated",
             capa_url="https://img/1.jpg",
+            capa_cor="#e4a15d",
             banner_url="https://img/1-banner.jpg",
             anilist_id=1,
             ano_estreia=2021,
@@ -136,7 +137,8 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_anilist_listar_em_alta_ano_cai_para_start_date(monkeypatch: pytest.MonkeyPatch):
-    """`seasonYear` nulo → usa `startDate.year`; `genres` nulo → `generos` vazio."""
+    """`seasonYear` nulo → usa `startDate.year`; `genres` nulo → `generos` vazio;
+    `coverImage` sem `color` → `capa_cor` None."""
     corpo = {
         "data": {
             "Page": {
@@ -162,6 +164,7 @@ def test_anilist_listar_em_alta_ano_cai_para_start_date(monkeypatch: pytest.Monk
 
     assert item.ano_estreia == 2024
     assert item.generos == ()
+    assert item.capa_cor is None
 
 
 def test_anilist_listar_em_alta_sem_ano_nem_generos(monkeypatch: pytest.MonkeyPatch):
@@ -720,9 +723,10 @@ def test_kitsu_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
             anilist_id=None,
         )
     ]
-    # Kitsu (caminho degradado) não preenche ano/gêneros — ficam nos defaults.
+    # Kitsu (caminho degradado) não preenche ano/gêneros/cor — ficam nos defaults.
     assert resultado[0].ano_estreia is None
     assert resultado[0].generos == ()
+    assert resultado[0].capa_cor is None
 
 
 def test_kitsu_listar_proxima_temporada(monkeypatch: pytest.MonkeyPatch):
