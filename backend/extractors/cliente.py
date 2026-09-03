@@ -20,6 +20,7 @@ import shutil
 import sys
 import time
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -89,6 +90,19 @@ class ClienteComCaptura(Protocol):
     ) -> MidiaCapturada: ...
 
 
+@runtime_checkable
+class ClienteComPost(Protocol):
+    """Capacidade de POST de formulário que só `ClienteLeve` tem — o cliente de
+    navegador observa o player montar a mídia, não fala o protocolo de RPC do
+    site na mão.
+
+    Mesmo contrato de uso de `ClienteComCaptura`: o helper que precisa disso
+    (`extractors/blogger.py`) confere com `isinstance` antes de chamar; o
+    contrato base (`ClienteDeSite`) segue sendo só GET."""
+
+    def postar_formulario(self, url: str, campos: dict[str, str], *, timeout_s: int) -> str: ...
+
+
 class ClienteLeve:
     """Sessão `cloudscraper` pré-carregada com cookies de `SessaoBypass`, se houver."""
 
@@ -104,17 +118,27 @@ class ClienteLeve:
             self._sessao.headers["User-Agent"] = user_agent
 
     def obter_html(self, url: str, *, timeout_s: int) -> str:
-        resposta = self._requisitar(url, timeout_s=timeout_s)
+        resposta = self._requisitar(url, lambda: self._sessao.get(url, timeout=timeout_s))
         return resposta.text
 
     def obter_json(self, url: str, *, timeout_s: int) -> dict | list:
-        resposta = self._requisitar(url, timeout_s=timeout_s)
+        resposta = self._requisitar(url, lambda: self._sessao.get(url, timeout=timeout_s))
         try:
             return resposta.json()
         except requests.JSONDecodeError as excecao:
             raise FalhaDeExtracao(
                 f"resposta de {url} não é JSON válido", permite_retentativa=True
             ) from excecao
+
+    def postar_formulario(self, url: str, campos: dict[str, str], *, timeout_s: int) -> str:
+        """POST de formulário (`application/x-www-form-urlencoded`) com a MESMA
+        tradução de erro do GET — ver `_requisitar`. Existe para o helper do
+        Blogger (`extractors/blogger.py`) falar o protocolo `batchexecute` do
+        player sem subir navegador; só o cliente leve implementa (`ClienteComPost`)."""
+        resposta = self._requisitar(
+            url, lambda: self._sessao.post(url, data=campos, timeout=timeout_s)
+        )
+        return resposta.text
 
     def cookies(self) -> dict[str, str]:
         return self._sessao.cookies.get_dict()
@@ -125,9 +149,16 @@ class ClienteLeve:
     def fechar(self) -> None:
         self._sessao.close()
 
-    def _requisitar(self, url: str, *, timeout_s: int) -> requests.Response:
+    def _requisitar(
+        self, url: str, enviar: Callable[[], requests.Response]
+    ) -> requests.Response:
+        """Executa `enviar` (o GET ou o POST já montado) e converte exceção de
+        `requests` ou status de erro na exceção de domínio equivalente. Núcleo
+        único de tradução: `obter_html`/`obter_json`/`postar_formulario` passam
+        todos por aqui, então 404/desafio Cloudflare/timeout têm o mesmo
+        tratamento seja qual for o método HTTP."""
         try:
-            resposta = self._sessao.get(url, timeout=timeout_s)
+            resposta = enviar()
         except (requests.ConnectionError, requests.Timeout) as excecao:
             raise FalhaDeExtracao(
                 f"falha de rede ao acessar {url}: {excecao}", permite_retentativa=True
