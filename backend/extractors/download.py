@@ -12,7 +12,11 @@ agnóstico de site), a checagem faz sua própria requisição HTTP curta com
 `requests`, isolada em `_baixar_amostra` para ser substituível em teste.
 """
 
+import asyncio
 import os
+import re
+import time
+import urllib.parse
 from pathlib import Path
 
 import requests
@@ -34,6 +38,15 @@ _TAMANHO_AMOSTRA_BYTES = 4096
 _TAMANHO_MINIMO_BYTES = 1024
 _ASSINATURA_PLAYLIST = "#extm3u"
 _MARCADORES_ISCA_HTML = ("<html", "<!doctype html")
+
+# Download em blocos (Range requests) para `*.googlevideo.com`: o Google throttla
+# conexão única, então baixamos em blocos sequenciais como o yt-dlp faz.
+# 10 MiB por bloco é o default do yt-dlp; 60 s de teto por requisição de bloco;
+# até 4 tentativas do mesmo bloco em erro de rede, com backoff `2 ** tentativa`.
+_TAMANHO_BLOCO_BYTES = 10 * 1024 * 1024
+_TIMEOUT_BLOCO_S = 60
+_MAX_TENTATIVAS_BLOCO = 4
+_CONTENT_RANGE_RE = re.compile(r"\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*", re.IGNORECASE)
 
 
 def caminho_raw(
@@ -86,38 +99,76 @@ def _baixar_amostra(url: str, cabecalhos: dict[str, str], timeout_s: int) -> tup
         ) from excecao
 
 
-async def baixar(link: LinkDeMidia, destino: Path, ffmpeg_bin: str) -> Path:
-    """Baixa `link` via `ffmpeg -c copy` para `destino` (`.mkv`), escrevendo em
-    `<destino>.part` e promovendo com `os.replace()` (rename atômico) só ao
-    concluir com sucesso. Remove o `.part` em qualquer `BaseException` — nunca
-    deixa lixo parcial em `MEDIA_ROOT/raw/`.
+def _eh_googlevideo(url: str) -> bool:
+    """`True` se `url` aponta para um CDN de mídia do Google (`*.googlevideo.com`).
+    Esses hosts respondem a `Range` e throttlam conexão única — daí o download em
+    blocos de `_baixar_em_blocos` no lugar do `ffmpeg` direto."""
+    hostname = urllib.parse.urlparse(url).hostname or ""
+    return hostname == "googlevideo.com" or hostname.endswith(".googlevideo.com")
 
-    Falha do `ffmpeg` no download (conexão truncada pelo CDN, timeout de rede) é
-    traduzida para `FalhaDeExtracao` retentável — o executor reagenda o job com
-    backoff em vez de marcá-lo como falho definitivo. Só o `.part` ausente após
-    sucesso do `ffmpeg` continua sendo `FalhaDeFerramenta` (bug interno, não rede)."""
+
+async def baixar(link: LinkDeMidia, destino: Path, ffmpeg_bin: str) -> Path:
+    """Baixa `link` para `destino` (`.mkv`), escrevendo em `<destino>.part` e
+    promovendo com `os.replace()` (rename atômico) só ao concluir com sucesso.
+    Remove qualquer parcial (`.part`, `.bruto`) em `BaseException` — nunca deixa
+    lixo em `MEDIA_ROOT/raw/`.
+
+    Para URLs `*.googlevideo.com` baixa o mp4 cru em blocos (Range requests, para
+    escapar do throttle de conexão única do Google) para `<destino>.bruto` e só
+    então remuxa localmente com `ffmpeg -c copy`. Para todo o resto, `ffmpeg`
+    baixa e remuxa direto da URL remota.
+
+    Falha do `ffmpeg` no download (conexão truncada pelo CDN, timeout de rede) e
+    falha de rede no download em blocos são traduzidas para `FalhaDeExtracao`
+    retentável — o executor reagenda o job com backoff em vez de marcá-lo como
+    falho definitivo. Só o `.part` ausente após sucesso do `ffmpeg` continua sendo
+    `FalhaDeFerramenta` (bug interno, não rede)."""
     destino.parent.mkdir(parents=True, exist_ok=True)
     parcial = destino.with_name(destino.name + ".part")
 
-    try:
-        argumentos = _montar_comando(ffmpeg_bin, link, parcial)
+    if _eh_googlevideo(link.url):
+        bruto = destino.with_name(destino.name + ".bruto")
         try:
-            await executar(argumentos, timeout_s=_TIMEOUT_DOWNLOAD_S)
-        except FalhaDeFerramenta as excecao:
-            sufixo_stderr = f" — stderr: {excecao.cauda_stderr}" if excecao.cauda_stderr else ""
-            raise FalhaDeExtracao(
-                f"ffmpeg falhou no download ({excecao}){sufixo_stderr}",
-                permite_retentativa=True,
-            ) from excecao
-        if not parcial.exists():
-            raise FalhaDeFerramenta(f"ffmpeg concluiu sem erro mas não gerou {parcial}")
-        os.replace(parcial, destino)
-    except BaseException:
-        if parcial.exists():
+            await asyncio.to_thread(
+                _baixar_em_blocos, link.url, link.cabecalhos, bruto, timeout_s=_TIMEOUT_BLOCO_S
+            )
+            entrada_local = LinkDeMidia(url=str(bruto), cabecalhos={})
+            await _remuxar_e_promover(ffmpeg_bin, entrada_local, parcial, destino)
+        except BaseException:
+            bruto.unlink(missing_ok=True)
             parcial.unlink(missing_ok=True)
+            raise
+        bruto.unlink(missing_ok=True)
+        return destino
+
+    try:
+        await _remuxar_e_promover(ffmpeg_bin, link, parcial, destino)
+    except BaseException:
+        parcial.unlink(missing_ok=True)
         raise
 
     return destino
+
+
+async def _remuxar_e_promover(
+    ffmpeg_bin: str, entrada: LinkDeMidia, parcial: Path, destino: Path
+) -> None:
+    """`ffmpeg -c copy` de `entrada` para `parcial`, promovendo para `destino` com
+    `os.replace()` (rename atômico) só no sucesso. Falha de rede/CDN do `ffmpeg`
+    (conexão truncada, timeout) vira `FalhaDeExtracao` retentável; `.part` ausente
+    após o `ffmpeg` sair 0 continua `FalhaDeFerramenta` (bug interno, não rede)."""
+    argumentos = _montar_comando(ffmpeg_bin, entrada, parcial)
+    try:
+        await executar(argumentos, timeout_s=_TIMEOUT_DOWNLOAD_S)
+    except FalhaDeFerramenta as excecao:
+        sufixo_stderr = f" — stderr: {excecao.cauda_stderr}" if excecao.cauda_stderr else ""
+        raise FalhaDeExtracao(
+            f"ffmpeg falhou no download ({excecao}){sufixo_stderr}",
+            permite_retentativa=True,
+        ) from excecao
+    if not parcial.exists():
+        raise FalhaDeFerramenta(f"ffmpeg concluiu sem erro mas não gerou {parcial}")
+    os.replace(parcial, destino)
 
 
 def _montar_comando(ffmpeg_bin: str, link: LinkDeMidia, destino_parcial: Path) -> list[str]:
@@ -144,3 +195,138 @@ def _montar_comando(ffmpeg_bin: str, link: LinkDeMidia, destino_parcial: Path) -
         ]
     argumentos += ["-i", link.url, "-c", "copy", "-f", "matroska", str(destino_parcial)]
     return argumentos
+
+
+def _baixar_em_blocos(
+    url: str, cabecalhos: dict[str, str], destino: Path, *, timeout_s: int
+) -> None:
+    """Baixa `url` inteira para `destino` (arquivo cru, tipicamente mp4 progressivo)
+    em blocos sequenciais de `_TAMANHO_BLOCO_BYTES` via header `Range`. Função
+    bloqueante — o chamador (`baixar`) a roda em `asyncio.to_thread`, fora do
+    event loop.
+
+    Se o servidor ignorar o `Range` e responder 200 no primeiro bloco, cai para
+    download de conexão única em streaming (sai throttled, mas funciona). 200 fora
+    de hora, `Content-Range` incoerente ou bloco vazio viram `FalhaDeExtracao`
+    retentável — nunca corrompe o arquivo em silêncio.
+
+    Teto de tempo total igual ao do `ffmpeg` (`_TIMEOUT_DOWNLOAD_S`): sem ele, um
+    servidor que devolvesse 206 sem fim manteria a thread presa para sempre e o
+    heartbeat do worker seguiria batendo (o event loop está livre), sem
+    `reciclar_jobs_orfaos` nunca detectar o job travado."""
+    prazo_final = time.monotonic() + _TIMEOUT_DOWNLOAD_S
+    inicio = 0
+    with open(destino, "wb") as arquivo:
+        while True:
+            if time.monotonic() > prazo_final:
+                raise FalhaDeExtracao(
+                    f"download em blocos excedeu {_TIMEOUT_DOWNLOAD_S}s: {url}",
+                    permite_retentativa=True,
+                )
+            faixa_pedida = f"bytes={inicio}-{inicio + _TAMANHO_BLOCO_BYTES - 1}"
+            cabecalhos_bloco = {**cabecalhos, "Range": faixa_pedida}
+            with _get_bloco_com_retry(url, cabecalhos_bloco, timeout_s=timeout_s) as resposta:
+                if resposta.status_code == 200:
+                    if inicio != 0:
+                        raise FalhaDeExtracao(
+                            f"servidor respondeu 200 no meio do download em blocos: {url}",
+                            permite_retentativa=True,
+                        )
+                    for pedaco in resposta.iter_content(chunk_size=_TAMANHO_BLOCO_BYTES):
+                        arquivo.write(pedaco)
+                    return
+
+                if resposta.status_code == 416:
+                    if inicio == 0:
+                        raise FalhaDeExtracao(
+                            f"servidor respondeu 416 no primeiro bloco: {url}",
+                            permite_retentativa=True,
+                        )
+                    return
+
+                corpo = resposta.content
+                if not corpo:
+                    raise FalhaDeExtracao(
+                        f"bloco 206 sem corpo — abortado para não entrar em laço: {url}",
+                        permite_retentativa=True,
+                    )
+                faixa_inicio, faixa_fim, total = _parse_content_range(
+                    resposta.headers.get("Content-Range", ""), url
+                )
+                if faixa_inicio != inicio or len(corpo) != faixa_fim - faixa_inicio + 1:
+                    raise FalhaDeExtracao(
+                        f"bloco incoerente com o Content-Range "
+                        f"(faixa {faixa_inicio}-{faixa_fim}, {len(corpo)} bytes) em {url}",
+                        permite_retentativa=True,
+                    )
+                arquivo.write(corpo)
+                inicio = faixa_fim + 1
+                if total is not None and inicio >= total:
+                    return
+
+
+def _get_bloco_com_retry(
+    url: str, cabecalhos: dict[str, str], *, timeout_s: int
+) -> requests.Response:
+    """`_get_bloco` com até `_MAX_TENTATIVAS_BLOCO` tentativas do mesmo bloco em
+    erro de rede (timeout, conexão truncada, 5xx), backoff `2 ** tentativa`. O
+    corpo de um 206 é lido aqui dentro, então uma conexão truncada durante a
+    transferência do bloco também dispara a retentativa. Esgotadas as tentativas,
+    `FalhaDeExtracao` retentável — o executor reagenda o job."""
+    ultimo_erro: Exception | None = None
+    for tentativa in range(_MAX_TENTATIVAS_BLOCO):
+        resposta = None
+        try:
+            resposta = _get_bloco(url, cabecalhos, timeout_s)
+            if resposta.status_code == 206:
+                _ = resposta.content  # puxa o corpo agora: truncação vira RequestException aqui
+            elif resposta.status_code not in (200, 416):
+                resposta.raise_for_status()
+                raise FalhaDeExtracao(
+                    f"HTTP {resposta.status_code} inesperado ao baixar bloco de {url}",
+                    permite_retentativa=True,
+                )
+            return resposta
+        except requests.RequestException as excecao:
+            if resposta is not None:
+                resposta.close()
+            ultimo_erro = excecao
+            if tentativa + 1 < _MAX_TENTATIVAS_BLOCO:
+                time.sleep(2**tentativa)
+        except BaseException:
+            if resposta is not None:
+                resposta.close()
+            raise
+    raise FalhaDeExtracao(
+        f"falha de rede ao baixar bloco de {url} após {_MAX_TENTATIVAS_BLOCO} "
+        f"tentativas: {ultimo_erro}",
+        permite_retentativa=True,
+    ) from ultimo_erro
+
+
+def _get_bloco(url: str, cabecalhos: dict[str, str], timeout_s: int) -> requests.Response:
+    """Isolado (como `_baixar_amostra`) para ser substituído por `monkeypatch` em
+    teste, sem tocar rede real. `stream=True` para não puxar o corpo antes de o
+    chamador checar o status."""
+    return requests.get(url, headers=cabecalhos, timeout=timeout_s, stream=True)
+
+
+def _parse_content_range(cabecalho: str, url: str) -> tuple[int, int, int | None]:
+    """`bytes <ini>-<fim>/<total>` → `(ini, fim, total)`, com `total` `None` quando
+    o servidor manda `*`. Cabeçalho ausente, malformado ou com faixa impossível
+    (`fim < ini`, `fim >= total`) vira `FalhaDeExtracao` retentável."""
+    correspondencia = _CONTENT_RANGE_RE.fullmatch(cabecalho)
+    if correspondencia is None:
+        raise FalhaDeExtracao(
+            f"Content-Range ausente ou malformado ({cabecalho!r}) no download de {url}",
+            permite_retentativa=True,
+        )
+    inicio_bruto, fim_bruto, total_bruto = correspondencia.groups()
+    inicio, fim = int(inicio_bruto), int(fim_bruto)
+    total = None if total_bruto == "*" else int(total_bruto)
+    if fim < inicio or (total is not None and fim >= total):
+        raise FalhaDeExtracao(
+            f"Content-Range com faixa impossível ({cabecalho!r}) no download de {url}",
+            permite_retentativa=True,
+        )
+    return inicio, fim, total
