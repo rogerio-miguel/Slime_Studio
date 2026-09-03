@@ -9,14 +9,10 @@
 
 ---
 
-## Demo
 
 <div align="center">
-  <img src="frontend/src/assets/inicio.gif" alt="Demo da home do Slime Studio" width="640" />
+  <img src="frontend/src/assets/inicio.png" alt="Demo da home do Slime Studio" width="640" />
 </div>
-
-> GIF gerado a partir de `frontend/src/assets/inicio.mp4` (vídeo original em qualidade
-> maior, se preferir assistir sem a compressão do GIF).
 
 ## O que é
 
@@ -28,9 +24,9 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
   (AniList, com fallback Kitsu) — não é o catálogo local.
 - Escolher um item da home **materializa** o anime no catálogo (persiste no banco) antes
   de abrir a página dele.
-- A **página do anime** resolve a fonte de vídeo (ex. animefire.io) e lista os episódios
-  disponíveis para captura sob demanda — nada é baixado até o usuário clicar em
-  **Capturar**.
+- A **página do anime** resolve a fonte de vídeo entre os sites suportados (AnimeFire,
+  MeusAnimes e AnimesDrive, nessa ordem de prioridade) e lista os episódios disponíveis
+  para captura sob demanda — nada é baixado até o usuário clicar em **Capturar**.
 - Episódios capturados são empacotados em HLS e assistidos num **player próprio**:
   `hls.js` alimenta um `<video>` oculto, e o quadro visível é um `<canvas>` WebGPU
   rodando o pipeline Anime4K frame a frame, com barra de controles própria (sem os
@@ -62,6 +58,9 @@ outra:
   <tr>
     <td colspan="2" align="center"><img src="frontend/src/assets/player.png" width="600" /></td>
   </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="frontend/src/assets/player2.png" width="600" /></td>
+  </tr>
 </table>
 
 ## Arquitetura
@@ -81,7 +80,9 @@ Slime_Studio/
 - **API e worker não são acoplados diretamente** — trocam estado só via a tabela `Job`
   no SQLite (polling), sem fila externa (Celery/Redis).
 - **`extractors/`** — um adapter por site de streaming (Strategy Pattern), resolve
-  vídeo com cache de sessão, retry e circuit breaker (bypass anti-bot).
+  vídeo com cache de sessão, retry e circuit breaker (bypass anti-bot). A resolução
+  de fonte tenta os sites em cadeia de fallback (AnimeFire → MeusAnimes → AnimesDrive);
+  `blogger.py` é um helper compartilhado para players do Blogger embutidos.
 - **`integrations/`** — mesmo padrão, mas para metadados: AniList como provedor
   principal e Kitsu como fallback, com cache em memória do feed "em alta".
 - **`worker/pipeline/`** — encapsula `ffmpeg` como subprocesso para empacotar os
@@ -93,6 +94,7 @@ backend/
 ├── worker/        # loop assíncrono + pipeline de vídeo
 ├── extractors/     # adapters de site (vídeo)
 ├── integrations/   # adapters de metadados (AniList/Kitsu)
+├── core/          # domínio puro — enums, erros, config, texto
 ├── models/        # SQLAlchemy
 └── db/migrations/ # Alembic
 ```
@@ -103,8 +105,8 @@ backend/
 
 ```
 frontend/src/
-├── paginas/    # Inicio, Galeria, PaginaDoAnime, PaginaDoPlayer
-├── player/     # canvas WebGPU, controles, hooks do pipeline Anime4K
+├── paginas/    # Inicio, Galeria, PaginaDoAnime, player (HLS e vídeo local)
+├── player/     # canvas WebGPU, controles, hooks do Anime4K e do Áudio Cinema
 ├── inicio/     # grade de destaques dirigida pelo feed externo
 ├── admin/      # ações de catálogo (materializar/remover)
 ├── api/        # cliente HTTP para o backend
