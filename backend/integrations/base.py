@@ -77,10 +77,11 @@ class AnimeEmAlta:
     `anilist_id` é opcional: o provedor de fallback (Kitsu) não tem
     conhecimento do id AniList do item, só o seu próprio.
 
-    `ano_estreia`/`generos` só o AniList preenche; no caminho degradado (Kitsu)
-    ficam nos defaults — `None` para o ano (não há inteiro que signifique
-    "desconhecido"), tupla vazia para os gêneros ("sem gêneros" e "lista vazia"
-    são a mesma coisa para quem renderiza).
+    `ano_estreia`/`generos`/`capa_cor` só o AniList preenche; no caminho
+    degradado (Kitsu) ficam nos defaults — `None` para o ano (não há inteiro que
+    signifique "desconhecido"), tupla vazia para os gêneros ("sem gêneros" e
+    "lista vazia" são a mesma coisa para quem renderiza), `None` para a cor
+    dominante da capa.
     """
 
     titulo_romaji: str
@@ -91,6 +92,11 @@ class AnimeEmAlta:
     ano_estreia: int | None = None
     generos: tuple[str, ...] = ()
     lancamento: LancamentoDeAnime | None = None
+    # Cor dominante da capa (`coverImage.color` da AniList, ex. "#e4a15d") — só o
+    # AniList preenche; Kitsu deixa no default `None` (e a própria AniList às
+    # vezes devolve `null`). A Home usa como fundo do slide do carrossel quando o
+    # item não tem arte horizontal (`banner_url`).
+    capa_cor: str | None = None
 
 
 class ProvedorDeMetadados(ABC):

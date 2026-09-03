@@ -113,8 +113,8 @@ class KitsuProvider(ProvedorDeMetadados):
 def _itens_para_animes_em_alta(itens: list) -> list[AnimeEmAlta]:
     """Parser único de `data` reusado por `listar_em_alta` e
     `listar_proxima_temporada` — nenhum dos dois endpoints (`/trending/anime`,
-    `/anime`) expõe gêneros nem ano de estreia, que ficam nos defaults do
-    dataclass (caminho degradado)."""
+    `/anime`) expõe gêneros, ano de estreia nem cor dominante de capa, que ficam
+    nos defaults do dataclass (caminho degradado)."""
     resultado = []
     for item in itens:
         atributos = item.get("attributes") or {}
@@ -130,6 +130,7 @@ def _itens_para_animes_em_alta(itens: list) -> list[AnimeEmAlta]:
                 anilist_id=None,
                 ano_estreia=None,
                 generos=(),
+                capa_cor=None,
                 lancamento=_extrair_lancamento(atributos),
             )
         )

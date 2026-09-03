@@ -227,6 +227,7 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
         anime_id=anime_id,
         ano_estreia=item.ano_estreia,
         generos=list(item.generos),
+        capa_cor=item.capa_cor,
         status_lancamento=lanc.status if lanc else None,
         proximo_ep_numero=lanc.proximo_ep_numero if lanc else None,
         proximo_ep_em=lanc.proximo_ep_em if lanc else None,

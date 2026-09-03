@@ -120,12 +120,13 @@ class AnimeEmAltaSaida(BaseModel):
     já cruzado com o catálogo local — `anime_id` vem preenchido pelo servidor
     quando o anime já está catalogado, `None` caso contrário.
 
-    `ano_estreia`/`generos` e o trio de lançamento (`status_lancamento`,
-    `proximo_ep_numero`, `proximo_ep_em`) alimentam a tagline do carrossel da
-    Home. Todos com default: só o AniList preenche ano/gêneros (Kitsu deixa nos
-    defaults) e nem todo item do feed traz bloco de lançamento — a resposta não
-    pode quebrar para item sem esses dados. `status_lancamento` sai 1:1 do enum
-    de domínio, igual a `AnimeSaida`."""
+    `ano_estreia`/`generos`/`capa_cor` e o trio de lançamento
+    (`status_lancamento`, `proximo_ep_numero`, `proximo_ep_em`) alimentam o
+    carrossel da Home — `capa_cor` é o fundo do slide sem `banner_url`, o resto
+    a tagline. Todos com default: só o AniList preenche ano/gêneros/cor (Kitsu
+    deixa nos defaults) e nem todo item do feed traz bloco de lançamento — a
+    resposta não pode quebrar para item sem esses dados. `status_lancamento` sai
+    1:1 do enum de domínio, igual a `AnimeSaida`."""
 
     titulo_romaji: str
     titulo_ingles: str | None
@@ -135,6 +136,9 @@ class AnimeEmAltaSaida(BaseModel):
     anime_id: int | None
     ano_estreia: int | None = None
     generos: list[str] = []
+    # Cor dominante da capa (`coverImage.color` da AniList) — fundo do slide do
+    # carrossel da Home quando não há `banner_url`. Só o AniList preenche.
+    capa_cor: str | None = None
     status_lancamento: StatusLancamento | None = None
     proximo_ep_numero: int | None = None
     proximo_ep_em: datetime | None = None

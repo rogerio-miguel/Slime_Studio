@@ -346,7 +346,16 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
                   aria-roledescription="slide"
                   aria-label={`${(k % n) + 1} de ${n}: ${titulo}`}
                   inert={!ativo}
-                  style={ativo ? { boxShadow: SOMBRA_SLIDE_ATIVO } : undefined}
+                  // `semBanner` + cor dominante da capa (AniList `coverImage.color`):
+                  // a cor entra como fundo do slide, sob o blur da capa (ver o
+                  // primeiro <img> abaixo). `bg-surface` continua de fallback
+                  // quando `capa_cor` é null — item do Kitsu, ou `color: null`
+                  // da própria AniList.
+                  style={{
+                    ...(ativo && { boxShadow: SOMBRA_SLIDE_ATIVO }),
+                    ...(semBanner &&
+                      item.capa_cor && { backgroundColor: item.capa_cor }),
+                  }}
                   // `group/slide`: gatilho do hover da BORDA. Grupo NOMEADO no
                   // próprio `<li>` (não no `group` da máscara, que é full-bleed
                   // e ainda transborda 64px em Y) pra a borda só acender sobre a
@@ -362,21 +371,23 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
                       decoding={primeiroDestaque ? undefined : 'async'}
                       className={
                         semBanner
-                          ? // abaixo de `lg` o cover recortado ainda mostra a
-                            // arte; em `lg` vira só o fundo borrado/escuro
-                            // atrás do pôster nítido (ver <img> logo abaixo)
-                            'absolute inset-0 h-full w-full object-cover lg:scale-125 lg:blur-lg lg:brightness-[0.5]'
+                          ? // a capa borrada/escurecida é só textura por cima da
+                            // cor dominante — em TODOS os breakpoints, não mais
+                            // a arte recortada nítida abaixo de `lg`. `opacity-70`
+                            // deixa a cor de fundo do <li> aparecer atrás.
+                            'absolute inset-0 h-full w-full object-cover scale-125 blur-lg brightness-[0.5] opacity-70'
                           : 'absolute inset-0 h-full w-full object-cover'
                       }
                     />
                   )}
 
-                  {/* Sem banner (`semBanner`): em vez de esticar o pôster
-                      retrato num slide ~3:1, ele entra NÍTIDO como card na
-                      lateral direita (oposta ao texto), sobre o próprio cover
-                      bem borrado ao fundo — tratamento padrão de "sem arte
-                      horizontal". Só de `lg` pra cima (abaixo não há largura
-                      pro pôster ao lado do texto — fica só o fill borrado).
+                  {/* Sem banner (`semBanner`): o fundo do slide é a cor
+                      dominante da capa (`item.capa_cor`, via `style` no `<li>`
+                      acima), com a própria capa borrada por cima como textura
+                      (o primeiro <img>). Só de `lg` pra cima o pôster também
+                      entra NÍTIDO como card na lateral direita (oposta ao
+                      texto) — abaixo disso não há largura pro pôster ao lado do
+                      texto: fica só cor + capa borrada + gradiente + título.
                       Mesma URL do fundo, então sem download extra. */}
                   {semBanner && (
                     <img
