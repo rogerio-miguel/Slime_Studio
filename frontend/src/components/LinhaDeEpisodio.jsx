@@ -1,4 +1,29 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+
+// Miniatura decorativa do episódio (thumb da fonte). `src` SEMPRE via o proxy
+// `GET /api/thumb` — nunca `src={thumb}` direto: o proxy existe pra não vazar
+// o IP do usuário pro site pirata e pra contornar hotlink (embute o `Referer`).
+// `alt=""` porque o número/título do episódio já está em texto ao lado (img
+// puramente decorativa). Some sozinha quando `thumb` é vazio (nada renderiza,
+// sem buraco no layout) ou quando o proxy responde 404 (`onError`) — a fonte
+// pode não ter a imagem daquele episódio. `falhouEm` guarda a URL que falhou
+// e é comparada com `thumb`: se a linha trocar de origem (ex. thumb remota →
+// `capa_path` após a captura), a nova URL volta a ser tentada.
+function MiniaturaDoEpisodio({ thumb }) {
+  const [falhouEm, setFalhouEm] = useState(null);
+  if (!thumb || falhouEm === thumb) return null;
+  return (
+    <img
+      key={thumb}
+      src={`/api/thumb?url=${encodeURIComponent(thumb)}`}
+      alt=""
+      loading="lazy"
+      onError={() => setFalhouEm(thumb)}
+      className="aspect-[16/9] w-24 shrink-0 rounded-md border border-border-chrome object-cover"
+    />
+  );
+}
 
 // Espelha PaginaDoAnime.jsx::ROTULO_VERSAO — duplicado em vez de importado
 // (componente não deve depender da página que o renderiza; mesma lógica de
@@ -60,6 +85,11 @@ export default function LinhaDeEpisodio({
   colisao,
   episodio,
   episodioDescartado,
+  // URL absoluta da thumbnail do episódio na fonte (ou `null`) — montada em
+  // `PaginaDoAnime.jsx` a partir de `EpisodioSaida.capa_path` /
+  // `EpisodioRemotoSaida.thumb_url`. Renderizada por `MiniaturaDoEpisodio`
+  // (sempre via o proxy `/api/thumb`); os 4 ramos de render abaixo a exibem.
+  thumb,
   // `PaginaDoAnime.jsx::remotos.dados?.dominio ?? null` — domínio da fonte
   // remota ativa (`null` enquanto ainda carrega/erra/está ambígua). Usado só
   // pra decidir a nota de origem do `episodioDescartado` no ramo
@@ -105,37 +135,40 @@ export default function LinhaDeEpisodio({
       <Link
         to={`/assistir/${episodio.id}`}
         state={{ episodio: { numero, animeId, animeTitulo, titulo: episodio.titulo } }}
-        className="flex flex-col gap-1.5 rounded-lg border border-neon-soft bg-surface px-4 py-2 text-sm text-white outline-none transition-colors hover:border-neon hover:bg-surface-hover focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+        className="flex items-center gap-3 rounded-lg border border-neon-soft bg-surface px-4 py-2 text-sm text-white outline-none transition-colors hover:border-neon hover:bg-surface-hover focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
       >
-        <span className="flex items-center justify-between">
-          <span>
-            Episódio {numero}
-            {episodio.titulo ? ` — ${episodio.titulo}` : ''}
+        <MiniaturaDoEpisodio thumb={thumb} />
+        <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <span className="flex items-center justify-between">
+            <span>
+              Episódio {numero}
+              {episodio.titulo ? ` — ${episodio.titulo}` : ''}
+            </span>
+            {episodio.assistido_em && (
+              <span className="text-xs text-ink-muted" aria-label="já assistido">
+                ✓ assistido
+              </span>
+            )}
           </span>
-          {episodio.assistido_em && (
-            <span className="text-xs text-ink-muted" aria-label="já assistido">
-              ✓ assistido
+          {percentualAssistido != null && (
+            <span className="flex items-center gap-2">
+              <span
+                role="progressbar"
+                aria-label="progresso de reprodução"
+                aria-valuenow={percentualAssistido}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
+              >
+                <span
+                  style={{ width: `${percentualAssistido}%` }}
+                  className="block h-full rounded-full bg-neon"
+                />
+              </span>
+              <span className="text-xs text-ink-muted">faltam {minutosRestantes} min</span>
             </span>
           )}
         </span>
-        {percentualAssistido != null && (
-          <span className="flex items-center gap-2">
-            <span
-              role="progressbar"
-              aria-label="progresso de reprodução"
-              aria-valuenow={percentualAssistido}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
-            >
-              <span
-                style={{ width: `${percentualAssistido}%` }}
-                className="block h-full rounded-full bg-neon"
-              />
-            </span>
-            <span className="text-xs text-ink-muted">faltam {minutosRestantes} min</span>
-          </span>
-        )}
       </Link>
     );
   }
@@ -178,14 +211,17 @@ export default function LinhaDeEpisodio({
     }
     return (
       <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-chrome px-4 py-2 text-sm text-ink-muted">
-        <span>
-          {naoNumerico ? rotulo : `Episódio ${numero}`}
-          {liberadoOuDescartado.assistido_em && (
-            <span className="ml-2 text-xs text-ink-muted" aria-label="já assistido">
-              ✓ assistido
-            </span>
-          )}
-          {notaOrigem && <span className="ml-2 text-xs text-ink-muted">({notaOrigem})</span>}
+        <span className="flex min-w-0 items-center gap-3">
+          <MiniaturaDoEpisodio thumb={thumb} />
+          <span>
+            {naoNumerico ? rotulo : `Episódio ${numero}`}
+            {liberadoOuDescartado.assistido_em && (
+              <span className="ml-2 text-xs text-ink-muted" aria-label="já assistido">
+                ✓ assistido
+              </span>
+            )}
+            {notaOrigem && <span className="ml-2 text-xs text-ink-muted">({notaOrigem})</span>}
+          </span>
         </span>
         <button
           type="button"
@@ -210,7 +246,10 @@ export default function LinhaDeEpisodio({
     const rotuloStatus = ROTULOS_STATUS[statusAtual] ?? statusAtual;
     return (
       <div className="flex items-center justify-between rounded-lg border border-border-chrome bg-surface px-4 py-2 text-sm text-ink-muted">
-        <span>Episódio {numero}</span>
+        <span className="flex min-w-0 items-center gap-3">
+          <MiniaturaDoEpisodio thumb={thumb} />
+          <span>Episódio {numero}</span>
+        </span>
         <span aria-live="polite">{rotuloStatus}</span>
       </div>
     );
@@ -218,11 +257,14 @@ export default function LinhaDeEpisodio({
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-chrome px-4 py-2 text-sm text-ink-muted">
-      <span>
-        {naoNumerico ? rotulo : `Episódio ${numero}`}
-        {rotuloDivergente && (
-          <span className="ml-2 text-xs text-ink-muted">(rótulo "{rotulo}" na fonte)</span>
-        )}
+      <span className="flex min-w-0 items-center gap-3">
+        <MiniaturaDoEpisodio thumb={thumb} />
+        <span>
+          {naoNumerico ? rotulo : `Episódio ${numero}`}
+          {rotuloDivergente && (
+            <span className="ml-2 text-xs text-ink-muted">(rótulo "{rotulo}" na fonte)</span>
+          )}
+        </span>
       </span>
       <div className="flex items-center gap-2">
         {naoNumerico && (

@@ -196,7 +196,10 @@ def test_listar_episodios_deduplica_e_inclui_rotulo_nao_numerico_sem_numero(extr
     """`episodios.html` tem um episódio "2" duplicado (mesmo href, dedup por
     href) e um rótulo não numérico ("especial") — que não é mais descartado:
     entra na lista com `numero=None` (decisão do produto: sem seção
-    "especial" separada, só não capturável ainda)."""
+    "especial" separada, só não capturável ainda).
+
+    `thumb_url` sai da URL determinística `/img/video/{slug}/{n}.webp` para os
+    episódios numéricos e `None` para o rótulo não numérico."""
     identificador = "tensei-shitara-slime-datta-ken"
     url_anime = f"{extrator.BASE_URL}/animes/{identificador}-todos-os-episodios"
     cliente = ClienteFalso(html_por_url={url_anime: _ler_fixture("episodios.html")})
@@ -205,18 +208,28 @@ def test_listar_episodios_deduplica_e_inclui_rotulo_nao_numerico_sem_numero(extr
 
     assert episodios == [
         EpisodioRemoto(
-            rotulo="1", numero=1, url=f"{extrator.BASE_URL}/animes/{identificador}/1"
+            rotulo="1",
+            numero=1,
+            url=f"{extrator.BASE_URL}/animes/{identificador}/1",
+            thumb_url=f"https://animefire.io/img/video/{identificador}/1.webp",
         ),
         EpisodioRemoto(
-            rotulo="2", numero=2, url=f"{extrator.BASE_URL}/animes/{identificador}/2"
+            rotulo="2",
+            numero=2,
+            url=f"{extrator.BASE_URL}/animes/{identificador}/2",
+            thumb_url=f"https://animefire.io/img/video/{identificador}/2.webp",
         ),
         EpisodioRemoto(
             rotulo="especial",
             numero=None,
             url=f"{extrator.BASE_URL}/animes/{identificador}/especial",
+            thumb_url=None,
         ),
         EpisodioRemoto(
-            rotulo="3", numero=3, url=f"{extrator.BASE_URL}/animes/{identificador}/3"
+            rotulo="3",
+            numero=3,
+            url=f"{extrator.BASE_URL}/animes/{identificador}/3",
+            thumb_url=f"https://animefire.io/img/video/{identificador}/3.webp",
         ),
     ]
 

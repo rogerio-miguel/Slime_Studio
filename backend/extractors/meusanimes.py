@@ -144,7 +144,10 @@ class MeusAnimesProvider(ExtratorDeSite):
             total_brutos = 0
             episodios: list[EpisodioRemoto] = []
             for temporada in temporadas:
-                for tag_a in temporada.select("ul.episodios > li .episodiotitle a[href]"):
+                for li in temporada.select("ul.episodios > li"):
+                    tag_a = li.select_one(".episodiotitle a[href]")
+                    if tag_a is None:
+                        continue
                     href = tag_a["href"]
                     total_brutos += 1
                     if href in vistos:
@@ -165,7 +168,13 @@ class MeusAnimesProvider(ExtratorDeSite):
                             rotulo,
                             href,
                         )
-                    episodios.append(EpisodioRemoto(rotulo=rotulo, numero=numero, url=href))
+                    tag_img = li.select_one(".imagen img")
+                    src_thumb = tag_img.get("src", "").strip() if tag_img is not None else ""
+                    episodios.append(
+                        EpisodioRemoto(
+                            rotulo=rotulo, numero=numero, url=href, thumb_url=src_thumb or None
+                        )
+                    )
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(
                 f"estrutura da listagem de episódios do MeusAnimes mudou: {excecao}",

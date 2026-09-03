@@ -171,8 +171,21 @@ class AnimeFireProvider(ExtratorDeSite):
                         href,
                     )
 
+                # Thumb do AnimeFire tem URL determinística (confirmada ao vivo):
+                # `/img/video/{identificador}/{numero}.webp` — só montável quando
+                # o rótulo é numérico, `None` para "Especial" e afins.
+                thumb_url = (
+                    f"{self.BASE_URL}/img/video/{identificador}/{numero}.webp"
+                    if numero is not None
+                    else None
+                )
                 episodios.append(
-                    EpisodioRemoto(rotulo=rotulo, numero=numero, url=self._absolutizar(href))
+                    EpisodioRemoto(
+                        rotulo=rotulo,
+                        numero=numero,
+                        url=self._absolutizar(href),
+                        thumb_url=thumb_url,
+                    )
                 )
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(
