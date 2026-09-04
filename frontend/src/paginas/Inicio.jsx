@@ -185,9 +185,9 @@ export default function Inicio() {
   // Ação disparada pelos cards da grade "Destaques da temporada": materializa
   // o item do feed no catálogo local (`POST /api/admin/animes`, get-or-create
   // por slug no servidor — reenvio acidental não duplica) e navega pro anime
-  // criado. Sem sinopse no payload: o feed "em alta" não a fornece (ver
-  // DestaquePrincipal.jsx); ela é preenchida no primeiro carregamento de
-  // `PaginaDoAnime`.
+  // criado. Banner e cor dominante vão no payload (o feed "em alta" os traz por
+  // item) pra alimentar o hero de `PaginaDoAnime`; a sinopse continua fora — o
+  // feed não a fornece e ela é preenchida no primeiro carregamento da página.
   const materializarEIrPara = useCallback(
     (item) =>
       materializar(item.anilist_id ?? item.titulo_romaji, () =>
@@ -195,6 +195,9 @@ export default function Inicio() {
           titulo: item.titulo_romaji,
           anilistId: item.anilist_id ?? undefined,
           capaUrl: item.capa_url ?? item.banner_url ?? undefined,
+          bannerUrl: item.banner_url ?? undefined,
+          capaCor: item.capa_cor ?? undefined,
+          generos: item.generos ?? undefined,
         })
       ),
     [materializar]
@@ -253,6 +256,9 @@ export default function Inicio() {
           titulo: item.titulo_romaji,
           anilistId: item.anilist_id ?? undefined,
           capaUrl: item.capa_url ?? item.banner_url ?? undefined,
+          bannerUrl: item.banner_url ?? undefined,
+          capaCor: item.capa_cor ?? undefined,
+          generos: item.generos ?? undefined,
         });
         setEstreiasSalvas((atual) => new Set(atual).add(chave));
       } catch (erroCapturado) {

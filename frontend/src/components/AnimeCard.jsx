@@ -78,11 +78,20 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // badge/título (padrão da linha de estreia de inicio/CartaoDeEstreia.jsx). Usado
 // pelos resultados de "outras fontes" da busca (paginas/Inicio.jsx) pra mostrar
 // o domínio do site de extração dentro do card, sobre o degradê.
+// `estatico` (opcional): renderiza o MESMO card, mas sem navegação (não é
+// `<Link>` nem `<button>`), sem a animação de hover/foco (escala + borda que
+// acende) e sem o overlay de borda neon. `semLegenda` (opcional): esconde o
+// degradê e o bloco de rodapé (fonte/badge/título) — só a capa. Os dois são
+// usados juntos no header de `paginas/PaginaDoAnime.jsx`, onde o card é
+// ilustração da capa — não um alvo de navegação (já se está na página do
+// anime), sem botão de remover e sem repetir o título que já está ao lado.
 export default function AnimeCard({
   anime,
   aoAtivar,
   aoRemover,
   desabilitado = false,
+  estatico = false,
+  semLegenda = false,
   sobreposicao,
   fonte,
 }) {
@@ -95,8 +104,9 @@ export default function AnimeCard({
   // display:flex, ao contrário de `<a>`, que preenche o container por
   // padrão — sem isto, o card de item ainda não catalogado (variante
   // `<button>`) encolhia pro tamanho do título em vez do slot do grid.
-  const classes =
-    'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left outline-none transition-all duration-200 hover:bg-surface-hover';
+  const classesBase =
+    'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left';
+  const classes = `${classesBase} outline-none transition-all duration-200 hover:bg-surface-hover`;
 
   // Escala no wrapper (ver bloco de comentário acima): assim o botão de remover,
   // irmão do Link/button, cresce junto com o card. Card desabilitado
@@ -119,7 +129,9 @@ export default function AnimeCard({
             loading="lazy"
             className="absolute inset-0 h-full w-full object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
+          {!semLegenda && (
+            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
+          )}
         </>
       )}
       {/* Bloco de baixo: kicker "episódio novo" (quando houver) logo acima do
@@ -127,21 +139,23 @@ export default function AnimeCard({
           `mt-auto` migrou do <h2> pra cá pra empurrar o par inteiro pro rodapé
           do card. `quantidade` é `undefined` no card do feed "em alta" — o
           guard de BadgeDeEpisodiosNovos devolve `null` nesse caso. */}
-      <div className="relative mt-auto flex flex-col gap-1">
-        {fonte && (
-          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">
-            {fonte}
-          </p>
-        )}
-        <BadgeDeEpisodiosNovos quantidade={anime.episodios_novos} />
-        <h2 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
-          {titulo}
-        </h2>
-      </div>
+      {!semLegenda && (
+        <div className="relative mt-auto flex flex-col gap-1">
+          {fonte && (
+            <p className="text-xs font-semibold uppercase tracking-wide text-white/70">
+              {fonte}
+            </p>
+          )}
+          <BadgeDeEpisodiosNovos quantidade={anime.episodios_novos} />
+          <h2 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
+            {titulo}
+          </h2>
+        </div>
+      )}
       {/* Borda neon: overlay por CIMA da capa/degradê (ver bloco de comentário
-          no topo). Card desabilitado não recebe o overlay — nem cresce nem
-          acende. */}
-      {!desabilitado && (
+          no topo). Card desabilitado ou `estatico` não recebe o overlay — nem
+          cresce nem acende. */}
+      {!desabilitado && !estatico && (
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 rounded-xl border-4 border-transparent transition-colors duration-300 ease-out group-hover/card:border-neon group-focus-within/card:border-neon motion-reduce:transition-none"
@@ -149,6 +163,15 @@ export default function AnimeCard({
       )}
     </>
   );
+
+  if (estatico) {
+    return (
+      <div className="relative">
+        <div className={classesBase}>{conteudo}</div>
+        {sobreposicao}
+      </div>
+    );
+  }
 
   if (idCatalogado != null) {
     return (

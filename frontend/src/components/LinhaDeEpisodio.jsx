@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { SOMBRA_SLIDE_ATIVO } from '../inicio/CarrosselDestaques.jsx';
 
 // Miniatura decorativa do episódio (thumb da fonte). `src` SEMPRE via o proxy
 // `GET /api/thumb` — nunca `src={thumb}` direto: o proxy existe pra não vazar
@@ -10,7 +11,7 @@ import { Link } from 'react-router-dom';
 // pode não ter a imagem daquele episódio. `falhouEm` guarda a URL que falhou
 // e é comparada com `thumb`: se a linha trocar de origem (ex. thumb remota →
 // `capa_path` após a captura), a nova URL volta a ser tentada.
-function MiniaturaDoEpisodio({ thumb }) {
+function MiniaturaDoEpisodio({ thumb, modo }) {
   const [falhouEm, setFalhouEm] = useState(null);
   if (!thumb || falhouEm === thumb) return null;
   return (
@@ -20,7 +21,16 @@ function MiniaturaDoEpisodio({ thumb }) {
       alt=""
       loading="lazy"
       onError={() => setFalhouEm(thumb)}
-      className="aspect-[16/9] w-24 shrink-0 rounded-md border border-border-chrome object-cover"
+      // modo grade: a thumb É o card — preenche o retângulo 16/9 em
+      // `absolute inset-0`, com o número do episódio e a ação sobre um degradê
+      // no rodapé; modo lista: mesma linguagem, a thumb 16/9 encosta na borda
+      // esquerda do card (o `overflow-hidden` + `rounded-lg` da raiz recorta os
+      // cantos) — sem borda/arredondamento próprios.
+      className={
+        modo === 'grade'
+          ? 'absolute inset-0 h-full w-full object-cover'
+          : 'aspect-[16/9] w-28 shrink-0 object-cover sm:w-32'
+      }
     />
   );
 }
@@ -36,6 +46,66 @@ const ROTULO_VERSAO = {
   dublado: 'Dublado',
   desconhecida: 'Desconhecida (site não confirma)',
 };
+
+// Card (modo grade) / linha (modo lista) de episódio como alvo de clique
+// único: o player (estado "pronto" → vira <Link>, passe `para`/`estadoDeRota`)
+// ou a captura (demais estados acionáveis → vira <button>, passe `aoClicar`/
+// `desabilitado`). Substitui os <button>/<Link> internos que antes ficavam
+// DENTRO do card — a ação vira só texto no rodapé (ver os ramos).
+// Hover/foco no idioma do card do catálogo (components/AnimeCard.jsx →
+// paginas/Galeria.jsx): modo grade cresce no lugar (`scale`, `z-10` pra passar
+// por cima dos vizinhos da grade) com a borda neon acendendo; modo lista,
+// linha full-width, sem escala — só realce de fundo + a borda neon. A borda
+// acesa em `group-focus-visible` é o indicador de foco de teclado (o alvo fica
+// `outline-none`, igual ao AnimeCard). `desabilitado` = captura em voo:
+// bloqueia o clique.
+function CartaoDeEpisodio({
+  modo,
+  cor,
+  estilo,
+  para,
+  estadoDeRota,
+  aoClicar,
+  desabilitado,
+  rotuloAcessivel,
+  children,
+}) {
+  const emGrade = modo === 'grade';
+  const classe = `group/cartao relative flex w-full cursor-pointer overflow-hidden rounded-lg bg-surface text-left text-sm outline-none ${cor} ${
+    emGrade
+      ? 'aspect-[16/9] transition-transform duration-300 ease-out hover:z-10 hover:scale-105 focus-visible:z-10 focus-visible:scale-105 motion-reduce:transition-none'
+      : 'transition-colors duration-200 hover:bg-surface-hover'
+  }`;
+  const bordaNeon = (
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none absolute inset-0 rounded-lg border-transparent transition-colors duration-300 ease-out group-hover/cartao:border-neon group-focus-visible/cartao:border-neon motion-reduce:transition-none ${
+        emGrade ? 'border-4' : 'border-2'
+      }`}
+    />
+  );
+  if (para) {
+    return (
+      <Link to={para} state={estadoDeRota} className={classe} style={estilo}>
+        {children}
+        {bordaNeon}
+      </Link>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={aoClicar}
+      disabled={desabilitado}
+      aria-label={rotuloAcessivel}
+      style={estilo}
+      className={`${classe} disabled:cursor-progress`}
+    >
+      {children}
+      {bordaNeon}
+    </button>
+  );
+}
 
 // Rótulos em `core/enums.py::StatusJob`/`StatusEpisodio` (backend) — mesmos
 // valores StrEnum, traduzidos aqui pra exibição.
@@ -76,9 +146,10 @@ const ROTULOS_STATUS = {
 // assistido" pareceria vir da fonte que o usuário está navegando agora;
 // (3) capturado mas ainda em
 // processamento (ou falhou): status ao vivo, cruzado com `job` do WS quando
-// disponível; (4) nunca capturado: botão que dispara a captura —
-// desabilitado quando `numero` é `null` (rótulo não numérico na fonte, ex.
-// "Especial": aparece na lista mas capturá-lo está fora de escopo por ora).
+// disponível; (4) nunca capturado: o card/linha inteiro dispara a captura
+// (CartaoDeEpisodio), com "Capturar" só como texto — não clicável quando
+// `numero` é `null` (rótulo não numérico na fonte, ex. "Especial": aparece na
+// lista mas capturá-lo está fora de escopo por ora).
 export default function LinhaDeEpisodio({
   numero,
   rotulo,
@@ -101,6 +172,13 @@ export default function LinhaDeEpisodio({
   // é do MESMO domínio ativo mas de versão diferente (ver nota de origem
   // abaixo); nos outros ramos deste componente não é lido.
   versaoAtiva,
+  // `PaginaDoAnime.jsx::modoVisualizacao` — 'lista' (default): linha
+  // horizontal, thumb 16/9 à esquerda e o conteúdo ao lado; 'grade': a thumb
+  // 16/9 É o card, com número/ação sobre um degradê no rodapé. Muda o
+  // enquadramento (className da raiz, posição da miniatura) e, nos ramos de
+  // captura, o quanto o card cresce no hover (ver CartaoDeEpisodio) — nunca
+  // qual conteúdo cada ramo renderiza.
+  modo = 'lista',
   job,
   aoCapturar,
   capturando,
@@ -108,6 +186,41 @@ export default function LinhaDeEpisodio({
   animeTitulo,
 }) {
   const naoNumerico = numero == null;
+  const emGrade = modo === 'grade';
+
+  // className da raiz de cada um dos 4 ramos de render. `cor` = só as classes
+  // de texto/estado que variam por ramo (o fundo `bg-surface` e a ausência de
+  // borda são comuns aos dois modos — lista e grade compartilham a linguagem
+  // de card: sem borda serrilhada, `bg-surface`, sombra). No modo grade a raiz
+  // é a própria thumb 16/9 (`overflow-hidden` recorta a imagem `absolute
+  // inset-0` + o rodapé sobreposto); no modo lista, a thumb encosta na borda
+  // esquerda e o conteúdo vem ao lado.
+  const classeRaiz = (cor) =>
+    emGrade
+      ? `relative flex aspect-[16/9] overflow-hidden rounded-lg bg-surface text-sm ${cor}`
+      : `flex overflow-hidden rounded-lg bg-surface text-sm ${cor}`;
+
+  // Modo grade: a mesma drop shadow dos cards do catálogo (fonte única em
+  // inicio/CarrosselDestaques.jsx). Modo lista: os cards ficam a 8px um do
+  // outro, então uma sombra bem mais curta e suave — a do catálogo, empilhada
+  // linha após linha, "suja" o fundo entre elas.
+  const estiloCartao = {
+    boxShadow: emGrade
+      ? SOMBRA_SLIDE_ATIVO
+      : 'rgba(0,0,0,0.38) 0 8px 10px -4px, rgba(0,0,0,0.28) 0 2px 4px -3px',
+  };
+
+  // Rodapé sobreposto à thumb no modo grade: degradê pra legibilidade do
+  // número/ação por cima da imagem. `items-end` mantém o botão alinhado à base
+  // enquanto um rótulo longo quebra em linhas acima.
+  const CLASSE_RODAPE_GRADE =
+    'absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3';
+
+  // Bloco de conteúdo (rótulo + ação/status) ao lado da miniatura no modo
+  // lista — o padding mora aqui, não na raiz, pra a thumb encostar na borda.
+  const CLASSE_CONTEUDO_LISTA =
+    'flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5';
+
   // `colisao` (calculado em `PaginaDoAnime.jsx`, `remotosDoNumero.length > 1`)
   // é verdadeiro só quando existe mais de um rótulo remoto de fato mapeando
   // pro mesmo `numero` inteiro (ex. "7" e "07" — extractors/base.py::
@@ -131,45 +244,66 @@ export default function LinhaDeEpisodio({
       percentualAssistido != null
         ? Math.max(1, Math.round((episodio.duracao_s - episodio.progresso_s) / 60))
         : null;
-    return (
-      <Link
-        to={`/assistir/${episodio.id}`}
-        state={{ episodio: { numero, animeId, animeTitulo, titulo: episodio.titulo } }}
-        className="flex items-center gap-3 rounded-lg border border-neon-soft bg-surface px-4 py-2 text-sm text-white outline-none transition-colors hover:border-neon hover:bg-surface-hover focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
-      >
-        <MiniaturaDoEpisodio thumb={thumb} />
-        <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <span className="flex items-center justify-between">
-            <span>
-              Episódio {numero}
-              {episodio.titulo ? ` — ${episodio.titulo}` : ''}
-            </span>
-            {episodio.assistido_em && (
-              <span className="text-xs text-ink-muted" aria-label="já assistido">
-                ✓ assistido
-              </span>
-            )}
+    // Rótulo, badge "assistido" e barra de progresso: mesmo conteúdo nos dois
+    // modos, só o enquadramento muda (linha ao lado da miniatura no modo lista,
+    // rodapé sobre a thumb no modo grade).
+    const tituloEpisodio = (
+      <span className={'font-semibold' + (emGrade ? ' line-clamp-2' : '')}>
+        Episódio {numero}
+        {episodio.titulo ? ` — ${episodio.titulo}` : ''}
+      </span>
+    );
+    const badgeAssistido = episodio.assistido_em ? (
+      <span className="shrink-0 text-xs text-ink-muted" aria-label="já assistido">
+        ✓ assistido
+      </span>
+    ) : null;
+    const barraProgresso =
+      percentualAssistido != null ? (
+        <span className="flex items-center gap-2">
+          <span
+            role="progressbar"
+            aria-label="progresso de reprodução"
+            aria-valuenow={percentualAssistido}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
+          >
+            <span
+              style={{ width: `${percentualAssistido}%` }}
+              className="block h-full rounded-full bg-neon"
+            />
           </span>
-          {percentualAssistido != null && (
-            <span className="flex items-center gap-2">
-              <span
-                role="progressbar"
-                aria-label="progresso de reprodução"
-                aria-valuenow={percentualAssistido}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
-              >
-                <span
-                  style={{ width: `${percentualAssistido}%` }}
-                  className="block h-full rounded-full bg-neon"
-                />
-              </span>
-              <span className="text-xs text-ink-muted">faltam {minutosRestantes} min</span>
-            </span>
-          )}
+          <span className="shrink-0 text-xs text-ink-muted font-semibold">faltam {minutosRestantes} min</span>
         </span>
-      </Link>
+      ) : null;
+    return (
+      <CartaoDeEpisodio
+        modo={modo}
+        cor="text-white"
+        estilo={estiloCartao}
+        para={`/assistir/${episodio.id}`}
+        estadoDeRota={{ episodio: { numero, animeId, animeTitulo, titulo: episodio.titulo } }}
+      >
+        <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
+        {emGrade ? (
+          <span className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3">
+            <span className="flex items-start justify-between gap-2">
+              {tituloEpisodio}
+              {badgeAssistido}
+            </span>
+            {barraProgresso}
+          </span>
+        ) : (
+          <span className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 px-3 py-2.5">
+            <span className="flex items-center justify-between gap-2">
+              {tituloEpisodio}
+              {badgeAssistido}
+            </span>
+            {barraProgresso}
+          </span>
+        )}
+      </CartaoDeEpisodio>
     );
   }
 
@@ -209,89 +343,122 @@ export default function LinhaDeEpisodio({
         notaOrigem = ROTULO_VERSAO[episodioDescartado.versao] ?? episodioDescartado.versao;
       }
     }
-    return (
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-chrome px-4 py-2 text-sm text-ink-muted">
-        <span className="flex min-w-0 items-center gap-3">
-          <MiniaturaDoEpisodio thumb={thumb} />
-          <span>
-            {naoNumerico ? rotulo : `Episódio ${numero}`}
-            {liberadoOuDescartado.assistido_em && (
-              <span className="ml-2 text-xs text-ink-muted" aria-label="já assistido">
-                ✓ assistido
-              </span>
-            )}
-            {notaOrigem && <span className="ml-2 text-xs text-ink-muted">({notaOrigem})</span>}
+    // Label + badges: mesmo conteúdo nos dois modos, só o enquadramento muda —
+    // linha ao lado da miniatura no modo lista, rodapé sobre a thumb no modo
+    // grade.
+    const rotuloComNotas = (
+      <span>
+        {naoNumerico ? rotulo : <span className="text-sm text-white font-semibold">Episódio {numero}</span>}
+        {liberadoOuDescartado.assistido_em && (
+          <span className="ml-3 text-sm text-white font-semibold" aria-label="já assistido">
+            ✓ assistido
           </span>
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            if (naoNumerico) return;
-            aoCapturar(numero);
-          }}
-          disabled={capturando}
-          aria-disabled={capturando || naoNumerico}
-          className={`rounded border border-neon-soft px-3 py-1 text-xs font-semibold uppercase tracking-wide text-neon outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50${
-            naoNumerico ? ' cursor-not-allowed opacity-50' : ''
-          }`}
-        >
-          {capturando ? 'Capturando…' : 'Recapturar'}
-        </button>
-      </div>
+        )}
+        {notaOrigem && <span className="ml-2 text-sm text-white font-semibold">({notaOrigem})</span>}
+      </span>
+    );
+    // "Recapturar" é só TEXTO — o card/linha inteiro (CartaoDeEpisodio) é o alvo
+    // de clique. `naoNumerico` (defensivo; um episódio liberado/assistido
+    // sempre tem número) não tem o que recapturar: card não clicável, sem a
+    // ação.
+    const conteudoLiberado = (
+      <>
+        <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
+        <div className={emGrade ? CLASSE_RODAPE_GRADE : CLASSE_CONTEUDO_LISTA}>
+          {rotuloComNotas}
+          {!naoNumerico && (
+            <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-neon">
+              {capturando ? 'Capturando…' : 'Recapturar'}
+            </span>
+          )}
+        </div>
+      </>
+    );
+    if (naoNumerico) {
+      return (
+        <div className={classeRaiz('text-ink-muted')} style={estiloCartao}>
+          {conteudoLiberado}
+        </div>
+      );
+    }
+    return (
+      <CartaoDeEpisodio
+        modo={modo}
+        cor="text-ink-muted"
+        estilo={estiloCartao}
+        aoClicar={() => aoCapturar(numero)}
+        desabilitado={capturando}
+        rotuloAcessivel={`Recapturar episódio ${numero}`}
+      >
+        {conteudoLiberado}
+      </CartaoDeEpisodio>
     );
   }
 
   if (episodio) {
     const statusAtual = job?.status ?? episodio.status;
     const rotuloStatus = ROTULOS_STATUS[statusAtual] ?? statusAtual;
+    const rotuloEpisodio = <span>Episódio {numero}</span>;
+    const statusAoVivo = (
+      <span aria-live="polite" className="shrink-0">
+        {rotuloStatus}
+      </span>
+    );
     return (
-      <div className="flex items-center justify-between rounded-lg border border-border-chrome bg-surface px-4 py-2 text-sm text-ink-muted">
-        <span className="flex min-w-0 items-center gap-3">
-          <MiniaturaDoEpisodio thumb={thumb} />
-          <span>Episódio {numero}</span>
-        </span>
-        <span aria-live="polite">{rotuloStatus}</span>
+      <div className={classeRaiz('text-ink-muted')} style={estiloCartao}>
+        <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
+        <div className={emGrade ? CLASSE_RODAPE_GRADE : CLASSE_CONTEUDO_LISTA}>
+          {rotuloEpisodio}
+          {statusAoVivo}
+        </div>
       </div>
     );
   }
 
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border-chrome px-4 py-2 text-sm text-ink-muted">
-      <span className="flex min-w-0 items-center gap-3">
-        <MiniaturaDoEpisodio thumb={thumb} />
-        <span>
-          {naoNumerico ? rotulo : `Episódio ${numero}`}
-          {rotuloDivergente && (
-            <span className="ml-2 text-xs text-ink-muted">(rótulo "{rotulo}" na fonte)</span>
-          )}
-        </span>
-      </span>
-      <div className="flex items-center gap-2">
-        {naoNumerico && (
-          <span className="text-xs text-ink-muted">
-            Captura indisponível — rótulo não numérico
+  const rotuloComDivergencia = (
+    <span>
+      {naoNumerico ? rotulo : `Episódio ${numero}`}
+      {rotuloDivergente && (
+        <span className="ml-2 text-xs text-ink-muted">(rótulo "{rotulo}" na fonte)</span>
+      )}
+    </span>
+  );
+  // "Capturar" é só TEXTO — o card/linha inteiro (CartaoDeEpisodio) é o alvo de
+  // clique. `naoNumerico` (rótulo não numérico na fonte, ex. "Especial"): o
+  // contrato de captura só aceita `numero`, então o card não é clicável e o
+  // texto vira o aviso.
+  const conteudoCaptura = (
+    <>
+      <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
+      <div className={emGrade ? CLASSE_RODAPE_GRADE : CLASSE_CONTEUDO_LISTA}>
+        {rotuloComDivergencia}
+        {naoNumerico ? (
+          <span className="text-xs text-ink-muted">Captura indisponível — rótulo não numérico</span>
+        ) : (
+          <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-neon">
+            {capturando ? 'Capturando…' : 'Capturar'}
           </span>
         )}
-        <button
-          type="button"
-          // Fica focável mesmo quando `naoNumerico` (não usa `disabled`
-          // nativo pra esse caso) — `disabled` tira o elemento da ordem de
-          // tabulação, e um usuário de teclado nunca chegaria a ler o texto
-          // explicativo acima. `aria-disabled` + bloquear o clique aqui
-          // dentro preserva o foco/leitura por leitor de tela.
-          onClick={() => {
-            if (naoNumerico) return;
-            aoCapturar(numero);
-          }}
-          disabled={capturando}
-          aria-disabled={capturando || naoNumerico}
-          className={`rounded border border-neon-soft px-3 py-1 text-xs font-semibold uppercase tracking-wide text-neon outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50${
-            naoNumerico ? ' cursor-not-allowed opacity-50' : ''
-          }`}
-        >
-          {capturando ? 'Capturando…' : 'Capturar'}
-        </button>
       </div>
-    </div>
+    </>
+  );
+  if (naoNumerico) {
+    return (
+      <div className={classeRaiz(' text-white font-semibold')} style={estiloCartao}>
+        {conteudoCaptura}
+      </div>
+    );
+  }
+  return (
+    <CartaoDeEpisodio
+      modo={modo}
+      cor="text-white font-semibold"
+      estilo={estiloCartao}
+      aoClicar={() => aoCapturar(numero)}
+      desabilitado={capturando}
+      rotuloAcessivel={`Capturar episódio ${numero}`}
+    >
+      {conteudoCaptura}
+    </CartaoDeEpisodio>
   );
 }
