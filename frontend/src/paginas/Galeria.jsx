@@ -8,9 +8,54 @@ import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
+import { traduzirGenero } from '../inicio/generos.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
+
+// Rótulos em `core/enums.py::StatusLancamento` (backend) — mesmos valores
+// StrEnum, traduzidos aqui pra exibição no filtro de status. `em_lancamento`
+// reaproveita o texto exato de `inicio/CarrosselDestaques.jsx::taglineDoItem`;
+// os demais não têm rótulo pré-existente no frontend, cunhados aqui.
+const ROTULOS_STATUS_LANCAMENTO = {
+  em_lancamento: 'Em lançamento',
+  finalizado: 'Finalizado',
+  nao_lancado: 'Não lançado',
+  cancelado: 'Cancelado',
+  hiato: 'Em hiato',
+};
+
+// Classe compartilhada pelos três <select> do filtro/ordenação — mesmo padrão
+// visual de player/SeletorDePreset.jsx (único <select> já existente no app).
+const CLASSE_SELECT =
+  'rounded-md border border-border-chrome bg-[#222] px-3 py-1.5 text-sm text-white outline-none transition-colors hover:bg-[#2a2a2a] focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon';
+const CLASSE_LABEL_FILTRO = 'text-xs font-semibold uppercase tracking-wide text-ink-muted';
+
+// Instante em ms de `proximo_ep_em`, ou `null` quando ausente/inválido —
+// usado só pela ordenação "Próximo episódio" (empurra itens sem valor pro
+// fim). `Number.isNaN` cobre string ISO malformada sem derrubar o sort.
+function instanteDoProximoEpisodio(anime) {
+  if (!anime.proximo_ep_em) return null;
+  const instante = new Date(anime.proximo_ep_em).getTime();
+  return Number.isNaN(instante) ? null : instante;
+}
+
+function compararPorProximoEpisodio(a, b) {
+  const instanteA = instanteDoProximoEpisodio(a);
+  const instanteB = instanteDoProximoEpisodio(b);
+  if (instanteA == null && instanteB == null) return 0;
+  if (instanteA == null) return 1; // sem valor sempre por último
+  if (instanteB == null) return -1;
+  return instanteA - instanteB; // mais próximo (menor instante) primeiro
+}
+
+// Nunca muta `lista` (mesma convenção de inicio/fileiras.js) — devolve
+// sempre uma cópia nova, mesmo pra `criterio === 'titulo'`.
+function ordenarAnimes(lista, criterio) {
+  const copia = [...lista];
+  if (criterio === 'proximo_episodio') return copia.sort(compararPorProximoEpisodio);
+  return copia.sort((a, b) => a.titulo.localeCompare(b.titulo, 'pt-BR'));
+}
 
 // Rota "/animes" — catálogo completo. Sem cadastro manual aqui: o catálogo
 // é populado materializando itens do feed de provedor externo na Home
@@ -39,17 +84,55 @@ import { VIDEOS_LOCAIS } from '../videosLocais.js';
 export default function Galeria() {
   const idMeuCatalogo = useId();
   const idVideosLocais = useId();
+  const idFiltroGenero = useId();
+  const idFiltroStatus = useId();
+  const idOrdenacao = useId();
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
   const { dados: animes, carregando, erro, recarregar } = useRecurso(listarAnimes, []);
-  const animesFiltrados = useMemo(
-    () =>
-      termoBuscaNormalizado
-        ? (animes ?? []).filter((anime) => anime.titulo.toLowerCase().includes(termoBuscaNormalizado))
-        : animes,
-    [animes, termoBuscaNormalizado]
-  );
+
+  const [generoSelecionado, setGeneroSelecionado] = useState('');
+  const [statusSelecionado, setStatusSelecionado] = useState('');
+  const [ordenacao, setOrdenacao] = useState('titulo');
+
+  // Opções construídas a partir do catálogo já carregado — nunca hardcoded:
+  // um gênero/status que não aparece em nenhum anime não vira opção morta no
+  // dropdown. `anime.generos` é nullable (coluna ainda não populada para todo
+  // anime) — `?? []` cobre. Rótulo ordena as opções (não a chave crua).
+  const generosDisponiveis = useMemo(() => {
+    const encontrados = new Set();
+    for (const anime of animes ?? []) {
+      for (const genero of anime.generos ?? []) encontrados.add(genero);
+    }
+    return [...encontrados].sort((a, b) => traduzirGenero(a).localeCompare(traduzirGenero(b), 'pt-BR'));
+  }, [animes]);
+
+  const statusDisponiveis = useMemo(() => {
+    const encontrados = new Set();
+    for (const anime of animes ?? []) {
+      if (anime.status_lancamento) encontrados.add(anime.status_lancamento);
+    }
+    return [...encontrados].sort((a, b) =>
+      (ROTULOS_STATUS_LANCAMENTO[a] ?? a).localeCompare(ROTULOS_STATUS_LANCAMENTO[b] ?? b, 'pt-BR')
+    );
+  }, [animes]);
+
+  // Busca -> gênero -> status -> ordenação, sempre client-side sobre o
+  // catálogo já carregado (sem chamada de API nova).
+  const animesExibidos = useMemo(() => {
+    let lista = animes ?? [];
+    if (termoBuscaNormalizado) {
+      lista = lista.filter((anime) => anime.titulo.toLowerCase().includes(termoBuscaNormalizado));
+    }
+    if (generoSelecionado) {
+      lista = lista.filter((anime) => (anime.generos ?? []).includes(generoSelecionado));
+    }
+    if (statusSelecionado) {
+      lista = lista.filter((anime) => anime.status_lancamento === statusSelecionado);
+    }
+    return ordenarAnimes(lista, ordenacao);
+  }, [animes, termoBuscaNormalizado, generoSelecionado, statusSelecionado, ordenacao]);
 
   const [animeParaRemover, setAnimeParaRemover] = useState(null);
   const [removendo, setRemovendo] = useState(false);
@@ -113,11 +196,11 @@ export default function Galeria() {
             Meu Catálogo
           </h1>
 
-          {/* Estados transitórios (carregando / erro / catálogo vazio / busca
-              sem resultado) — condições inalteradas. O wrapper só repõe o
-              `paddingInline` que antes vinha do `px` do <main>; cada mensagem
-              leva o próprio `mt-[22px]` (mesmo respiro título->conteúdo da
-              grade). Altura zero quando nada aparece. */}
+          {/* Estados transitórios (carregando / erro / catálogo vazio / sem
+              resultado) + a barra de filtro/ordenação, no mesmo wrapper que só
+              repõe o `paddingInline` que antes vinha do `px` do <main>; cada
+              bloco leva o próprio `mt-[22px]` (mesmo respiro título->conteúdo
+              da grade). Altura zero quando nada aparece. */}
           <div style={{ paddingInline: PADDING_TITULO }}>
             {carregando && (
               <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
@@ -136,9 +219,78 @@ export default function Galeria() {
             {!carregando && !erro && animes?.length === 0 && (
               <p className="mt-[22px] text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
             )}
-            {!carregando && !erro && animes?.length > 0 && animesFiltrados.length === 0 && (
+
+            {/* Filtro por gênero/status + ordenação — <select> nativo (mesmo
+                padrão de player/SeletorDePreset.jsx), sem chamada de API nova:
+                as três derivações rodam em memória sobre `animes`. Cada
+                <select> só renderiza se há pelo menos uma opção real (ver
+                `generosDisponiveis`/`statusDisponiveis` acima) — um dropdown
+                com só "Todos" seria um controle morto. Ordenação sempre
+                aparece: "Título (A-Z)" funciona mesmo sem nenhum dado extra. */}
+            {!carregando && !erro && animes?.length > 0 && (
+              <div className="mt-[22px] flex flex-wrap items-end gap-4">
+                {generosDisponiveis.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor={idFiltroGenero} className={CLASSE_LABEL_FILTRO}>
+                      Gênero
+                    </label>
+                    <select
+                      id={idFiltroGenero}
+                      value={generoSelecionado}
+                      onChange={(event) => setGeneroSelecionado(event.target.value)}
+                      className={CLASSE_SELECT}
+                    >
+                      <option value="">Todos os gêneros</option>
+                      {generosDisponiveis.map((genero) => (
+                        <option key={genero} value={genero}>
+                          {traduzirGenero(genero)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {statusDisponiveis.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor={idFiltroStatus} className={CLASSE_LABEL_FILTRO}>
+                      Status
+                    </label>
+                    <select
+                      id={idFiltroStatus}
+                      value={statusSelecionado}
+                      onChange={(event) => setStatusSelecionado(event.target.value)}
+                      className={CLASSE_SELECT}
+                    >
+                      <option value="">Todos os status</option>
+                      {statusDisponiveis.map((status) => (
+                        <option key={status} value={status}>
+                          {ROTULOS_STATUS_LANCAMENTO[status] ?? status}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="flex flex-col gap-1">
+                  <label htmlFor={idOrdenacao} className={CLASSE_LABEL_FILTRO}>
+                    Ordenar por
+                  </label>
+                  <select
+                    id={idOrdenacao}
+                    value={ordenacao}
+                    onChange={(event) => setOrdenacao(event.target.value)}
+                    className={CLASSE_SELECT}
+                  >
+                    <option value="titulo">Título (A-Z)</option>
+                    <option value="proximo_episodio">Próximo episódio</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {!carregando && !erro && animes?.length > 0 && animesExibidos.length === 0 && (
               <p className="mt-[22px] text-sm text-ink-muted">
-                Nenhum anime encontrado para “{termoBusca.trim()}”.
+                {termoBusca.trim()
+                  ? `Nenhum anime encontrado para “${termoBusca.trim()}”.`
+                  : 'Nenhum anime encontrado com os filtros selecionados.'}
               </p>
             )}
           </div>
@@ -151,7 +303,7 @@ export default function Galeria() {
               chegar na PaginaDoAnime pra resolver fonte / enfileirar captura;
               só o bookmark de "Próximas estreias" é beco sem saída proposital. */}
           <GradeDeCatalogo
-            itens={animesFiltrados}
+            itens={animesExibidos}
             tamanho="pequeno"
             chaveDoItem={(anime) => anime.id}
             renderItem={(anime) =>
