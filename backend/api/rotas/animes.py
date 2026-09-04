@@ -71,6 +71,9 @@ async def criar_anime(
         kitsu_id=corpo.kitsu_id,
         capa_url=corpo.capa_url,
         sinopse=corpo.sinopse,
+        banner_url=corpo.banner_url,
+        capa_cor=corpo.capa_cor,
+        generos=corpo.generos,
     )
     return await sessao.get(Anime, anime_id)
 
@@ -333,6 +336,9 @@ async def obter_anime(
         slug=anime.slug,
         ano=anime.ano,
         capa_path=anime.capa_path,
+        banner_path=anime.banner_path,
+        capa_cor=anime.capa_cor,
+        generos=anime.generos or [],
         sinopse=anime.sinopse,
         criado_em=anime.criado_em,
         versoes_disponiveis=_versoes_disponiveis(versoes_de_fonte),
