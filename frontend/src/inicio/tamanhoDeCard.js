@@ -32,6 +32,14 @@ export const CLASSES_POR_PAGINA = {
 // opacidade do Tailwind v4.
 export const FLEX_BASIS_SLOT = 'calc(100% / var(--por-pagina))';
 
+// Largura de UM cartão avulso, fora da grade (ex. header de
+// paginas/PaginaDoAnime.jsx) — reproduz o tamanho que o slot da grade dá:
+// (viewport − gutter de 7.4%) / `--por-pagina` − os 20px do `p-[10px]` do
+// slot. Aplicar junto com `CLASSES_POR_PAGINA[tamanho]` no MESMO elemento (é
+// ele que define `--por-pagina`). Usa `vw` no lugar do `%` da grade porque
+// aqui não há um container full-width pra medir (diferença: a scrollbar).
+export const LARGURA_CARTAO_AVULSO = 'calc(92.6vw / var(--por-pagina) - 20px)';
+
 // Gutter de 3.7% de cada lado da trilha/grade (onde a fileira ancora as setas).
 export const CLASSE_GUTTER = 'px-[3.7%]';
 

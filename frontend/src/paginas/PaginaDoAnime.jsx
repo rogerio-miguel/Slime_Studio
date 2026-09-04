@@ -10,12 +10,17 @@ import {
   removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
+import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+import { SOMBRA_SLIDE_ATIVO } from '../inicio/CarrosselDestaques.jsx';
+import { traduzirGenero } from '../inicio/generos.js';
+import { CLASSES_POR_PAGINA, LARGURA_CARTAO_AVULSO } from '../inicio/tamanhoDeCard.js';
+import { usePreferencia } from '../player/hooks/usePreferencia.js';
 
 // Rótulo legível de `versaoAtiva`/`Episodio.versao` — inclui 'desconhecida'
 // (fonte NAO_DIFERENCIADA, o backend nunca finge saber qual versão foi
@@ -49,6 +54,50 @@ function pertenceAFonteAtiva(episodio, { dominioAtivo, versaoAtiva }) {
   return episodio.versao === versaoAtiva || episodio.versao === 'desconhecida';
 }
 
+// Chave da preferência lista/grade da lista de episódios (persistida por
+// `usePreferencia` — mesmo prefixo `slime.` de `slime.preset`/`slime.hudVisivel`).
+const CHAVE_MODO_VISUALIZACAO = 'slime.modoVisualizacaoEpisodios';
+
+// Ícones inline do alternador lista/grade — sem lib de ícones (Escada de
+// Minimalismo, CLAUDE.md §4; mesmo padrão de `player/Icones.jsx`).
+// `aria-hidden`: o texto acessível vem do `aria-label` de cada <button>.
+const propsIconeVisualizacao = {
+  viewBox: '0 0 24 24',
+  width: 16,
+  height: 16,
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+  'aria-hidden': 'true',
+  focusable: 'false',
+};
+
+function IconeLista() {
+  return (
+    <svg {...propsIconeVisualizacao}>
+      <line x1="8" y1="6" x2="21" y2="6" />
+      <line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" />
+      <line x1="3" y1="12" x2="3.01" y2="12" />
+      <line x1="3" y1="18" x2="3.01" y2="18" />
+    </svg>
+  );
+}
+
+function IconeGrade() {
+  return (
+    <svg {...propsIconeVisualizacao}>
+      <rect x="3" y="3" width="7" height="7" />
+      <rect x="14" y="3" width="7" height="7" />
+      <rect x="3" y="14" width="7" height="7" />
+      <rect x="14" y="14" width="7" height="7" />
+    </svg>
+  );
+}
+
 // Rota "/anime/:id" — grade prontos/não capturados. Clique num episódio não
 // capturado dispara a resolução automática de fonte direto (sem formulário
 // de URL, ESPECIFICACAO.md §4): `POST /api/admin/jobs` (modo "site") resolve
@@ -66,6 +115,12 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     recarregar: recarregarAnime,
   } = useRecurso(() => obterAnime(animeId), [animeId]);
   const animeNaoEncontrado = erroAnime instanceof ErroDeApi && erroAnime.status === 404;
+
+  // Linha "ano • gênero" abaixo da sinopse — mesmo formato do card do
+  // carrossel da Home (inicio/CarrosselDestaques.jsx): ano seguido de até 3
+  // gêneros traduzidos, juntados por " • ", partes vazias omitidas.
+  const generosTraduzidos = (anime?.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
+  const meta = [anime?.ano, generosTraduzidos.join(', ')].filter(Boolean).join(' • ');
 
   const episodios = useRecurso(() => listarEpisodios(animeId), [animeId]);
 
@@ -102,6 +157,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const [numeroCapturando, setNumeroCapturando] = useState(null);
   const [erroCaptura, setErroCaptura] = useState(null);
   const [fonteAmbigua, setFonteAmbigua] = useState(null); // { dominio, candidatos, numero }
+
+  // Alternador lista/grade da lista de episódios, persistido por navegador via
+  // o hook padrão de preferências (try/catch de leitura e escrita já lá
+  // dentro). O guard `=== 'grade' ? … : 'lista'` normaliza qualquer valor
+  // inesperado no storage (corrupção / edição manual) pros dois únicos modos
+  // válidos — mantém `aria-pressed` e o container sempre coerentes.
+  const [modoArmazenado, mudarModoVisualizacao] = usePreferencia(CHAVE_MODO_VISUALIZACAO, 'lista');
+  const modoVisualizacao = modoArmazenado === 'grade' ? 'grade' : 'lista';
 
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   const [removendo, setRemovendo] = useState(false);
@@ -452,45 +515,107 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           filtrar, então a caixa de busca nem renderiza (ver
           `components/BarraDeNavegacao.jsx`). */}
       <BarraDeNavegacao fase="revelado" />
-      <main className="px-6 pb-16 pt-24 md:px-10">
+      {/* `bg-[#17171b]` + `min-h-screen`: mesmo fundo do `<main>` de
+          paginas/Galeria.jsx (fonte da verdade — cor do `body` do Disney+) —
+          é ele que faz a drop shadow dos cards (capa e grade de episódios)
+          aparecer; sobre um preto mais fechado a sombra 69% preta some. */}
+      <main className="min-h-screen bg-[#17171b] px-6 pb-16 pt-24 md:px-10">
         {/* Header ampliado — vira o conteúdo central da página (capa e
             título maiores, mais respiro) em vez de um preâmbulo estreito
             acima da grade; lista de episódios continua abaixo, sem herdar
             essa largura (max-w-4xl no container da lista, mais adiante) pra
             não esticar linha de episódio a ponto de ficar ilegível em telas
-            largas. */}
-        <header className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-            {anime?.capa_path && (
+            largas. Padrão de página de detalhe (Disney+/Netflix): faixa
+            panorâmica no topo, capa + título logo abaixo com o topo da capa
+            invadindo a faixa. */}
+        <header className="mb-10">
+          {/* Faixa panorâmica full-bleed: `-mx-6 md:-mx-10` cancela o `px` do
+              <main> pra sangrar até as bordas da viewport; `-mt-2` come um
+              naco do `pt-24` do <main> deixando só um respiro pequeno abaixo
+              da navbar (fixa/translúcida). O fallback "sem banner" espelha o
+              `semBanner` de inicio/CarrosselDestaques.jsx: a cor dominante da
+              capa vira o fundo (`bg-surface` quando `capa_cor` é null — Kitsu
+              ou `color: null` da AniList), com a própria capa borrada e
+              escurecida por cima como textura. */}
+          <div className="relative -mx-6 -mt-2 h-44 overflow-hidden sm:h-56 md:-mx-10 lg:h-72">
+            {anime?.banner_path ? (
               <img
-                src={anime.capa_path}
+                src={anime.banner_path}
                 alt=""
-                className="h-56 w-40 flex-none rounded-lg border border-neon-soft object-cover sm:h-72 sm:w-52"
+                className="absolute inset-0 h-full w-full object-cover"
               />
-            )}
-            <div>
-              <h1
-                ref={focoTitulo}
-                tabIndex={-1}
-                className="mb-3 text-3xl font-semibold text-white outline-none sm:text-4xl md:text-5xl"
+            ) : (
+              <div
+                className="absolute inset-0 bg-surface"
+                style={anime?.capa_cor ? { backgroundColor: anime.capa_cor } : undefined}
               >
-                {anime?.titulo ?? `Anime #${animeId}`}
-                {anime?.ano ? ` (${anime.ano})` : ''}
-              </h1>
-              {anime?.sinopse && (
-                <p className="max-w-2xl text-sm text-ink-muted sm:text-base">{anime.sinopse}</p>
-              )}
-            </div>
+                {anime?.capa_path && (
+                  <img
+                    src={anime.capa_path}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover scale-125 blur-lg brightness-[0.5] opacity-70"
+                  />
+                )}
+              </div>
+            )}
+            {/* Gradiente de baixo pra cima (o conteúdo do header fica ABAIXO
+                da faixa, não à esquerda como no carrossel — daí `to-t`): funde
+                o pé da faixa no `#17171b` do <main>. */}
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#17171b] via-[#17171b]/60 to-transparent" />
           </div>
-          {!animeNaoEncontrado && (
-            <button
-              type="button"
-              onClick={() => setConfirmandoRemocao(true)}
-              className="flex-none rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 focus-visible:ring-2 focus-visible:ring-neon"
-            >
-              Remover do catálogo
-            </button>
-          )}
+
+          {/* Capa + título sobre o `#17171b`, com `-mt-16` puxando só o topo
+              da capa pra dentro da faixa — o resto da capa e todo o
+              título/sinopse ficam abaixo dela. Layout mantido: capa+título de
+              um lado, "Remover do catálogo" do outro. */}
+          <div className="relative -mt-16 flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+              {anime?.capa_path && (
+                // Mesmo card do catálogo (paginas/Galeria.jsx → AnimeCard dentro
+                // do wrapper de sombra `SOMBRA_SLIDE_ATIVO` de
+                // inicio/GradeDeCatalogo.jsx), no MESMO tamanho da grade da
+                // Galeria (`CLASSES_POR_PAGINA.pequeno` define `--por-pagina`,
+                // `LARGURA_CARTAO_AVULSO` reproduz a largura do slot). `estatico`
+                // tira o hover/navegação; `semLegenda` tira o título (já está no
+                // <h1> ao lado); sem `aoRemover`, sem botão de X.
+                <div
+                  className={`flex-none ${CLASSES_POR_PAGINA.pequeno}`}
+                  style={{ width: LARGURA_CARTAO_AVULSO }}
+                >
+                  <div className="rounded-xl" style={{ boxShadow: SOMBRA_SLIDE_ATIVO }}>
+                    <AnimeCard anime={anime} estatico semLegenda />
+                  </div>
+                </div>
+              )}
+              {/* `sm:self-end`: alinha o título com a BASE da capa (a capa é
+                  o item alto da linha), não com o topo dela lá em cima na
+                  faixa. */}
+              <div className="sm:self-end">
+                <h1
+                  ref={focoTitulo}
+                  tabIndex={-1}
+                  className="mb-3 text-3xl font-semibold text-white outline-none sm:text-4xl md:text-5xl"
+                >
+                  {anime?.titulo ?? `Anime #${animeId}`}
+                </h1>
+                {anime?.sinopse && (
+                  <p className="max-w-2xl text-sm text-ink-muted sm:text-base">{anime.sinopse}</p>
+                )}
+                {meta && (
+                  <p className="mt-2 text-xs text-ink-muted sm:text-sm">{meta}</p>
+                )}
+              </div>
+            </div>
+            {!animeNaoEncontrado && (
+              <button
+                type="button"
+                onClick={() => setConfirmandoRemocao(true)}
+                className="flex-none rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 focus-visible:ring-2 focus-visible:ring-neon"
+              >
+                Remover do catálogo
+              </button>
+            )}
+          </div>
         </header>
 
         {erroAnime && (
@@ -554,14 +679,45 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             <button
               type="button"
               onClick={() => setTrocandoFonte(true)}
-              className="rounded-md border border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
             >
               Trocar fonte
             </button>
+            <div
+              className="ml-auto flex items-center gap-1"
+              role="group"
+              aria-label="Modo de exibição dos episódios"
+            >
+              {[
+                { modo: 'grade', rotulo: 'Exibir em grade', Icone: IconeGrade },
+                { modo: 'lista', rotulo: 'Exibir em lista', Icone: IconeLista },
+              ].map(({ modo, rotulo, Icone }) => (
+                <button
+                  key={modo}
+                  type="button"
+                  onClick={() => mudarModoVisualizacao(modo)}
+                  aria-pressed={modoVisualizacao === modo}
+                  aria-label={rotulo}
+                  className={`rounded-md border-2 p-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-neon ${
+                    modoVisualizacao === modo
+                      ? 'border-neon text-white'
+                      : 'border-border-chrome text-ink-muted hover:border-neon hover:text-white'
+                  }`}
+                >
+                  <Icone />
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        <div className="flex flex-col gap-2">
+        <div
+          className={
+            modoVisualizacao === 'grade'
+              ? 'grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4'
+              : 'flex flex-col gap-2'
+          }
+        >
           {linhas.map(({ chave, numero, rotulo, colisao, episodio, episodioDescartado, thumb }) => {
             const job = episodio ? jobsPorEpisodio.get(episodio.id) : null;
             return (
@@ -580,6 +736,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                 // pra anotar a origem de um `episodioDescartado`).
                 dominioAtivo={remotos.dados?.dominio ?? null}
                 versaoAtiva={versaoAtiva}
+                modo={modoVisualizacao}
                 job={job}
                 capturando={numero != null && numeroCapturando === numero}
                 aoCapturar={capturar}
