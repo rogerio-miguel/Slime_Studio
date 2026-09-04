@@ -209,6 +209,128 @@ async def test_aplicar_metadados_sem_lancamento_nao_toca_colunas_de_lancamento(
         assert anime.lancamento_atualizado_em is None
 
 
+async def test_aplicar_metadados_preenche_banner_e_capa_cor(sessionmaker: _SessionMaker):
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+
+    await aplicar_metadados(
+        sessionmaker,
+        anime_id,
+        MetadadosDeAnime(
+            capa_url="https://img/capa.jpg",
+            sinopse=None,
+            anilist_id=None,
+            kitsu_id=None,
+            banner_url="https://img/banner.jpg",
+            capa_cor="#e4a15d",
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.banner_path == "https://img/banner.jpg"
+        assert anime.capa_cor == "#e4a15d"
+
+
+async def test_aplicar_metadados_nao_sobrescreve_banner_nem_com_none(sessionmaker: _SessionMaker):
+    """Preenchimento só-quando-nulo: banner/cor já gravados não são tocados, e um
+    metadado com `banner_url=None` não zera a coluna."""
+    anime_id = await _criar_anime(
+        sessionmaker,
+        titulo="Slime",
+        slug="slime",
+        banner_path="https://original/banner.jpg",
+        capa_cor="#000000",
+    )
+
+    await aplicar_metadados(
+        sessionmaker,
+        anime_id,
+        MetadadosDeAnime(
+            capa_url=None,
+            sinopse=None,
+            anilist_id=None,
+            kitsu_id=None,
+            banner_url="https://novo/banner.jpg",
+            capa_cor=None,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.banner_path == "https://original/banner.jpg"
+        assert anime.capa_cor == "#000000"
+
+
+async def test_aplicar_metadados_preenche_generos_e_ano(sessionmaker: _SessionMaker):
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+
+    await aplicar_metadados(
+        sessionmaker,
+        anime_id,
+        MetadadosDeAnime(
+            capa_url=None,
+            sinopse=None,
+            anilist_id=None,
+            kitsu_id=None,
+            generos=["Action", "Comedy"],
+            ano=2018,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.generos == ["Action", "Comedy"]
+        assert anime.ano == 2018
+
+
+async def test_aplicar_metadados_nao_sobrescreve_generos_nem_ano(sessionmaker: _SessionMaker):
+    """Preenchimento só-quando-nulo: gêneros/ano já gravados não são substituídos
+    pelos do metadado novo."""
+    anime_id = await _criar_anime(
+        sessionmaker,
+        titulo="Slime",
+        slug="slime",
+        generos=["Slice of Life"],
+        ano=2015,
+    )
+
+    await aplicar_metadados(
+        sessionmaker,
+        anime_id,
+        MetadadosDeAnime(
+            capa_url=None,
+            sinopse=None,
+            anilist_id=None,
+            kitsu_id=None,
+            generos=["Action", "Comedy"],
+            ano=2018,
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.generos == ["Slice of Life"]
+        assert anime.ano == 2015
+
+
+async def test_aplicar_metadados_generos_lista_vazia_nao_grava(sessionmaker: _SessionMaker):
+    """`generos=[]` do provedor ("sem gêneros conhecidos") não vira uma lista
+    vazia gravada — a coluna fica `NULL`, distinta de "gêneros = nenhum"."""
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+
+    await aplicar_metadados(
+        sessionmaker,
+        anime_id,
+        MetadadosDeAnime(
+            capa_url=None, sinopse=None, anilist_id=None, kitsu_id=None, generos=[]
+        ),
+    )
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.generos is None
+
+
 # --- atualizar_lancamento / atualizar_lancamentos_em_lote ---
 
 

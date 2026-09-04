@@ -516,6 +516,65 @@ async def test_criar_anime_com_metadado_persiste_direto_sem_chamar_provedor(
     assert resposta.json()["capa_path"] == "https://img/direto.jpg"
 
 
+async def test_criar_anime_com_banner_e_capa_cor_no_payload_persiste(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """`banner_url`/`capa_cor` do item do feed da Home entram no curto-circuito de
+    "algum campo veio no payload" (sem chamar provedor) e persistem em
+    `Anime.banner_path`/`Anime.capa_cor`."""
+    chamadas = []
+
+    async def _buscar_fake(titulo):
+        chamadas.append(titulo)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/animes",
+        json={
+            "titulo": "Slime Com Banner",
+            "banner_url": "https://img/banner.jpg",
+            "capa_cor": "#e4a15d",
+        },
+    )
+
+    assert resposta.status_code == 200
+    assert chamadas == []
+    corpo = resposta.json()
+    assert corpo["banner_path"] == "https://img/banner.jpg"
+    assert corpo["capa_cor"] == "#e4a15d"
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, corpo["id"])
+        assert anime.banner_path == "https://img/banner.jpg"
+        assert anime.capa_cor == "#e4a15d"
+
+
+async def test_criar_anime_com_generos_no_payload_persiste_sem_chamar_provedor(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """`generos` do item do feed da Home entra no curto-circuito de "algum campo
+    veio no payload" (sem chamar provedor) e persiste em `Anime.generos`."""
+    chamadas = []
+
+    async def _buscar_fake(titulo):
+        chamadas.append(titulo)
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/animes",
+        json={"titulo": "Slime Com Generos", "generos": ["Action", "Comedy"]},
+    )
+
+    assert resposta.status_code == 200
+    assert chamadas == []
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, resposta.json()["id"])
+        assert anime.generos == ["Action", "Comedy"]
+
+
 async def test_criar_anime_enriquecimento_falho_nao_bloqueia_criacao(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
@@ -679,6 +738,94 @@ async def test_em_alta_refresh_oportunista_erro_de_escrita_nao_derruba_home(
     assert resposta.status_code == 200
     assert resposta.json()[0]["anilist_id"] == 1
     assert "refresh oportunista de lançamento" in caplog.text
+
+
+# --- F4a visual: backfill de banner/cor no cruzamento do feed "em alta" ---
+
+
+def _feed_com_banner(anilist_id: int, *, banner_url: str, capa_cor: str | None) -> AnimeEmAlta:
+    return AnimeEmAlta(
+        titulo_romaji=f"Anime {anilist_id}",
+        titulo_ingles=None,
+        capa_url=None,
+        banner_url=banner_url,
+        anilist_id=anilist_id,
+        capa_cor=capa_cor,
+    )
+
+
+async def test_em_alta_preenche_banner_de_anime_catalogado_sem_banner(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Slime Sem Banner", "slime-sem-banner", anilist_id=1
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_banner(1, banner_url="https://img/banner.jpg", capa_cor="#e4a15d")]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.banner_path == "https://img/banner.jpg"
+        assert anime.capa_cor == "#e4a15d"
+
+
+async def test_em_alta_nao_sobrescreve_banner_ja_gravado(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "Slime Com Banner",
+        "slime-com-banner",
+        anilist_id=1,
+        banner_path="https://original/banner.jpg",
+        capa_cor="#000000",
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_banner(1, banner_url="https://novo/banner.jpg", capa_cor="#ffffff")]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.banner_path == "https://original/banner.jpg"
+        assert anime.capa_cor == "#000000"
+
+
+async def test_em_alta_backfill_de_banner_erro_de_escrita_nao_derruba_home(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    await _criar_anime(sessionmaker_api, "Slime Home Banner", "slime-home-banner", anilist_id=1)
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_banner(1, banner_url="https://img/b.jpg", capa_cor=None)]
+
+    async def _escrita_falha(*args, **kwargs):
+        raise SQLAlchemyError("banco indisponível")
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+    monkeypatch.setattr(
+        "api.servicos.descoberta.preencher_banner_visual_em_lote", _escrita_falha
+    )
+
+    with caplog.at_level("WARNING"):
+        resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    assert resposta.json()[0]["anilist_id"] == 1
+    assert "backfill oportunista de banner" in caplog.text
 
 
 # --- F4b: refresh lazy fire-and-forget ao abrir a página de um anime ---

@@ -496,6 +496,70 @@ async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(
     assert "episodios_novos" not in resposta.json()
 
 
+async def test_obter_anime_detalhe_expoe_banner_e_capa_cor(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    async with sessionmaker_api() as sessao:
+        anime = Anime(
+            titulo="Anime Com Hero",
+            slug="anime-com-hero",
+            banner_path="https://img/banner.jpg",
+            capa_cor="#e4a15d",
+        )
+        sessao.add(anime)
+        await sessao.commit()
+        anime_id = anime.id
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["banner_path"] == "https://img/banner.jpg"
+    assert corpo["capa_cor"] == "#e4a15d"
+
+
+async def test_obter_anime_detalhe_banner_e_capa_cor_null_por_padrao(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    anime_id = await _criar_anime_catalogado(sessionmaker_api, "Anime Sem Hero")
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+
+    assert resposta.status_code == 200
+    assert resposta.json()["banner_path"] is None
+    assert resposta.json()["capa_cor"] is None
+
+
+async def test_obter_anime_detalhe_expoe_generos(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    async with sessionmaker_api() as sessao:
+        anime = Anime(
+            titulo="Anime Com Generos",
+            slug="anime-com-generos",
+            generos=["Action", "Comedy"],
+        )
+        sessao.add(anime)
+        await sessao.commit()
+        anime_id = anime.id
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+
+    assert resposta.status_code == 200
+    assert resposta.json()["generos"] == ["Action", "Comedy"]
+
+
+async def test_obter_anime_detalhe_generos_lista_vazia_por_padrao(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    anime_id = await _criar_anime_catalogado(sessionmaker_api, "Anime Sem Generos")
+
+    resposta = await cliente.get(f"/api/animes/{anime_id}")
+
+    assert resposta.status_code == 200
+    assert resposta.json()["generos"] == []
+
+
 async def test_em_alta_nao_expoe_o_badge_episodios_novos(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):

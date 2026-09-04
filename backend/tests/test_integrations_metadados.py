@@ -67,7 +67,104 @@ def test_anilist_buscar_por_titulo_sanitiza_sinopse(monkeypatch: pytest.MonkeyPa
         sinopse="Linha um\nLinha dois & mais",
         anilist_id=123,
         kitsu_id=None,
+        banner_url="https://img/banner.jpg",
     )
+
+
+def test_anilist_buscar_por_titulo_preenche_banner_e_capa_cor(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 7,
+                "title": {"romaji": "Tensei", "english": None},
+                "coverImage": {"extraLarge": "https://img/cover.jpg", "color": "#e4a15d"},
+                "bannerImage": "https://img/banner.jpg",
+                "description": "sinopse",
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_por_titulo("Slime")
+
+    assert resultado.banner_url == "https://img/banner.jpg"
+    assert resultado.capa_cor == "#e4a15d"
+
+
+def test_anilist_buscar_por_titulo_sem_banner_nem_cor_deixa_campos_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`bannerImage` nulo e `coverImage` sem `color` (a AniList omite os dois em
+    títulos antigos): `banner_url`/`capa_cor` caem para `None`."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 7,
+                "coverImage": {"extraLarge": "https://img/c.jpg"},
+                "bannerImage": None,
+                "description": "x",
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_por_titulo("Slime")
+
+    assert resultado.banner_url is None
+    assert resultado.capa_cor is None
+
+
+def test_anilist_buscar_por_titulo_preenche_generos_e_ano(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 7,
+                "coverImage": {"extraLarge": "https://img/c.jpg"},
+                "bannerImage": None,
+                "genres": ["Action", "Comedy"],
+                "description": "x",
+                "seasonYear": 2018,
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_por_titulo("Slime")
+
+    assert resultado.generos == ["Action", "Comedy"]
+    assert resultado.ano == 2018
+
+
+def test_anilist_buscar_por_titulo_sem_generos_nem_ano_deixa_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`genres` vazio e sem `seasonYear`/`startDate` (títulos antigos): `generos`
+    cai para `None` e `ano` para `None` — não `[]` nem `0`."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 7,
+                "coverImage": {"extraLarge": "https://img/c.jpg"},
+                "bannerImage": None,
+                "genres": [],
+                "description": "x",
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_por_titulo("Slime")
+
+    assert resultado.generos is None
+    assert resultado.ano is None
 
 
 def test_anilist_buscar_por_titulo_nao_encontrado_404(monkeypatch: pytest.MonkeyPatch):
@@ -622,6 +719,112 @@ def test_anilist_buscar_lancamento_media_null_devolve_none(monkeypatch: pytest.M
     assert AniListProvider().buscar_lancamento_por_anilist_id(999) is None
 
 
+# --- AniListProvider: metadados por id AniList (feature banner na página) ---
+
+
+def test_anilist_buscar_metadados_por_anilist_id(monkeypatch: pytest.MonkeyPatch):
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "title": {"romaji": "Tensei", "english": "Reincarnated"},
+                "description": "Linha um<br>Linha dois &amp; mais",
+                "coverImage": {"extraLarge": "https://img/cover.jpg", "color": "#e4a15d"},
+                "bannerImage": "https://img/banner.jpg",
+            }
+        }
+    }
+    capturado = {}
+
+    def _post(*a, **k):
+        capturado.update(k["json"])
+        return _RespostaFalsa(corpo=corpo)
+
+    monkeypatch.setattr("integrations.anilist.requests.post", _post)
+
+    resultado = AniListProvider().buscar_metadados_por_anilist_id(21)
+
+    assert capturado["variables"] == {"id": 21}
+    assert resultado == MetadadosDeAnime(
+        capa_url="https://img/cover.jpg",
+        sinopse="Linha um\nLinha dois & mais",
+        anilist_id=21,
+        kitsu_id=None,
+        banner_url="https://img/banner.jpg",
+        capa_cor="#e4a15d",
+        titulo_romaji="Tensei",
+        titulo_ingles="Reincarnated",
+    )
+
+
+def test_anilist_buscar_metadados_por_anilist_id_extrai_generos_e_ano(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "description": "sinopse",
+                "coverImage": {"extraLarge": "https://img/cover.jpg"},
+                "bannerImage": "https://img/banner.jpg",
+                "genres": ["Action", "Comedy"],
+                "seasonYear": 2018,
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_metadados_por_anilist_id(21)
+
+    assert resultado.generos == ["Action", "Comedy"]
+    assert resultado.ano == 2018
+
+
+def test_anilist_buscar_metadados_por_anilist_id_ano_cai_para_start_date(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Sem `seasonYear`, `_extrair_ano` recai sobre `startDate.year`."""
+    corpo = {
+        "data": {
+            "Media": {
+                "id": 21,
+                "description": "sinopse",
+                "coverImage": {"extraLarge": "https://img/cover.jpg"},
+                "bannerImage": None,
+                "genres": [],
+                "startDate": {"year": 2015},
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = AniListProvider().buscar_metadados_por_anilist_id(21)
+
+    assert resultado.generos is None
+    assert resultado.ano == 2015
+
+
+def test_anilist_buscar_metadados_por_anilist_id_media_null_devolve_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post",
+        lambda *a, **k: _RespostaFalsa(corpo={"data": {"Media": None}}),
+    )
+
+    assert AniListProvider().buscar_metadados_por_anilist_id(999) is None
+
+
+def test_kitsu_nao_implementa_metadados_por_anilist_id():
+    """Kitsu herda a implementação padrão de `ProvedorDeMetadados` (`None`) — não
+    conhece id AniList."""
+    assert KitsuProvider().buscar_metadados_por_anilist_id(21) is None
+
+
 # --- KitsuProvider ---
 
 
@@ -1010,6 +1213,7 @@ class _ProvedorFake(ProvedorDeMetadados):
         nome: str,
         *,
         metadados=None,
+        metadados_por_id=None,
         em_alta=None,
         proxima_temporada=None,
         titulos=None,
@@ -1017,6 +1221,7 @@ class _ProvedorFake(ProvedorDeMetadados):
     ):
         self._nome = nome
         self._metadados = metadados
+        self._metadados_por_id = metadados_por_id
         self._em_alta = em_alta or []
         self._proxima_temporada = proxima_temporada or []
         self._titulos = titulos
@@ -1030,6 +1235,11 @@ class _ProvedorFake(ProvedorDeMetadados):
         if self._erro is not None:
             raise self._erro
         return self._metadados
+
+    def buscar_metadados_por_anilist_id(self, anilist_id: int):
+        if self._erro is not None:
+            raise self._erro
+        return self._metadados_por_id
 
     def listar_em_alta(self):
         if self._erro is not None:
@@ -1415,3 +1625,60 @@ async def test_servico_buscar_lancamento_levanta_se_todos_capazes_falham(
 
     with pytest.raises(FalhaDeMetadados):
         await servico.buscar_lancamento_por_anilist_id(21)
+
+
+# --- servico.buscar_metadados_por_anilist_id (feature banner na página) ---
+
+
+async def test_servico_buscar_metadados_por_anilist_id_primeira_resposta_vence(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    esperado = MetadadosDeAnime(
+        capa_url="https://img/c.jpg",
+        sinopse="s",
+        anilist_id=21,
+        kitsu_id=None,
+        banner_url="https://img/b.jpg",
+        capa_cor="#e4a15d",
+    )
+    anilist = _ProvedorFake("anilist", metadados_por_id=esperado)
+    kitsu = _ProvedorFake("kitsu")
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    assert await servico.buscar_metadados_por_anilist_id(21) is esperado
+
+
+async def test_servico_buscar_metadados_por_anilist_id_cai_para_o_proximo_em_erro(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    esperado = MetadadosDeAnime(
+        capa_url=None, sinopse=None, anilist_id=21, kitsu_id=None, banner_url="https://img/b.jpg"
+    )
+    falho = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
+    ok = _ProvedorFake("outro", metadados_por_id=esperado)
+    monkeypatch.setattr(servico, "PROVEDORES", (falho, ok))
+
+    assert await servico.buscar_metadados_por_anilist_id(21) is esperado
+
+
+async def test_servico_buscar_metadados_por_anilist_id_ninguem_resolve_devolve_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """AniList respondeu sem achar (`None`), Kitsu devolve `None` pela
+    implementação padrão — condição normal, não erro: devolve `None`."""
+    anilist = _ProvedorFake("anilist", metadados_por_id=None)
+    kitsu = _ProvedorFake("kitsu")
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    assert await servico.buscar_metadados_por_anilist_id(21) is None
+
+
+async def test_servico_buscar_metadados_por_anilist_id_levanta_se_todos_falham(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
+    kitsu = _ProvedorFake("kitsu", erro=requests.HTTPError("HTTP 502"))
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.buscar_metadados_por_anilist_id(21)
