@@ -206,6 +206,7 @@ async def _criar_anime_catalogado(
     fonte_verificada_em: datetime | None = None,
     proximo_ep_em: datetime | None = None,
     estreia_em: date | None = None,
+    generos: list[str] | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         anime = Anime(
@@ -216,6 +217,7 @@ async def _criar_anime_catalogado(
             fonte_verificada_em=fonte_verificada_em,
             proximo_ep_em=proximo_ep_em,
             estreia_em=estreia_em,
+            generos=generos,
         )
         sessao.add(anime)
         await sessao.commit()
@@ -415,6 +417,25 @@ async def test_listar_animes_preserva_campos_e_defaults_sem_lancamento(
     assert "criado_em" in item
     assert item["status_lancamento"] is None
     assert item["episodios_novos"] == 0
+
+
+async def test_listar_animes_expoe_generos_e_preserva_null_sem_metadado(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    """`generos` sai 1:1 da coluna homônima (nullable) em `GET /api/animes` —
+    alimenta o filtro por gênero da Galeria. Anime sem o metadado ainda (coluna
+    NULL) não pode quebrar a resposta: precisa sair `None`, não `[]`."""
+    com_generos = await _criar_anime_catalogado(
+        sessionmaker_api, "Anime Com Generos", generos=["Action", "Comedy"]
+    )
+    sem_generos = await _criar_anime_catalogado(sessionmaker_api, "Anime Sem Generos")
+
+    resposta = await cliente.get("/api/animes")
+
+    assert resposta.status_code == 200
+    por_id = {item["id"]: item for item in resposta.json()}
+    assert por_id[com_generos]["generos"] == ["Action", "Comedy"]
+    assert por_id[sem_generos]["generos"] is None
 
 
 async def test_listar_animes_expoe_tem_episodios_e_proximo_ep_em_numa_resposta(
