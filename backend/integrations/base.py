@@ -53,6 +53,20 @@ class MetadadosDeAnime:
     sinopse: str | None
     anilist_id: int | None
     kitsu_id: int | None
+    # Arte horizontal (`bannerImage` da AniList) e cor dominante da capa
+    # (`coverImage.color`, ex. "#e4a15d"). AO CONTRÁRIO de `titulo_*` abaixo,
+    # estes SÃO persistidos — em `Anime.banner_path`/`Anime.capa_cor`. Só o
+    # AniList preenche; o Kitsu não conhece esses campos e deixa nos defaults.
+    banner_url: str | None = None
+    capa_cor: str | None = None
+    # Gêneros crus da AniList (`genres`) e ano de estreia (`seasonYear` /
+    # `startDate.year`). Como `banner_url`/`capa_cor` acima, estes SÃO
+    # persistidos — em `Anime.generos`/`Anime.ano`. Só o AniList preenche; o
+    # Kitsu não conhece esses campos e deixa nos defaults. `ano` aqui fecha o
+    # buraco de animes sem bloco de lançamento vivo, que hoje ficam sem
+    # `Anime.ano` (só `_aplicar_lancamento_no_anime` o preenche).
+    generos: list[str] | None = None
+    ano: int | None = None
     lancamento: LancamentoDeAnime | None = None
     titulo_romaji: str | None = None
     titulo_ingles: str | None = None
@@ -129,6 +143,16 @@ class ProvedorDeMetadados(ABC):
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
         """Títulos do melhor casamento para `titulo`; `None` quando o provedor
         não encontrou nada (mesma convenção de `buscar_por_titulo`)."""
+
+    def buscar_metadados_por_anilist_id(self, anilist_id: int) -> MetadadosDeAnime | None:
+        """Metadados (capa, banner, cor dominante, sinopse, títulos) do anime de
+        id AniList `anilist_id`. Capability opcional com implementação PADRÃO
+        `None` (não abstrata, ao contrário de
+        `ProvedorComLancamento.buscar_lancamento_por_anilist_id`): só provedores
+        que conhecem o id AniList a sobrescrevem — hoje só `anilist.py`; o Kitsu
+        carrega apenas o seu próprio id. `integrations/servico.py` percorre a
+        cadeia e aceita a primeira resposta não-`None`."""
+        return None
 
 
 class ProvedorComLancamento(ABC):

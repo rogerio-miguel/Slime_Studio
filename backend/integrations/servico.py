@@ -138,6 +138,47 @@ async def buscar_lancamento_por_anilist_id(anilist_id: int) -> LancamentoDeAnime
     ) from ultimo_erro
 
 
+async def buscar_metadados_por_anilist_id(anilist_id: int) -> MetadadosDeAnime | None:
+    """Metadados completos (capa, banner, cor dominante da capa, sinopse) de um
+    anime pelo seu id AniList — usado pelo backfill de arte visual
+    (`scripts/backfill_metadados_visuais.py`).
+
+    Mesma semântica de fallback de `buscar_lancamento_por_anilist_id`: primeira
+    resposta não-`None` vence; um provedor que levanta é logado e a cadeia segue
+    para o próximo; só levanta `FalhaDeMetadados` se TODOS os provedores falharem
+    de fato (rede/HTTP/timeout). Provedores que não conhecem id AniList (Kitsu)
+    devolvem `None` pela implementação padrão de `ProvedorDeMetadados` e a cadeia
+    segue — se ninguém resolve, devolve `None` em vez de exceção. Sem cache (o
+    cache TTL de `servico.py` é só para os feeds sazonais).
+    """
+    algum_respondeu = False
+    ultimo_erro: Exception | None = None
+    for provedor in PROVEDORES:
+        try:
+            resultado = await _chamar(
+                provedor, provedor.buscar_metadados_por_anilist_id, anilist_id
+            )
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.warning(
+                "provedor de metadados %r falhou ao buscar metadados de anilist_id=%s: %s",
+                provedor.nome,
+                anilist_id,
+                excecao,
+            )
+            ultimo_erro = excecao
+            continue
+
+        algum_respondeu = True
+        if resultado is not None:
+            return resultado
+
+    if algum_respondeu:
+        return None
+    raise FalhaDeMetadados(
+        f"todos os provedores falharam ao buscar metadados de anilist_id={anilist_id}"
+    ) from ultimo_erro
+
+
 async def _buscar_em_cadeia[T](
     operacao: Callable[[ProvedorDeMetadados], Callable[[str], T | None]],
     titulo: str,
