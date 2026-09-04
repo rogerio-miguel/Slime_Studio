@@ -126,6 +126,13 @@ class AnimeSaida(BaseModel):
     proximo_ep_em: datetime | None = None
     estreia_em: date | None = None
     tem_episodios: bool = False
+    # Gêneros crus da AniList (tradução pt-BR é no frontend, `inicio/generos.js`)
+    # — 1:1 com a coluna homônima via `model_validate`, igual a `status_lancamento`
+    # acima. Nullable (não normalizado a `[]` aqui): animes sem esse metadado
+    # ainda têm a coluna NULL, e `model_validate` valida o atributo bruto — um
+    # default `[]` sem `| None` quebraria a resposta pra esses animes. Alimenta o
+    # filtro por gênero do catálogo (`paginas/Galeria.jsx`).
+    generos: list[str] | None = None
 
 
 class AnimeEmAltaSaida(BaseModel):
