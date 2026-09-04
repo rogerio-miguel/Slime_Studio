@@ -71,6 +71,14 @@ async def aplicar_metadados(
 
         if anime.capa_path is None and metadados.capa_url is not None:
             anime.capa_path = metadados.capa_url
+        if anime.banner_path is None and metadados.banner_url is not None:
+            anime.banner_path = metadados.banner_url
+        if anime.capa_cor is None and metadados.capa_cor is not None:
+            anime.capa_cor = metadados.capa_cor
+        if anime.generos is None and metadados.generos:
+            anime.generos = metadados.generos
+        if anime.ano is None and metadados.ano is not None:
+            anime.ano = metadados.ano
         if anime.sinopse is None and metadados.sinopse is not None:
             anime.sinopse = metadados.sinopse
         if anime.anilist_id is None and metadados.anilist_id is not None:
@@ -251,6 +259,39 @@ async def atualizar_lancamentos_em_lote(
 
     async with sessionmaker() as sessao:
         for lote in (com_total, sem_total):
+            if lote:
+                await sessao.execute(update(Anime), lote)
+        await sessao.commit()
+
+
+async def preencher_banner_visual_em_lote(
+    sessionmaker: _SessionMaker, dados: dict[int, tuple[str, str | None]]
+) -> None:
+    """Grava `banner_path` (e `capa_cor`, quando o feed traz) de vários `Anime`
+    de uma vez, a partir do cruzamento do feed "em alta"
+    (`api/servicos/descoberta.py`). `dados` já vem filtrado pelo chamador para
+    animes com `banner_path` NULL — preenchimento só-quando-nulo (arte permanente
+    e visível, mesma semântica de `aplicar_metadados`, não a sobrescrita do bloco
+    de lançamento). `anime_id -> (banner_url, capa_cor)`.
+
+    Particionado em dois lotes (com e sem `capa_cor`), no máximo duas queries no
+    total — mesma restrição de `atualizar_lancamentos_em_lote` (o `update` bulk
+    por primary key exige o MESMO conjunto de chaves em todos os dicts do lote):
+    um `capa_cor` ausente no feed não zera uma cor já conhecida do anime."""
+    if not dados:
+        return
+    com_cor: list[dict[str, object]] = []
+    sem_cor: list[dict[str, object]] = []
+    for anime_id, (banner_url, capa_cor) in dados.items():
+        linha: dict[str, object] = {"id": anime_id, "banner_path": banner_url}
+        if capa_cor is not None:
+            linha["capa_cor"] = capa_cor
+            com_cor.append(linha)
+        else:
+            sem_cor.append(linha)
+
+    async with sessionmaker() as sessao:
+        for lote in (com_cor, sem_cor):
             if lote:
                 await sessao.execute(update(Anime), lote)
         await sessao.commit()

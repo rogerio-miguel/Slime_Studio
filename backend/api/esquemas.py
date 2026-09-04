@@ -86,6 +86,15 @@ class CriarAnimeRequest(BaseModel):
     kitsu_id: int | None = None
     capa_url: str | None = None
     sinopse: str | None = None
+    # Arte horizontal (`bannerImage` da AniList) e cor dominante da capa
+    # (`coverImage.color`) do item do feed da Home — persistem direto quando
+    # vêm no payload (mesmo caminho de `capa_url`).
+    banner_url: str | None = None
+    capa_cor: str | None = None
+    # Gêneros crus (`genres` da AniList) do item do feed "em alta" — a
+    # materialização repassa e persiste direto (mesmo curto-circuito de
+    # `capa_url`/`banner_url`); tradução pt-BR é no frontend.
+    generos: list[str] | None = None
 
 
 class AnimeSaida(BaseModel):
@@ -96,6 +105,10 @@ class AnimeSaida(BaseModel):
     slug: str
     ano: int | None
     capa_path: str | None
+    # 1:1 com as colunas homônimas de `Anime` (via `model_validate`). Default
+    # para não quebrar a resposta de animes sem metadado visual ainda.
+    banner_path: str | None = None
+    capa_cor: str | None = None
     criado_em: datetime
     # Detector de episódios novos (badge no catálogo) e rótulo de estreia do card
     # de bookmark no catálogo (rota `/animes` do frontend). Todos com default:
@@ -152,6 +165,15 @@ class AnimeDetalheSaida(BaseModel):
     slug: str
     ano: int | None
     capa_path: str | None
+    # Hero da página do anime: `banner_path` é a arte horizontal; quando nula, o
+    # frontend usa `capa_cor` como fundo do fallback (mesma cor do carrossel da
+    # Home). Preenchidos explicitamente em `obter_anime`, 1:1 com as colunas.
+    banner_path: str | None
+    capa_cor: str | None
+    # Gêneros crus da AniList (tradução pt-BR é no frontend). Default `[]`:
+    # preenchido explicitamente em `obter_anime` como `anime.generos or []`,
+    # animes sem esse metadado ainda não podem quebrar a resposta.
+    generos: list[str] = []
     sinopse: str | None
     criado_em: datetime
     # Derivado das linhas de `FonteAnime` já mapeadas pro anime (não é

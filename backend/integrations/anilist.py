@@ -40,8 +40,9 @@ query ($busca: String) {
   Media(search: $busca, type: ANIME) {
     id
     title { romaji english }
-    coverImage { extraLarge }
+    coverImage { extraLarge color }
     bannerImage
+    genres
     description(asHtml: false)
     status
     episodes
@@ -110,6 +111,21 @@ query ($id: Int) {
 }
 """
 
+_QUERY_METADADOS_POR_ID = """
+query ($id: Int) {
+  Media(id: $id, type: ANIME) {
+    id
+    title { romaji english }
+    description(asHtml: false)
+    coverImage { extraLarge color }
+    bannerImage
+    genres
+    seasonYear
+    startDate { year }
+  }
+}
+"""
+
 _STATUS_ANILIST: dict[str, StatusLancamento] = {
     "RELEASING": StatusLancamento.EM_LANCAMENTO,
     "FINISHED": StatusLancamento.FINALIZADO,
@@ -134,11 +150,16 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
             return None
 
         titulo_bruto = media.get("title") or {}
+        cover = media.get("coverImage") or {}
         return MetadadosDeAnime(
-            capa_url=(media.get("coverImage") or {}).get("extraLarge"),
+            capa_url=cover.get("extraLarge"),
             sinopse=_sanitizar_sinopse(media.get("description")),
             anilist_id=media.get("id"),
             kitsu_id=None,
+            banner_url=media.get("bannerImage"),
+            capa_cor=cover.get("color"),
+            generos=media.get("genres") or None,
+            ano=_extrair_ano(media),
             lancamento=_extrair_lancamento(media),
             titulo_romaji=_texto_ou_none(titulo_bruto.get("romaji")),
             titulo_ingles=_texto_ou_none(titulo_bruto.get("english")),
@@ -150,6 +171,27 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
         if not isinstance(media, dict):
             return None
         return _extrair_lancamento(media)
+
+    def buscar_metadados_por_anilist_id(self, anilist_id: int) -> MetadadosDeAnime | None:
+        dados = self._executar(_QUERY_METADADOS_POR_ID, {"id": anilist_id})
+        media = dados.get("Media") if isinstance(dados, dict) else None
+        if not isinstance(media, dict):
+            return None
+
+        titulo_bruto = media.get("title") or {}
+        cover = media.get("coverImage") or {}
+        return MetadadosDeAnime(
+            capa_url=cover.get("extraLarge"),
+            sinopse=_sanitizar_sinopse(media.get("description")),
+            anilist_id=anilist_id,
+            kitsu_id=None,
+            banner_url=media.get("bannerImage"),
+            capa_cor=cover.get("color"),
+            generos=media.get("genres") or None,
+            ano=_extrair_ano(media),
+            titulo_romaji=_texto_ou_none(titulo_bruto.get("romaji")),
+            titulo_ingles=_texto_ou_none(titulo_bruto.get("english")),
+        )
 
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
         dados = self._executar(_QUERY_TITULOS, {"busca": titulo})

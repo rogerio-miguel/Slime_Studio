@@ -2,7 +2,7 @@
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Date, Integer, String
+from sqlalchemy import JSON, Date, Integer, String
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,7 +27,18 @@ class Anime(Base):
     # `Episodio.capa_path` segue a mesma convenção; renomear os dois
     # expandiria o escopo desta leva, então só documentado aqui.
     capa_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Mesma convenção enganosa de `capa_path`: guarda a URL da arte horizontal
+    # (`bannerImage` da AniList), não um caminho em disco. Alimenta o hero da
+    # página do anime; `capa_cor` (`coverImage.color` da AniList, ex. "#e4a15d")
+    # é o fundo do fallback quando não há banner — mesma cor que o carrossel da
+    # Home usa em `AnimeEmAltaSaida.capa_cor`.
+    banner_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    capa_cor: Mapped[str | None] = mapped_column(String, nullable=True)
     sinopse: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Lista de gêneros crus da AniList (ex. `["Action", "Comedy"]`) — a tradução
+    # pt-BR é no frontend. Mesma origem de `AnimeEmAltaSaida.generos` do feed da
+    # Home; preenchida por `db.catalogo.aplicar_metadados`.
+    generos: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     total_episodios_anilist: Mapped[int | None] = mapped_column(Integer, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         ColunaDataHoraUTC(), nullable=False, default=lambda: datetime.now(UTC)

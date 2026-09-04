@@ -24,6 +24,7 @@ from db.catalogo import (
     atualizar_lancamentos_em_lote,
     localizar_animes_por_anilist_id,
     localizar_animes_por_slug,
+    preencher_banner_visual_em_lote,
 )
 from extractors.versao import remover_marcador_de_versao
 from integrations import servico
@@ -100,6 +101,7 @@ async def listar_em_alta_com_catalogo(
     itens = await servico.listar_em_alta()
     pares = await _cruzar_com_catalogo(sessionmaker, itens)
     await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
+    await _preencher_banner_do_cruzamento(sessionmaker, pares)
     return pares
 
 
@@ -199,6 +201,49 @@ async def _refrescar_lancamentos_do_cruzamento(
     except SQLAlchemyError as excecao:
         logger.warning(
             "refresh oportunista de lançamento no cruzamento do feed falhou "
+            "(%d candidato(s)): %s",
+            len(do_feed),
+            excecao,
+        )
+
+
+async def _preencher_banner_do_cruzamento(
+    sessionmaker: _SessionMaker, pares: list[tuple[AnimeEmAlta, int | None]]
+) -> None:
+    """F4a visual — backfill "de graça" da arte horizontal: para cada item do
+    feed "em alta" que traz `banner_url` e cruzou com um anime catalogado ainda
+    SEM `banner_path` local, grava `banner_path`/`capa_cor` do próprio item do
+    feed. Nenhuma chamada de rede extra (o bloco já veio no feed); nunca
+    re-sobrescreve um banner já gravado (o filtro `banner_path IS NULL` é do
+    SELECT abaixo — mesma abordagem de `_refrescar_lancamentos_do_cruzamento`,
+    que filtra pelo carimbo no lado da leitura).
+
+    Best-effort de ponta a ponta: falha de leitura ou de escrita vira `warning` e
+    nunca derruba `GET /api/animes/em-alta` (o cruzamento já foi montado)."""
+    do_feed = {
+        anime_id: item
+        for item, anime_id in pares
+        if anime_id is not None and item.banner_url is not None
+    }
+    if not do_feed:
+        return
+
+    try:
+        async with sessionmaker() as sessao:
+            resultado = await sessao.execute(
+                select(Anime.id).where(
+                    Anime.id.in_(list(do_feed)), Anime.banner_path.is_(None)
+                )
+            )
+            sem_banner = resultado.scalars().all()
+
+        await preencher_banner_visual_em_lote(
+            sessionmaker,
+            {aid: (do_feed[aid].banner_url, do_feed[aid].capa_cor) for aid in sem_banner},
+        )
+    except SQLAlchemyError as excecao:
+        logger.warning(
+            "backfill oportunista de banner no cruzamento do feed falhou "
             "(%d candidato(s)): %s",
             len(do_feed),
             excecao,
@@ -437,6 +482,9 @@ async def enriquecer_anime_criado(
     kitsu_id: int | None,
     capa_url: str | None,
     sinopse: str | None,
+    banner_url: str | None,
+    capa_cor: str | None,
+    generos: list[str] | None,
 ) -> None:
     """Preenche metadados do anime recém-obtido/criado (`POST
     /api/admin/animes`). Se o request já trouxe algum campo, persiste direto
@@ -449,10 +497,19 @@ async def enriquecer_anime_criado(
         or kitsu_id is not None
         or capa_url is not None
         or sinopse is not None
+        or banner_url is not None
+        or capa_cor is not None
+        or generos is not None
     )
     if algum_campo_veio_no_payload:
         metadados = MetadadosDeAnime(
-            capa_url=capa_url, sinopse=sinopse, anilist_id=anilist_id, kitsu_id=kitsu_id
+            capa_url=capa_url,
+            sinopse=sinopse,
+            anilist_id=anilist_id,
+            kitsu_id=kitsu_id,
+            banner_url=banner_url,
+            capa_cor=capa_cor,
+            generos=generos,
         )
         await aplicar_metadados(sessionmaker, anime_id, metadados)
         return

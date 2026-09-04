@@ -47,6 +47,9 @@ async def backfill() -> int:
                 kitsu_id=None,
                 capa_url=None,
                 sinopse=None,
+                banner_url=None,
+                capa_cor=None,
+                generos=None,
             )
         return len(pendentes)
     finally:
