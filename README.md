@@ -45,12 +45,16 @@ outra:
 
 <table>
   <tr>
-    <td align="center"><b>Catálogo</b></td>
-    <td align="center"><b>Página do anime</b></td>
+    <td align="center" colspan="2"><b>Catálogo</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/assets/catalogo.png" width="420" /></td>
-    <td><img src="frontend/src/assets/anime-page.png" width="420" /></td>
+    <td colspan="2" align="center"><img src="frontend/src/assets/catalogo.png" width="600" /></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><b>Página do Anime</b></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="frontend/src/assets/anime-page.png" width="600" /></td>
   </tr>
   <tr>
     <td align="center" colspan="2"><b>Player</b></td>
