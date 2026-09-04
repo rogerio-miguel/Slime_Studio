@@ -8,9 +8,13 @@ import logo from '../assets/logo2.png';
 // `revelado`, mesma fase que dispara o fade-in do `main` (paginas/Inicio.jsx)
 // — navbar e conteúdo aparecem juntos, ao final do vídeo.
 //
-// Gêneros/Favoritos: decisão do usuário sobre dados faltantes — não existe
-// gêneros/favoritos no modelo hoje, então ficam visíveis mas desabilitados
-// (`disabled` + `aria-disabled` + `title`), nunca escondidos.
+// Gêneros: decisão do usuário sobre dado faltante — não existe gênero no
+// modelo hoje, então fica visível mas desabilitado (`disabled` +
+// `aria-disabled` + `title`), nunca escondido. Favoritos saiu da navbar:
+// agora é filtro dentro de paginas/Galeria.jsx.
+//
+// Logo: puramente decorativa (sem `<Link>`/navegação) — "Início" na lista
+// de links é quem leva pra `/`.
 //
 // Busca: `termoBusca`/`aoMudarBusca` controlados pelo pai (`paginas/Inicio.jsx`
 // e `paginas/Galeria.jsx`, cada um filtrando sua própria lista). Filtro local
@@ -36,6 +40,7 @@ export default function BarraDeNavegacao({
   const idBusca = useId();
   const visivel = fase === 'revelado';
   const { pathname } = useLocation();
+  const emInicio = pathname === '/';
   const emAnimes = pathname.startsWith('/animes');
   const [rolou, setRolou] = useState(false);
 
@@ -63,20 +68,26 @@ export default function BarraDeNavegacao({
       }`}
     >
       <div className="flex items-center gap-10">
-        <Link
-          to="/"
-          // `state.revelado`: sinaliza pra Inicio.jsx (via `location.state`)
-          // que a navegação veio do clique na logo — pula a intro de scroll
-          // direto pro estado final em vez de reiniciá-la do zero.
-          state={{ revelado: true }}
-          className="outline-none focus-visible:ring-2 focus-visible:ring-neon"
-        >
-          {/* Altura da nav é fixa (h-20 acima) e não depende do tamanho da
-              logo. Para redimensionar a logo, ajuste só a classe h-* abaixo
-              (até o teto de max-h-full = altura da nav). */}
-          <img src={logo} alt="Slime Studio" className="h-20 max-h-full w-auto object-contain" />
-        </Link>
+        {/* Decorativa: não navega. Altura da nav é fixa (h-20 acima) e não
+            depende do tamanho da logo. Para redimensionar a logo, ajuste só
+            a classe h-* abaixo (até o teto de max-h-full = altura da nav). */}
+        <img src={logo} alt="Slime Studio" className="h-20 max-h-full w-auto object-contain" />
         <ul className="hidden items-center gap-8 text-lg text-ink-muted sm:flex sm:text-lg">
+          <li>
+            <Link
+              to="/"
+              // `state.revelado`: sinaliza pra Inicio.jsx (via `location.state`)
+              // que a navegação veio deste link — pula a intro de vídeo
+              // direto pro estado final em vez de reiniciá-la do zero.
+              state={{ revelado: true }}
+              aria-current={emInicio ? 'page' : undefined}
+              className={`outline-none transition-colors font-bold hover:text-neon focus-visible:ring-2 focus-visible:ring-neon ${
+                emInicio ? 'text-neon' : 'focus-visible:text-white'
+              }`}
+            >
+              Início
+            </Link>
+          </li>
           <li>
             <Link
               to="/animes"
@@ -97,17 +108,6 @@ export default function BarraDeNavegacao({
               className="cursor-not-allowed opacity-50 font-bold"
             >
               Gêneros
-            </button>
-          </li>
-          <li>
-            <button
-              type="button"
-              disabled
-              aria-disabled="true"
-              title="Em breve"
-              className="cursor-not-allowed opacity-50 font-bold"
-            >
-              Favoritos
             </button>
           </li>
         </ul>
