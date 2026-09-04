@@ -303,6 +303,7 @@ export default function Inicio() {
 
       <BarraDeNavegacao
         fase={fase}
+        transparente
         termoBusca={termoBusca}
         aoMudarBusca={setTermoBusca}
         aoSubmeterBusca={submeterBuscaEmFontes}

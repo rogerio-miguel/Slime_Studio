@@ -543,8 +543,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           scrub de vídeo aqui, a navbar já nasce visível/interativa. Sem
           `termoBusca`/`aoMudarBusca`: esta página não tem uma lista pra
           filtrar, então a caixa de busca nem renderiza (ver
-          `components/BarraDeNavegacao.jsx`). */}
-      <BarraDeNavegacao fase="revelado" />
+          `components/BarraDeNavegacao.jsx`). `transparente`: sem fundo no topo
+          (deixa a faixa panorâmica do header aparecer), escurece ao rolar. */}
+      <BarraDeNavegacao fase="revelado" transparente />
       {/* `bg-[#17171b]` + `min-h-screen`: mesmo fundo do `<main>` de
           paginas/Galeria.jsx (fonte da verdade — cor do `body` do Disney+) —
           é ele que faz a drop shadow dos cards (capa e grade de episódios)
@@ -560,14 +561,17 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             invadindo a faixa. */}
         <header className="mb-10">
           {/* Faixa panorâmica full-bleed: `-mx-6 md:-mx-10` cancela o `px` do
-              <main> pra sangrar até as bordas da viewport; `-mt-2` come um
-              naco do `pt-24` do <main> deixando só um respiro pequeno abaixo
-              da navbar (fixa/translúcida). O fallback "sem banner" espelha o
-              `semBanner` de inicio/CarrosselDestaques.jsx: a cor dominante da
-              capa vira o fundo (`bg-surface` quando `capa_cor` é null — Kitsu
-              ou `color: null` da AniList), com a própria capa borrada e
+              <main> pra sangrar até as bordas da viewport; `-mt-24` cancela
+              todo o `pt-24` do <main> pra faixa subir até o topo e correr por
+              baixo da navbar (fixa/transparente no topo — ver
+              `components/BarraDeNavegacao.jsx`). As alturas embutem os ~96px
+              da navbar pra que a borda de baixo da faixa fique onde estava. O
+              fallback "sem banner" espelha o `semBanner` de
+              inicio/CarrosselDestaques.jsx: a cor dominante da capa vira o
+              fundo (`bg-surface` quando `capa_cor` é null — Kitsu ou
+              `color: null` da AniList), com a própria capa borrada e
               escurecida por cima como textura. */}
-          <div className="relative -mx-6 -mt-2 h-44 overflow-hidden sm:h-56 md:-mx-10 lg:h-72">
+          <div className="relative -mx-6 -mt-24 h-64 overflow-hidden sm:h-80 md:-mx-10 lg:h-96">
             {anime?.banner_path ? (
               <img
                 src={anime.banner_path}
