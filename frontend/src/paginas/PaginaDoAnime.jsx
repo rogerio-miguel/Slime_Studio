@@ -111,6 +111,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
 
   const {
     dados: anime,
+    carregando: animeCarregando,
     erro: erroAnime,
     recarregar: recarregarAnime,
   } = useRecurso(() => obterAnime(animeId), [animeId]);
@@ -193,6 +194,22 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   const [erroTrocaFonte, setErroTrocaFonte] = useState(null);
   const [versaoAtiva, setVersaoAtiva] = useState('legendado');
 
+  // `versaoAtiva` nasce no default 'legendado' do `useState` e só vira a
+  // versão real do anime depois que o efeito de hidratação (mais abaixo)
+  // roda. `versaoHidratada` marca esse momento — até lá o fetch de `remotos`
+  // fica represado, senão a listagem remota resolve a fonte pra versão errada
+  // (ex. anime dublado → `?versao=legendado` → sem `FonteAnime` mapeada →
+  // `resolver_fonte_do_anime` varre a cadeia do registro → outra fonte →
+  // Cloudflare/502). Reset por `animeId`: a rota "/anime/:id" reaproveita
+  // este componente ao navegar entre animes (params mudam, sem remount), e um
+  // `versaoHidratada` preso em `true` deixaria `remotos` buscar o anime novo
+  // com a `versaoAtiva` do anterior.
+  const [versaoHidratada, setVersaoHidratada] = useState(false);
+  useEffect(() => {
+    setVersaoHidratada(false);
+    setVersaoAtiva('legendado');
+  }, [animeId]);
+
   // `versaoAtiva` pode ser 'desconhecida' (episódio mais recente veio de uma
   // fonte NAO_DIFERENCIADA) — válido pra EXIBIÇÃO (`ROTULO_VERSAO` já trata),
   // mas `resolver_fonte_do_anime` rejeita `DESCONHECIDA` como versão PEDIDA
@@ -207,8 +224,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   // reflete a versão ativa (senão a grade mostraria episódios da versão
   // errada quando o usuário troca) — precisa da variável já existir.
   const remotos = useRecurso(
-    () => listarEpisodiosRemotos(animeId, versaoPedida),
-    [animeId, versaoPedida]
+    () =>
+      versaoHidratada
+        ? listarEpisodiosRemotos(animeId, versaoPedida)
+        : // Ainda não hidratou a versão — não bate na fonte com um palpite.
+          // Promise que nunca resolve: mantém `remotos.carregando` até as deps
+          // mudarem (`versaoHidratada` vira true) e a busca real disparar, sem
+          // piscar um "nenhum episódio" no intervalo. O cleanup de `useRecurso`
+          // descarta esta promise pendente na próxima execução do efeito.
+          new Promise(() => {}),
+    [animeId, versaoPedida, versaoHidratada]
   );
 
   // Hidrata `versaoAtiva` com prioridade: 1) `anime.versao_confirmada_mais_recente`
@@ -225,18 +250,23 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   // depois do outro com dado desatualizado e sobrescreva a prioridade acima
   // com dois efeitos concorrentes. Sem nenhuma das duas fontes ainda (anime
   // sem fonte mapeada E sem episódio capturado), mantém o default 'legendado'
-  // do `useState` inicial.
+  // do `useState` inicial. Espera os DOIS recursos assentarem
+  // (`!animeCarregando && !episodios.carregando`) antes de decidir: até lá a
+  // versão real ainda pode chegar por qualquer um dos dois e a escolha seria
+  // prematura. Só ao fim marca `versaoHidratada` — o gatilho que libera o
+  // fetch de `remotos` (ver acima).
   useEffect(() => {
+    if (animeCarregando || episodios.carregando) return;
     if (anime && anime.versao_confirmada_mais_recente != null) {
       setVersaoAtiva(anime.versao_confirmada_mais_recente);
-      return;
+    } else if (episodios.dados && episodios.dados.length > 0) {
+      const maisRecente = episodios.dados.reduce((atual, episodio) =>
+        !atual || new Date(episodio.criado_em) > new Date(atual.criado_em) ? episodio : atual
+      , null);
+      setVersaoAtiva(maisRecente.versao);
     }
-    if (!episodios.dados || episodios.dados.length === 0) return;
-    const maisRecente = episodios.dados.reduce((atual, episodio) =>
-      !atual || new Date(episodio.criado_em) > new Date(atual.criado_em) ? episodio : atual
-    , null);
-    setVersaoAtiva(maisRecente.versao);
-  }, [anime, episodios.dados]);
+    setVersaoHidratada(true);
+  }, [anime, animeCarregando, episodios.dados, episodios.carregando]);
 
   // A própria listagem remota (não só a captura) pode bater em ambiguidade
   // na primeira visita a um anime recém-criado (`episodios-remotos` também
