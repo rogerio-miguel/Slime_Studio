@@ -16,10 +16,12 @@ from models.episodio import Episodio
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 
-async def _criar_anime(sessionmaker: _SessionMaker, titulo: str) -> int:
+async def _criar_anime(
+    sessionmaker: _SessionMaker, titulo: str, *, capa_path: str | None = None
+) -> int:
     slug = titulo.lower().replace(" ", "-")
     async with sessionmaker() as sessao:
-        anime = Anime(titulo=titulo, slug=slug)
+        anime = Anime(titulo=titulo, slug=slug, capa_path=capa_path)
         sessao.add(anime)
         await sessao.commit()
         return anime.id
@@ -34,6 +36,7 @@ async def _criar_episodio(
     duracao_s: int | None = 1200,
     progresso_s: int | None = None,
     progresso_atualizado_em: datetime | None = None,
+    capa_path: str | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         episodio = Episodio(
@@ -48,6 +51,7 @@ async def _criar_episodio(
             duracao_s=duracao_s,
             progresso_s=progresso_s,
             progresso_atualizado_em=progresso_atualizado_em,
+            capa_path=capa_path,
         )
         sessao.add(episodio)
         await sessao.commit()
@@ -181,6 +185,28 @@ async def test_rota_continuar_assistindo_devolve_itens_esperados(
     assert corpo[0]["numero"] == 3
     assert corpo[0]["progresso_s"] == 600
     assert corpo[0]["duracao_s"] == 1200
+
+
+async def test_rota_continuar_assistindo_thumb_vem_do_episodio_nao_do_anime(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Anime Thumb", capa_path="https://img/capa-do-anime.jpg"
+    )
+    await _criar_episodio(
+        sessionmaker_api,
+        anime_id,
+        progresso_s=600,
+        progresso_atualizado_em=datetime.now(UTC),
+        capa_path="https://img/thumb-do-episodio.jpg",
+    )
+
+    resposta = await cliente.get("/api/episodios/continuar-assistindo")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo[0]["thumb"] == "https://img/thumb-do-episodio.jpg"
+    assert "capa_path" not in corpo[0]
 
 
 # --- GET /api/episodios/{id} ---

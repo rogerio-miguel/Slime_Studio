@@ -71,7 +71,7 @@ async def continuar_assistindo(
             episodio_id=linha.episodio_id,
             anime_id=linha.anime_id,
             anime_titulo=linha.anime_titulo,
-            capa_path=linha.capa_path,
+            thumb=linha.thumb,
             numero=linha.numero,
             titulo=linha.titulo,
             progresso_s=linha.progresso_s,

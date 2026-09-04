@@ -582,7 +582,7 @@ export default function Inicio() {
               <FileiraDeCards
                 titulo="Continuar assistindo"
                 itens={continuando.dados}
-                tamanho="pequeno"
+                tamanho="episodio"
                 chaveDoItem={(item) => item.episodio_id}
                 renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
               />
