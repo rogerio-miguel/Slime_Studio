@@ -85,7 +85,12 @@ export default function Galeria() {
 
   return (
     <>
-      <BarraDeNavegacao fase="revelado" termoBusca={termoBusca} aoMudarBusca={setTermoBusca} />
+      <BarraDeNavegacao
+        fase="revelado"
+        transparente
+        termoBusca={termoBusca}
+        aoMudarBusca={setTermoBusca}
+      />
       {/* `bg-[#17171b]` + `min-h-screen`: mesmo par de classes do `<main>` de
           paginas/Inicio.jsx (fonte da verdade lá — cor exata do `body` do
           Disney+). É esse fundo que faz a drop shadow dos cards da grade

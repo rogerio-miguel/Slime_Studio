@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import logo from '../assets/logo2.png';
 
@@ -20,17 +20,45 @@ import logo from '../assets/logo2.png';
 // `aoMudarBusca` inteiro é opcional: `paginas/PaginaDoAnime.jsx` não tem uma
 // lista pra filtrar, então o formulário de busca nem renderiza ali — melhor
 // omitir a caixa do que exibir um campo que não faz nada ao digitar.
-export default function BarraDeNavegacao({ fase, termoBusca, aoMudarBusca, aoSubmeterBusca }) {
+//
+// `transparente`: usado por Início, Galeria e Página do Anime. Sem fundo
+// enquanto a página está no topo (o conteúdo full-bleed do topo — faixa
+// panorâmica, carrossel — aparece atrás da navbar); ao rolar, ganha um fundo
+// mais escuro que o `<main>` (#17171b) pra manter contraste com o conteúdo
+// que passa por baixo.
+export default function BarraDeNavegacao({
+  fase,
+  transparente = false,
+  termoBusca,
+  aoMudarBusca,
+  aoSubmeterBusca,
+}) {
   const idBusca = useId();
   const visivel = fase === 'revelado';
   const { pathname } = useLocation();
   const emAnimes = pathname.startsWith('/animes');
+  const [rolou, setRolou] = useState(false);
+
+  useEffect(() => {
+    if (!transparente) return undefined;
+    const aoRolar = () => setRolou(window.scrollY > 8);
+    aoRolar();
+    window.addEventListener('scroll', aoRolar, { passive: true });
+    return () => window.removeEventListener('scroll', aoRolar);
+  }, [transparente]);
+
+  const fundo =
+    transparente && !rolou
+      ? 'bg-transparent'
+      : transparente
+        ? 'bg-[#0d0d10]/95 backdrop-blur-sm'
+        : 'bg-surface/40 backdrop-blur-sm';
 
   return (
     <nav
       aria-label="Principal"
       inert={fase !== 'revelado'}
-      className={`fixed inset-x-0 top-0 z-20 flex h-20 items-center justify-between gap-6 bg-surface/40 px-6 backdrop-blur-sm transition-opacity duration-700 ease-out md:px-10 ${
+      className={`fixed inset-x-0 top-0 z-20 flex h-20 items-center justify-between gap-6 px-6 transition-[opacity,background-color] duration-700 ease-out md:px-10 ${fundo} ${
         visivel ? 'opacity-100' : 'opacity-0'
       }`}
     >
