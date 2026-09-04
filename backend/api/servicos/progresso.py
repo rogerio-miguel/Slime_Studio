@@ -37,7 +37,7 @@ async def listar_continuar_assistindo(
                 Episodio.id.label("episodio_id"),
                 Episodio.anime_id.label("anime_id"),
                 Anime.titulo.label("anime_titulo"),
-                Anime.capa_path.label("capa_path"),
+                Episodio.capa_path.label("thumb"),
                 Episodio.numero.label("numero"),
                 Episodio.titulo.label("titulo"),
                 Episodio.progresso_s.label("progresso_s"),

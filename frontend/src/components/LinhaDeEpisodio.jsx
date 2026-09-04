@@ -12,7 +12,7 @@ import { IconePlay } from '../player/Icones.jsx';
 // pode não ter a imagem daquele episódio. `falhouEm` guarda a URL que falhou
 // e é comparada com `thumb`: se a linha trocar de origem (ex. thumb remota →
 // `capa_path` após a captura), a nova URL volta a ser tentada.
-function MiniaturaDoEpisodio({ thumb, modo }) {
+export function MiniaturaDoEpisodio({ thumb, modo }) {
   const [falhouEm, setFalhouEm] = useState(null);
   if (!thumb || falhouEm === thumb) return null;
   return (
@@ -71,7 +71,7 @@ const ROTULO_VERSAO = {
 // cards do catálogo (fonte única em inicio/CarrosselDestaques.jsx); lista, com
 // os cards a 8px um do outro, usa uma sombra bem mais curta — a do catálogo
 // empilhada linha após linha "suja" o fundo entre elas.
-function CartaoDeEpisodio({
+export function CartaoDeEpisodio({
   modo,
   cor,
   para,
@@ -237,7 +237,7 @@ function OverlayDeStatus({ rotulo, tom }) {
 // centralizado na caixa da miniatura à esquerda (mesmas medidas de
 // MiniaturaDoEpisodio); sem thumb, cai numa faixa estreita à esquerda pra
 // não flutuar sobre o texto.
-function IndicadorDePlay({ emGrade, temThumb }) {
+export function IndicadorDePlay({ emGrade, temThumb }) {
   const posicao = emGrade
     ? 'absolute inset-0'
     : temThumb
@@ -304,7 +304,7 @@ function RotuloDeAcao({ verbo, capturando }) {
 // assistido", verbo de captura, status inline, nota de origem ou o aviso de
 // rótulo não numérico), alinhados pelo topo com `justify-between`. `extra` (a
 // barra de progresso do ramo `pronto`) vem abaixo.
-function FaixaDeConteudo({ modo, rotulo, trailing, extra }) {
+export function FaixaDeConteudo({ modo, rotulo, trailing, extra }) {
   return (
     <span
       className={

@@ -22,9 +22,18 @@
 //   - `grande`  (default): pôster ~336px, 5 por página no desktop — fileiras de
 //                catálogo (Próximas estreias, Top 10, gênero) e grade da Galeria.
 //   - `pequeno`: pôster ~277px, 6 por página — "Continuar assistindo".
+//   - `episodio`: cards 16:9 (thumb de episódio, não pôster) — bem mais largo
+//                por item que `grande`/`pequeno` porque 16:9 já é mais largo
+//                que 2:3 pra mesma "presença" visual. Menos por página (1–4)
+//                pra reproduzir a largura do card real de
+//                LinhaDeEpisodio.jsx/PaginaDoAnime.jsx (~444px, medido ao
+//                vivo em viewport 1920 — 4 por página nesse breakpoint, não
+//                3: a essa largura 3 por página dava ~568px, passando do
+//                alvo em ~28%). Usado só por "Continuar assistindo".
 export const CLASSES_POR_PAGINA = {
   grande: '[--por-pagina:2] sm:[--por-pagina:3] md:[--por-pagina:3] lg:[--por-pagina:4] xl:[--por-pagina:5]',
   pequeno: '[--por-pagina:2] sm:[--por-pagina:3] md:[--por-pagina:4] lg:[--por-pagina:5] xl:[--por-pagina:6]',
+  episodio: '[--por-pagina:1] sm:[--por-pagina:2] md:[--por-pagina:3] lg:[--por-pagina:3] xl:[--por-pagina:4]',
 };
 
 // flex-basis de cada slot: uma fração igual da trilha/grade conforme

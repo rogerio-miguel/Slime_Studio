@@ -1,76 +1,91 @@
-import { Link } from 'react-router-dom';
+import {
+  CartaoDeEpisodio,
+  FaixaDeConteudo,
+  IndicadorDePlay,
+  MiniaturaDoEpisodio,
+} from './LinhaDeEpisodio.jsx';
 
-// Item da prateleira "Continuar assistindo" (paginas/Inicio.jsx) — cartão de
-// POSIÇÃO em episódio, não de anime: por isso não reaproveita AnimeCard.jsx
-// diretamente (alvo de navegação é o player de um episódio específico, com
-// barra de progresso, não a página do anime).
+// Item da prateleira "Continuar assistindo" (paginas/Inicio.jsx). Não é uma
+// reimplementação visual — É o `CartaoDeEpisodio` em modo grade, a mesma peça
+// que `LinhaDeEpisodio.jsx` usa no ramo `episodio.status === 'pronto'` na
+// grade de `PaginaDoAnime.jsx` (importado daquele arquivo, não copiado):
+// tamanho (aspect-ratio 16/9), sombra (`SOMBRA_SLIDE_ATIVO`), hover/escala e
+// borda neon vêm de graça por serem o MESMO componente, não reimplementados
+// (pedido do usuário após a primeira tentativa, que reimplementava esse CSS à
+// mão e não batia o tamanho do card real).
 //
-// Mesma mecânica de hover/foco do AnimeCard (Disney+): o card CRESCE em escala
-// no wrapper (`scale-105`, 0,3s ease-out) e a borda neon de 4px acende via
-// overlay dedicado (`group-hover/card`/`group-focus-within/card` — grupo
-// NOMEADO pelo mesmo motivo do AnimeCard: a fileira horizontal tem `group`
-// próprio pras setas). `group/card` no wrapper pra a badge/escala pegarem os
-// irmãos; a borda no overlay, não `border`/`ring` no Link (encolheria o
-// content-box / ficaria atrás dos filhos `absolute inset-0`).
+// Única diferença de conteúdo em relação ao ramo `pronto`: esta prateleira
+// cruza vários animes na mesma fileira — ao contrário da grade de episódios de
+// UM anime só em `PaginaDoAnime.jsx` — então o `rotulo` da `FaixaDeConteudo`
+// mostra o TÍTULO DO ANIME (não só "Episódio N"). Também não há badge "✓
+// assistido": a query do backend que alimenta esta prateleira já filtra por
+// episódio não concluído, então `trailing` fica de fora.
 //
 // `state` do Link segue o MESMO formato que LinhaDeEpisodio.jsx já passa pro
 // player (`{ episodio: { numero, animeId, animeTitulo, titulo } }`) — sem
-// isso o cabeçalho do player perderia o link "voltar"/título de imediato
-// (só recuperaria número/animeId depois, via o fallback de
+// isso o cabeçalho do player perderia o link "voltar"/título de imediato (só
+// recuperaria número/animeId depois, via o fallback de
 // `GET /api/episodios/{id}` em PaginaDoPlayer.jsx).
 export default function CartaoContinuarAssistindo({ item }) {
-  // `duracao_s` pode ser `null` (worker não conseguiu sondar) — sem ele não
-  // dá pra calcular fração, a barra fica zerada em vez de quebrar o layout.
-  const percentual = item.duracao_s
-    ? Math.min(100, Math.round((item.progresso_s / item.duracao_s) * 100))
-    : 0;
+  // Mesmo cálculo do ramo `pronto` de LinhaDeEpisodio.jsx: sem `duracao_s`
+  // (worker não conseguiu sondar) não dá pra calcular a fração, a barra
+  // simplesmente não aparece (em vez de aparecer zerada).
+  const percentualAssistido =
+    item.progresso_s > 0 && item.duracao_s
+      ? Math.min(100, Math.round((item.progresso_s / item.duracao_s) * 100))
+      : null;
+  const minutosRestantes =
+    percentualAssistido != null
+      ? Math.max(1, Math.round((item.duracao_s - item.progresso_s) / 60))
+      : null;
 
   return (
-    <div className="group/card relative transition-transform duration-300 ease-out motion-reduce:transition-none hover:z-10 hover:scale-105 focus-within:z-10 focus-within:scale-105">
-      <Link
-        to={`/assistir/${item.episodio_id}`}
-        state={{
-          episodio: {
-            numero: item.numero,
-            animeId: item.anime_id,
-            animeTitulo: item.anime_titulo,
-            titulo: item.titulo,
-          },
-        }}
-        className="relative flex aspect-[2/3] w-full flex-col justify-end overflow-hidden rounded-xl bg-surface text-left outline-none transition-colors duration-200 hover:bg-surface-hover"
-      >
-        {item.capa_path && (
-          <img
-            src={item.capa_path}
-            alt=""
-            loading="lazy"
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
-        <div className="relative flex flex-col gap-1.5 p-4">
-          <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors group-hover/card:text-neon lg:text-base">
-            {item.anime_titulo}
-          </h3>
-          <p className="text-xs text-ink-muted">Episódio {item.numero}</p>
-          <span
-            role="progressbar"
-            aria-label="progresso de reprodução"
-            aria-valuenow={percentual}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            className="h-1 w-full overflow-hidden rounded-full bg-border-chrome"
-          >
-            <span style={{ width: `${percentual}%` }} className="block h-full rounded-full bg-neon" />
+    <CartaoDeEpisodio
+      modo="grade"
+      cor="text-white"
+      para={`/assistir/${item.episodio_id}`}
+      estadoDeRota={{
+        episodio: {
+          numero: item.numero,
+          animeId: item.anime_id,
+          animeTitulo: item.anime_titulo,
+          titulo: item.titulo,
+        },
+      }}
+    >
+      <MiniaturaDoEpisodio thumb={item.thumb} modo="grade" />
+      <IndicadorDePlay emGrade temThumb={!!item.thumb} />
+      <FaixaDeConteudo
+        modo="grade"
+        rotulo={
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <h3 className="line-clamp-1 text-sm font-semibold text-white">{item.anime_titulo}</h3>
+            <p className="text-xs text-ink-muted">Episódio {item.numero}</p>
           </span>
-        </div>
-        {/* Borda neon: overlay por cima da capa/degradê (mesma técnica do
-            AnimeCard e do CarrosselDestaques). */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 rounded-xl border-4 border-transparent transition-colors duration-300 ease-out group-hover/card:border-neon group-focus-within/card:border-neon motion-reduce:transition-none"
-        />
-      </Link>
-    </div>
+        }
+        extra={
+          percentualAssistido != null ? (
+            <span className="flex items-center gap-2">
+              <span
+                role="progressbar"
+                aria-label="progresso de reprodução"
+                aria-valuenow={percentualAssistido}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
+              >
+                <span
+                  style={{ width: `${percentualAssistido}%` }}
+                  className="block h-full rounded-full bg-neon"
+                />
+              </span>
+              <span className="shrink-0 text-xs text-ink-muted font-semibold">
+                faltam {minutosRestantes} min
+              </span>
+            </span>
+          ) : null
+        }
+      />
+    </CartaoDeEpisodio>
   );
 }

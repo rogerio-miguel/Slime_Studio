@@ -348,7 +348,10 @@ class ContinuarAssistindoSaida(BaseModel):
     episodio_id: int
     anime_id: int
     anime_titulo: str
-    capa_path: str | None
+    # Thumb do EPISÓDIO (`Episodio.capa_path`, não `Anime.capa_path`) — mesma
+    # convenção de URL crua servida via `GET /api/thumb` que `EpisodioSaida.
+    # capa_path`/`EpisodioRemotoSaida.thumb_url` usam.
+    thumb: str | None
     numero: int
     titulo: str | None
     progresso_s: int
