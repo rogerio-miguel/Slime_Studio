@@ -7,6 +7,7 @@ import {
   listarAnimes,
   listarAnimesEmAlta,
   listarContinuarAssistindo,
+  listarFileirasTematicas,
   listarProximaTemporada,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
@@ -19,9 +20,12 @@ import CenarioDeEntrada from '../inicio/CenarioDeEntrada.jsx';
 // só não é renderizado por enquanto.
 import CarrosselDestaques from '../inicio/CarrosselDestaques.jsx';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
+import DestaqueGrande from '../inicio/DestaqueGrande.jsx';
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { topDaTemporada } from '../inicio/fileiras.js';
+import { rotularFileiras } from '../inicio/fileirasTematicas.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
+import { intercalarDestaques } from '../inicio/intercalarDestaques.js';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 
@@ -33,14 +37,25 @@ import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 //
 // Conteúdo (branch `!buscando`): o carrossel hero seguido das fileiras
 // horizontais (inicio/FileiraDeCards.jsx), nesta ordem — "Próximas estreias",
-// "Continuar assistindo", "Top 10 da semana". "Top 10" é recorte puro do feed
+// "Continuar assistindo", "Top 10 da semana", fileiras temáticas ("Isekai",
+// "Família encontrada" etc.). "Top 10" é recorte puro do feed
 // `GET /api/animes/em-alta` (inicio/fileiras.js); "Próximas estreias" vem do
 // feed próprio `GET /api/animes/proxima-temporada` (próxima temporada da
 // AniList — o feed "em alta" só traz o que já está no ar); "Continuar
-// assistindo" de `GET /api/episodios/continuar-assistindo`. Cada fileira some
-// sozinha quando sua lista está vazia (guard no próprio FileiraDeCards). As
-// fileiras por gênero (`fileirasPorGenero` em fileiras.js) saíram da Home e
-// ainda não têm página nova — a função segue exportada, o render não.
+// assistindo" de `GET /api/episodios/continuar-assistindo`; as fileiras
+// temáticas vêm de `GET /api/animes/fileiras-tematicas`, uma por tema
+// pré-definido no backend, traduzidas e recortadas em
+// inicio/fileirasTematicas.js. Cada fileira some sozinha quando sua lista
+// está vazia (guard no próprio FileiraDeCards). As fileiras por gênero
+// (`fileirasPorGenero` em fileiras.js) saíram da Home e ainda não têm página
+// nova — a função segue exportada, o render não.
+//
+// "Destaques grandes" (inicio/DestaqueGrande.jsx) — 2 cards banner+info,
+// seção ADICIONAL que não substitui carrossel nem "Top 10": reaproveita 2
+// itens ALEATÓRIOS de `top10` (amostraAleatoria) e fica intercalada ENTRE as
+// fileiras temáticas (não antes/depois do bloco inteiro), via
+// inicio/intercalarDestaques.js. Some sozinha se `top10` estiver vazio
+// (mesma exibição silenciosa).
 // "Seu catálogo" segue FORA da Inicio de propósito — o catálogo local (listar,
 // abrir, remover) mora inteiro em `paginas/Galeria.jsx` (rota "/animes",
 // linkada na navbar). `DestaquePrincipal` também não está nesta ordem (pivot
@@ -57,6 +72,21 @@ import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 // src/inicio/ só importam de src/api/, components/ e react-router-dom —
 // nada de src/player/ (a única ligação com o player é a rota
 // "/assistir/:episodioId", string, não import).
+
+// Sorteia `tamanho` itens distintos de `lista`, sem repetir e sem mutar a
+// entrada (`[...lista]` antes do `splice`). Usada só pelos "destaques
+// grandes" (ver `destaquesGrandes` abaixo) — função pura, testável sem
+// precisar montar o componente.
+function amostraAleatoria(lista, tamanho) {
+  const copia = [...lista];
+  const amostra = [];
+  while (amostra.length < tamanho && copia.length > 0) {
+    const indice = Math.floor(Math.random() * copia.length);
+    amostra.push(copia.splice(indice, 1)[0]);
+  }
+  return amostra;
+}
+
 export default function Inicio() {
   const navigate = useNavigate();
   const idResultadosFontes = useId();
@@ -86,11 +116,57 @@ export default function Inicio() {
   // silenciosa: em carregando/erro/vazio a fileira não aparece.
   const proximaTemporada = useRecurso(listarProximaTemporada, []);
 
+  // Fileiras temáticas — `GET /api/animes/fileiras-tematicas`. Mesma exibição
+  // silenciosa das demais fileiras auto-hospedadas: em carregando/erro a
+  // seção simplesmente não aparece (sem aviso visível), e cada fileira some
+  // sozinha se vier vazia (guard em FileiraDeCards). A tradução de `chave`
+  // para rótulo PT e o corte de itens (backend traz até 50 de propósito)
+  // ficam em `rotularFileiras` (inicio/fileirasTematicas.js).
+  const fileirasTematicas = useRecurso(listarFileirasTematicas, []);
+  const fileirasRotuladas = useMemo(
+    () => rotularFileiras(fileirasTematicas.dados ?? []),
+    [fileirasTematicas.dados]
+  );
+
   // "Top 10" — recorte puro do feed `em-alta` (inicio/fileiras.js). `?? []`
   // porque `emAlta.dados` é `null` até a primeira resposta. (As fileiras por
   // gênero — `fileirasPorGenero`, ainda exportada de fileiras.js — saíram da
   // Home; vão pra uma página própria.)
   const top10 = useMemo(() => topDaTemporada(emAlta.dados ?? []), [emAlta.dados]);
+
+  // "Destaques grandes" — 2 itens ALEATÓRIOS do Top 10 (não os primeiros: o
+  // pedido é variar a cada carregamento, não fixar sempre os mesmos 2 do topo
+  // do ranking). Repetição com a fileira "Top 10" é aceitável (mesmo padrão de
+  // streaming). `sinopse`/`continuarEm` já resolvidos aqui pra
+  // DestaqueGrande.jsx só renderizar. `amostraAleatoria` roda dentro do
+  // `useMemo` — só sorteia de novo quando `top10` muda de fato (reload do
+  // feed), não a cada re-render por digitação na busca ou outro estado alheio.
+  // `sinopse`: cruza por `anime_id` com `catalogo.dados` (já carregado acima,
+  // sem request extra por card) — `AnimeSaida` (`GET /api/animes`) expõe
+  // `sinopse` 1:1 com a coluna. Só fica ausente pra anime ainda não
+  // catalogado (`item.anime_id == null`), caminho normal do componente (o
+  // parágrafo simplesmente não aparece).
+  // `continuarEm`: entrada correspondente em `continuando.dados` (mesma
+  // prateleira "Continuar assistindo" já carregada) — decide o rótulo do CTA.
+  const destaquesGrandes = useMemo(() => {
+    const catalogoPorId = new Map((catalogo.dados ?? []).map((anime) => [anime.id, anime]));
+    const continuandoPorAnime = new Map(
+      (continuando.dados ?? []).map((entrada) => [entrada.anime_id, entrada])
+    );
+    return amostraAleatoria(top10, 2).map((item) => ({
+      item,
+      sinopse: item.anime_id != null ? (catalogoPorId.get(item.anime_id)?.sinopse ?? null) : null,
+      continuarEm: item.anime_id != null ? (continuandoPorAnime.get(item.anime_id) ?? null) : null,
+    }));
+  }, [top10, catalogo.dados, continuando.dados]);
+
+  // Intercala os destaques grandes entre as fileiras temáticas (ver
+  // inicio/intercalarDestaques.js) — produz a lista final de blocos que o
+  // `.map()` do render usa no lugar de `fileirasRotuladas` cru.
+  const blocosDeConteudo = useMemo(
+    () => intercalarDestaques(fileirasRotuladas, destaquesGrandes),
+    [fileirasRotuladas, destaquesGrandes]
+  );
 
   const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
   const [erroMaterializacao, setErroMaterializacao] = useState(null);
@@ -610,6 +686,27 @@ export default function Inicio() {
                   )
                 }
               />
+
+              {blocosDeConteudo.map((bloco) =>
+                bloco.tipo === 'destaque' ? (
+                  <DestaqueGrande
+                    key={bloco.chave}
+                    item={bloco.destaque.item}
+                    sinopse={bloco.destaque.sinopse}
+                    continuarEm={bloco.destaque.continuarEm}
+                    aoMaterializar={materializarEIrPara}
+                    materializando={chaveEmMaterializacao != null}
+                  />
+                ) : (
+                  <FileiraDeCards
+                    key={bloco.chave}
+                    titulo={bloco.fileira.rotulo}
+                    itens={bloco.fileira.itens}
+                    chaveDoItem={chaveDoItemDoFeed}
+                    renderItem={(item) => renderCardDoFeed(item)}
+                  />
+                )
+              )}
             </div>
 
           </>
