@@ -24,7 +24,12 @@ from integrations.base import ArteDeAnime, ProvedorDeArte
 _URL_BASE = "https://api.themoviedb.org/3"
 _URL_IMAGEM = "https://image.tmdb.org/t/p"
 _TAMANHO_BACKDROP = "w1280"  # equivalente ao bannerImage
-_TAMANHO_STILL = "w300"  # thumb de episódio (Fatia 5) — tamanho intermediário, card de lista
+_TAMANHO_STILL = "original"  # thumb de episódio (Fatia 5). `still_sizes` do TMDB só
+# tem w92/w185/w300/original (sem w500/w780/w1280, que só existem pra poster/backdrop)
+# — w300 ficava borrado no card grande da grade de episódios/"Continuar assistindo"
+# (renderizado a ~440-560px CSS, `/api/thumb` não faz resize). `original` também
+# iguala a qualidade da thumb ao vivo (TMDB) com a persistida em `capa_path` na
+# captura, que já usa `still_src` cru do extractor (mesma URL "original").
 _IDIOMA = "pt-BR"  # TMDB cai pro pôster default quando não há arte pt-BR
 # Estritamente < `integrations/servico.py::_TIMEOUT_POR_PROVEDOR_S` (8s) —
 # mesma razão de `integrations/anilist.py::_TIMEOUT_S`.
