@@ -1,85 +1,95 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+// Re-exportado por components/LinhaDeEpisodio.jsx — `src/inicio/` não importa
+// de `src/player/` direto (fronteira Clean Architecture, ver paginas/Inicio.jsx).
+// Mesmo ícone do CTA "Assistir agora" que inicio/DestaqueGrande.jsx já reusa.
+import { IconePlay } from '../components/LinhaDeEpisodio.jsx';
+import IconeSeta from './IconeSeta.jsx';
+import {
+  embaralharComSemente,
+  INTERVALO_ROTACAO_MS,
+  TAMANHO_DA_JANELA,
+} from './janelaDeDestaques.js';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 import { traduzirGenero } from './generos.js';
+import { PADDING_TITULO } from './tamanhoDeCard.js';
 
-// Carrossel "billboard" da home (estilo Hulu/Disney+): um destaque grande por
-// vez com espiada (peek) dos vizinhos, alimentado pelo feed
+// Hero da home (estilo AnimeFire): banner full-width com imagem de fundo e
+// gradiente escuro, um destaque por vez, alimentado pelo feed
 // `GET /api/animes/em-alta`. Substitui visualmente o DestaquePrincipal único
-// (inicio/DestaquePrincipal.jsx, hoje não renderizado). Não há botão de CTA:
-// o slide ativo inteiro é clicável — abre `/anime/:id` quando já catalogado,
-// senão materializa o item do feed (`aoMaterializar`) e navega pro anime criado.
+// (inicio/DestaquePrincipal.jsx, hoje não renderizado) e o antigo layout de
+// carrossel "billboard" com peek dos vizinhos (estilo Hulu/Disney+) — a
+// imagem agora cobre 100% da largura da seção, sem card com bordas
+// arredondadas nem sombra flutuando sobre o fundo da página; é a própria
+// seção.
 //
-// O feed chega com até 50 itens; o carrossel mostra uma JANELA de 15 que
-// desliza pelo pool a cada 10 min (e a cada reload, via relógio) — herda da
-// antiga GradeRotativa o papel de não deixar a home presa nos mesmos
-// destaques. Ver `TAMANHO_DA_JANELA` / `INTERVALO_ROTACAO_MS`.
+// Cada slide tem um bloco de conteúdo ancorado embaixo-esquerda: pill de
+// ranking (`#N em alta`, posição do item no feed já ordenado), título (link
+// pra `/anime/:id` quando catalogado), título alternativo e UM botão primário
+// de CTA. O slide NÃO é mais clicável inteiro — o botão é o único alvo de
+// navegação/materialização (mais o link do título quando catalogado): `<Link>`
+// "Assistir agora" pro anime já catalogado, `<button>` "Adicionar ao Catálogo"
+// (`aoMaterializar`) pro item do feed ainda não catalogado.
 //
-// Geometria (ponto sensível): a máscara externa é `overflow-hidden`, NÃO
-// scroll do usuário — rolagem manual dessincronizaria o índice. Ela leva
-// `py-16 -my-16`: o padding afasta as bordas de clipe pra cima/baixo o
-// bastante pra sombra do slide ativo (que projeta pra baixo) não ser cortada,
-// e a margem negativa devolve esse espaço ao fluxo (largura e ritmo vertical
-// intactos). O track é um flex; cada slide ocupa `--slide-w` (< 100%, e é daí
-// que sai o peek, sem
-// margin/padding negativo) e o track desliza `--slide-w + --slide-gap` por
-// passo via `transform: translateX(calc(...))`, com meia-folga inicial pra
-// centralizar o slide ativo. O gap vem de uma variável (`--slide-gap`), não
-// de uma classe `gap-4`, pra não repetir o mesmo número dentro do `calc`
-// (mesma armadilha documentada em inicio/GradeDeCards.jsx). As proporções e
-// larguras seguem a medição do carrossel do Disney+ (card ~92,6% da largura,
-// ~2,93:1 no desktop). A `<section>` NÃO tem `max-w`/`mx-auto`: ocupa toda a
-// largura do `<main>` (full-bleed, como a área do carrossel do Disney+); o
-// peek de ~3,7% de cada lado é o único respiro horizontal.
+// O feed chega com até 50 itens; o carrossel mostra 15 deles, sorteados do
+// pool por um embaralhamento com semente no relógio (ver `embaralharComSemente`
+// / `blocoDaJanela`) — ordem aparentemente aleatória, não a ordem de ranking do
+// feed. A cada 10 min (e a cada reload) a semente muda: novo recorte e nova
+// ordem — herda da antiga GradeRotativa o papel de não deixar a home presa nos
+// mesmos destaques. `TAMANHO_DA_JANELA` / `INTERVALO_ROTACAO_MS` /
+// `embaralharComSemente` vêm de ./janelaDeDestaques.js (fonte única —
+// paginas/Inicio.jsx reproduz este recorte pra excluí-lo dos destaques
+// grandes).
 //
-// Loop infinito (estilo Disney+): a lista base é renderizada 3x concatenada e
-// `pos` — o índice de render do slide ativo dentro dessas cópias — começa na
-// cópia do MEIO. Avançar/voltar mexe `pos` de 1 em 1 com transição; quando
-// `pos` sai da faixa da cópia do meio `[n, 2n)`, depois que a animação assenta
-// (`onTransitionEnd`) ele salta pro ponto equivalente da cópia do meio SEM
-// transição (`semTransicao` tira a classe por 1 frame). Como as três cópias
-// são idênticas, o salto é imperceptível — os dois peeks nunca ficam vazios e
-// o wrap não "rebobina". Sem animação (movimento reduzido, ou clique rápido
-// que empurra `pos` pros extremos das cópias) a normalização acontece direto
-// num efeito, aceitando o corte da animação pra nunca renderizar slot vazio.
+// Geometria: a máscara externa é `overflow-hidden`, NÃO scroll do usuário —
+// rolagem manual dessincronizaria o índice. Cada slide ocupa 100% da largura
+// do track (`w-full shrink-0`, sem peek) e o track desliza um slide inteiro
+// por passo via `transform: translateX(-N * 100%)`. A `<section>` NÃO tem
+// `max-w`/`mx-auto`: ocupa toda a largura do `<main>` (full-bleed). As
+// bolinhas de paginação ficam SOBREPOSTAS na imagem, dentro do hero
+// (`absolute bottom-*`), não numa faixa abaixo dele.
+//
+// Loop infinito (estilo Disney+, mantido do layout anterior): a lista base é
+// renderizada 3x concatenada e `pos` — o índice de render do slide ativo
+// dentro dessas cópias — começa na cópia do MEIO. Avançar/voltar mexe `pos`
+// de 1 em 1 com transição; quando `pos` sai da faixa da cópia do meio
+// `[n, 2n)`, depois que a animação assenta (`onTransitionEnd`) ele salta pro
+// ponto equivalente da cópia do meio SEM transição (`semTransicao` tira a
+// classe por 1 frame). Como as três cópias são idênticas, o salto é
+// imperceptível — os dois peeks nunca ficam vazios (não que haja peek visual
+// aqui, mas o mecanismo evita o "rebobinar" do wrap) e o wrap não
+// "rebobina". Sem animação (movimento reduzido, ou clique rápido que empurra
+// `pos` pros extremos das cópias) a normalização acontece direto num efeito,
+// aceitando o corte da animação pra nunca renderizar slot vazio.
 //
 // A11y: perfil mínimo do padrão "carrossel" do WAI-ARIA APG. Só o slide
-// central é interativo — todos os outros `<li>` (peeks e cópias) ficam `inert`
-// (remove foco/tab/clique/árvore de a11y de uma vez), então os CTAs
-// triplicados no DOM não entram no tab order. Setas e bolinhas têm rótulo e
-// `focus-visible`; a navegação por seta do teclado fica presa à `<section>`
-// (sem listener global). O track tem `aria-live` (silencioso enquanto o
-// auto-avanço roda; `polite` quando parado por hover/foco/`prefers-reduced-
-// motion`) e o auto-avanço reagenda um `setTimeout` por slide — gate por
-// `ativa`, hover/foco e movimento reduzido.
+// central é interativo — todos os outros `<li>` (cópias) ficam `inert` (remove
+// foco/tab/clique/árvore de a11y de uma vez), então o botão de CTA e o link do
+// título triplicados no DOM não entram no tab order. Setas e bolinhas têm
+// rótulo e `focus-visible`; a navegação por seta do teclado fica presa à
+// `<section>` (sem listener global). O track tem `aria-live` (silencioso
+// enquanto o auto-avanço roda; `polite` quando parado por hover/foco/
+// `prefers-reduced-motion`) e o auto-avanço reagenda um `setTimeout` por slide
+// — gate por `ativa`, hover/foco e movimento reduzido.
 
-// Quantos destaques o carrossel mostra de uma vez. O feed "em alta" chega com
-// até 50 itens (`perPage: 50` na AniList); em vez de cortar nos 15 primeiros
-// para sempre, essa é uma JANELA que desliza pelo pool inteiro ao longo do
-// tempo (ver `blocoDaJanela` / `INTERVALO_ROTACAO_MS`), no lugar da rotação de
-// lotes que a antiga GradeRotativa fazia.
-const TAMANHO_DA_JANELA = 15;
+// `TAMANHO_DA_JANELA` (destaques por vez) e `INTERVALO_ROTACAO_MS` (de quanto
+// em quanto a janela desliza pelo pool), junto com `embaralharComSemente`,
+// moram em ./janelaDeDestaques.js — fonte única, porque paginas/Inicio.jsx
+// reproduz o mesmo recorte pra excluí-lo dos "destaques grandes".
 
 // Janela do auto-avanço. `setTimeout` reagendado a cada slide (não
 // `setInterval`): navegação manual muda `pos`, o efeito reexecuta e a
 // contagem de 10s reinicia de graça.
 const INTERVALO_MS = 10000;
 
-// A cada 10 min (mesmo intervalo da antiga GradeRotativa) a janela avança um
-// bloco pelo pool. O bloco inicial vem do relógio (`Date.now()`), não de 0:
-// dois reloads dentro da mesma janela de 10 min mostram o mesmo recorte e não
-// há "drift" entre abas.
-const INTERVALO_ROTACAO_MS = 600000;
-
-// Sombra do slide ativo — `box-shadow` computado medido ao vivo no billboard
-// do Disney+. Via `style` inline, NÃO classe Tailwind: o parser de valor
-// arbitrário do Tailwind v4 não gera de forma confiável uma sombra de 2
-// camadas que começa pela cor, então `shadow-[#hex_0_26px...]` era emitida na
-// classe mas sem regra CSS correspondente.
-// Exportada: `inicio/FileiraDeCards.jsx` reusa o mesmo valor nos slots das
-// fileiras (o usuário pediu a sombra do billboard nos cards, não o "sem
-// sombra" do Disney+ real) — fonte única, se a sombra for retunada muda nos
-// dois lugares de uma vez.
+// Sombra "flutuante" usada pelos cards da Galeria/fileiras
+// (GradeDeCatalogo.jsx, FileiraDeCards.jsx, DestaqueGrande.jsx) e pela capa no
+// header de PaginaDoAnime.jsx — `box-shadow` computado medido ao vivo no
+// antigo billboard do Disney+, via `style` inline (não classe Tailwind: o
+// parser de valor arbitrário do Tailwind v4 não gera de forma confiável uma
+// sombra de 2 camadas que começa pela cor). Este arquivo não usa mais
+// localmente — o hero agora é um banner full-bleed, sem card flutuando sobre
+// o fundo — mas o export segue como fonte única pra quem ainda precisa dela.
 export const SOMBRA_SLIDE_ATIVO =
   'rgba(0,0,0,0.69) 0 26px 30px -10px, rgba(0,0,0,0.73) 0 16px 10px -10px';
 
@@ -93,19 +103,81 @@ function relativo(iso) {
   return rtf.format(dias, 'day');
 }
 
-// Frase curta derivada do item do feed. Ordem importa — para no primeiro match.
-// Nunca promete disponibilidade ("já disponível"): o item pode nem estar
-// catalogado. Sem match → null e a linha da tagline não renderiza.
-function taglineDoItem(item) {
+// Texto do próximo episódio a partir de `proximo_ep_em`/`proximo_ep_numero`.
+// Sem data (ausente, ou já no passado/dado inválido — ex. `status_lancamento
+// === 'finalizado'`) retorna null e a linha simplesmente não renderiza, nunca
+// "Invalid Date"/"NaN dias". Compartilhado com inicio/DestaqueGrande.jsx
+// (mesmo painel de info); `relativo`/`rtf` acima continuam locais.
+export function textoProximoEpisodio(item) {
   const epEm = item.proximo_ep_em;
-  const futuro = Boolean(epEm) && new Date(epEm) > new Date();
-  if (futuro && item.proximo_ep_numero != null) {
-    return `Episódio ${item.proximo_ep_numero} ${relativo(epEm)}`;
-  }
-  if (futuro) return `Novo episódio ${relativo(epEm)}`;
-  if (item.status_lancamento === 'em_lancamento') return 'Em lançamento';
-  if (item.status_lancamento === 'finalizado') return 'Temporada completa';
-  return null;
+  if (!epEm) return null;
+  const data = new Date(epEm);
+  if (Number.isNaN(data.getTime()) || data <= new Date()) return null;
+  const quando = relativo(epEm);
+  return item.proximo_ep_numero != null
+    ? `Episódio ${item.proximo_ep_numero} ${quando}`
+    : `Novo episódio ${quando}`;
+}
+
+// Backdrops do TMDB chegam do feed em `w1280` (ver backend/integrations/tmdb.py
+// `_TAMANHO_BACKDROP`). O hero é full-bleed (>=1920px): w1280 sob `object-cover`
+// é upscale visível. Os tamanhos de backdrop do TMDB são w300/w780/w1280/original
+// — nada entre w1280 e original —, então pro hero sobe direto pra `original`.
+// URL de outra origem (banner da AniList, capa) passa intacta.
+function imagemEmAltaResolucao(url) {
+  if (!url) return url;
+  return url.replace(
+    /^(https:\/\/image\.tmdb\.org\/t\/p\/)w\d+(\/)/,
+    '$1original$2',
+  );
+}
+
+// Gradiente do hero — pseudo-::before empilhado no AnimeFire: 3 camadas com a
+// cor EXATA do fundo da página (`#17171b`, ver `bg-[#17171b]` em
+// paginas/Inicio.jsx), pra base do hero se dissolver no fundo sem emenda.
+// Inline no `style`: o parser de multi-gradiente de valor arbitrário do
+// Tailwind v4 não é confiável (mesmo motivo de `SOMBRA_SLIDE_ATIVO`).
+const GRADIENTE_HERO =
+  'linear-gradient(to top, #17171b, transparent 45%), linear-gradient(to top, #17171b, transparent 40%), linear-gradient(77deg, #17171b, transparent 60%)';
+// Sem arte horizontal (`semBanner`): só o pôster retrato borrado atrás do
+// texto — uma camada extra à esquerda mantém o texto legível sobre ele.
+const GRADIENTE_HERO_SEM_BANNER = `linear-gradient(to right, #17171b, transparent 60%), ${GRADIENTE_HERO}`;
+
+// Botão primário do hero (pílula clara, texto escuro, ícone play) — geometria
+// medida ao vivo no AnimeFire. Compartilhado entre o `<Link>` (anime já
+// catalogado) e o `<button>` de materialização (item do feed), e reusado por
+// inicio/DestaqueGrande.jsx pro CTA do mesmo painel de info.
+export const CLASSE_BOTAO_HERO =
+  'inline-flex h-11 w-fit items-center gap-3 rounded-xl bg-white px-6 font-bold text-[#17171b] outline-none transition hover:brightness-90 focus-visible:ring-2 focus-visible:ring-neon motion-reduce:transition-none disabled:cursor-progress sm:h-12 lg:h-14 lg:text-xl';
+
+// Pill do hero — usada pela tag de ranking ("#N em alta") e pela de estado
+// ("Anime no Catálogo"), lado a lado. Mesmo visual pras duas. Compartilhada
+// com inicio/DestaqueGrande.jsx.
+export const CLASSE_PILL_HERO =
+  'inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm';
+
+// Ícone "em alta" (chama) da pill de ranking — inline, sem dependência nova
+// (Escada de Minimalismo, CLAUDE.md §4); mesmo estilo stroke 24×24 de
+// player/Icones.jsx. Decorativo: o texto "#N em alta" já carrega o sentido.
+// Compartilhado com inicio/DestaqueGrande.jsx.
+export function IconeEmAlta(props) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      {...props}
+    >
+      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+    </svg>
+  );
 }
 
 export default function CarrosselDestaques({ itens, ativa, aoMaterializar, materializando }) {
@@ -122,16 +194,16 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
     Math.floor(Date.now() / INTERVALO_ROTACAO_MS),
   );
 
-  // Recorte visível: `TAMANHO_DA_JANELA` itens a partir do bloco atual,
-  // circulando pelo pool (`% pool.length`) — mesma fórmula de rotação da
-  // GradeRotativa. `n` fica fixo em `TAMANHO_DA_JANELA` sempre que o pool é
-  // grande o bastante, então as 3 cópias, as bolinhas e a normalização não
-  // mudam de tamanho quando a janela gira.
+  // Recorte visível: o pool inteiro embaralhado com semente no `blocoDaJanela`,
+  // cortado em `TAMANHO_DA_JANELA`. Cada rotação de janela re-embaralha (nova
+  // semente) — troca o recorte E a ordem, sem ficar preso nos mesmos destaques
+  // nem exibi-los em ordem de ranking. `n` fica fixo em `TAMANHO_DA_JANELA`
+  // sempre que o pool é grande o bastante, então as 3 cópias, as bolinhas e a
+  // normalização não mudam de tamanho quando a janela gira.
   const base = useMemo(() => {
     const tamanho = Math.min(TAMANHO_DA_JANELA, pool.length);
     if (tamanho === 0) return [];
-    const inicio = (blocoDaJanela * TAMANHO_DA_JANELA) % pool.length;
-    return Array.from({ length: tamanho }, (_, i) => pool[(inicio + i) % pool.length]);
+    return embaralharComSemente(pool, blocoDaJanela).slice(0, tamanho);
   }, [pool, blocoDaJanela]);
   const n = base.length;
 
@@ -278,7 +350,8 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
 
   // Depois que a varredura de 1 passo assenta: se `pos` caiu fora da cópia do
   // meio, salta pro ponto equivalente sem transição. Filtra o `transitionend`
-  // do próprio track (a `transform`), ignorando o `box-shadow` dos `<li>`.
+  // do próprio track (a `transform`), ignorando qualquer transição interna dos
+  // `<li>`.
   const aoFimDaTransicao = (evento) => {
     if (!loop) return;
     if (evento.target !== trackRef.current || evento.propertyName !== 'transform') {
@@ -303,163 +376,210 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
         Destaques da temporada
       </h2>
 
-      <div className="group relative">
-        {/* `py-16 -my-16`: espaço de clipe pra sombra do slide ativo sem
-            mexer no layout — ver bloco de geometria no topo do arquivo. */}
-        <div className="overflow-hidden py-16 -my-16">
-          <ul
-            ref={trackRef}
-            id={idSlides}
-            aria-live={autoAvancando ? 'off' : 'polite'}
-            onTransitionEnd={aoFimDaTransicao}
-            style={{
-              '--slide-gap': '1.5rem',
-              gap: 'var(--slide-gap)',
-              transform: `translateX(calc((100% - var(--slide-w)) / 2 - ${deslocamento} * (var(--slide-w) + var(--slide-gap))))`,
-            }}
-            className={`flex [--slide-w:88%] sm:[--slide-w:90%] lg:[--slide-w:92.6%] ${
-              semTransicao
-                ? ''
-                : 'transition-transform duration-500 ease-out motion-reduce:transition-none'
-            }`}
-          >
-            {slides.map((item, k) => {
-              const ativo = loop ? k === pos : true;
-              const titulo = item.titulo_romaji || item.titulo_ingles;
-              // Sem arte horizontal: só temos o pôster retrato pra trabalhar.
-              const semBanner = !item.banner_url && Boolean(item.capa_url);
-              const fonteImagem = item.banner_url || item.capa_url || null;
-              const primeiroDestaque = k % n === 0;
+      <div className="group relative overflow-hidden">
+        <ul
+          ref={trackRef}
+          id={idSlides}
+          aria-live={autoAvancando ? 'off' : 'polite'}
+          onTransitionEnd={aoFimDaTransicao}
+          style={{ transform: `translateX(-${deslocamento * 100}%)` }}
+          className={`flex ${
+            semTransicao
+              ? ''
+              : 'transition-transform duration-500 ease-out motion-reduce:transition-none'
+          }`}
+        >
+          {slides.map((item, k) => {
+            const ativo = loop ? k === pos : true;
+            const titulo = item.titulo_romaji || item.titulo_ingles;
+            // Título alternativo (o outro idioma) pro subtítulo nativo — só
+            // aparece se existir E divergir do exibido.
+            const tituloAlternativo =
+              titulo === item.titulo_romaji ? item.titulo_ingles : item.titulo_romaji;
+            const mostrarAlternativo =
+              Boolean(tituloAlternativo) && tituloAlternativo !== titulo;
+            const catalogado = item.anime_id != null;
+            // Posição no ranking do feed `em-alta` (já vem ordenado). `pool` é
+            // o array `itens` original e o item aqui é a MESMA referência de
+            // objeto (janela e cópias não clonam item), então `indexOf` casa.
+            // -1 (não deve acontecer) → sem pill.
+            const rank = pool.indexOf(item) + 1;
+            // Sem arte horizontal: só temos o pôster retrato pra trabalhar.
+            const semBanner = !item.banner_url && Boolean(item.capa_url);
+            const fonteImagem = item.banner_url || item.capa_url || null;
+            const primeiroDestaque = k % n === 0;
 
-              const tag = taglineDoItem(item);
-              const generosTraduzidos = (item.generos ?? [])
-                .slice(0, 3)
-                .map((g) => traduzirGenero(g));
-              const meta = [item.ano_estreia, generosTraduzidos.join(', ')]
-                .filter(Boolean)
-                .join(' • ');
+            const proximoEpisodio = textoProximoEpisodio(item);
+            const generosTraduzidos = (item.generos ?? [])
+              .slice(0, 3)
+              .map((g) => traduzirGenero(g));
+            const meta = [item.ano_estreia, generosTraduzidos.join(', ')]
+              .filter(Boolean)
+              .join(' • ');
 
-              return (
-                <li
-                  key={k}
-                  role="group"
-                  aria-roledescription="slide"
-                  aria-label={`${(k % n) + 1} de ${n}: ${titulo}`}
-                  inert={!ativo}
-                  // `semBanner` + cor dominante da capa (AniList `coverImage.color`):
-                  // a cor entra como fundo do slide, sob o blur da capa (ver o
-                  // primeiro <img> abaixo). `bg-surface` continua de fallback
-                  // quando `capa_cor` é null — item do Kitsu, ou `color: null`
-                  // da própria AniList.
-                  style={{
-                    ...(ativo && { boxShadow: SOMBRA_SLIDE_ATIVO }),
-                    ...(semBanner &&
-                      item.capa_cor && { backgroundColor: item.capa_cor }),
-                  }}
-                  // `group/slide`: gatilho do hover da BORDA. Grupo NOMEADO no
-                  // próprio `<li>` (não no `group` da máscara, que é full-bleed
-                  // e ainda transborda 64px em Y) pra a borda só acender sobre a
-                  // área do card ativo, não nos peeks/faixas vazias. Os `<li>`
-                  // inertes não casam `:hover`, então pôr em todos é inofensivo.
-                  className="group/slide relative aspect-[16/10] max-h-[40rem] shrink-0 grow-0 basis-[var(--slide-w)] overflow-hidden rounded-[18px] bg-surface transition-shadow duration-300 sm:aspect-[7/3] lg:aspect-[1783/608]"
-                >
-                  {fonteImagem && (
-                    <img
-                      src={fonteImagem}
-                      alt=""
-                      loading={primeiroDestaque ? undefined : 'lazy'}
-                      decoding={primeiroDestaque ? undefined : 'async'}
-                      className={
-                        semBanner
-                          ? // a capa borrada/escurecida é só textura por cima da
-                            // cor dominante — em TODOS os breakpoints, não mais
-                            // a arte recortada nítida abaixo de `lg`. `opacity-70`
-                            // deixa a cor de fundo do <li> aparecer atrás.
-                            'absolute inset-0 h-full w-full object-cover scale-125 blur-lg brightness-[0.5] opacity-70'
-                          : 'absolute inset-0 h-full w-full object-cover'
-                      }
-                    />
-                  )}
-
-                  {/* Sem banner (`semBanner`): o fundo do slide é a cor
-                      dominante da capa (`item.capa_cor`, via `style` no `<li>`
-                      acima), com a própria capa borrada por cima como textura
-                      (o primeiro <img>). Só de `lg` pra cima o pôster também
-                      entra NÍTIDO como card na lateral direita (oposta ao
-                      texto) — abaixo disso não há largura pro pôster ao lado do
-                      texto: fica só cor + capa borrada + gradiente + título.
-                      Mesma URL do fundo, então sem download extra. */}
-                  {semBanner && (
-                    <img
-                      src={item.capa_url}
-                      alt=""
-                      loading={primeiroDestaque ? undefined : 'lazy'}
-                      decoding={primeiroDestaque ? undefined : 'async'}
-                      className="absolute right-14 top-1/2 hidden aspect-[2/3] h-[82%] -translate-y-1/2 rounded-xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 lg:block"
-                    />
-                  )}
-
-                  <div
+            return (
+              <li
+                key={k}
+                role="group"
+                aria-roledescription="slide"
+                aria-label={`${(k % n) + 1} de ${n}: ${titulo}`}
+                inert={!ativo}
+                // `semBanner` + cor dominante da capa (AniList `coverImage.color`):
+                // a cor entra como fundo do slide, sob o blur da capa (ver o
+                // primeiro <img> abaixo). `bg-surface` continua de fallback
+                // quando `capa_cor` é null — item do Kitsu, ou `color: null`
+                // da própria AniList.
+                style={semBanner && item.capa_cor ? { backgroundColor: item.capa_cor } : undefined}
+                // Altura = viewport pequena (`h-svh`, medido ao vivo no
+                // AnimeFire: a `<section>` hero deles usa `svh`) — não mais uma
+                // fração dela nem `100vh` (que conta a barra de UI do mobile).
+                // `min-h` só pra não achatar demais em viewports muito baixos.
+                className="relative h-svh min-h-[480px] w-full shrink-0 grow-0 overflow-hidden bg-surface"
+              >
+                {fonteImagem && (
+                  <img
+                    // Só o banner horizontal (caso COM banner) sobe pra
+                    // `original`: no `semBanner` a fonte é a capa da AniList
+                    // (`item.capa_url`, sem variantes de tamanho) e o regex
+                    // não casaria — não vale chamar o helper nesse caminho.
+                    src={semBanner ? fonteImagem : imagemEmAltaResolucao(fonteImagem)}
+                    alt=""
+                    loading={primeiroDestaque ? undefined : 'lazy'}
+                    decoding={primeiroDestaque ? undefined : 'async'}
                     className={
                       semBanner
-                        ? 'pointer-events-none absolute inset-0 bg-gradient-to-r from-black/90 via-black/45 to-black/15 lg:to-transparent'
-                        : 'pointer-events-none absolute inset-0 bg-gradient-to-r from-black/95 via-black/55 to-black/10'
+                        ? // a capa borrada/escurecida é só textura por cima da
+                          // cor dominante — em TODOS os breakpoints, não mais
+                          // a arte recortada nítida abaixo de `lg`. `opacity-70`
+                          // deixa a cor de fundo do <li> aparecer atrás.
+                          'absolute inset-0 h-full w-full object-cover object-top scale-125 blur-lg brightness-[0.5] opacity-70'
+                        : // `object-top`: ancora a imagem pelo topo (medido no
+                          // AnimeFire) — a essa altura (`h-svh`) o `object-cover`
+                          // centralizado cortaria rosto/cabeça dos personagens
+                          // no banner.
+                          'absolute inset-0 h-full w-full object-cover object-top'
                     }
                   />
+                )}
 
-                  {/* Slide ativo inteiro clicável (sem botão de CTA): navega
-                      pro anime catalogado ou materializa o item do feed. Os
-                      peeks/cópias não recebem clique — o `<li>` não-ativo é
-                      `inert`. A camada de texto abaixo é `pointer-events-none`
-                      pra não roubar o clique deste overlay. */}
-                  {ativo &&
-                    (item.anime_id != null ? (
-                      <Link
-                        to={`/anime/${item.anime_id}`}
-                        aria-label={`${titulo} — ver episódios`}
-                        className="absolute inset-0 z-10 rounded-[18px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => aoMaterializar(item)}
-                        disabled={materializando}
-                        aria-label={`Adicionar ${titulo} ao catálogo`}
-                        className="absolute inset-0 z-10 rounded-[18px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon disabled:cursor-progress"
-                      />
-                    ))}
+                {/* Sem banner (`semBanner`): o fundo do slide é a cor
+                    dominante da capa (`item.capa_cor`, via `style` no `<li>`
+                    acima), com a própria capa borrada por cima como textura
+                    (o primeiro <img>). Só de `lg` pra cima o pôster também
+                    entra NÍTIDO como card na lateral direita (oposta ao
+                    texto) — abaixo disso não há largura pro pôster ao lado do
+                    texto: fica só cor + capa borrada + gradiente + título.
+                    Mesma URL do fundo, então sem download extra. */}
+                {semBanner && (
+                  <img
+                    src={item.capa_url}
+                    alt=""
+                    loading={primeiroDestaque ? undefined : 'lazy'}
+                    decoding={primeiroDestaque ? undefined : 'async'}
+                    className="absolute right-14 top-1/2 hidden aspect-[2/3] h-[82%] -translate-y-1/2 rounded-xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 lg:block"
+                  />
+                )}
 
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex max-w-[min(90%,42rem)] flex-col items-start justify-center gap-2 px-6 md:px-10 lg:px-14">
-                    <h3 className="line-clamp-3 text-2xl font-black uppercase tracking-tight text-white sm:text-4xl lg:text-5xl">
-                      {titulo}
-                    </h3>
-                    <p className="text-sm font-semibold text-white/90 sm:text-base">
-                      {item.anime_id != null
-                        ? 'Anime já no catálogo'
-                        : materializando
-                          ? 'Adicionando…'
-                          : ''}
-                    </p>
-                    {meta && <p className="text-xs text-ink-muted sm:text-sm">{meta}</p>}
-                    {tag && <p className="text-xs text-white/70 sm:text-sm">{tag}</p>}
-                  </div>
-                  {/* Borda do slide ativo: overlay por CIMA da imagem/gradiente
-                      (um `ring`/`border` no próprio `<li>` fica atrás dos filhos
-                      `absolute inset-0` e aparece só nas frestas). `border-4
-                      border-transparent` reserva a espessura; acende só no hover
-                      do CARD ativo (`group/slide`, não a máscara full-bleed),
-                      igual ao Disney+ (traço limpo, sem glow), na cor neon. */}
-                  {ativo && (
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute inset-0 rounded-[18px] border-4 border-transparent transition-colors duration-200 group-hover/slide:border-neon motion-reduce:transition-none"
-                    />
+                {/* Gradiente empilhado (::before do AnimeFire) — 3 camadas
+                    inline (multi-gradiente arbitrário não é confiável no
+                    Tailwind v4). Sem banner, uma 4ª camada à esquerda pro
+                    texto continuar legível sobre o pôster borrado. Substitui
+                    o card com bordas/sombra flutuante do layout anterior —
+                    aqui a imagem+gradiente É a seção. */}
+                <div
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background: semBanner ? GRADIENTE_HERO_SEM_BANNER : GRADIENTE_HERO,
+                  }}
+                />
+
+                {/* Bloco de conteúdo ancorado embaixo-esquerda — largura
+                    limitada a `45vw` no desktop, texto empurrado pro rodapé do
+                    hero (geometria medida ao vivo no AnimeFire). `paddingInline`
+                    = `PADDING_TITULO` (./tamanhoDeCard.js, `calc(3.7% + 10px)`):
+                    a MESMA margem lateral das fileiras/Galeria, pra o título e o
+                    botão do hero ficarem no mesmo eixo vertical que os títulos e
+                    a borda dos cards das prateleiras abaixo — em qualquer
+                    viewport (antes era `px-6/10/16` fixo, que descolava do
+                    gutter percentual das fileiras acima de `lg`). Vai no `style`
+                    inline: a `/` do `calc` colide com o modificador de opacidade
+                    do Tailwind v4. Sem `pointer-events-none`: agora tem
+                    botão/link dentro; os textos puros não roubam clique de
+                    nada (não há mais overlay de slide). */}
+                <div
+                  className="absolute inset-x-0 bottom-0 flex max-w-[90%] flex-col items-start gap-4 pb-10 sm:max-w-[70%] sm:pb-14 lg:max-w-[45vw] lg:pb-[18vh] xl:pb-[20vh]"
+                  style={{ paddingInline: PADDING_TITULO }}
+                >
+                  {(rank > 0 || catalogado) && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {rank > 0 && (
+                        <span className={CLASSE_PILL_HERO}>
+                          <IconeEmAlta />
+                          {`#${rank} em alta`}
+                        </span>
+                      )}
+                      {catalogado && <span className={CLASSE_PILL_HERO}>Anime no Catálogo</span>}
+                    </div>
                   )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+
+                  <div>
+                    <h3 className="mb-1 line-clamp-2 text-2xl font-extrabold text-white sm:text-4xl lg:text-5xl lg:leading-[1.2]">
+                      {catalogado ? (
+                        <Link
+                          to={`/anime/${item.anime_id}`}
+                          className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-neon"
+                        >
+                          {titulo}
+                        </Link>
+                      ) : (
+                        titulo
+                      )}
+                    </h3>
+                    {mostrarAlternativo && (
+                      <p className="line-clamp-1 text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
+                        {tituloAlternativo}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Meta (ano • gêneros) + data do próximo episódio ACIMA do
+                      botão — o AnimeFire não mostra essas linhas no hero, mas o
+                      usuário quis mantê-las e vê-las nesta posição. */}
+                  {(meta || proximoEpisodio) && (
+                    <div className="flex flex-col items-start gap-1">
+                      {meta && <p className="text-xs text-ink-muted sm:text-sm">{meta}</p>}
+                      {proximoEpisodio && (
+                        <p className="text-xs text-white/70 sm:text-sm">{proximoEpisodio}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {catalogado ? (
+                    <Link
+                      to={`/anime/${item.anime_id}`}
+                      aria-label={`${titulo} — assistir agora`}
+                      className={CLASSE_BOTAO_HERO}
+                    >
+                      <IconePlay width={20} height={20} fill="currentColor" />
+                      Assistir agora
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => aoMaterializar(item)}
+                      disabled={materializando}
+                      aria-label={materializando ? undefined : `Adicionar ${titulo} ao catálogo`}
+                      className={CLASSE_BOTAO_HERO}
+                    >
+                      <IconePlay width={20} height={20} fill="currentColor" />
+                      {materializando ? 'Adicionando…' : 'Adicionar ao Catálogo'}
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
 
         {mostrarControles && (
           <>
@@ -471,9 +591,9 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
               }}
               aria-label="Destaque anterior"
               aria-controls={idSlides}
-              className="absolute inset-y-0 left-2 z-10 flex w-6 items-center justify-center rounded-lg text-8xl text-white/60 opacity-0 outline-none transition hover:text-white focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-neon group-hover:opacity-100"
+              className="absolute inset-y-0 left-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon group-hover:opacity-100 motion-reduce:transition-none"
             >
-              <span aria-hidden="true">‹</span>
+              <IconeSeta direcao="esquerda" />
             </button>
             <button
               type="button"
@@ -483,46 +603,44 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
               }}
               aria-label="Próximo destaque"
               aria-controls={idSlides}
-              className="absolute inset-y-0 right-2 z-10 flex w-6 items-center justify-center rounded-lg text-8xl text-white/60 opacity-0 outline-none transition hover:text-white focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-neon group-hover:opacity-100"
+              className="absolute inset-y-0 right-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon group-hover:opacity-100 motion-reduce:transition-none"
             >
-              <span aria-hidden="true">›</span>
+              <IconeSeta direcao="direita" />
             </button>
+
+            {/* Paginação SOBREPOSTA na imagem, dentro do hero (`bottom-[14.3vh]`
+                no desktop, medido no AnimeFire; mais baixo no mobile, onde o
+                bloco de conteúdo fica colado no rodapé e ocuparia essa faixa).
+                Bullet ativo vira PÍLULA por largura (`w-4` + `transition-all`),
+                não por `scale`. Wrappers `<button>` de 24px mantêm o alvo de
+                clique e o rótulo. */}
+            <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 gap-2 lg:bottom-[14.3vh]">
+              {base.map((item, i) => (
+                <button
+                  key={item.anilist_id ?? item.titulo_romaji ?? i}
+                  type="button"
+                  onClick={(evento) => {
+                    irParaLogico(i);
+                    desfocarSePonteiro(evento);
+                  }}
+                  aria-label={`Ir para o destaque ${i + 1}`}
+                  aria-current={i === indiceLogico ? 'true' : undefined}
+                  className="group/dot flex h-6 w-6 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-neon"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`block h-2 rounded-full transition-all motion-reduce:transition-none ${
+                      i === indiceLogico
+                        ? 'w-4 bg-white'
+                        : 'w-2 bg-white/25 group-hover/dot:bg-white/50'
+                    }`}
+                  />
+                </button>
+              ))}
+            </div>
           </>
         )}
       </div>
-
-      {mostrarControles && (
-        // `relative z-10`: sem isto os cliques nas bolinhas não chegam. O
-        // `<div className="group relative">` acima é posicionado e sua máscara
-        // `overflow-hidden py-16 -my-16` transborda ~64px pra baixo, cobrindo
-        // esta faixa; como elemento posicionado ele é pintado DEPOIS deste
-        // container (estático) e intercepta o ponteiro. Posicionar o container
-        // e elevá-lo devolve o clique.
-        <div className="relative z-10 mt-6 flex flex-wrap justify-center gap-2">
-          {base.map((item, i) => (
-            <button
-              key={item.anilist_id ?? item.titulo_romaji ?? i}
-              type="button"
-              onClick={(evento) => {
-                irParaLogico(i);
-                desfocarSePonteiro(evento);
-              }}
-              aria-label={`Ir para o destaque ${i + 1}`}
-              aria-current={i === indiceLogico ? 'true' : undefined}
-              className="group/dot flex h-6 w-6 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-neon"
-            >
-              <span
-                aria-hidden="true"
-                className={`block h-2 w-2 rounded-full transition motion-reduce:transition-none ${
-                  i === indiceLogico
-                    ? 'scale-125 bg-white'
-                    : 'bg-white/40 group-hover/dot:bg-white/70'
-                }`}
-              />
-            </button>
-          ))}
-        </div>
-      )}
     </section>
   );
 }

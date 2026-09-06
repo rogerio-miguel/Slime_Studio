@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { SOMBRA_SLIDE_ATIVO } from './CarrosselDestaques.jsx';
+import IconeSeta from './IconeSeta.jsx';
 import {
   CLASSE_GUTTER,
   CLASSES_POR_PAGINA,
@@ -107,9 +108,12 @@ export default function FileiraDeCards({
   // Setas reveladas só no hover/foco do grupo — NUNCA `hidden`: continuam
   // alcançáveis por Tab mesmo invisíveis. No limite, as classes de revelar
   // não entram, então a seta fica `opacity-0` inclusive sob o cursor.
+  // Mesma seta do hero (glyph chevron do IconeSeta, modelo AnimeFire): zona de
+  // clique full-height no gutter, sem fundo, revelada no hover da fileira, cor
+  // trocando no hover do próprio controle.
   const classesSeta =
-    'absolute inset-y-0 z-10 flex w-[3.7%] items-center justify-center text-8xl ' +
-    'text-white/70 outline-none transition-opacity duration-300 hover:text-white ' +
+    'absolute inset-y-0 z-10 flex w-[3.7%] items-center justify-center ' +
+    'text-white/60 outline-none transition-opacity duration-300 hover:text-neon ' +
     'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon ' +
     'motion-reduce:transition-none opacity-0';
   const classesRevelar = 'group-hover/fileira:opacity-100 focus-visible:opacity-100';
@@ -191,7 +195,7 @@ export default function FileiraDeCards({
           aria-controls={idTrilha}
           className={`left-0 ${classesSeta} ${limites.noInicio ? '' : classesRevelar}`}
         >
-          <span aria-hidden="true">‹</span>
+          <IconeSeta direcao="esquerda" />
         </button>
         <button
           type="button"
@@ -204,7 +208,7 @@ export default function FileiraDeCards({
           aria-controls={idTrilha}
           className={`right-0 ${classesSeta} ${limites.noFim ? '' : classesRevelar}`}
         >
-          <span aria-hidden="true">›</span>
+          <IconeSeta direcao="direita" />
         </button>
       </div>
     </section>

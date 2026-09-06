@@ -14,9 +14,8 @@ import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
 
 // Rótulos em `core/enums.py::StatusLancamento` (backend) — mesmos valores
-// StrEnum, traduzidos aqui pra exibição no filtro de status. `em_lancamento`
-// reaproveita o texto exato de `inicio/CarrosselDestaques.jsx::taglineDoItem`;
-// os demais não têm rótulo pré-existente no frontend, cunhados aqui.
+// StrEnum, traduzidos aqui pra exibição no filtro de status. Cunhados aqui,
+// sem rótulo pré-existente no frontend a reaproveitar.
 const ROTULOS_STATUS_LANCAMENTO = {
   em_lancamento: 'Em lançamento',
   finalizado: 'Finalizado',

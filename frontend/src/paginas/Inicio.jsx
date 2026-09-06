@@ -26,6 +26,7 @@ import { topDaTemporada } from '../inicio/fileiras.js';
 import { rotularFileiras } from '../inicio/fileirasTematicas.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { intercalarDestaques } from '../inicio/intercalarDestaques.js';
+import { recorteVisivelDoCarrossel } from '../inicio/janelaDeDestaques.js';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 
@@ -51,11 +52,14 @@ import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 // nova — a função segue exportada, o render não.
 //
 // "Destaques grandes" (inicio/DestaqueGrande.jsx) — 2 cards banner+info,
-// seção ADICIONAL que não substitui carrossel nem "Top 10": reaproveita 2
-// itens ALEATÓRIOS de `top10` (amostraAleatoria) e fica intercalada ENTRE as
-// fileiras temáticas (não antes/depois do bloco inteiro), via
-// inicio/intercalarDestaques.js. Some sozinha se `top10` estiver vazio
-// (mesma exibição silenciosa).
+// seção ADICIONAL que não substitui carrossel nem "Top 10": 2 itens
+// ALEATÓRIOS (amostraAleatoria) do feed `em-alta` INTEIRO menos o recorte que
+// o carrossel exibe agora (recorteVisivelDoCarrossel) — de propósito NÃO
+// repete os animes do carrossel. Fica intercalada ao longo de TODAS as
+// fileiras da home (`fileirasDaHome` — "Próximas estreias", "Continuar
+// assistindo", "Top 10" e as temáticas), não só as temáticas, via
+// inicio/intercalarDestaques.js. Some sozinha quando não sobra item fora do
+// recorte do carrossel (mesma exibição silenciosa).
 // "Seu catálogo" segue FORA da Inicio de propósito — o catálogo local (listar,
 // abrir, remover) mora inteiro em `paginas/Galeria.jsx` (rota "/animes",
 // linkada na navbar). `DestaquePrincipal` também não está nesta ordem (pivot
@@ -134,39 +138,31 @@ export default function Inicio() {
   // Home; vão pra uma página própria.)
   const top10 = useMemo(() => topDaTemporada(emAlta.dados ?? []), [emAlta.dados]);
 
-  // "Destaques grandes" — 2 itens ALEATÓRIOS do Top 10 (não os primeiros: o
-  // pedido é variar a cada carregamento, não fixar sempre os mesmos 2 do topo
-  // do ranking). Repetição com a fileira "Top 10" é aceitável (mesmo padrão de
-  // streaming). `sinopse`/`continuarEm` já resolvidos aqui pra
-  // DestaqueGrande.jsx só renderizar. `amostraAleatoria` roda dentro do
-  // `useMemo` — só sorteia de novo quando `top10` muda de fato (reload do
-  // feed), não a cada re-render por digitação na busca ou outro estado alheio.
-  // `sinopse`: cruza por `anime_id` com `catalogo.dados` (já carregado acima,
-  // sem request extra por card) — `AnimeSaida` (`GET /api/animes`) expõe
-  // `sinopse` 1:1 com a coluna. Só fica ausente pra anime ainda não
-  // catalogado (`item.anime_id == null`), caminho normal do componente (o
-  // parágrafo simplesmente não aparece).
-  // `continuarEm`: entrada correspondente em `continuando.dados` (mesma
-  // prateleira "Continuar assistindo" já carregada) — decide o rótulo do CTA.
+  // "Destaques grandes" — 2 itens ALEATÓRIOS do feed `em-alta` INTEIRO (até
+  // 50), EXCLUINDO o recorte que o carrossel exibe agora
+  // (recorteVisivelDoCarrossel, ./janelaDeDestaques.js — mesma fórmula do
+  // `base` do carrossel): as duas seções não mostram os mesmos animes. Sem
+  // sinopse (o bloco de conteúdo do carrossel também não tem). `rank` = posição
+  // no feed `em-alta` (já ordenado por trending/popularidade da AniList) + 1 —
+  // vira a pill "#N em alta"; `indexOf` casa por referência (o feed não é
+  // clonado em nenhum ponto). `amostraAleatoria` roda dentro do `useMemo` — só
+  // sorteia de novo quando o feed ou `continuando` mudam de fato, não a cada
+  // re-render por digitação na busca ou outro estado alheio. `continuarEm`:
+  // entrada correspondente em `continuando.dados` (mesma prateleira "Continuar
+  // assistindo" já carregada) — decide o rótulo do CTA.
   const destaquesGrandes = useMemo(() => {
-    const catalogoPorId = new Map((catalogo.dados ?? []).map((anime) => [anime.id, anime]));
+    const feed = emAlta.dados ?? [];
+    const naJanela = new Set(recorteVisivelDoCarrossel(feed));
+    const disponiveis = feed.filter((item) => !naJanela.has(item));
     const continuandoPorAnime = new Map(
       (continuando.dados ?? []).map((entrada) => [entrada.anime_id, entrada])
     );
-    return amostraAleatoria(top10, 2).map((item) => ({
+    return amostraAleatoria(disponiveis, 2).map((item) => ({
       item,
-      sinopse: item.anime_id != null ? (catalogoPorId.get(item.anime_id)?.sinopse ?? null) : null,
+      rank: feed.indexOf(item) + 1,
       continuarEm: item.anime_id != null ? (continuandoPorAnime.get(item.anime_id) ?? null) : null,
     }));
-  }, [top10, catalogo.dados, continuando.dados]);
-
-  // Intercala os destaques grandes entre as fileiras temáticas (ver
-  // inicio/intercalarDestaques.js) — produz a lista final de blocos que o
-  // `.map()` do render usa no lugar de `fileirasRotuladas` cru.
-  const blocosDeConteudo = useMemo(
-    () => intercalarDestaques(fileirasRotuladas, destaquesGrandes),
-    [fileirasRotuladas, destaquesGrandes]
-  );
+  }, [emAlta.dados, continuando.dados]);
 
   const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
   const [erroMaterializacao, setErroMaterializacao] = useState(null);
@@ -362,6 +358,98 @@ export default function Inicio() {
       sobreposicao={sobreposicao}
     />
   );
+
+  // Fileiras horizontais da home NA ORDEM em que aparecem, cada uma já como
+  // nó pronto (com `key`). Só entram as que de fato vão renderizar (lista não
+  // vazia) — assim o `passo` de intercalarDestaques conta prateleiras visíveis,
+  // não fantasmas. Antes só as fileiras temáticas alimentavam a intercalação
+  // dos "destaques grandes"; agora TODAS entram, então um destaque pode cair
+  // logo depois de "Próximas estreias"/"Continuar assistindo"/"Top 10", não só
+  // no meio dos temas. Montado no corpo do render (não `useMemo`): são ~10
+  // objetos + JSX leve, e memoizar exigiria arrastar toda a lista de callbacks
+  // de materialização pras deps.
+  const fileirasDaHome = [
+    (proximaTemporada.dados ?? []).length > 0 && {
+      chave: 'proximas-estreias',
+      node: (
+        <FileiraDeCards
+          key="proximas-estreias"
+          titulo="Próximas estreias"
+          itens={proximaTemporada.dados}
+          chaveDoItem={chaveDoItemDoFeed}
+          renderItem={(item) => {
+            const chave = chaveDoItemDoFeed(item);
+            return (
+              <CartaoDeEstreia
+                item={item}
+                salvo={item.anime_id != null || estreiasSalvas.has(chave)}
+                salvando={chaveSalvandoEstreia === chave}
+                aoSalvar={() => salvarEstreia(item)}
+              />
+            );
+          }}
+        />
+      ),
+    },
+    (continuando.dados ?? []).length > 0 && {
+      chave: 'continuar-assistindo',
+      node: (
+        <FileiraDeCards
+          key="continuar-assistindo"
+          titulo="Continuar assistindo"
+          itens={continuando.dados}
+          tamanho="episodio"
+          chaveDoItem={(item) => item.episodio_id}
+          renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
+        />
+      ),
+    },
+    top10.length > 0 && {
+      chave: 'top-10',
+      node: (
+        <FileiraDeCards
+          key="top-10"
+          titulo="Top 10 da semana"
+          itens={top10}
+          chaveDoItem={chaveDoItemDoFeed}
+          // Numeral grande estilo Netflix/Disney+ DENTRO do card: canto
+          // superior esquerdo, sobre a arte (`z-10`), com sombra forte pra
+          // legibilidade (o topo do pôster não tem o degradê do rodapé).
+          // `aria-hidden`/`pointer-events-none`: decorativo, não rouba o
+          // clique. Vai como `sobreposicao` do AnimeCard (irmão do card no
+          // wrapper) pra crescer junto no `scale` do hover.
+          renderItem={(item, indice) =>
+            renderCardDoFeed(
+              item,
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2 top-0 z-10 select-none font-black leading-none text-white text-[3.5rem] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[4.5rem] lg:text-[5.5rem]"
+              >
+                {indice + 1}
+              </span>
+            )
+          }
+        />
+      ),
+    },
+    ...fileirasRotuladas.map((fileira) => ({
+      chave: fileira.chave,
+      node: (
+        <FileiraDeCards
+          key={fileira.chave}
+          titulo={fileira.rotulo}
+          itens={fileira.itens}
+          chaveDoItem={chaveDoItemDoFeed}
+          renderItem={(item) => renderCardDoFeed(item)}
+        />
+      ),
+    })),
+  ].filter(Boolean);
+
+  // Intercala os "destaques grandes" ao longo de TODAS as fileiras da home
+  // (ver inicio/intercalarDestaques.js) — lista final de blocos pro `.map()`
+  // do render.
+  const blocosDeConteudo = intercalarDestaques(fileirasDaHome, destaquesGrandes);
 
   return (
     <>
@@ -605,14 +693,28 @@ export default function Inicio() {
             )}
 
             {!emAlta.carregando && !emAlta.erro && (emAlta.dados ?? []).length > 0 && (
-              // `pt-4`: só o respiro vertical do topo. Sem `pb-*` aqui — o
-              // espaçamento até a primeira fileira (e o do fim da página) vem
-              // do `<div>` que envolve as fileiras abaixo. Sem padding
-              // horizontal nem `max-w` de propósito — o carrossel é full-bleed
-              // (encosta nas bordas da viewport, como a área do carrossel do
-              // Disney+); os estados de carregando/erro do feed seguem na
-              // coluna `max-w-6xl`.
-              <section className="pt-4">
+              // `-mt-22`: cancela o `pt-22` do <main> pra o hero encostar no
+              // y=0 real da viewport, por trás da navbar fixa/transparente
+              // (BarraDeNavegacao.jsx já documenta esse contrato: "sem fundo
+              // enquanto a página está no topo... aparece atrás da navbar").
+              // Sem isso o banner começava abaixo da faixa da navbar, como
+              // uma seção separada — não é o layout de referência (AnimeFire).
+              // Sem padding horizontal nem `max-w` de propósito — o carrossel
+              // é full-bleed (encosta nas bordas da viewport); os estados de
+              // carregando/erro do feed seguem na coluna `max-w-6xl`.
+              // `-mb-32`: puxa a fileira seguinte pra dentro do fade da base do
+              // hero, deixando o título dela + o topo dos cards "espiar" sob o
+              // gradiente (padrão AnimeFire — mais peek que os ~90px do wrapper
+              // deles porque nossa fileira tem título maior + `pt` da trilha).
+              // Pré-requisito pro título não sumir: o <div> das fileiras abaixo
+              // tem `relative z-10` — sem isso o `<h2>` da primeira fileira
+              // (`position:static`) fica ATRÁS do banner/gradiente do slide, que
+              // são `position:absolute` e pintam depois. Com o `z-10` o título
+              // pinta sobre a base escura do hero e fica legível; as bolinhas de
+              // paginação (`lg:bottom-[14.3vh]`) ficam ~8px acima dele. O
+              // gradiente é `pointer-events-none`, então a sobreposição não
+              // rouba clique dos cards. Casado com `pt-0` no <div> das fileiras.
+              <section className="-mt-22 -mb-32">
                 {/* `ativa`: gate do auto-avanço do carrossel (ver
                     CarrosselDestaques.jsx) — a fase só vira "revelado"
                     quando <main> deixa de estar inert/opacity-0; sem o
@@ -633,78 +735,32 @@ export default function Inicio() {
                 quando a AniList cai. "Próximas estreias" (feed próprio) e
                 "Top 10" (recorte de `em-alta`) se auto-escondem quando suas
                 listas chegam vazias — feed indisponível vira fileira ausente,
-                não erro. `pb-20`: respiro do fim da página. `space-y-10`:
-                separa as prateleiras. `pt-4`: respiro do topo quando o
-                carrossel não está presente (com carrossel, soma ao `pt-4`
-                dele — gap aceitável). */}
-            <div className="space-y-10 pb-20 pt-4">
-              <FileiraDeCards
-                titulo="Próximas estreias"
-                itens={proximaTemporada.dados}
-                chaveDoItem={chaveDoItemDoFeed}
-                renderItem={(item) => {
-                  const chave = chaveDoItemDoFeed(item);
-                  return (
-                    <CartaoDeEstreia
-                      item={item}
-                      salvo={item.anime_id != null || estreiasSalvas.has(chave)}
-                      salvando={chaveSalvandoEstreia === chave}
-                      aoSalvar={() => salvarEstreia(item)}
-                    />
-                  );
-                }}
-              />
-
-              <FileiraDeCards
-                titulo="Continuar assistindo"
-                itens={continuando.dados}
-                tamanho="episodio"
-                chaveDoItem={(item) => item.episodio_id}
-                renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
-              />
-
-              <FileiraDeCards
-                titulo="Top 10 da semana"
-                itens={top10}
-                chaveDoItem={chaveDoItemDoFeed}
-                // Numeral grande estilo Netflix/Disney+ DENTRO do card:
-                // canto superior esquerdo, sobre a arte (`z-10`), com
-                // sombra forte pra legibilidade (o topo do pôster não tem
-                // o degradê que o rodapé tem). `aria-hidden`/
-                // `pointer-events-none`: decorativo, não rouba o clique.
-                // Vai como `sobreposicao` do AnimeCard (irmão do card
-                // dentro do wrapper) pra crescer junto no `scale` do hover.
-                renderItem={(item, indice) =>
-                  renderCardDoFeed(
-                    item,
-                    <span
-                      aria-hidden="true"
-                      className="pointer-events-none absolute left-2 top-0 z-10 select-none font-black leading-none text-white text-[3.5rem] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[4.5rem] lg:text-[5.5rem]"
-                    >
-                      {indice + 1}
-                    </span>
-                  )
-                }
-              />
-
+                não erro. A ordem e o guard de lista vazia de cada prateleira
+                moram em `fileirasDaHome` (corpo do componente), que também é a
+                lista que intercala os "destaques grandes".
+                `relative z-10`: promove todo o bloco de fileiras pra um
+                contexto de empilhamento acima do hero. Sem isso o `<h2>` da
+                primeira fileira (`position:static`) fica ATRÁS do banner e do
+                gradiente do carrossel, que são `position:absolute` e pintam
+                depois — o título "Próximas estreias" sumia sob a base do hero.
+                `pb-20`: respiro do fim da página. `space-y-10`: separa as
+                prateleiras. `pt-0`: com o carrossel presente, o respiro entre
+                hero e lista vem do `-mb-32` da <section> acima (peek da
+                primeira fileira sob o fade). Sem carrossel (feed vazio/erro),
+                `space-y-10`/`pb-20` e o `pt-22` do <main> já dão respiro. */}
+            <div className="relative z-10 space-y-10 pb-20 pt-0">
               {blocosDeConteudo.map((bloco) =>
                 bloco.tipo === 'destaque' ? (
                   <DestaqueGrande
                     key={bloco.chave}
                     item={bloco.destaque.item}
-                    sinopse={bloco.destaque.sinopse}
+                    rank={bloco.destaque.rank}
                     continuarEm={bloco.destaque.continuarEm}
                     aoMaterializar={materializarEIrPara}
                     materializando={chaveEmMaterializacao != null}
                   />
                 ) : (
-                  <FileiraDeCards
-                    key={bloco.chave}
-                    titulo={bloco.fileira.rotulo}
-                    itens={bloco.fileira.itens}
-                    chaveDoItem={chaveDoItemDoFeed}
-                    renderItem={(item) => renderCardDoFeed(item)}
-                  />
+                  bloco.fileira.node
                 )
               )}
             </div>
