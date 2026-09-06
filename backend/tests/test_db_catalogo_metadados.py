@@ -20,7 +20,9 @@ from db.catalogo import (
     atualizar_lancamentos_em_lote,
     localizar_animes_por_anilist_id,
     localizar_animes_por_slug,
+    obter_ou_criar_anime_id,
     sobrescrever_arte,
+    sobrescrever_capa,
 )
 from db.engine import criar_engine, criar_sessionmaker
 from integrations.base import ArteDeAnime, LancamentoDeAnime, MetadadosDeAnime
@@ -332,12 +334,11 @@ async def test_aplicar_metadados_generos_lista_vazia_nao_grava(sessionmaker: _Se
         assert anime.generos is None
 
 
-# --- sobrescrever_arte (Fatia 4 do PLANO_ARTE_TMDB.md) ---
+# --- sobrescrever_arte (Fatia 4 do PLANO_ARTE_TMDB.md; só banner_path desde a
+# reversão de capa pra AniList) ---
 
 
-async def test_sobrescrever_arte_substitui_capa_e_banner_ja_preenchidos(
-    sessionmaker: _SessionMaker,
-):
+async def test_sobrescrever_arte_substitui_banner_ja_preenchido(sessionmaker: _SessionMaker):
     """Ao contrário de `aplicar_metadados`, aqui o valor já existente É
     substituído — é o comportamento que a Fatia 4 pede."""
     anime_id = await _criar_anime(
@@ -348,47 +349,61 @@ async def test_sobrescrever_arte_substitui_capa_e_banner_ja_preenchidos(
         banner_path="https://anilist/banner.jpg",
     )
 
-    await sobrescrever_arte(
-        sessionmaker,
-        anime_id,
-        ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url="https://tmdb/banner.jpg"),
-    )
+    await sobrescrever_arte(sessionmaker, anime_id, ArteDeAnime(banner_url="https://tmdb/banner.jpg"))
 
     async with sessionmaker() as sessao:
         anime = await sessao.get(Anime, anime_id)
-        assert anime.capa_path == "https://tmdb/capa.jpg"
+        # capa_path não é campo de `ArteDeAnime` mais — permanece intocado.
+        assert anime.capa_path == "https://anilist/capa.jpg"
         assert anime.banner_path == "https://tmdb/banner.jpg"
 
 
-async def test_sobrescrever_arte_campo_none_preserva_valor_existente(
+async def test_sobrescrever_arte_banner_none_preserva_valor_existente(
     sessionmaker: _SessionMaker,
 ):
-    """Um match do TMDB só com pôster (sem backdrop) não pode zerar o banner
-    já confirmado — mesma regra de `_com_arte` em `integrations/servico.py`."""
+    """`banner_url=None` (TMDB não achou backdrop) não pode zerar o banner já
+    confirmado — mesma regra de `_com_arte` em `integrations/servico.py`."""
     anime_id = await _criar_anime(
         sessionmaker,
         titulo="Slime",
         slug="slime",
-        capa_path="https://anilist/capa.jpg",
         banner_path="https://anilist/banner.jpg",
     )
 
-    await sobrescrever_arte(
-        sessionmaker, anime_id, ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url=None)
-    )
+    await sobrescrever_arte(sessionmaker, anime_id, ArteDeAnime(banner_url=None))
 
     async with sessionmaker() as sessao:
         anime = await sessao.get(Anime, anime_id)
-        assert anime.capa_path == "https://tmdb/capa.jpg"
         assert anime.banner_path == "https://anilist/banner.jpg"
 
 
 async def test_sobrescrever_arte_anime_inexistente_nao_levanta(sessionmaker: _SessionMaker):
-    await sobrescrever_arte(
+    await sobrescrever_arte(sessionmaker, 999999, ArteDeAnime(banner_url="https://tmdb/b.jpg"))
+
+
+# --- sobrescrever_capa (reversão de capa pra AniList) ---
+
+
+async def test_sobrescrever_capa_substitui_capa_ja_preenchida(sessionmaker: _SessionMaker):
+    anime_id = await _criar_anime(
         sessionmaker,
-        999999,
-        ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url=None),
+        titulo="Slime",
+        slug="slime",
+        capa_path="https://tmdb/capa-serie.jpg",
+        banner_path="https://tmdb/banner.jpg",
     )
+
+    await sobrescrever_capa(sessionmaker, anime_id, "https://anilist/capa.jpg")
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.capa_path == "https://anilist/capa.jpg"
+        # banner_path não é tocado por `sobrescrever_capa`.
+        assert anime.banner_path == "https://tmdb/banner.jpg"
+
+
+async def test_sobrescrever_capa_anime_inexistente_nao_levanta(sessionmaker: _SessionMaker):
+    await sobrescrever_capa(sessionmaker, 999999, "https://anilist/capa.jpg")
 
 
 # --- atualizar_lancamento / atualizar_lancamentos_em_lote ---
@@ -758,3 +773,38 @@ async def test_localizar_animes_por_anilist_id_lista_vazia_nao_bate_no_banco(
     sessionmaker: _SessionMaker,
 ):
     assert await localizar_animes_por_anilist_id(sessionmaker, []) == {}
+
+
+async def test_obter_ou_criar_anime_id_deriva_numero_temporada_do_titulo(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await obter_ou_criar_anime_id(sessionmaker, "Slime Datta Ken 3rd Season", 2024)
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.numero_temporada == 3
+
+
+async def test_obter_ou_criar_anime_id_sem_marcador_de_temporada_fica_none(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await obter_ou_criar_anime_id(sessionmaker, "Slime Datta Ken", 2018)
+
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.numero_temporada is None
+
+
+async def test_obter_ou_criar_anime_id_existente_nao_recalcula_numero_temporada(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(
+        sessionmaker, titulo="Slime", slug="slime", ano=2018, numero_temporada=1
+    )
+
+    resultado = await obter_ou_criar_anime_id(sessionmaker, "Slime", 2018)
+
+    assert resultado == anime_id
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.numero_temporada == 1

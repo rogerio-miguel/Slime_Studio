@@ -1281,7 +1281,7 @@ def _resultado_tv(**overrides) -> dict:
     return base
 
 
-def test_tmdb_buscar_arte_por_titulo_match_exato_prefixa_urls_de_imagem(
+def test_tmdb_buscar_arte_por_titulo_match_exato_prefixa_url_de_imagem(
     monkeypatch: pytest.MonkeyPatch,
 ):
     corpo = {"results": [_resultado_tv(name="Slime", original_name="Slime")]}
@@ -1291,28 +1291,26 @@ def test_tmdb_buscar_arte_por_titulo_match_exato_prefixa_urls_de_imagem(
 
     resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime", None)
 
-    assert resultado == ArteDeAnime(
-        capa_url="https://image.tmdb.org/t/p/w500/poster.jpg",
-        banner_url="https://image.tmdb.org/t/p/w1280/backdrop.jpg",
-    )
+    assert resultado == ArteDeAnime(banner_url="https://image.tmdb.org/t/p/w1280/backdrop.jpg")
 
 
 def test_tmdb_desempate_por_ano_entre_dois_candidatos(monkeypatch: pytest.MonkeyPatch):
     """Nenhum dos dois candidatos bate por título exato com "Slime Franquia S3"
     (D3: TMDB modela a franquia inteira numa entrada só) — o pool cai pros dois
-    e o de `first_air_date` mais perto de `ano` vence."""
+    e o de `first_air_date` mais perto de `ano` vence (aqui desambiguado pelo
+    `backdrop_path`, já que capa não é mais parte do retorno)."""
     corpo = {
         "results": [
             _resultado_tv(
                 name="Slime Franquia",
                 original_name="Slime Franquia",
-                poster_path="/franquia.jpg",
+                backdrop_path="/franquia-backdrop.jpg",
                 first_air_date="2010-01-01",
             ),
             _resultado_tv(
                 name="Slime Franquia",
                 original_name="Slime Franquia",
-                poster_path="/temporada3.jpg",
+                backdrop_path="/temporada3-backdrop.jpg",
                 first_air_date="2024-01-01",
             ),
         ]
@@ -1323,20 +1321,20 @@ def test_tmdb_desempate_por_ano_entre_dois_candidatos(monkeypatch: pytest.Monkey
 
     resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime Franquia S3", 2024)
 
-    assert resultado.capa_url.endswith("/temporada3.jpg")
+    assert resultado.banner_url.endswith("/temporada3-backdrop.jpg")
 
 
-def test_tmdb_item_so_com_backdrop_path(monkeypatch: pytest.MonkeyPatch):
-    corpo = {"results": [_resultado_tv(poster_path=None, backdrop_path="/backdrop.jpg")]}
+def test_tmdb_item_so_com_poster_path_sem_backdrop_devolve_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Sem `backdrop_path` (mesmo com `poster_path`), não há banner pra
+    oferecer — capa não é mais parte do retorno, então o resultado é `None`."""
+    corpo = {"results": [_resultado_tv(poster_path="/poster.jpg", backdrop_path=None)]}
     monkeypatch.setattr(
         "integrations.tmdb.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
     )
 
-    resultado = TmdbProvider("token").buscar_arte_por_titulo("Tensei", None)
-
-    assert resultado == ArteDeAnime(
-        capa_url=None, banner_url="https://image.tmdb.org/t/p/w1280/backdrop.jpg"
-    )
+    assert TmdbProvider("token").buscar_arte_por_titulo("Tensei", None) is None
 
 
 def test_tmdb_results_vazio_devolve_none(monkeypatch: pytest.MonkeyPatch):
@@ -1356,6 +1354,14 @@ def test_tmdb_401_levanta_nao_autorizado(monkeypatch: pytest.MonkeyPatch):
 
     with pytest.raises(TmdbNaoAutorizado):
         TmdbProvider("token").buscar_arte_por_titulo("Slime", None)
+
+
+def test_tmdb_buscar_arte_por_titulo_nao_aceita_mais_numero_temporada():
+    """A refinação de capa por temporada foi removida (reversão pra AniList
+    como fonte exclusiva de capa) — `numero_temporada` não é mais um parâmetro
+    válido de `buscar_arte_por_titulo`."""
+    with pytest.raises(TypeError):
+        TmdbProvider("token").buscar_arte_por_titulo("Slime", None, numero_temporada=4)
 
 
 # --- TmdbProvider.buscar_still_de_episodio (Fatia 5, PLANO_ARTE_TMDB.md) ---
@@ -1572,7 +1578,7 @@ class _ProvedorComFileirasTematicasFake(ProvedorDeMetadados, ProvedorComFileiras
 
 
 class _ProvedorDeArteFake(ProvedorDeArte):
-    """Provedor fake de `ProvedorDeArte` (overlay de arte TMDB,
+    """Provedor fake de `ProvedorDeArte` (overlay de banner TMDB,
     PLANO_ARTE_TMDB.md) — instalado via
     `monkeypatch.setattr(registro, "_provedores_de_arte", (fake,))`.
     `chamadas` registra `(titulo, ano)` de cada chamada real (não conta as que
@@ -2066,12 +2072,14 @@ async def test_servico_fileiras_tematicas_levanta_falha_de_metadados_quando_toda
         await servico.listar_fileiras_tematicas()
 
 
-# --- overlay de arte (integrations/servico.py, PLANO_ARTE_TMDB.md) ---
+# --- overlay de banner (integrations/servico.py, PLANO_ARTE_TMDB.md) ---
 
 
-async def test_servico_buscar_por_titulo_tmdb_vence_a_capa_da_anilist(
+async def test_servico_buscar_por_titulo_tmdb_sobrescreve_so_o_banner(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    """O overlay do TMDB sobrescreve `banner_url`; `capa_url` da AniList
+    sobrevive intacta — capa não é mais responsabilidade do TMDB/overlay."""
     metadados_anilist = MetadadosDeAnime(
         capa_url="https://anilist/capa.jpg",
         sinopse="s",
@@ -2083,22 +2091,19 @@ async def test_servico_buscar_por_titulo_tmdb_vence_a_capa_da_anilist(
     anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
     monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
 
-    tmdb = _ProvedorDeArteFake(
-        "tmdb",
-        arte=ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url="https://tmdb/banner.jpg"),
-    )
+    tmdb = _ProvedorDeArteFake("tmdb", arte=ArteDeAnime(banner_url="https://tmdb/banner.jpg"))
     monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
 
     resultado = await servico.buscar_por_titulo("Slime")
 
-    assert resultado.capa_url == "https://tmdb/capa.jpg"
+    assert resultado.capa_url == "https://anilist/capa.jpg"
     assert resultado.banner_url == "https://tmdb/banner.jpg"
 
 
 async def test_servico_tmdb_sem_backdrop_preserva_banner_da_anilist(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Um match do TMDB com pôster e sem backdrop não pode zerar o
+    """Um resultado do TMDB sem backdrop (`banner_url=None`) não pode zerar o
     `bannerImage` que a AniList já tinha resolvido."""
     metadados_anilist = MetadadosDeAnime(
         capa_url="https://anilist/capa.jpg",
@@ -2111,14 +2116,12 @@ async def test_servico_tmdb_sem_backdrop_preserva_banner_da_anilist(
     anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
     monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
 
-    tmdb = _ProvedorDeArteFake(
-        "tmdb", arte=ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url=None)
-    )
+    tmdb = _ProvedorDeArteFake("tmdb", arte=ArteDeAnime(banner_url=None))
     monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
 
     resultado = await servico.buscar_por_titulo("Slime")
 
-    assert resultado.capa_url == "https://tmdb/capa.jpg"
+    assert resultado.capa_url == "https://anilist/capa.jpg"
     assert resultado.banner_url == "https://anilist/banner.jpg"
 
 
@@ -2157,15 +2160,13 @@ async def test_servico_memo_de_arte_evita_segunda_chamada_pro_mesmo_titulo_e_ano
     anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
     monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
 
-    tmdb = _ProvedorDeArteFake(
-        "tmdb", arte=ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url=None)
-    )
+    tmdb = _ProvedorDeArteFake("tmdb", arte=ArteDeAnime(banner_url="https://tmdb/banner.jpg"))
     monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
 
     primeiro = await servico.buscar_por_titulo("Slime")
     segundo = await servico.buscar_por_titulo("Slime")
 
-    assert primeiro.capa_url == segundo.capa_url == "https://tmdb/capa.jpg"
+    assert primeiro.banner_url == segundo.banner_url == "https://tmdb/banner.jpg"
     assert tmdb.chamadas == [("Slime", 2018)]
 
 
@@ -2177,6 +2178,7 @@ async def test_servico_latch_desliga_arte_apos_401_pro_resto_do_lote(
         sinopse=None,
         anilist_id=1,
         kitsu_id=None,
+        banner_url="https://anilist/banner.jpg",
         titulo_romaji="Slime",
     )
     anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
@@ -2189,7 +2191,8 @@ async def test_servico_latch_desliga_arte_apos_401_pro_resto_do_lote(
     segundo = await servico.buscar_por_titulo("Slime")
 
     assert primeiro.capa_url == "https://anilist/capa.jpg"
-    assert segundo.capa_url == "https://anilist/capa.jpg"
+    assert primeiro.banner_url == "https://anilist/banner.jpg"
+    assert segundo.banner_url == "https://anilist/banner.jpg"
     assert len(tmdb.chamadas) == 1
     assert servico._arte_desabilitada_por_auth is True
 

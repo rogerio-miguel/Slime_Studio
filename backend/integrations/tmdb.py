@@ -1,7 +1,13 @@
-"""Adapter TMDB (REST) — provedor PADRÃO de arte (capa/banner de anime,
-still de episódio) (`PLANO_ARTE_TMDB.md`). NÃO é um `ProvedorDeMetadados` (D1
-do plano): só resolve imagem, nunca sinopse/ids/feed — implementa
+"""Adapter TMDB (REST) — provedor PADRÃO de arte (banner de anime, still de
+episódio) (`PLANO_ARTE_TMDB.md`). NÃO é um `ProvedorDeMetadados` (D1 do
+plano): só resolve imagem, nunca sinopse/ids/feed — implementa
 `ProvedorDeArte`, com tupla de registro própria (`registro.PROVEDORES_DE_ARTE`).
+
+Capa (pôster) NÃO é mais responsabilidade deste provedor: volta a ser
+exclusiva da cadeia normal de `ProvedorDeMetadados` (AniList/Kitsu) — a
+AniList modela cada temporada como uma `Media` própria e já resolve capa por
+temporada corretamente por construção, ao contrário do TMDB, que agrupa a
+série inteira sob um único id.
 
 Síncrono via `requests`; ver `integrations/anilist.py` para a nota sobre onde
 mora a fronteira de exceção HTTP e o `to_thread`/timeout externo
@@ -17,7 +23,6 @@ from integrations.base import ArteDeAnime, ProvedorDeArte
 
 _URL_BASE = "https://api.themoviedb.org/3"
 _URL_IMAGEM = "https://image.tmdb.org/t/p"
-_TAMANHO_POSTER = "w500"  # equivalente ao coverImage.extraLarge da AniList (~500px)
 _TAMANHO_BACKDROP = "w1280"  # equivalente ao bannerImage
 _TAMANHO_STILL = "w300"  # thumb de episódio (Fatia 5) — tamanho intermediário, card de lista
 _IDIOMA = "pt-BR"  # TMDB cai pro pôster default quando não há arte pt-BR
@@ -78,15 +83,16 @@ class TmdbProvider(ProvedorDeArte):
         return "tmdb"
 
     def buscar_arte_por_titulo(self, titulo: str, ano: int | None) -> ArteDeAnime | None:
+        """Só banner (`backdrop_path` da série) — capa (pôster) não é mais
+        responsabilidade deste método, ver docstring de módulo."""
         serie = self._resolver_serie(titulo, ano)
         if serie is None:
             return None
 
-        capa_url = _url_imagem(serie.get("poster_path"), _TAMANHO_POSTER)
         banner_url = _url_imagem(serie.get("backdrop_path"), _TAMANHO_BACKDROP)
-        if capa_url is None and banner_url is None:
+        if banner_url is None:
             return None
-        return ArteDeAnime(capa_url=capa_url, banner_url=banner_url)
+        return ArteDeAnime(banner_url=banner_url)
 
     def buscar_still_de_episodio(
         self, titulo: str, ano: int | None, numero_absoluto: int
