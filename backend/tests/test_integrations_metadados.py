@@ -1403,7 +1403,7 @@ def test_tmdb_still_de_episodio_match_feliz(monkeypatch: pytest.MonkeyPatch):
 
     resultado = TmdbProvider("token").buscar_still_de_episodio("Slime", 2018, 13)
 
-    assert resultado == "https://image.tmdb.org/t/p/w300/ep13.jpg"
+    assert resultado == "https://image.tmdb.org/t/p/original/ep13.jpg"
 
 
 def test_tmdb_still_de_episodio_temporada_fora_do_range_devolve_none(
@@ -2240,8 +2240,8 @@ async def test_servico_still_memo_evita_repescar_temporada_pro_proximo_episodio(
     segundo = await servico.buscar_still_de_episodio("Slime", 2018, 2)
     terceiro = await servico.buscar_still_de_episodio("Slime", 2018, 1)
 
-    assert primeiro == "https://image.tmdb.org/t/p/w300/ep1.jpg"
-    assert segundo == "https://image.tmdb.org/t/p/w300/ep2.jpg"
+    assert primeiro == "https://image.tmdb.org/t/p/original/ep1.jpg"
+    assert segundo == "https://image.tmdb.org/t/p/original/ep2.jpg"
     assert terceiro == primeiro
     # search/tv + tv/999 + tv/999/season/1 — uma vez cada, nunca mais.
     assert len(chamadas) == 3
