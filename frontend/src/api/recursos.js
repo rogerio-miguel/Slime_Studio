@@ -15,6 +15,10 @@ export function listarProximaTemporada() {
   return requisitar('/api/animes/proxima-temporada');
 }
 
+export function listarFileirasTematicas() {
+  return requisitar('/api/animes/fileiras-tematicas');
+}
+
 export function obterAnime(animeId) {
   return requisitar(`/api/animes/${animeId}`);
 }

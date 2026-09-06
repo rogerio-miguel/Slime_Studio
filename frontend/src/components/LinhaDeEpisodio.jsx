@@ -3,6 +3,12 @@ import { Link } from 'react-router-dom';
 import { SOMBRA_SLIDE_ATIVO } from '../inicio/CarrosselDestaques.jsx';
 import { IconePlay } from '../player/Icones.jsx';
 
+// Re-exportado: `src/inicio/` não pode importar de `src/player/` direto
+// (fronteira Clean Architecture documentada em paginas/Inicio.jsx, D5 do
+// plano) — `inicio/DestaqueGrande.jsx` reusa o MESMO ícone do CTA "Assistir
+// agora"/"Continuar assistindo" passando por aqui, não duplicando o SVG.
+export { IconePlay };
+
 // Miniatura decorativa do episódio (thumb da fonte). `src` SEMPRE via o proxy
 // `GET /api/thumb` — nunca `src={thumb}` direto: o proxy existe pra não vazar
 // o IP do usuário pro site pirata e pra contornar hotlink (embute o `Referer`).
