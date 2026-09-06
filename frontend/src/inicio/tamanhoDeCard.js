@@ -16,8 +16,7 @@
 // dinâmico. A prop `tamanho` seleciona entre DUAS strings de classe LITERAIS
 // (as duas presentes aqui no fonte pro Tailwind extrair). Valores com `/` ou
 // `calc()` (`FLEX_BASIS_SLOT`, `PADDING_TITULO`) vão no `style` inline: a `/`
-// colide com o modificador de opacidade do Tailwind v4 (mesma armadilha do
-// `--slide-gap` em CarrosselDestaques.jsx).
+// colide com o modificador de opacidade do Tailwind v4.
 //
 //   - `grande`  (default): pôster ~336px, 5 por página no desktop — fileiras de
 //                catálogo (Próximas estreias, Top 10, gênero) e grade da Galeria.
