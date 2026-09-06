@@ -29,6 +29,7 @@ from core.erros import (
     VersaoIndisponivelError,
 )
 from db.engine import criar_engine, criar_sessionmaker
+from integrations.registro import instalar_provedores_de_arte
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ def criar_app(config: Config) -> FastAPI:
         sessionmaker = criar_sessionmaker(engine)
         assinantes = Assinantes()
         monitor = MonitorDeFila(sessionmaker, assinantes)
+        instalar_provedores_de_arte(config.tmdb_token)
 
         app.state.config = config
         app.state.sessionmaker = sessionmaker

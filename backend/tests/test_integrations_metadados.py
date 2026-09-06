@@ -16,17 +16,23 @@ import requests
 
 from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
-from integrations import servico
+from integrations import registro, servico
 from integrations.anilist import AniListProvider, _proxima_temporada
 from integrations.base import (
     AnimeEmAlta,
+    ArteDeAnime,
+    FileiraTematica,
     LancamentoDeAnime,
     MetadadosDeAnime,
+    ProvedorComFileirasTematicas,
     ProvedorComLancamento,
+    ProvedorDeArte,
     ProvedorDeMetadados,
     TitulosDeAnime,
 )
 from integrations.kitsu import KitsuProvider
+from integrations.registro import FILEIRAS_TEMATICAS
+from integrations.tmdb import TmdbNaoAutorizado, TmdbProvider
 
 
 class _RespostaFalsa:
@@ -290,6 +296,62 @@ def test_anilist_listar_em_alta_sem_ano_nem_generos(monkeypatch: pytest.MonkeyPa
 
     assert item.ano_estreia is None
     assert item.generos == ()
+
+
+def test_anilist_listar_fileira_tematica(monkeypatch: pytest.MonkeyPatch):
+    """Parsing idêntico ao de `listar_em_alta` (`_item_para_anime_em_alta`
+    reusado); aqui o foco é a query enviada — `tag` como variável e
+    `minimumTagRank: 60`/`isAdult: false` fixos no filtro."""
+    corpo = {
+        "data": {
+            "Page": {
+                "media": [
+                    {
+                        "id": 1,
+                        "title": {"romaji": "Tensei", "english": "Reincarnated"},
+                        "coverImage": {"extraLarge": "https://img/1.jpg", "color": "#e4a15d"},
+                        "bannerImage": "https://img/1-banner.jpg",
+                        "genres": ["Action", "Fantasy"],
+                        "seasonYear": 2021,
+                        "startDate": {"year": 2021},
+                    }
+                ]
+            }
+        }
+    }
+    capturado = {}
+
+    def _post(*a, **k):
+        capturado.update(k["json"])
+        return _RespostaFalsa(corpo=corpo)
+
+    monkeypatch.setattr("integrations.anilist.requests.post", _post)
+
+    fileira = FileiraTematica(chave="isekai", tag="Isekai")
+    resultado = AniListProvider().listar_fileira_tematica(fileira)
+
+    assert capturado["variables"] == {"tag": "Isekai"}
+    assert "minimumTagRank: 60" in capturado["query"]
+    assert "isAdult: false" in capturado["query"]
+    assert resultado == [
+        AnimeEmAlta(
+            titulo_romaji="Tensei",
+            titulo_ingles="Reincarnated",
+            capa_url="https://img/1.jpg",
+            capa_cor="#e4a15d",
+            banner_url="https://img/1-banner.jpg",
+            anilist_id=1,
+            ano_estreia=2021,
+            generos=("Action", "Fantasy"),
+            lancamento=LancamentoDeAnime(
+                status=None,
+                total_episodios=None,
+                proximo_ep_numero=None,
+                proximo_ep_em=None,
+                ano_estreia=2021,
+            ),
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1204,6 +1266,185 @@ def test_kitsu_nao_e_provedor_com_lancamento():
     assert not isinstance(KitsuProvider(), ProvedorComLancamento)
 
 
+# --- TmdbProvider (arte: capa/banner, PLANO_ARTE_TMDB.md) ---
+
+
+def _resultado_tv(**overrides) -> dict:
+    base = {
+        "name": "Tensei",
+        "original_name": "Tensei",
+        "poster_path": "/poster.jpg",
+        "backdrop_path": "/backdrop.jpg",
+        "first_air_date": "2018-10-02",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_tmdb_buscar_arte_por_titulo_match_exato_prefixa_urls_de_imagem(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    corpo = {"results": [_resultado_tv(name="Slime", original_name="Slime")]}
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime", None)
+
+    assert resultado == ArteDeAnime(
+        capa_url="https://image.tmdb.org/t/p/w500/poster.jpg",
+        banner_url="https://image.tmdb.org/t/p/w1280/backdrop.jpg",
+    )
+
+
+def test_tmdb_desempate_por_ano_entre_dois_candidatos(monkeypatch: pytest.MonkeyPatch):
+    """Nenhum dos dois candidatos bate por título exato com "Slime Franquia S3"
+    (D3: TMDB modela a franquia inteira numa entrada só) — o pool cai pros dois
+    e o de `first_air_date` mais perto de `ano` vence."""
+    corpo = {
+        "results": [
+            _resultado_tv(
+                name="Slime Franquia",
+                original_name="Slime Franquia",
+                poster_path="/franquia.jpg",
+                first_air_date="2010-01-01",
+            ),
+            _resultado_tv(
+                name="Slime Franquia",
+                original_name="Slime Franquia",
+                poster_path="/temporada3.jpg",
+                first_air_date="2024-01-01",
+            ),
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime Franquia S3", 2024)
+
+    assert resultado.capa_url.endswith("/temporada3.jpg")
+
+
+def test_tmdb_item_so_com_backdrop_path(monkeypatch: pytest.MonkeyPatch):
+    corpo = {"results": [_resultado_tv(poster_path=None, backdrop_path="/backdrop.jpg")]}
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = TmdbProvider("token").buscar_arte_por_titulo("Tensei", None)
+
+    assert resultado == ArteDeAnime(
+        capa_url=None, banner_url="https://image.tmdb.org/t/p/w1280/backdrop.jpg"
+    )
+
+
+def test_tmdb_results_vazio_devolve_none(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get",
+        lambda *a, **k: _RespostaFalsa(corpo={"results": []}),
+    )
+
+    assert TmdbProvider("token").buscar_arte_por_titulo("Slime", None) is None
+
+
+def test_tmdb_401_levanta_nao_autorizado(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get",
+        lambda *a, **k: _RespostaFalsa(status_code=401),
+    )
+
+    with pytest.raises(TmdbNaoAutorizado):
+        TmdbProvider("token").buscar_arte_por_titulo("Slime", None)
+
+
+# --- TmdbProvider.buscar_still_de_episodio (Fatia 5, PLANO_ARTE_TMDB.md) ---
+
+
+def test_tmdb_still_de_episodio_match_feliz(monkeypatch: pytest.MonkeyPatch):
+    """Resolve a série, monta a tabela de temporadas (especial season_number=0
+    fica fora da numeração absoluta; temporada 1 com 12 episódios, temporada 2
+    começando no absoluto 13) e acha que o episódio absoluto 13 é o 1º da
+    temporada 2."""
+
+    def _fake_get(url, **kwargs):
+        if url.endswith("/search/tv"):
+            return _RespostaFalsa(
+                corpo={"results": [_resultado_tv(id=999, name="Slime", original_name="Slime")]}
+            )
+        if url.endswith("/tv/999"):
+            return _RespostaFalsa(
+                corpo={
+                    "seasons": [
+                        {"season_number": 0, "episode_count": 3},
+                        {"season_number": 1, "episode_count": 12},
+                        {"season_number": 2, "episode_count": 12},
+                    ]
+                }
+            )
+        if url.endswith("/tv/999/season/2"):
+            return _RespostaFalsa(
+                corpo={
+                    "episodes": [
+                        {"episode_number": 1, "still_path": "/ep13.jpg"},
+                        {"episode_number": 2, "still_path": "/ep14.jpg"},
+                    ]
+                }
+            )
+        raise AssertionError(f"URL não mapeada no fake: {url}")
+
+    monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
+
+    resultado = TmdbProvider("token").buscar_still_de_episodio("Slime", 2018, 13)
+
+    assert resultado == "https://image.tmdb.org/t/p/w300/ep13.jpg"
+
+
+def test_tmdb_still_de_episodio_temporada_fora_do_range_devolve_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def _fake_get(url, **kwargs):
+        if url.endswith("/search/tv"):
+            return _RespostaFalsa(
+                corpo={"results": [_resultado_tv(id=999, name="Slime", original_name="Slime")]}
+            )
+        if url.endswith("/tv/999"):
+            return _RespostaFalsa(corpo={"seasons": [{"season_number": 1, "episode_count": 12}]})
+        raise AssertionError(f"URL não mapeada no fake: {url}")
+
+    monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
+
+    # 99 fica fora do intervalo [1, 12] coberto pela única temporada — nunca
+    # deveria disparar `/tv/999/season/{n}` (o fake levantaria se disparasse).
+    assert TmdbProvider("token").buscar_still_de_episodio("Slime", 2018, 99) is None
+
+
+def test_tmdb_still_de_episodio_still_nulo_devolve_none(monkeypatch: pytest.MonkeyPatch):
+    def _fake_get(url, **kwargs):
+        if url.endswith("/search/tv"):
+            return _RespostaFalsa(
+                corpo={"results": [_resultado_tv(id=999, name="Slime", original_name="Slime")]}
+            )
+        if url.endswith("/tv/999"):
+            return _RespostaFalsa(corpo={"seasons": [{"season_number": 1, "episode_count": 12}]})
+        if url.endswith("/tv/999/season/1"):
+            return _RespostaFalsa(corpo={"episodes": [{"episode_number": 5, "still_path": None}]})
+        raise AssertionError(f"URL não mapeada no fake: {url}")
+
+    monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
+
+    assert TmdbProvider("token").buscar_still_de_episodio("Slime", 2018, 5) is None
+
+
+def test_tmdb_still_de_episodio_id_nao_resolvido_devolve_none(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get",
+        lambda *a, **k: _RespostaFalsa(corpo={"results": []}),
+    )
+
+    assert TmdbProvider("token").buscar_still_de_episodio("Slime", None, 1) is None
+
+
 # --- cadeia de fallback (integrations/servico.py) ---
 
 
@@ -1289,13 +1530,101 @@ class _ProvedorComLancamentoFake(ProvedorDeMetadados, ProvedorComLancamento):
         return self._lancamento
 
 
+class _ProvedorComFileirasTematicasFake(ProvedorDeMetadados, ProvedorComFileirasTematicas):
+    """Provedor fake que implementa a capability opcional
+    `ProvedorComFileirasTematicas` (o `_ProvedorFake` acima não a implementa),
+    para exercitar `servico.listar_fileira_tematica`/`listar_fileiras_tematicas`
+    sem rede. `tags_com_erro` simula falha só para as fileiras cujas `chave`
+    estão no conjunto — as demais respondem normalmente."""
+
+    def __init__(self, nome: str, *, tags_com_erro: frozenset[str] = frozenset()):
+        self._nome = nome
+        self._tags_com_erro = tags_com_erro
+
+    @property
+    def nome(self) -> str:
+        return self._nome
+
+    def buscar_por_titulo(self, titulo: str):
+        return None
+
+    def listar_em_alta(self):
+        return []
+
+    def listar_proxima_temporada(self):
+        return []
+
+    def buscar_titulos(self, titulo: str):
+        return None
+
+    def listar_fileira_tematica(self, fileira: FileiraTematica) -> list[AnimeEmAlta]:
+        if fileira.chave in self._tags_com_erro:
+            raise requests.ConnectionError(f"falhou: {fileira.chave}")
+        return [
+            AnimeEmAlta(
+                titulo_romaji=fileira.chave,
+                titulo_ingles=None,
+                capa_url=None,
+                banner_url=None,
+                anilist_id=None,
+            )
+        ]
+
+
+class _ProvedorDeArteFake(ProvedorDeArte):
+    """Provedor fake de `ProvedorDeArte` (overlay de arte TMDB,
+    PLANO_ARTE_TMDB.md) — instalado via
+    `monkeypatch.setattr(registro, "_provedores_de_arte", (fake,))`.
+    `chamadas` registra `(titulo, ano)` de cada chamada real (não conta as que
+    o latch/memo pouparam) — usado para verificar memo e latch sem espionar
+    `buscar_arte_por_titulo` diretamente."""
+
+    def __init__(
+        self, nome: str, *, arte: ArteDeAnime | None = None, erro: Exception | None = None
+    ):
+        self._nome = nome
+        self._arte = arte
+        self._erro = erro
+        self.chamadas: list[tuple[str, int | None]] = []
+
+    @property
+    def nome(self) -> str:
+        return self._nome
+
+    def buscar_arte_por_titulo(self, titulo: str, ano: int | None) -> ArteDeAnime | None:
+        self.chamadas.append((titulo, ano))
+        if self._erro is not None:
+            raise self._erro
+        return self._arte
+
+
 @pytest.fixture(autouse=True)
 def _limpa_caches_de_feed(monkeypatch: pytest.MonkeyPatch):
-    """`integrations.servico._cache_em_alta` e `._cache_proxima_temporada` são
-    estado de módulo — isola cada teste para não vazar cache de um teste para o
-    outro."""
+    """`integrations.servico._cache_em_alta`, `._cache_proxima_temporada` e
+    `._cache_fileiras_tematicas` são estado de módulo — isola cada teste para
+    não vazar cache de um teste para o outro. `_locks_fileiras_tematicas` não
+    precisa ser recriado: são `asyncio.Lock` reusáveis, sempre liberados ao fim
+    de cada `async with` (nenhum teste os deixa presos)."""
     monkeypatch.setattr(servico, "_cache_em_alta", None)
     monkeypatch.setattr(servico, "_cache_proxima_temporada", None)
+    monkeypatch.setattr(servico, "_cache_fileiras_tematicas", {})
+
+
+@pytest.fixture(autouse=True)
+def _limpa_overlay_de_arte(monkeypatch: pytest.MonkeyPatch):
+    """`integrations.servico._memo_arte`/`._memo_temporadas`/`._memo_still` e
+    `._arte_desabilitada_por_auth` são estado de módulo (memo/latch dos
+    overlays de arte — capa/banner e still de episódio, PLANO_ARTE_TMDB.md D4
+    e Fatia 5) — isola cada teste pra não vazar memo/latch de um teste pro
+    outro (mesmo cuidado que `conftest.py` já toma com
+    `descoberta._refreshs_de_lancamento_em_voo`). `integrations.registro.
+    _provedores_de_arte` fica vazio por padrão (D2: nunca lido no import) —
+    quem quiser exercitar o overlay faz o próprio
+    `monkeypatch.setattr(registro, "_provedores_de_arte", (...))`."""
+    monkeypatch.setattr(servico, "_memo_arte", {})
+    monkeypatch.setattr(servico, "_memo_temporadas", {})
+    monkeypatch.setattr(servico, "_memo_still", {})
+    monkeypatch.setattr(servico, "_arte_desabilitada_por_auth", False)
 
 
 @pytest.fixture(autouse=True)
@@ -1682,3 +2011,234 @@ async def test_servico_buscar_metadados_por_anilist_id_levanta_se_todos_falham(
 
     with pytest.raises(FalhaDeMetadados):
         await servico.buscar_metadados_por_anilist_id(21)
+
+
+# --- servico.listar_fileira_tematica / listar_fileiras_tematicas (fileiras temáticas) ---
+
+
+async def test_servico_fileira_tematica_chave_desconhecida_levanta_value_error():
+    with pytest.raises(ValueError):
+        await servico.listar_fileira_tematica("chave-que-nao-existe")
+
+
+async def test_servico_fileira_tematica_usa_cache_dentro_do_ttl(monkeypatch: pytest.MonkeyPatch):
+    chamadas = []
+    item = AnimeEmAlta(
+        titulo_romaji="X", titulo_ingles=None, capa_url=None, banner_url=None, anilist_id=1
+    )
+
+    def _listar(fileira):
+        chamadas.append(1)
+        return [item]
+
+    provedor = _ProvedorComFileirasTematicasFake("anilist")
+    provedor.listar_fileira_tematica = _listar
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    primeira = await servico.listar_fileira_tematica("isekai")
+    segunda = await servico.listar_fileira_tematica("isekai")
+
+    assert len(chamadas) == 1
+    assert primeira == segunda == [item]
+
+
+async def test_servico_fileira_que_falha_e_omitida_do_agregado(monkeypatch: pytest.MonkeyPatch):
+    chave_com_erro = FILEIRAS_TEMATICAS[0].chave
+    provedor = _ProvedorComFileirasTematicasFake(
+        "anilist", tags_com_erro=frozenset({chave_com_erro})
+    )
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    resultado = await servico.listar_fileiras_tematicas()
+
+    assert chave_com_erro not in resultado
+    assert set(resultado) == {f.chave for f in FILEIRAS_TEMATICAS} - {chave_com_erro}
+
+
+async def test_servico_fileiras_tematicas_levanta_falha_de_metadados_quando_todas_falham(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    todas_as_chaves = frozenset(f.chave for f in FILEIRAS_TEMATICAS)
+    provedor = _ProvedorComFileirasTematicasFake("anilist", tags_com_erro=todas_as_chaves)
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.listar_fileiras_tematicas()
+
+
+# --- overlay de arte (integrations/servico.py, PLANO_ARTE_TMDB.md) ---
+
+
+async def test_servico_buscar_por_titulo_tmdb_vence_a_capa_da_anilist(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    metadados_anilist = MetadadosDeAnime(
+        capa_url="https://anilist/capa.jpg",
+        sinopse="s",
+        anilist_id=1,
+        kitsu_id=None,
+        banner_url="https://anilist/banner.jpg",
+        titulo_romaji="Slime",
+    )
+    anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
+
+    tmdb = _ProvedorDeArteFake(
+        "tmdb",
+        arte=ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url="https://tmdb/banner.jpg"),
+    )
+    monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
+
+    resultado = await servico.buscar_por_titulo("Slime")
+
+    assert resultado.capa_url == "https://tmdb/capa.jpg"
+    assert resultado.banner_url == "https://tmdb/banner.jpg"
+
+
+async def test_servico_tmdb_sem_backdrop_preserva_banner_da_anilist(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Um match do TMDB com pôster e sem backdrop não pode zerar o
+    `bannerImage` que a AniList já tinha resolvido."""
+    metadados_anilist = MetadadosDeAnime(
+        capa_url="https://anilist/capa.jpg",
+        sinopse="s",
+        anilist_id=1,
+        kitsu_id=None,
+        banner_url="https://anilist/banner.jpg",
+        titulo_romaji="Slime",
+    )
+    anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
+
+    tmdb = _ProvedorDeArteFake(
+        "tmdb", arte=ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url=None)
+    )
+    monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
+
+    resultado = await servico.buscar_por_titulo("Slime")
+
+    assert resultado.capa_url == "https://tmdb/capa.jpg"
+    assert resultado.banner_url == "https://anilist/banner.jpg"
+
+
+async def test_servico_provedor_de_arte_que_levanta_nao_derruba_o_feed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    item = AnimeEmAlta(
+        titulo_romaji="Slime",
+        titulo_ingles=None,
+        capa_url="https://anilist/capa.jpg",
+        banner_url="https://anilist/banner.jpg",
+        anilist_id=1,
+    )
+    anilist = _ProvedorFake("anilist", em_alta=[item])
+    monkeypatch.setattr(servico, "PROVEDORES_DE_FEED", (anilist,))
+
+    tmdb = _ProvedorDeArteFake("tmdb", erro=requests.ConnectionError("falhou"))
+    monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
+
+    resultado = await servico.listar_em_alta()
+
+    assert resultado == [item]
+
+
+async def test_servico_memo_de_arte_evita_segunda_chamada_pro_mesmo_titulo_e_ano(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    metadados_anilist = MetadadosDeAnime(
+        capa_url=None,
+        sinopse=None,
+        anilist_id=1,
+        kitsu_id=None,
+        titulo_romaji="Slime",
+        ano=2018,
+    )
+    anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
+
+    tmdb = _ProvedorDeArteFake(
+        "tmdb", arte=ArteDeAnime(capa_url="https://tmdb/capa.jpg", banner_url=None)
+    )
+    monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
+
+    primeiro = await servico.buscar_por_titulo("Slime")
+    segundo = await servico.buscar_por_titulo("Slime")
+
+    assert primeiro.capa_url == segundo.capa_url == "https://tmdb/capa.jpg"
+    assert tmdb.chamadas == [("Slime", 2018)]
+
+
+async def test_servico_latch_desliga_arte_apos_401_pro_resto_do_lote(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    metadados_anilist = MetadadosDeAnime(
+        capa_url="https://anilist/capa.jpg",
+        sinopse=None,
+        anilist_id=1,
+        kitsu_id=None,
+        titulo_romaji="Slime",
+    )
+    anilist = _ProvedorFake("anilist", metadados=metadados_anilist)
+    monkeypatch.setattr(servico, "PROVEDORES", (anilist,))
+
+    tmdb = _ProvedorDeArteFake("tmdb", erro=TmdbNaoAutorizado("token inválido"))
+    monkeypatch.setattr(registro, "_provedores_de_arte", (tmdb,))
+
+    primeiro = await servico.buscar_por_titulo("Slime")
+    segundo = await servico.buscar_por_titulo("Slime")
+
+    assert primeiro.capa_url == "https://anilist/capa.jpg"
+    assert segundo.capa_url == "https://anilist/capa.jpg"
+    assert len(tmdb.chamadas) == 1
+    assert servico._arte_desabilitada_por_auth is True
+
+
+# --- overlay de still de episódio (integrations/servico.py, Fatia 5) ---
+
+
+async def test_servico_still_de_episodio_nenhum_provedor_devolve_none():
+    assert await servico.buscar_still_de_episodio("Slime", 2018, 1) is None
+
+
+async def test_servico_still_memo_evita_repescar_temporada_pro_proximo_episodio(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`_memo_temporadas` evita repetir `/search/tv`+`/tv/{id}` e `_memo_still`
+    evita repescar `/tv/{id}/season/{n}` pro 2º episódio da MESMA temporada —
+    a 1ª consulta popula o still da temporada inteira de uma vez; a 2ª (outro
+    episódio, mesma temporada) e a 3ª (mesmo episódio da 1ª) não disparam
+    nenhuma chamada nova."""
+    chamadas: list[str] = []
+
+    def _fake_get(url, **kwargs):
+        chamadas.append(url)
+        if url.endswith("/search/tv"):
+            return _RespostaFalsa(
+                corpo={"results": [_resultado_tv(id=999, name="Slime", original_name="Slime")]}
+            )
+        if url.endswith("/tv/999"):
+            return _RespostaFalsa(corpo={"seasons": [{"season_number": 1, "episode_count": 12}]})
+        if url.endswith("/tv/999/season/1"):
+            return _RespostaFalsa(
+                corpo={
+                    "episodes": [
+                        {"episode_number": 1, "still_path": "/ep1.jpg"},
+                        {"episode_number": 2, "still_path": "/ep2.jpg"},
+                    ]
+                }
+            )
+        raise AssertionError(f"URL não mapeada no fake: {url}")
+
+    monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
+    monkeypatch.setattr(registro, "_provedores_de_arte", (TmdbProvider("token"),))
+
+    primeiro = await servico.buscar_still_de_episodio("Slime", 2018, 1)
+    segundo = await servico.buscar_still_de_episodio("Slime", 2018, 2)
+    terceiro = await servico.buscar_still_de_episodio("Slime", 2018, 1)
+
+    assert primeiro == "https://image.tmdb.org/t/p/w300/ep1.jpg"
+    assert segundo == "https://image.tmdb.org/t/p/w300/ep2.jpg"
+    assert terceiro == primeiro
+    # search/tv + tv/999 + tv/999/season/1 — uma vez cada, nunca mais.
+    assert len(chamadas) == 3

@@ -21,6 +21,7 @@ from api.esquemas import (
     EpisodioSaida,
     EpisodiosRemotosSaida,
     EscopoBusca,
+    FileiraTematicaSaida,
     FonteConsultadaSaida,
     ResultadoBuscaFonteSaida,
 )
@@ -34,6 +35,7 @@ from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
 from core.config import Config
 from core.enums import VersaoDeFonte, VersaoEpisodio
+from core.texto import slugificar
 from db.catalogo import obter_ou_criar_anime_id
 from extractors.base import ResultadoBusca
 from extractors.registro import EXTRATORES
@@ -220,6 +222,23 @@ async def listar_animes_proxima_temporada(
     return [_para_saida_em_alta(item, anime_id) for item, anime_id in pares]
 
 
+# `/fileiras-tematicas` — mesma armadilha de ordem de `/em-alta`/`/proxima-
+# temporada`: precisa vir ANTES de `/{anime_id}`, senão casaria com
+# `anime_id="fileiras-tematicas"`.
+@router_publico.get("/fileiras-tematicas", response_model=list[FileiraTematicaSaida])
+async def listar_animes_fileiras_tematicas(
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[FileiraTematicaSaida]:
+    fileiras = await servico_descoberta.listar_fileiras_tematicas_com_catalogo(sessionmaker)
+    return [
+        FileiraTematicaSaida(
+            chave=chave,
+            itens=[_para_saida_em_alta(item, anime_id) for item, anime_id in pares],
+        )
+        for chave, pares in fileiras
+    ]
+
+
 def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaSaida:
     """Traduz um item do feed (`integrations.base.AnimeEmAlta`) já cruzado com o
     catálogo para o schema HTTP. `item.lancamento` pode ser `None` (nem todo item
@@ -270,7 +289,7 @@ async def buscar_animes_em_fontes(
         )
     else:
         busca = await servico_busca.buscar_com_titulos_alternativos(sessionmaker, titulo)
-    fontes = await servico_capas.enriquecer_capas(sessionmaker, busca.fontes)
+    capas = await servico_capas.capas_por_titulo(busca.fontes)
     return BuscaEmFontesSaida(
         resultados=[
             ResultadoBuscaFonteSaida(
@@ -278,18 +297,18 @@ async def buscar_animes_em_fontes(
                 identificador=candidato.identificador,
                 url=candidato.url,
                 dominio=fonte.dominio,
-                capa_url=candidato.capa_url,
+                capa_url=capas.get(slugificar(candidato.titulo_exibicao)),
                 versao=candidato.versao,
                 site_diferencia_versao=_diferencia_versao(fonte.dominio),
             )
-            for fonte in fontes
+            for fonte in busca.fontes
             for candidato in fonte.candidatos
         ],
         fontes=[
             FonteConsultadaSaida(
                 dominio=fonte.dominio, indisponivel=fonte.indisponivel, motivo=fonte.motivo
             )
-            for fonte in fontes
+            for fonte in busca.fontes
         ],
         termo_alternativo=busca.termo_alternativo,
         dominio_alternativo=busca.dominio_alternativo,

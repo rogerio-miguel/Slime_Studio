@@ -69,9 +69,11 @@ _BUSCA_HTML = """
 """
 
 
-def test_buscar_parseia_cards_com_identificador_titulo_capa_e_versao(extrator, cliente_falso):
+def test_buscar_parseia_cards_com_identificador_titulo_e_versao(extrator, cliente_falso):
     """Card sem sufixo → LEGENDADO; card com " Dublado"/`-dublado` → DUBLADO.
-    Capa relativa é absolutizada pela `BASE_URL`, capa já absoluta sai intacta."""
+    O card traz `<img>` de capa no markup real (fixture `_BUSCA_HTML`), mas
+    `extractors/` não resolve mais capa de anime (Fatia 3 de
+    `PLANO_ARTE_TMDB.md`) — a tag é ignorada pelo parsing."""
     url_busca = f"{extrator.BASE_URL}/?s=One+Piece"
     cliente = cliente_falso(html_por_url={url_busca: _BUSCA_HTML})
 
@@ -82,37 +84,15 @@ def test_buscar_parseia_cards_com_identificador_titulo_capa_e_versao(extrator, c
             titulo_exibicao="One Piece",
             identificador="one-piece",
             url="https://meusanimes.blog/a/one-piece/",
-            capa_url="https://meusanimes.blog/capa/one-piece-150x150.jpg",
             versao=VersaoEpisodio.LEGENDADO,
         ),
         ResultadoBusca(
             titulo_exibicao="One Piece Dublado",
             identificador="one-piece-dublado",
             url="https://meusanimes.blog/a/one-piece-dublado/",
-            capa_url="https://cdn.meusanimes.blog/op-dub-150x150.jpg",
             versao=VersaoEpisodio.DUBLADO,
         ),
     ]
-
-
-def test_buscar_card_sem_img_devolve_capa_url_none(extrator, cliente_falso):
-    html = """
-    <div class="result-item"><article>
-      <div class="image"><div class="thumbnail">
-        <a href="https://meusanimes.blog/a/naruto/"></a>
-      </div></div>
-      <div class="details"><div class="title">
-        <a href="https://meusanimes.blog/a/naruto/">Naruto</a>
-      </div></div>
-    </article></div>
-    """
-    url_busca = f"{extrator.BASE_URL}/?s=Naruto"
-    cliente = cliente_falso(html_por_url={url_busca: html})
-
-    (resultado,) = extrator.buscar(cliente, "Naruto")
-
-    assert resultado.capa_url is None
-    assert resultado.identificador == "naruto"
 
 
 def test_buscar_ignora_link_que_nao_e_de_anime(extrator, cliente_falso):

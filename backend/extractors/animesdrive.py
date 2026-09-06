@@ -146,22 +146,6 @@ class AnimesDriveProvider(ExtratorDeSite):
                     continue
 
                 url_anime = tag_link["href"]
-                # Ausência da tag/atributo não é erro (imagem faltando num card
-                # isolado não invalida o resultado) — `urljoin` absolutiza tanto
-                # caminho relativo (`/capa.jpg`) quanto URL já absoluta, sem
-                # precisar duplicar o tratamento manual de `//host/...` que
-                # `resolver_midia` faz para iframes.
-                # Classe real é `.thumbnail` (`.thumb` nunca bateu com nada,
-                # confirmado ao vivo em 2026-08-17 — era a causa de capa
-                # sempre vir `None` pra todo resultado do AnimesDrive).
-                tag_capa = artigo.select_one(".thumbnail img")
-                src_capa = tag_capa.get("src") if tag_capa else None
-                capa_url = (
-                    urllib.parse.urljoin(self.BASE_URL, src_capa.strip())
-                    if src_capa and src_capa.strip()
-                    else None
-                )
-
                 titulo_exibicao = " ".join(tag_titulo.get_text().split())
                 identificador = _extrair_identificador(url_anime)
                 resultados.append(
@@ -169,7 +153,6 @@ class AnimesDriveProvider(ExtratorDeSite):
                         titulo_exibicao=titulo_exibicao,
                         identificador=identificador,
                         url=url_anime,
-                        capa_url=capa_url,
                         # Site declara `diferencia_versao=True`: convenção dos
                         # sites BR é dublado sempre marcado, legendado é o
                         # default silencioso — ausência de marcador aqui

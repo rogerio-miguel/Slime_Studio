@@ -468,6 +468,82 @@ async def test_proxima_temporada_nao_faz_refresh_oportunista_de_lancamento(
         assert anime.proximo_ep_numero == 3  # feed trazia 9, mas não há refresh aqui
 
 
+# --- GET /api/animes/fileiras-tematicas ---
+
+
+async def test_fileiras_tematicas_propaga_502_se_todos_provedores_falham(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    async def _fake(sessionmaker):
+        raise FalhaDeMetadados("todos os provedores de metadados falharam")
+
+    monkeypatch.setattr("api.servicos.descoberta.listar_fileiras_tematicas_com_catalogo", _fake)
+
+    resposta = await cliente.get("/api/animes/fileiras-tematicas")
+
+    assert resposta.status_code == 502
+
+
+async def test_ordem_de_rotas_fileiras_tematicas_nao_e_interpretado_como_anime_id(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    async def _fake(sessionmaker):
+        return []
+
+    monkeypatch.setattr("api.servicos.descoberta.listar_fileiras_tematicas_com_catalogo", _fake)
+
+    resposta = await cliente.get("/api/animes/fileiras-tematicas")
+
+    assert resposta.status_code == 200
+    assert resposta.json() == []
+
+
+async def test_fileiras_tematicas_cruza_com_catalogo_local_no_schema_de_resposta(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Uma fileira com um item catalogado (`anime_id` local) e um item sem
+    correspondência (`None`) — o JSON de resposta reflete `{chave, itens}` por
+    fileira, cada item no mesmo shape de `AnimeEmAltaSaida`."""
+    anime_id = await _criar_anime(sessionmaker_api, "Tensei Shitara Slime Datta Ken", "tensei")
+
+    catalogado = AnimeEmAlta(
+        titulo_romaji="Tensei",
+        titulo_ingles="That Time I Got Reincarnated as a Slime",
+        capa_url="https://img/1.jpg",
+        banner_url="https://img/1-banner.jpg",
+        anilist_id=1,
+        ano_estreia=2018,
+        generos=("Action", "Fantasy"),
+        capa_cor="#1a2b3c",
+    )
+    nao_catalogado = AnimeEmAlta(
+        titulo_romaji="Ainda Nao Catalogado",
+        titulo_ingles=None,
+        capa_url=None,
+        banner_url=None,
+        anilist_id=99,
+    )
+
+    async def _fake(sessionmaker):
+        return [("found_family", [(catalogado, anime_id), (nao_catalogado, None)])]
+
+    monkeypatch.setattr("api.servicos.descoberta.listar_fileiras_tematicas_com_catalogo", _fake)
+
+    resposta = await cliente.get("/api/animes/fileiras-tematicas")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert len(corpo) == 1
+    fileira = corpo[0]
+    assert fileira["chave"] == "found_family"
+    assert len(fileira["itens"]) == 2
+    assert fileira["itens"][0]["anime_id"] == anime_id
+    assert fileira["itens"][0]["titulo_romaji"] == "Tensei"
+    assert fileira["itens"][0]["generos"] == ["Action", "Fantasy"]
+    assert fileira["itens"][1]["anime_id"] is None
+    assert fileira["itens"][1]["titulo_romaji"] == "Ainda Nao Catalogado"
+
+
 # --- POST /api/admin/animes: enriquecimento best-effort ---
 
 

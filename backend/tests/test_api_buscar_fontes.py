@@ -8,11 +8,14 @@ provedor externo (romaji/inglês) só se nenhum site achar nada com elas.
 módulo que a rota chama via `servico_extractors`, então o patch vale pros
 dois nomes) — mesmo padrão de `test_api_animes.py` para resolução de fonte,
 um nível mais alto que `extrator.buscar`/`resiliencia.chamar` (essas duas
-camadas já têm cobertura própria em `test_extractors_servico.py`). Testes
-cujos candidatos falsos saem sem `capa_url` também monkeypatcham
-`integrations.servico.buscar_por_titulo` — sem isso, `enriquecer_capas`
-tentaria consultar AniList/Kitsu de verdade. Pelo mesmo motivo, testes cuja
-Fase 1 vem vazia em todos os sites também monkeypatcham
+camadas já têm cobertura própria em `test_extractors_servico.py`).
+`extractors/` não resolve mais capa (Fatia 3 de PLANO_ARTE_TMDB.md) — todo
+candidato de busca é enriquecido por `api/servicos/capas.py::capas_por_titulo`
+via `integrations.servico.buscar_por_titulo`, coberta pela fixture autouse
+`_busca_de_metadados_por_titulo_sem_rede` (conftest.py) que já devolve `None`
+sem tocar rede; alguns testes abaixo re-monkeypatcham por cima pra afirmar
+algo específico sobre a chamada. Pelo mesmo motivo de rede, testes cuja Fase 1
+vem vazia em todos os sites também monkeypatcham
 `integrations.servico.buscar_titulos` — sem isso, a Fase 2 (expansão por
 termo de provedor) tentaria consultar AniList/Kitsu de verdade."""
 
@@ -215,7 +218,6 @@ async def test_buscar_fontes_expande_com_titulo_alternativo_quando_termo_digitad
                 titulo_exibicao="Naruto Shippuden",
                 identificador="1",
                 url="https://x/1",
-                capa_url="https://cdn/naruto.jpg",
             )
             return _fonte(dominio, candidato), None
         return _fonte(dominio), None

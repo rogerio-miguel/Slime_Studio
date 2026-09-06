@@ -1,0 +1,32 @@
+{
+  "data": {
+    "id": "ep-s1-1",
+    "anime": {"id": "tensei-shitara-slime-datta-ken", "title": "Tensei Shitara Slime Datta Ken"},
+    "title": "Episodio 1",
+    "audio": "legendado",
+    "season": 1,
+    "number": 1,
+    "streams": [
+      {
+        "audio": "dublado",
+        "is_mtl": false,
+        "is_offline": false,
+        "url": "https://akumast.net/i/tokendublado/m.jpg",
+        "qualities": ["360p"],
+        "chapters": [],
+        "thumbnails": "https://image.tmdb.org/t/p/original/ep1.jpg"
+      },
+      {
+        "audio": "legendado",
+        "is_mtl": false,
+        "is_offline": false,
+        "url": "https://akumast.net/i/tokenlegendado/m.jpg",
+        "qualities": ["360p"],
+        "chapters": [],
+        "thumbnails": "https://image.tmdb.org/t/p/original/ep1.jpg"
+      }
+    ],
+    "comments": 547,
+    "nextEpisode": {}
+  }
+}

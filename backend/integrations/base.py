@@ -113,6 +113,15 @@ class AnimeEmAlta:
     capa_cor: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class FileiraTematica:
+    """Uma fileira temática da Home (`registro.py::FILEIRAS_TEMATICAS`) — par
+    chave estável / tag crua da AniList."""
+
+    chave: str  # id estável snake_case, usado na rota da API e no rótulo do frontend
+    tag: str  # nome cru da tag AniList (ex: "Found Family")
+
+
 class ProvedorDeMetadados(ABC):
     """Uma implementação por provedor (`anilist.py`, `kitsu.py`), síncrona —
     o `asyncio.to_thread`/timeout que a torna não-bloqueante mora só em
@@ -155,6 +164,48 @@ class ProvedorDeMetadados(ABC):
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class ArteDeAnime:
+    """Capa/banner resolvidos por um `ProvedorDeArte` — formato mínimo, sem
+    nenhum dos outros campos de `MetadadosDeAnime` (sinopse, ids, lançamento):
+    quem resolve arte (TMDB) não é um `ProvedorDeMetadados`."""
+
+    capa_url: str | None
+    banner_url: str | None
+
+
+class ProvedorDeArte(ABC):
+    """Capability autônoma, NÃO um `ProvedorDeMetadados` (D1 do plano de arte
+    TMDB): o TMDB não responde sinopse/ids/feed, só imagem — por isso ganha
+    contrato e tupla de registro (`registro.PROVEDORES_DE_ARTE`) próprios, em
+    vez de entrar na tupla `PROVEDORES`/ser filtrado por `isinstance` a partir
+    dela como as demais capabilities opcionais deste módulo. Síncrona pela
+    mesma razão de `ProvedorDeMetadados` (o `to_thread`/timeout mora só no
+    serviço)."""
+
+    @property
+    @abstractmethod
+    def nome(self) -> str:
+        """Chave para logs de fallback (ex.: "tmdb")."""
+
+    @abstractmethod
+    def buscar_arte_por_titulo(self, titulo: str, ano: int | None) -> ArteDeAnime | None:
+        """Busca capa/banner por título (com `ano` só como desempate entre
+        candidatos, nunca como filtro — D3 do plano); `None` é resultado
+        normal (título não encontrado neste provedor), não erro — mesma
+        convenção de `ProvedorDeMetadados.buscar_por_titulo`."""
+
+    def buscar_still_de_episodio(
+        self, titulo: str, ano: int | None, numero_absoluto: int
+    ) -> str | None:
+        """Thumb do episódio `numero_absoluto` (numeração absoluta local, não
+        por temporada); capability opcional com implementação PADRÃO `None`
+        (não abstrata, mesmo padrão de
+        `ProvedorDeMetadados.buscar_metadados_por_anilist_id`) — reservada
+        para a Fatia 5 do plano de arte TMDB. Só `TmdbProvider` a sobrescreve."""
+        return None
+
+
 class ProvedorComLancamento(ABC):
     """Capability opcional: só provedores que expõem o estado de lançamento por
     id AniList a implementam (hoje só `anilist.py` — Kitsu não tem next-airing).
@@ -167,3 +218,17 @@ class ProvedorComLancamento(ABC):
     def buscar_lancamento_por_anilist_id(self, anilist_id: int) -> LancamentoDeAnime | None:
         """Estado de lançamento do anime de id AniList `anilist_id`; `None`
         quando o provedor não conhece esse id."""
+
+
+class ProvedorComFileirasTematicas(ABC):
+    """Capability opcional: só provedores que expõem busca por tag a
+    implementam (hoje só `anilist.py` — Kitsu não tem esse recurso).
+    `integrations/servico.py` filtra `PROVEDORES`/`PROVEDORES_DE_FEED` por
+    `isinstance(p, ProvedorComFileirasTematicas)` antes de consultar. Síncrona
+    pela mesma razão de `ProvedorDeMetadados` (o `to_thread`/timeout mora só
+    no serviço)."""
+
+    @abstractmethod
+    def listar_fileira_tematica(self, fileira: FileiraTematica) -> list[AnimeEmAlta]:
+        """Lista animes cuja tag AniList é `fileira.tag`, ordenados por
+        popularidade — mesmo formato de `ProvedorDeMetadados.listar_em_alta`."""

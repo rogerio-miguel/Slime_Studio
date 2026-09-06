@@ -101,20 +101,11 @@ class MeusAnimesProvider(ExtratorDeSite):
                     )
                     continue
 
-                tag_capa = artigo.select_one("div.image .thumbnail a img")
-                src_capa = tag_capa.get("src") if tag_capa is not None else None
-                capa_url = (
-                    urllib.parse.urljoin(self.BASE_URL, src_capa.strip())
-                    if src_capa and src_capa.strip()
-                    else None
-                )
-
                 resultados.append(
                     ResultadoBusca(
                         titulo_exibicao=titulo_exibicao,
                         identificador=identificador,
                         url=url_anime,
-                        capa_url=capa_url,
                         versao=(
                             inferir_versao(titulo_exibicao, identificador)
                             or VersaoEpisodio.LEGENDADO

@@ -75,9 +75,11 @@ Por que NÃO são uma função só: a diferença de contrato de saída (fonte ú
 com desempate vs. união de fontes) é o motivo — registrado aqui pra evitar
 que a próxima passada (humana ou agente) tente fundir os dois caminhos.
 
-O enriquecimento de capa saiu deste módulo pra `api/servicos/capas.py` e é
-aplicado pela rota (`api/rotas/animes.py`) DEPOIS da busca — o resultado que
-sai daqui ainda NÃO tem `capa_url` preenchida pros candidatos que vieram sem.
+Capa de anime não é responsabilidade deste módulo nem de `extractors/`
+(Fatia 3 de `PLANO_ARTE_TMDB.md` — `extractors/` volta a ser só extração de
+VÍDEO, `ResultadoBusca` não tem mais campo `capa_url`): o enriquecimento mora
+inteiro em `api/servicos/capas.py::capas_por_titulo`, aplicado pela rota
+(`api/rotas/animes.py`) DEPOIS da busca em fontes.
 """
 
 import asyncio

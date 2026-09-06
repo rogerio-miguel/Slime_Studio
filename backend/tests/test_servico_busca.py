@@ -6,7 +6,7 @@ nos nomes de módulo (mesmo padrão usado em `tests/test_api_buscar_fontes.py`),
 pois `busca.py` os chama via `servico_metadados`/`servico_extractors`, que
 apontam pro mesmo objeto de módulo.
 
-O enriquecimento de capa (`enriquecer_capas`) saiu de `busca.py` para
+O enriquecimento de capa (`capas_por_titulo`) saiu de `busca.py` para
 `api/servicos/capas.py` — sua cobertura mora em `tests/test_servico_capas.py`.
 
 `buscar_com_titulos_alternativos` (Fase A, fatia 3 de

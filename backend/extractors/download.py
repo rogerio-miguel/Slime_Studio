@@ -23,7 +23,7 @@ import requests
 
 from core.enums import TipoEpisodio, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FalhaDeFerramenta
-from extractors.base import LinkDeMidia
+from extractors.base import FormatoDeMidia, LinkDeMidia
 from worker.pipeline.ferramentas import executar
 
 _TIMEOUT_S = 15
@@ -37,6 +37,7 @@ _TAMANHO_AMOSTRA_BYTES = 4096
 # Abaixo disso, quase certo que é isca (PNG/HTML de erro) em vez de mídia real.
 _TAMANHO_MINIMO_BYTES = 1024
 _ASSINATURA_PLAYLIST = "#extm3u"
+_ASSINATURA_MPD = "<mpd"
 _MARCADORES_ISCA_HTML = ("<html", "<!doctype html")
 
 # Download em blocos (Range requests) para `*.googlevideo.com`: o Google throttla
@@ -63,6 +64,17 @@ def conferir_link_de_midia(link: LinkDeMidia, *, timeout_s: int = _TIMEOUT_S) ->
     amostra parecer uma isca."""
     content_type, amostra = _baixar_amostra(link.url, link.cabecalhos, timeout_s)
     corpo_como_texto = amostra.decode("utf-8", errors="replace").lower()
+
+    if link.formato is FormatoDeMidia.DASH:
+        # Manifesto DASH disfarçado de imagem (URL `.../m.jpg`, corpo XML de MPD):
+        # pula tanto o piso de tamanho quanto a guarda de `content_type` abaixo —
+        # um manifesto compacto (uma Representation, um SegmentTemplate) cabe em
+        # menos de `_TAMANHO_MINIMO_BYTES` e a URL termina em `.jpg` só de fachada.
+        if _ASSINATURA_MPD not in corpo_como_texto:
+            raise FalhaDeExtracao(
+                f"manifesto DASH sem assinatura <MPD: {link.url}", permite_retentativa=True
+            )
+        return
 
     if any(marcador in corpo_como_texto for marcador in _MARCADORES_ISCA_HTML):
         raise FalhaDeExtracao(
@@ -193,6 +205,10 @@ def _montar_comando(ffmpeg_bin: str, link: LinkDeMidia, destino_parcial: Path) -
             "-reconnect_on_network_error", "1",
             "-reconnect_delay_max", "30",
         ]
+    if link.formato is FormatoDeMidia.DASH:
+        # Formato de *entrada* explícito: sem isso o ffmpeg tentaria inferir pelo
+        # probe automático, que usaria a extensão `.jpg` mascarada e poderia falhar.
+        argumentos += ["-f", "dash"]
     argumentos += ["-i", link.url, "-c", "copy", "-f", "matroska", str(destino_parcial)]
     return argumentos
 

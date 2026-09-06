@@ -105,6 +105,43 @@ async def listar_em_alta_com_catalogo(
     return pares
 
 
+async def listar_fileiras_tematicas_com_catalogo(
+    sessionmaker: _SessionMaker,
+) -> list[tuple[str, list[tuple[AnimeEmAlta, int | None]]]]:
+    """As 10 fileiras temáticas da Home (`integrations.servico.
+    listar_fileiras_tematicas`) pareadas com `Anime.id` local. Achata os itens
+    de todas as fileiras antes de cruzar (`_cruzar_com_catalogo`) — uma única
+    consulta ao catálogo para as ~10 fileiras, não uma por fileira — e
+    reagrupa de volta na mesma ordem/tamanho original de cada fileira.
+
+    Sem o refresh oportunista de lançamento/banner de
+    `listar_em_alta_com_catalogo` (F4a): esse efeito colateral existe porque o
+    feed "em alta" traz um bloco de lançamento fresco e o item cruzado costuma
+    estar em lançamento; popularidade histórica por tag não tem essa mesma
+    correlação, e replicar o refresh aqui multiplicaria as escritas por 10
+    fileiras à toa.
+
+    Propaga `FalhaDeMetadados` só se `listar_fileiras_tematicas` propagar
+    (todas as fileiras falharam) — uma fileira isolada que falhou já vem
+    omitida do dict de entrada, então some da lista de saída também."""
+    por_fileira = await servico.listar_fileiras_tematicas()
+
+    achatados: list[AnimeEmAlta] = []
+    tamanhos: list[tuple[str, int]] = []
+    for chave, itens in por_fileira.items():
+        achatados.extend(itens)
+        tamanhos.append((chave, len(itens)))
+
+    pares_achatados = await _cruzar_com_catalogo(sessionmaker, achatados)
+
+    resultado = []
+    cursor = 0
+    for chave, tamanho in tamanhos:
+        resultado.append((chave, pares_achatados[cursor : cursor + tamanho]))
+        cursor += tamanho
+    return resultado
+
+
 async def listar_proxima_temporada_com_catalogo(
     sessionmaker: _SessionMaker,
 ) -> list[tuple[AnimeEmAlta, int | None]]:
