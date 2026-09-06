@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusEpisodio, TipoEpisodio, VersaoEpisodio
 from core.erros import EpisodioJaExiste, ErroSlimeStudio
+from core.temporada import separar_temporada
 from core.texto import slugificar
 from db.fila import criar_job
 from integrations.base import ArteDeAnime, LancamentoDeAnime, MetadadosDeAnime
@@ -32,7 +33,8 @@ async def obter_ou_criar_anime_id(sessionmaker: _SessionMaker, titulo: str, ano:
         if anime_id is not None:
             return anime_id
 
-        anime = Anime(titulo=titulo, slug=slug, ano=ano)
+        _, numero_temporada = separar_temporada(titulo)
+        anime = Anime(titulo=titulo, slug=slug, ano=ano, numero_temporada=numero_temporada)
         sessao.add(anime)
         try:
             await sessao.commit()
@@ -104,24 +106,41 @@ async def aplicar_metadados(
 
 
 async def sobrescrever_arte(sessionmaker: _SessionMaker, anime_id: int, arte: ArteDeAnime) -> None:
-    """Sobrescreve `capa_path`/`banner_path` de um anime JÁ catalogado — ao
-    contrário de `aplicar_metadados` (só-quando-nulo, protege dado confirmado
-    em todos os outros caminhos de escrita), aqui a intenção explícita de quem
-    chama (Fatia 4 do `PLANO_ARTE_TMDB.md`, `scripts/backfill_metadados_visuais.py
-    --forcar-arte`) é SUBSTITUIR a arte existente pela do TMDB. Mesmo assim só
-    grava campo cujo valor da `arte` não seja `None` — nunca apaga capa/banner
-    existente por um match parcial (mesma regra de `_com_arte` em
-    `integrations/servico.py`)."""
+    """Sobrescreve `banner_path` de um anime JÁ catalogado — ao contrário de
+    `aplicar_metadados` (só-quando-nulo, protege dado confirmado em todos os
+    outros caminhos de escrita), aqui a intenção explícita de quem chama é
+    SUBSTITUIR o banner existente pelo do TMDB. Mesmo assim só grava quando
+    `arte.banner_url` não é `None` — nunca apaga banner existente por um match
+    parcial (mesma regra de `_com_arte` em `integrations/servico.py`).
+
+    `ArteDeAnime` não carrega mais `capa_url` (capa voltou a ser
+    responsabilidade exclusiva da AniList/Kitsu — ver `sobrescrever_capa` para
+    o equivalente de sobrescrita de capa)."""
     async with sessionmaker() as sessao:
         anime = await sessao.get(Anime, anime_id)
         if anime is None:
             return
 
-        if arte.capa_url is not None:
-            anime.capa_path = arte.capa_url
         if arte.banner_url is not None:
             anime.banner_path = arte.banner_url
 
+        await sessao.commit()
+
+
+async def sobrescrever_capa(sessionmaker: _SessionMaker, anime_id: int, capa_url: str) -> None:
+    """Sobrescreve `capa_path` de um anime JÁ catalogado — usado por
+    `scripts/backfill_capa_anilist.py` pra restaurar a capa da AniList (fonte
+    exclusiva de capa desde a reversão do overlay de capa por temporada do
+    TMDB), mesmo quando já havia uma capa gravada (ex.: pôster de série do
+    TMDB de um backfill anterior). Sobrescrita incondicional — ao contrário de
+    `aplicar_metadados` (só-quando-nulo) — mas o chamador já garante
+    `capa_url` não-`None` antes de chamar (mesma responsabilidade que
+    `sobrescrever_arte` deixa pro chamador)."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.capa_path = capa_url
         await sessao.commit()
 
 

@@ -166,11 +166,16 @@ class ProvedorDeMetadados(ABC):
 
 @dataclass(frozen=True, slots=True)
 class ArteDeAnime:
-    """Capa/banner resolvidos por um `ProvedorDeArte` — formato mínimo, sem
-    nenhum dos outros campos de `MetadadosDeAnime` (sinopse, ids, lançamento):
-    quem resolve arte (TMDB) não é um `ProvedorDeMetadados`."""
+    """Banner resolvido por um `ProvedorDeArte` — formato mínimo, sem nenhum
+    dos outros campos de `MetadadosDeAnime` (sinopse, ids, lançamento): quem
+    resolve arte (TMDB) não é um `ProvedorDeMetadados`.
 
-    capa_url: str | None
+    Sem `capa_url`: a capa (pôster) voltou a ser responsabilidade exclusiva da
+    cadeia normal de `ProvedorDeMetadados` (AniList/Kitsu) — a AniList modela
+    cada temporada como uma `Media` própria, então já resolve a capa por
+    temporada corretamente por construção, ao contrário do TMDB, que agrupa a
+    série inteira sob um único id."""
+
     banner_url: str | None
 
 
@@ -190,10 +195,14 @@ class ProvedorDeArte(ABC):
 
     @abstractmethod
     def buscar_arte_por_titulo(self, titulo: str, ano: int | None) -> ArteDeAnime | None:
-        """Busca capa/banner por título (com `ano` só como desempate entre
+        """Busca só banner por título (com `ano` só como desempate entre
         candidatos, nunca como filtro — D3 do plano); `None` é resultado
         normal (título não encontrado neste provedor), não erro — mesma
-        convenção de `ProvedorDeMetadados.buscar_por_titulo`."""
+        convenção de `ProvedorDeMetadados.buscar_por_titulo`.
+
+        Capa (pôster) NÃO é mais responsabilidade deste método/provedor —
+        volta a ser resolvida só pela cadeia normal de `ProvedorDeMetadados`
+        (AniList/Kitsu, que já modela capa por temporada corretamente)."""
 
     def buscar_still_de_episodio(
         self, titulo: str, ano: int | None, numero_absoluto: int

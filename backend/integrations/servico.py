@@ -1,10 +1,12 @@
 """Serviço de metadados externos: cadeia de fallback AniList -> Kitsu com
 timeout por provedor, e cache em memória de processo do feed "em alta".
 
-Também orquestra o overlay de arte (capa/banner) de TMDB por cima do
-resultado de metadados/feed, ANTES de gravar qualquer cache — ver a seção
-"overlay de arte" no fim do arquivo e `PLANO_ARTE_TMDB.md` (D4) para o
-racional completo (memo próprio, latch de autenticação, mecânica de lote). A
+Também orquestra o overlay de banner de TMDB por cima do resultado de
+metadados/feed, ANTES de gravar qualquer cache — ver a seção "overlay de
+banner" no fim do arquivo e `PLANO_ARTE_TMDB.md` (D4) para o racional
+completo (memo próprio, latch de autenticação, mecânica de lote). Capa
+(pôster) NÃO passa por este overlay — é responsabilidade exclusiva da cadeia
+normal de `ProvedorDeMetadados` (AniList/Kitsu) acima. A
 seção "overlay de still de episódio" logo depois (Fatia 5 do mesmo plano)
 expõe `buscar_still_de_episodio`, consumido por
 `api/servicos/fontes.py::listar_episodios_remotos` — não um dos 5 pontos de
@@ -30,6 +32,7 @@ from dataclasses import replace
 import requests
 
 from core.erros import FalhaDeMetadados
+from core.temporada import separar_temporada
 from core.texto import slugificar
 from integrations.base import (
     AnimeEmAlta,
@@ -135,12 +138,13 @@ _fileiras_por_chave: dict[str, FileiraTematica] = {
     fileira.chave: fileira for fileira in FILEIRAS_TEMATICAS
 }
 
-# Memo de processo do overlay de arte (D4): `(slug do título, ano) ->
-# (expira_em_monotonic, ArteDeAnime | None)`. Com cache negativo — título que o
-# TMDB não achou não é re-perguntado dentro do TTL. Ao ultrapassar
+# Memo de processo do overlay de banner (D4): `(slug do título base, ano) ->
+# (expira_em_monotonic, ArteDeAnime | None)`. Com cache negativo — título que
+# o TMDB não achou não é re-perguntado dentro do TTL. Ao ultrapassar
 # `_LIMITE_MEMO_ARTE`, `_gravar_memo_arte` limpa o dict inteiro (política
-# simples e correta, sem LRU). `tests/test_integrations_metadados.py` tem
-# fixture autouse que zera isto entre testes (estado de módulo).
+# simples e correta, sem LRU).
+# `tests/test_integrations_metadados.py` tem fixture autouse que zera isto
+# entre testes (estado de módulo).
 _memo_arte: dict[tuple[str, int | None], tuple[float, ArteDeAnime | None]] = {}
 
 # Memo de dois níveis do overlay de still de episódio (Fatia 5,
@@ -552,16 +556,22 @@ def _desabilitar_arte_por_auth(provedor: ProvedorDeArte, excecao: TmdbNaoAutoriz
 
 
 async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | None:
-    """Busca capa/banner nos `provedores_de_arte()` instalados (hoje só TMDB),
-    com memo de processo por `(slug do título, ano)` — TTL `_TTL_ARTE_S`, com
-    cache negativo: sem isso, aquecer `listar_fileiras_tematicas` do zero
+    """Busca só banner nos `provedores_de_arte()` instalados (hoje só TMDB),
+    com memo de processo por `(slug do título base, ano)` — TTL `_TTL_ARTE_S`,
+    com cache negativo: sem isso, aquecer `listar_fileiras_tematicas` do zero
     custaria ~500 chamadas TMDB (10 fileiras × 50 itens, repetição alta de
     anime entre fileiras).
 
+    O título é reduzido ao título BASE via `separar_temporada` (ex. "Slime
+    Season 4" -> "Slime") antes de ir ao provedor — melhora o match de busca
+    de série no TMDB mesmo só para banner, já que o TMDB modela a série
+    inteira, não a temporada (D3); o número de temporada derivado não
+    alimenta mais nada além disso (capa não é mais resolvida aqui).
+
     Pública (não `_`-prefixada) porque, além do overlay interno via
-    `_com_arte`, `scripts/backfill_metadados_visuais.py` (Fatia 4 do
-    PLANO_ARTE_TMDB.md) chama direto pra re-resolver arte de anime já
-    catalogado, sem passar pelo fluxo completo de metadados.
+    `_com_arte`, é chamada direto por scripts de backfill pra re-resolver
+    banner de anime já catalogado, sem passar pelo fluxo completo de
+    metadados.
 
     Erro de provedor (`_ERROS_DE_PROVEDOR`) NUNCA grava no memo — congelar 12h
     de "sem arte" por causa de uma falha transitória de rede seria pior que
@@ -575,7 +585,9 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
     if _arte_desabilitada_por_auth:
         return None
 
-    chave = (slugificar(titulo), ano)
+    titulo_base, _derivado = separar_temporada(titulo)
+
+    chave = (slugificar(titulo_base), ano)
     memo = _memo_arte.get(chave)
     if memo is not None:
         expira_em, arte = memo
@@ -584,7 +596,7 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
 
     for provedor in provedores_de_arte():
         try:
-            arte = await _chamar(provedor, provedor.buscar_arte_por_titulo, titulo, ano)
+            arte = await _chamar(provedor, provedor.buscar_arte_por_titulo, titulo_base, ano)
         except TmdbNaoAutorizado as excecao:
             _desabilitar_arte_por_auth(provedor, excecao)
             return None
@@ -605,6 +617,11 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
 
 
 # --- overlay de still de episódio (TMDB, Fatia 5 do PLANO_ARTE_TMDB.md) ---
+#
+# `buscar_still_de_episodio` recebe `numero_absoluto` (numeração absoluta
+# SOBRE A SÉRIE INTEIRA, via `TabelaDeTemporadas`/`localizar_temporada`) e
+# resolve sozinho a temporada e o episódio dentro dela — infraestrutura de
+# still de episódio, não tocada pela reversão de capa pra AniList.
 
 
 def _gravar_memo_temporadas(
@@ -635,7 +652,7 @@ async def buscar_still_de_episodio(
     que não achar ou o provedor falhar — quem chama decide o fallback (o
     `thumb_url` original do extractor). Compartilha o latch de autenticação
     (`_arte_desabilitada_por_auth`) com `buscar_arte_por_titulo`: um token rejeitado
-    desabilita os dois overlays de uma vez, não só o de capa/banner.
+    desabilita os dois overlays de uma vez, não só o de banner.
     """
     if _arte_desabilitada_por_auth:
         return None
@@ -731,12 +748,14 @@ async def _buscar_still_de_um_provedor(
 
 
 async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T:
-    """Sobrepõe capa/banner de TMDB num `MetadadosDeAnime` ou `AnimeEmAlta` —
-    genérico porque os dois compartilham exatamente os campos `capa_url`/
-    `banner_url`. `titulo=None` devolve `registro` intacto (nada para
-    buscar). Campo do TMDB nulo PRESERVA o valor anterior — um match com
-    pôster e sem backdrop não pode zerar o `bannerImage` da AniList. Qualquer
-    falha do overlay (`_ERROS_DE_PROVEDOR`) vira warning e devolve `registro`
+    """Sobrepõe banner de TMDB num `MetadadosDeAnime` ou `AnimeEmAlta` —
+    genérico porque os dois compartilham exatamente o campo `banner_url`.
+    `titulo=None` devolve `registro` intacto (nada para buscar). Banner nulo
+    do TMDB PRESERVA o valor anterior — nunca zera o `bannerImage` já
+    resolvido pela AniList. `capa_url` de `registro` nunca é tocado aqui:
+    capa é responsabilidade exclusiva da cadeia normal de
+    `ProvedorDeMetadados` (AniList/Kitsu), não deste overlay. Qualquer falha
+    do overlay (`_ERROS_DE_PROVEDOR`) vira warning e devolve `registro`
     intacto: arte é sempre best-effort, nunca derruba o registro base.
     """
     if titulo is None:
@@ -753,7 +772,6 @@ async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T
 
     return replace(
         registro,
-        capa_url=arte.capa_url if arte.capa_url is not None else registro.capa_url,
         banner_url=arte.banner_url if arte.banner_url is not None else registro.banner_url,
     )
 
