@@ -159,69 +159,15 @@ def test_buscar_com_resultado_devolve_candidatos(extrator, cliente_falso):
             titulo_exibicao="Tensei Shitara Slime Datta Ken",
             identificador="tensei-shitara-slime-datta-ken",
             url="https://animesdrive.cloud/anime/tensei-shitara-slime-datta-ken",
-            capa_url="https://animesdrive.cloud/capa1.jpg",
             versao=VersaoEpisodio.LEGENDADO,
         ),
         ResultadoBusca(
             titulo_exibicao="Tensei Shitara Slime Datta Ken Dublado",
             identificador="tensei-shitara-slime-datta-ken-dublado",
             url="https://animesdrive.cloud/anime/tensei-shitara-slime-datta-ken-dublado",
-            capa_url="https://animesdrive.cloud/capa2.jpg",
             versao=VersaoEpisodio.DUBLADO,
         ),
     ]
-
-
-def test_buscar_absolutiza_capa_nas_3_formas_de_src(extrator, cliente_falso):
-    """`busca.html` só cobre path relativo (`/capa1.jpg`) — protocolo-relativo
-    (`//host/...`) e URL já absoluta também precisam sair intactos/absolutizados
-    de `urljoin`, e `src` só-espaço deve virar `capa_url=None` (não a
-    homepage)."""
-    html = """
-    <div class="result-item"><article>
-      <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.cloud/anime/relativo"><img src="/relativo.jpg"></a>
-      </div></div>
-      <div class="details"><div class="title">
-        <a href="https://animesdrive.cloud/anime/relativo">Relativo</a>
-      </div></div>
-    </article></div>
-    <div class="result-item"><article>
-      <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.cloud/anime/protocolo-relativo"
-           ><img src="//cdn.animesdrive.cloud/protocolo.jpg"></a>
-      </div></div>
-      <div class="details"><div class="title">
-        <a href="https://animesdrive.cloud/anime/protocolo-relativo">Protocolo Relativo</a>
-      </div></div>
-    </article></div>
-    <div class="result-item"><article>
-      <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.cloud/anime/absoluto"><img src="https://cdn.outra.com/absoluta.jpg"></a>
-      </div></div>
-      <div class="details"><div class="title">
-        <a href="https://animesdrive.cloud/anime/absoluto">Absoluto</a>
-      </div></div>
-    </article></div>
-    <div class="result-item"><article>
-      <div class="image"><div class="thumbnail">
-        <a href="https://animesdrive.cloud/anime/src-vazio"><img src="   "></a>
-      </div></div>
-      <div class="details"><div class="title">
-        <a href="https://animesdrive.cloud/anime/src-vazio">Src Vazio</a>
-      </div></div>
-    </article></div>
-    """
-    url_busca = f"{extrator.BASE_URL}/?s=teste"
-    cliente = cliente_falso(html_por_url={url_busca: html})
-
-    resultados = extrator.buscar(cliente, "teste")
-
-    capas = {resultado.identificador: resultado.capa_url for resultado in resultados}
-    assert capas["relativo"] == "https://animesdrive.cloud/relativo.jpg"
-    assert capas["protocolo-relativo"] == "https://cdn.animesdrive.cloud/protocolo.jpg"
-    assert capas["absoluto"] == "https://cdn.outra.com/absoluta.jpg"
-    assert capas["src-vazio"] is None
 
 
 def test_buscar_sem_resultado_devolve_lista_vazia_mesmo_com_widget(extrator, cliente_falso):

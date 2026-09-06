@@ -38,6 +38,7 @@ from core.erros import FalhaDeMetadados
 from db.catalogo import aplicar_metadados
 from db.engine import criar_engine, criar_sessionmaker
 from integrations import servico
+from integrations.registro import instalar_provedores_de_arte
 from models.anime import Anime
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,7 @@ async def backfill() -> tuple[tuple[int, int], tuple[int, int]]:
     """Devolve `((pendentes, preenchidos) do passo com anilist_id, idem do passo
     por título)`."""
     config = carregar_config()
+    instalar_provedores_de_arte(config.tmdb_token)
     engine = criar_engine(config)
     sessionmaker = criar_sessionmaker(engine)
     try:

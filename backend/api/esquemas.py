@@ -133,6 +133,12 @@ class AnimeSaida(BaseModel):
     # default `[]` sem `| None` quebraria a resposta pra esses animes. Alimenta o
     # filtro por gênero do catálogo (`paginas/Galeria.jsx`).
     generos: list[str] | None = None
+    # 1:1 com a coluna homônima via `model_validate`, mesmo default de
+    # `banner_path`/`capa_cor` acima (animes sem metadado ainda têm a coluna
+    # NULL). Alimenta o parágrafo de descrição dos "destaques grandes" da Home
+    # (`inicio/DestaqueGrande.jsx`) sem precisar de um request por item —
+    # `AnimeDetalheSaida` (GET /api/animes/{id}) já expõe o mesmo campo.
+    sinopse: str | None = None
 
 
 class AnimeEmAltaSaida(BaseModel):
@@ -162,6 +168,18 @@ class AnimeEmAltaSaida(BaseModel):
     status_lancamento: StatusLancamento | None = None
     proximo_ep_numero: int | None = None
     proximo_ep_em: datetime | None = None
+
+
+class FileiraTematicaSaida(BaseModel):
+    """Item de `GET /api/animes/fileiras-tematicas`: uma fileira temática da
+    Home (`integrations.registro.FILEIRAS_TEMATICAS`) com seus itens já
+    cruzados com o catálogo local. `chave` é o id estável snake_case da
+    fileira (ex. "found_family") — o rótulo em pt-BR é responsabilidade do
+    frontend, mesma régua já usada para `AnimeSaida.generos`/`AnimeEmAltaSaida.
+    generos` (tradução nunca no backend)."""
+
+    chave: str
+    itens: list[AnimeEmAltaSaida]
 
 
 class AnimeDetalheSaida(BaseModel):
@@ -231,10 +249,11 @@ class ResultadoBuscaFonteSaida(BaseModel):
     identificador: str
     url: str
     dominio: str
-    # Preenchida direto do parsing (AnimesDrive) ou por enriquecimento
-    # best-effort via metadado de provedor externo (AnimeFire, que não expõe
-    # imagem na busca — `api/servicos/capas.py::enriquecer_capas`). `None`
-    # quando nenhuma das duas fontes achou capa.
+    # `extractors/` não resolve mais capa (Fatia 3 de PLANO_ARTE_TMDB.md) —
+    # preenchida por enriquecimento best-effort via metadado de provedor
+    # externo (`api/servicos/capas.py::capas_por_titulo`, capa já resolvida
+    # pela cadeia TMDB→AniList). `None` quando o provedor não achou capa pra
+    # este título.
     capa_url: str | None = None
     # `None` quando o site não diferencia versão ou nenhum marcador foi
     # detectado neste candidato específico (`extractors.base.ResultadoBusca.versao`).

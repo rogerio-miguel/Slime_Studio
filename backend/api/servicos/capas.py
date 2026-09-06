@@ -1,17 +1,11 @@
 """Enriquecimento best-effort de capa para os candidatos de
-`GET /api/animes/buscar-fontes` que vieram sem imagem: preenche `capa_url` de
-candidato de busca ainda NÃO catalogado localmente (`extractors.base.
-ResultadoBusca` com `capa_url is None`) consultando metadado de provedor
-externo (`integrations/servico.py::buscar_por_titulo`, AniList principal,
-Kitsu fallback). Falha de uma consulta nunca propaga daqui pra fora nem
-derruba os demais candidatos — aquele título só fica sem capa.
-
-Hoje só o AnimeFire precisa disto: a página de busca dele genuinamente não
-expõe imagem nenhuma (confirmado ao vivo e no código de referência
-Slime_Shell_Web, não é bug de parsing) — os `ResultadoBusca` de
-`extractors/animefire.py` sempre saem com `capa_url=None`. O AnimesDrive já
-vem com capa própria da busca (`extractors/animesdrive.py::buscar`), então
-seus candidatos passam batido pelo filtro `capa_url is not None`.
+`GET /api/animes/buscar-fontes`: `extractors/` não resolve mais imagem alguma
+(Fatia 3 de `PLANO_ARTE_TMDB.md` — `extractors/` volta a ser só extração de
+VÍDEO), então **todo** candidato de busca é enriquecido aqui, consultando
+metadado de provedor externo (`integrations/servico.py::buscar_por_titulo`,
+capa já resolvida pela cadeia TMDB→AniList, D4 do plano). Falha de uma
+consulta nunca propaga daqui pra fora nem derruba os demais candidatos —
+aquele título só fica sem capa.
 
 Módulo próprio, separado de `api/servicos/busca.py`: ao contrário daquela
 orquestração, este fluxo NÃO cruza a fronteira `extractors/` ×
@@ -24,7 +18,7 @@ pertencer àquela fronteira.
 Não confundir com `api/servicos/descoberta.py`, que enriquece metadado
 (capa/sinopse/ids) de anime já CATALOGADO e o persiste no banco — aqui o alvo
 é um candidato de busca ainda NÃO catalogado e nada é persistido (só o
-`ResultadoDeFonte` da resposta é reescrito em memória).
+`dict` de saída é usado em memória pela rota).
 
 Quem aplica isto é a rota `api/rotas/animes.py` (`buscar_animes_em_fontes`),
 DEPOIS da busca em fontes (`api/servicos/busca.py`) e antes de montar
@@ -33,22 +27,16 @@ DEPOIS da busca em fontes (`api/servicos/busca.py`) e antes de montar
 
 import asyncio
 import logging
-from dataclasses import replace
-
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.texto import slugificar
-from extractors.base import ResultadoBusca
 from extractors.busca.servico import ResultadoDeFonte
 from integrations import servico as servico_metadados
 
 logger = logging.getLogger(__name__)
 
-_SessionMaker = async_sessionmaker[AsyncSession]
-
 # Teto pequeno de propósito: `buscar-fontes` já roda a busca sequencial por
 # site de `api/servicos/busca.py::buscar_com_titulos_alternativos`; este
-# enriquecimento roda LOGO DEPOIS, sobre um provedor diferente (AniList/Kitsu,
+# enriquecimento roda LOGO DEPOIS, sobre um provedor diferente (AniList/TMDB,
 # sem circuit breaker próprio como `extractors/`) — 5 é um teto conservador pra
 # nunca virar uma segunda rajada descontrolada, mesmo espírito de
 # `integrations/servico.py::_lock_em_alta` (thundering herd), sem depender de
@@ -56,8 +44,8 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 _CONCORRENCIA_MAXIMA = 5
 
 # Teto do LOTE inteiro (asyncio.wait, não wait_for por chamada individual):
-# `integrations/servico.py::buscar_por_titulo` tenta AniList e, se falhar,
-# Kitsu, cada um com até `_TIMEOUT_POR_PROVEDOR_S` (8s) — pior caso de UMA
+# `integrations/servico.py::buscar_por_titulo` tenta a cadeia de provedores de
+# metadado, cada um com até `_TIMEOUT_POR_PROVEDOR_S` (8s) — pior caso de UMA
 # chamada é 16s. Mesmo raciocínio de
 # `api/servicos/descoberta.py::_TETO_ENRIQUECIMENTO_S` (16s + margem = 18s)
 # pra essa mesma função; aqui o teto cobre várias chamadas em paralelo
@@ -66,39 +54,22 @@ _CONCORRENCIA_MAXIMA = 5
 _TETO_LOTE_S = 18
 
 
-async def enriquecer_capas(
-    sessionmaker: _SessionMaker, resultados: list[ResultadoDeFonte]
-) -> list[ResultadoDeFonte]:
-    """Preenche `capa_url` dos candidatos que vieram sem (`ResultadoBusca.
-    capa_url is None`) consultando `integrations.servico.buscar_por_titulo`.
+async def capas_por_titulo(resultados: list[ResultadoDeFonte]) -> dict[str, str]:
+    """Consulta `integrations.servico.buscar_por_titulo` para cada título
+    distinto entre os candidatos de `resultados` e devolve
+    `dict[slug do título -> capa_url]` (chave via `core/texto.py::slugificar`).
     Best-effort: falha de uma consulta (`FalhaDeMetadados`, timeout ou
     qualquer outra exceção do provedor) nunca propaga daqui pra fora nem
-    derruba os demais candidatos — aquele título simplesmente fica sem capa.
-
-    `sessionmaker` não é usado no corpo hoje (`buscar_por_titulo` não toca o
-    banco) — mantido na assinatura por consistência com as demais funções de
-    `api/servicos/` (todas recebem sessionmaker como 1º parâmetro) e pra não
-    obrigar mudar a assinatura no dia em que este enriquecimento passar a
-    persistir alguma coisa (ex. cache de capa por título).
-    """
-    titulos_pendentes = _titulos_sem_capa(resultados)
-    if not titulos_pendentes:
-        return resultados
-
-    capa_por_titulo = await _consultar_capas(titulos_pendentes)
-    if not capa_por_titulo:
-        return resultados
-
-    return [
-        replace(
-            fonte,
-            candidatos=[_com_capa(candidato, capa_por_titulo) for candidato in fonte.candidatos],
-        )
-        for fonte in resultados
-    ]
+    derruba os demais candidatos — aquele título simplesmente fica ausente do
+    dict devolvido. Título sem capa encontrada também fica ausente (nunca
+    entra com valor `None`)."""
+    titulos = _titulos_distintos(resultados)
+    if not titulos:
+        return {}
+    return await _consultar_capas(titulos)
 
 
-def _titulos_sem_capa(resultados: list[ResultadoDeFonte]) -> list[str]:
+def _titulos_distintos(resultados: list[ResultadoDeFonte]) -> list[str]:
     """Dedupe por título normalizado (`core/texto.py::slugificar`) — dois
     candidatos com o mesmo título, do mesmo site ou de sites diferentes, geram
     só uma consulta a `buscar_por_titulo`."""
@@ -106,21 +77,12 @@ def _titulos_sem_capa(resultados: list[ResultadoDeFonte]) -> list[str]:
     titulos: list[str] = []
     for fonte in resultados:
         for candidato in fonte.candidatos:
-            if candidato.capa_url is not None:
-                continue
             chave = slugificar(candidato.titulo_exibicao)
             if chave in vistos:
                 continue
             vistos.add(chave)
             titulos.append(candidato.titulo_exibicao)
     return titulos
-
-
-def _com_capa(candidato: ResultadoBusca, capa_por_titulo: dict[str, str]) -> ResultadoBusca:
-    if candidato.capa_url is not None:
-        return candidato
-    capa = capa_por_titulo.get(slugificar(candidato.titulo_exibicao))
-    return candidato if capa is None else replace(candidato, capa_url=capa)
 
 
 async def _consultar_capas(titulos: list[str]) -> dict[str, str]:

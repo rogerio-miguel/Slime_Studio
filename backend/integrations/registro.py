@@ -3,9 +3,14 @@ de fallback (ESPECIFICACAO.md: AniList principal, Kitsu fallback — decisão de
 produto já fechada), mesmo papel de `extractors/registro.py`.
 """
 
+import logging
+
 from integrations.anilist import AniListProvider
-from integrations.base import ProvedorDeMetadados
+from integrations.base import FileiraTematica, ProvedorDeArte, ProvedorDeMetadados
 from integrations.kitsu import KitsuProvider
+from integrations.tmdb import TmdbProvider
+
+logger = logging.getLogger(__name__)
 
 _anilist = AniListProvider()
 
@@ -23,3 +28,51 @@ PROVEDORES: tuple[ProvedorDeMetadados, ...] = (_anilist, KitsuProvider())
 # `FalhaDeMetadados`) do que conteúdo enganoso. Kitsu segue em `PROVEDORES`
 # acima para busca por título/id.
 PROVEDORES_DE_FEED: tuple[ProvedorDeMetadados, ...] = (_anilist,)
+
+# Fileiras temáticas da Home — curadoria por popularidade real por tag na
+# AniList, filtrada por distintividade (cortadas tags genéricas que já se
+# sobrepõem com Gêneros). Repetição de anime entre fileiras é permitida
+# (mesmo comportamento de Netflix/Disney+). Sem filtro de país de origem: o
+# volume por tag já é alto o bastante, filtrar derrubaria coproduções
+# legítimas. Fileira de "adaptado de manhwa" foi cogitada e descartada —
+# `MediaSource` da AniList não tem valor `MANHWA`, só dava pra resolver via
+# query separada pelo lado do mangá + relações `ADAPTATION`, custo não
+# justificado pra esta rodada. Ordem é decisão de produto fechada, não alterar.
+FILEIRAS_TEMATICAS: list[FileiraTematica] = [
+    FileiraTematica(chave="isekai", tag="Isekai"),
+    FileiraTematica(chave="familia_encontrada", tag="Found Family"),
+    FileiraTematica(chave="amor_nao_correspondido", tag="Unrequited Love"),
+    FileiraTematica(chave="batalha_real", tag="Battle Royale"),
+    FileiraTematica(chave="diferenca_de_idade", tag="Age Gap"),
+    FileiraTematica(chave="reencarnacao", tag="Reincarnation"),
+    FileiraTematica(chave="jogos_mortais", tag="Death Game"),
+    FileiraTematica(chave="morando_juntos", tag="Cohabitation"),
+    FileiraTematica(chave="casais_secretos", tag="Fake Relationship"),
+    FileiraTematica(chave="vila_nao_tao_vila", tag="Villainess"),
+]
+
+# Provedores de ARTE (capa/banner) — tupla PRÓPRIA, não a `PROVEDORES` acima:
+# `ProvedorDeArte` é uma capability autônoma (D1 do PLANO_ARTE_TMDB.md), não um
+# `ProvedorDeMetadados` filtrável por `isinstance` a partir daquela tupla.
+# Instalada em runtime por `instalar_provedores_de_arte`, nunca no import deste
+# módulo (D2): ler o token aqui faria `uv run pytest` instanciar um
+# `TmdbProvider` com token real e bater em rede de verdade em toda a suíte.
+_provedores_de_arte: tuple[ProvedorDeArte, ...] = ()
+
+
+def instalar_provedores_de_arte(token: str | None) -> None:
+    """Chamada uma vez no lifespan da API (`api/main.py`) e no início do
+    backfill (`scripts/backfill_metadados_visuais.py`) — nunca no import deste
+    módulo (D2). Sem token, a tupla fica vazia e a cadeia de arte degrada pra
+    AniList sem quebrar nada; loga um `warning` para a ausência não passar
+    despercebida."""
+    global _provedores_de_arte
+    if not token:
+        logger.warning("TMDB_READ_ACCESS_TOKEN ausente: capas/banners vêm só da AniList")
+        _provedores_de_arte = ()
+        return
+    _provedores_de_arte = (TmdbProvider(token),)
+
+
+def provedores_de_arte() -> tuple[ProvedorDeArte, ...]:
+    return _provedores_de_arte

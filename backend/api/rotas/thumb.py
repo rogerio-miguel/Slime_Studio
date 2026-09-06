@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["thumb"])
 
+# Hosts de terceiro cuja imagem um extrator pode legitimamente embutir sem
+# hospedar ela mesmo — hoje só o CDN público do TMDB, que `extractors/animefire.py`
+# passa a repassar em `poster_src`/`still_src` desde a migração pra API JSON
+# (ESPECIFICACAO.md, 2026-09-04): não é o site de origem, então não aparece
+# como host de nenhum `BASE_URL`, mas é uma origem confiável e deliberada, não
+# uma brecha de SSRF.
+_HOSTS_DE_CDN_DE_TERCEIRO = frozenset({"image.tmdb.org"})
+
 # Hosts de onde uma thumb pode legitimamente vir: os sites de extração
 # registrados. Derivada do host de `BASE_URL`, NÃO de `ExtratorDeSite.dominio` —
 # `dominio` é identificador estável e nem sempre um hostname (ex. "animesdrive",
@@ -31,7 +39,7 @@ _HOSTS_PERMITIDOS = frozenset(
     host
     for extrator in EXTRATORES
     if (host := urllib.parse.urlparse(getattr(extrator, "BASE_URL", "")).hostname)
-)
+) | _HOSTS_DE_CDN_DE_TERCEIRO
 
 # A thumb é uma imagem pequena: teto de tempo curto na busca à origem e teto de
 # tamanho de resposta — acima disso quase certo que não é o que se espera.

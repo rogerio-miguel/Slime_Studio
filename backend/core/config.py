@@ -29,6 +29,13 @@ class Config:
     ffmpeg: Path
     ffprobe: Path
     caminho_lock: Path
+    # Token do TMDB (provedor padrão de arte — capa/banner/thumb de episódio,
+    # ver PLANO_ARTE_TMDB.md). Default `None` obrigatório: ausência é DEGRADE
+    # pra AniList (D2 do plano), nunca `ErroDeConfiguracao` — ao contrário de
+    # `database_url`/`ffmpeg`/`ffprobe` acima, que são hard-fail. Campo NOVO
+    # no fim da dataclass pra não quebrar as construções por keyword já
+    # existentes em `tests/conftest.py` e outros arquivos de teste.
+    tmdb_token: str | None = None
 
 
 def carregar_config(env_path: Path | None = None) -> Config:
@@ -47,6 +54,7 @@ def carregar_config(env_path: Path | None = None) -> Config:
     ffmpeg = _localizar_ferramenta("ffmpeg")
     ffprobe = _localizar_ferramenta("ffprobe")
     caminho_lock = _extrair_caminho_banco(database_url).parent / _NOME_ARQUIVO_LOCK
+    tmdb_token = valores.get("TMDB_READ_ACCESS_TOKEN") or None
 
     return Config(
         database_url=database_url,
@@ -55,6 +63,7 @@ def carregar_config(env_path: Path | None = None) -> Config:
         ffmpeg=ffmpeg,
         ffprobe=ffprobe,
         caminho_lock=caminho_lock,
+        tmdb_token=tmdb_token,
     )
 
 

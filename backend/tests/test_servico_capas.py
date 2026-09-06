@@ -1,4 +1,4 @@
-"""Testes de `api/servicos/capas.py::enriquecer_capas`, sem rede.
+"""Testes de `api/servicos/capas.py::capas_por_titulo`, sem rede.
 
 `integrations.servico.buscar_por_titulo` é monkeypatchado no nome do módulo de
 origem (`integrations.servico`), não em `api.servicos.capas` — `capas.py` o
@@ -20,7 +20,9 @@ def _fonte(dominio: str, *candidatos: ResultadoBusca) -> ResultadoDeFonte:
     )
 
 
-async def test_enriquecer_capas_preenche_resultado_sem_capa(monkeypatch: pytest.MonkeyPatch):
+async def test_capas_por_titulo_preenche_dict_com_capa_encontrada(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async def _buscar_por_titulo_fake(titulo: str) -> MetadadosDeAnime | None:
         assert titulo == "Naruto"
         return MetadadosDeAnime(
@@ -34,12 +36,12 @@ async def test_enriquecer_capas_preenche_resultado_sem_capa(monkeypatch: pytest.
         ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1"),
     )
 
-    resultado = await servico_capas.enriquecer_capas(None, [fonte])
+    capas = await servico_capas.capas_por_titulo([fonte])
 
-    assert resultado[0].candidatos[0].capa_url == "https://cdn/naruto.jpg"
+    assert capas == {"naruto": "https://cdn/naruto.jpg"}
 
 
-async def test_enriquecer_capas_dedupe_por_titulo_normalizado(monkeypatch: pytest.MonkeyPatch):
+async def test_capas_por_titulo_dedupe_por_titulo_normalizado(monkeypatch: pytest.MonkeyPatch):
     chamadas: list[str] = []
 
     async def _buscar_por_titulo_fake(titulo: str) -> MetadadosDeAnime | None:
@@ -61,14 +63,13 @@ async def test_enriquecer_capas_dedupe_por_titulo_normalizado(monkeypatch: pytes
         ),
     ]
 
-    resultado = await servico_capas.enriquecer_capas(None, fontes)
+    capas = await servico_capas.capas_por_titulo(fontes)
 
     assert len(chamadas) == 1
-    assert resultado[0].candidatos[0].capa_url == "https://cdn/naruto.jpg"
-    assert resultado[1].candidatos[0].capa_url == "https://cdn/naruto.jpg"
+    assert capas == {"naruto": "https://cdn/naruto.jpg"}
 
 
-async def test_enriquecer_capas_falha_de_uma_consulta_nao_derruba_as_outras(
+async def test_capas_por_titulo_falha_de_uma_consulta_nao_derruba_as_outras(
     monkeypatch: pytest.MonkeyPatch,
 ):
     async def _buscar_por_titulo_fake(titulo: str) -> MetadadosDeAnime | None:
@@ -86,31 +87,19 @@ async def test_enriquecer_capas_falha_de_uma_consulta_nao_derruba_as_outras(
         ResultadoBusca(titulo_exibicao="Bleach", identificador="2", url="https://x/2"),
     )
 
-    resultado = await servico_capas.enriquecer_capas(None, [fonte])
+    capas = await servico_capas.capas_por_titulo([fonte])
 
-    candidatos = resultado[0].candidatos
-    assert candidatos[0].capa_url is None
-    assert candidatos[1].capa_url == "https://cdn/bleach.jpg"
+    assert capas == {"bleach": "https://cdn/bleach.jpg"}
 
 
-async def test_enriquecer_capas_nao_reconsulta_resultado_que_ja_tem_capa(
+async def test_capas_por_titulo_sem_candidatos_nao_consulta_provedor(
     monkeypatch: pytest.MonkeyPatch,
 ):
     async def _falha_se_chamado(titulo: str) -> MetadadosDeAnime | None:
-        raise AssertionError("não deveria consultar título que já veio com capa")
+        raise AssertionError("não deveria consultar quando não há candidatos")
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _falha_se_chamado)
 
-    fonte = _fonte(
-        "animesdrive",
-        ResultadoBusca(
-            titulo_exibicao="Naruto",
-            identificador="1",
-            url="https://x/1",
-            capa_url="https://animesdrive.online/capa.jpg",
-        ),
-    )
+    capas = await servico_capas.capas_por_titulo([_fonte("animefire.io")])
 
-    resultado = await servico_capas.enriquecer_capas(None, [fonte])
-
-    assert resultado[0].candidatos[0].capa_url == "https://animesdrive.online/capa.jpg"
+    assert capas == {}

@@ -15,7 +15,7 @@ from core.enums import StatusEpisodio, TipoEpisodio, VersaoEpisodio
 from core.erros import EpisodioJaExiste, ErroSlimeStudio
 from core.texto import slugificar
 from db.fila import criar_job
-from integrations.base import LancamentoDeAnime, MetadadosDeAnime
+from integrations.base import ArteDeAnime, LancamentoDeAnime, MetadadosDeAnime
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -101,6 +101,28 @@ async def aplicar_metadados(
                 anime_id,
                 excecao,
             )
+
+
+async def sobrescrever_arte(sessionmaker: _SessionMaker, anime_id: int, arte: ArteDeAnime) -> None:
+    """Sobrescreve `capa_path`/`banner_path` de um anime JÁ catalogado — ao
+    contrário de `aplicar_metadados` (só-quando-nulo, protege dado confirmado
+    em todos os outros caminhos de escrita), aqui a intenção explícita de quem
+    chama (Fatia 4 do `PLANO_ARTE_TMDB.md`, `scripts/backfill_metadados_visuais.py
+    --forcar-arte`) é SUBSTITUIR a arte existente pela do TMDB. Mesmo assim só
+    grava campo cujo valor da `arte` não seja `None` — nunca apaga capa/banner
+    existente por um match parcial (mesma regra de `_com_arte` em
+    `integrations/servico.py`)."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+
+        if arte.capa_url is not None:
+            anime.capa_path = arte.capa_url
+        if arte.banner_url is not None:
+            anime.banner_path = arte.banner_url
+
+        await sessao.commit()
 
 
 def _aplicar_lancamento_no_anime(

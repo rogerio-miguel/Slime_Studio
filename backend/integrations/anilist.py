@@ -20,8 +20,10 @@ import requests
 from core.enums import StatusLancamento
 from integrations.base import (
     AnimeEmAlta,
+    FileiraTematica,
     LancamentoDeAnime,
     MetadadosDeAnime,
+    ProvedorComFileirasTematicas,
     ProvedorComLancamento,
     ProvedorDeMetadados,
     TitulosDeAnime,
@@ -65,6 +67,31 @@ _QUERY_EM_ALTA = """
 query {
   Page(page: 1, perPage: 50) {
     media(status: RELEASING, type: ANIME, sort: TRENDING_DESC) {
+      id
+      title { romaji english }
+      coverImage { extraLarge color }
+      bannerImage
+      genres
+      seasonYear
+      startDate { year }
+      status
+      episodes
+      nextAiringEpisode { episode airingAt }
+    }
+  }
+}
+"""
+
+_QUERY_POR_TAG = """
+query ($tag: String) {
+  Page(page: 1, perPage: 50) {
+    media(
+      tag: $tag
+      minimumTagRank: 60
+      isAdult: false
+      type: ANIME
+      sort: POPULARITY_DESC
+    ) {
       id
       title { romaji english }
       coverImage { extraLarge color }
@@ -138,7 +165,7 @@ _REGEX_TAG_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _REGEX_TAG_HTML = re.compile(r"<[^>]+>")
 
 
-class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
+class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento, ProvedorComFileirasTematicas):
     @property
     def nome(self) -> str:
         return "anilist"
@@ -214,6 +241,10 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento):
         dados = self._executar(_QUERY_PROXIMA_TEMPORADA, {"estacao": estacao, "ano": ano})
         return _pagina_para_animes_em_alta(dados, "próxima temporada")
 
+    def listar_fileira_tematica(self, fileira: FileiraTematica) -> list[AnimeEmAlta]:
+        dados = self._executar(_QUERY_POR_TAG, {"tag": fileira.tag})
+        return _pagina_para_animes_em_alta(dados, f"fileira temática {fileira.chave!r}")
+
     def _executar(self, query: str, variaveis: dict) -> dict:
         resposta = requests.post(
             _URL, json={"query": query, "variables": variaveis}, timeout=_TIMEOUT_S
@@ -242,31 +273,40 @@ def _proxima_temporada(agora: datetime) -> tuple[str, int]:
 
 
 def _pagina_para_animes_em_alta(dados: dict, contexto: str) -> list[AnimeEmAlta]:
-    """Parser único de `Page.media` reusado por `listar_em_alta` e
-    `listar_proxima_temporada` (mesmos campos nas duas queries). `contexto` só
-    entra na mensagem de erro para diferenciar qual feed veio malformado."""
+    """Parser único de `Page.media` reusado por `listar_em_alta`,
+    `listar_proxima_temporada` e `listar_fileira_tematica` (mesmos campos nas
+    três queries). `contexto` só entra na mensagem de erro para diferenciar
+    qual feed veio malformado."""
     pagina = dados.get("Page") if isinstance(dados, dict) else None
     itens = pagina.get("media") if isinstance(pagina, dict) else None
     if not isinstance(itens, list):
         raise RuntimeError(f"AniList: resposta de {contexto!r} com formato inesperado")
 
     return [
-        AnimeEmAlta(
-            titulo_romaji=(item.get("title") or {}).get("romaji") or "",
-            titulo_ingles=(item.get("title") or {}).get("english"),
-            capa_url=(item.get("coverImage") or {}).get("extraLarge"),
-            capa_cor=(item.get("coverImage") or {}).get("color"),
-            banner_url=item.get("bannerImage"),
-            anilist_id=item.get("id"),
-            ano_estreia=_extrair_ano(item),
-            generos=tuple(
-                g for g in (item.get("genres") or []) if isinstance(g, str) and g.strip()
-            ),
-            lancamento=_extrair_lancamento(item),
-        )
+        _item_para_anime_em_alta(item)
         for item in itens
         if isinstance(item, dict) and item.get("id") is not None
     ]
+
+
+def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
+    """Converte um item de `Page.media` num `AnimeEmAlta` — lógica por-item
+    extraída de `_pagina_para_animes_em_alta` para reuso isolado (mesmo
+    formato de resposta em `listar_em_alta`, `listar_proxima_temporada` e
+    `listar_fileira_tematica`)."""
+    return AnimeEmAlta(
+        titulo_romaji=(item.get("title") or {}).get("romaji") or "",
+        titulo_ingles=(item.get("title") or {}).get("english"),
+        capa_url=(item.get("coverImage") or {}).get("extraLarge"),
+        capa_cor=(item.get("coverImage") or {}).get("color"),
+        banner_url=item.get("bannerImage"),
+        anilist_id=item.get("id"),
+        ano_estreia=_extrair_ano(item),
+        generos=tuple(
+            g for g in (item.get("genres") or []) if isinstance(g, str) and g.strip()
+        ),
+        lancamento=_extrair_lancamento(item),
+    )
 
 
 def _extrair_lancamento(media: dict) -> LancamentoDeAnime | None:

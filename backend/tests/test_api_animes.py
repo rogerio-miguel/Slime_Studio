@@ -109,6 +109,54 @@ async def test_listar_episodios_remotos_anime_inexistente_404(cliente: AsyncClie
     assert resposta.status_code == 404
 
 
+async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_original(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Fatia 5 (`PLANO_ARTE_TMDB.md`): episódio que o TMDB resolve troca de
+    thumb; episódio que o TMDB não acha preserva o `thumb_url` que o
+    extractor já trouxe; episódio sem `numero` (rótulo não numérico) nem
+    tenta — mantém o original sem chamar o overlay."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Com Still")
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [
+            EpisodioRemoto(
+                rotulo="1", numero=1, url="https://x/ep1", thumb_url="https://original/1.webp"
+            ),
+            EpisodioRemoto(
+                rotulo="2", numero=2, url="https://x/ep2", thumb_url="https://original/2.webp"
+            ),
+            EpisodioRemoto(rotulo="especial", numero=None, url="https://x/ep-especial"),
+        ]
+
+    async def _still_fake(titulo, ano, numero_absoluto):
+        # TMDB só resolve o episódio 1 — o 2 cai pro thumb_url do extractor.
+        return "https://tmdb/1.jpg" if numero_absoluto == 1 else None
+
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr(
+        "api.servicos.fontes.servico_metadados.buscar_still_de_episodio", _still_fake
+    )
+
+    resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
+
+    assert resposta.status_code == 200
+    episodios = resposta.json()["episodios"]
+    assert episodios[0]["thumb_url"] == "https://tmdb/1.jpg"
+    assert episodios[1]["thumb_url"] == "https://original/2.webp"
+    assert episodios[2]["thumb_url"] is None
+
+
 # --- detector de episódios novos: api/servicos/lancamentos.py ---
 
 

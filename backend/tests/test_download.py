@@ -10,7 +10,7 @@ import pytest
 from core.enums import TipoEpisodio, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FalhaDeFerramenta
 from extractors import download
-from extractors.base import LinkDeMidia
+from extractors.base import FormatoDeMidia, LinkDeMidia
 from worker.pipeline.ferramentas import executar
 
 _FFMPEG = shutil.which("ffmpeg")
@@ -90,6 +90,21 @@ def test_montar_comando_sem_cabecalhos_omite_flag_headers():
     ]
 
 
+def test_montar_comando_dash_inclui_flag_de_formato_de_entrada():
+    link = LinkDeMidia(
+        url="https://akumast.net/i/token/m.jpg", cabecalhos={}, formato=FormatoDeMidia.DASH
+    )
+    destino = Path("/tmp/destino.mkv.part")
+
+    argumentos = download._montar_comando("ffmpeg", link, destino)
+
+    indice_f_dash = argumentos.index("-f")
+    assert argumentos[indice_f_dash + 1] == "dash"
+    indice_i = argumentos.index("-i")
+    assert indice_f_dash < indice_i
+    assert argumentos[indice_i + 1] == link.url
+
+
 def test_conferir_link_de_midia_aceita_playlist_valida(monkeypatch):
     monkeypatch.setattr(
         download, "_baixar_amostra", lambda url, cabecalhos, timeout_s: ("", b"#EXTM3U\n...")
@@ -140,6 +155,35 @@ def test_conferir_link_de_midia_detecta_corpo_pequeno_demais(monkeypatch):
         download, "_baixar_amostra", lambda url, cabecalhos, timeout_s: ("video/mp4", b"x")
     )
     link = LinkDeMidia(url="https://cdn.exemplo/video.mp4", cabecalhos={})
+
+    with pytest.raises(FalhaDeExtracao):
+        download.conferir_link_de_midia(link)
+
+
+def test_conferir_link_de_midia_dash_aceita_manifesto_compacto(monkeypatch):
+    """Regressão: um manifesto DASH compacto (uma Representation, um
+    SegmentTemplate) cabe em menos de `_TAMANHO_MINIMO_BYTES` — o piso de tamanho
+    não pode rejeitá-lo, nem a guarda de content-type de imagem (a URL termina em
+    `.jpg` só de fachada)."""
+    corpo = b'<?xml version="1.0"?><MPD><Period><AdaptationSet></AdaptationSet></Period></MPD>'
+    assert len(corpo) < download._TAMANHO_MINIMO_BYTES
+    monkeypatch.setattr(
+        download, "_baixar_amostra", lambda url, cabecalhos, timeout_s: ("image/jpeg", corpo)
+    )
+    link = LinkDeMidia(
+        url="https://akumast.net/i/token/m.jpg", cabecalhos={}, formato=FormatoDeMidia.DASH
+    )
+
+    download.conferir_link_de_midia(link)  # não levanta
+
+
+def test_conferir_link_de_midia_dash_sem_assinatura_falha(monkeypatch):
+    monkeypatch.setattr(
+        download, "_baixar_amostra", lambda url, cabecalhos, timeout_s: ("image/jpeg", b"lixo")
+    )
+    link = LinkDeMidia(
+        url="https://akumast.net/i/token/m.jpg", cabecalhos={}, formato=FormatoDeMidia.DASH
+    )
 
     with pytest.raises(FalhaDeExtracao):
         download.conferir_link_de_midia(link)

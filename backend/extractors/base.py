@@ -9,6 +9,7 @@ validação (`ruff` só), então a garantia de contrato completo precisa vir de
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 
 from core.enums import VersaoEpisodio
 from extractors.cliente import ClienteDeSite
@@ -19,10 +20,6 @@ class ResultadoBusca:
     titulo_exibicao: str
     identificador: str  # id do anime naquele site -> FonteAnime.identificador_no_site
     url: str
-    # `None` quando o site não expõe capa na busca (ex. AnimeFire) ou a tag de
-    # imagem está ausente no card — enriquecimento best-effort por metadado de
-    # provedor externo mora em `api/servicos/capas.py::enriquecer_capas`.
-    capa_url: str | None = None
     # `None` quando o site não diferencia versão (`diferencia_versao=False`) ou
     # o adapter não detectou marcador algum — não confundir com
     # `VersaoDeFonte.NAO_DIFERENCIADA` (esse é o estado do mapeamento, este
@@ -53,10 +50,30 @@ class EpisodioRemoto:
     thumb_url: str | None = None
 
 
+class FormatoDeMidia(StrEnum):
+    """Formato do container/protocolo apontado por `LinkDeMidia.url` — vocabulário
+    de extractor, não domínio persistido (mesmo racional de `extractors/qualidade.py`:
+    fica fora de `core/enums.py` de propósito, pois é só o site que atravessou a
+    fronteira, não algo que o resto do sistema precisa conhecer).
+
+    `DESCONHECIDO` é o default: quem baixa infere o formato como sempre (extensão
+    da URL/probe automático do ffmpeg). `DASH` sinaliza um manifesto MPEG-DASH
+    disfarçado de imagem (ex. AnimeFire: URL termina em `.jpg`, mas o corpo é XML
+    de MPD) — sem essa distinção explícita, tanto a checagem de amostra quanto o
+    probe do ffmpeg seriam enganados pela extensão de fachada.
+    """
+
+    DESCONHECIDO = "desconhecido"
+    DASH = "dash"
+
+
 @dataclass(frozen=True, slots=True)
 class LinkDeMidia:
     url: str
     cabecalhos: dict[str, str]  # Referer + User-Agent (+ Cookie) — hotlink protection
+    # Último campo, com default — adapters existentes (`animesdrive`, `meusanimes`)
+    # e seus testes instanciam `LinkDeMidia` sem este campo; não pode quebrar.
+    formato: FormatoDeMidia = FormatoDeMidia.DESCONHECIDO
 
 
 class ExtratorDeSite(ABC):
