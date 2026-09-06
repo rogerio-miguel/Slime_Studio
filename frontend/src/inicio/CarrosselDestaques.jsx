@@ -123,8 +123,10 @@ export function textoProximoEpisodio(item) {
 // `_TAMANHO_BACKDROP`). O hero é full-bleed (>=1920px): w1280 sob `object-cover`
 // é upscale visível. Os tamanhos de backdrop do TMDB são w300/w780/w1280/original
 // — nada entre w1280 e original —, então pro hero sobe direto pra `original`.
-// URL de outra origem (banner da AniList, capa) passa intacta.
-function imagemEmAltaResolucao(url) {
+// URL de outra origem (banner da AniList, capa) passa intacta. Exportada —
+// fonte única: o hero de paginas/PaginaDoAnime.jsx usa a mesma normalização
+// pro `banner_path` do anime catalogado.
+export function imagemEmAltaResolucao(url) {
   if (!url) return url;
   return url.replace(
     /^(https:\/\/image\.tmdb\.org\/t\/p\/)w\d+(\/)/,
@@ -137,11 +139,14 @@ function imagemEmAltaResolucao(url) {
 // paginas/Inicio.jsx), pra base do hero se dissolver no fundo sem emenda.
 // Inline no `style`: o parser de multi-gradiente de valor arbitrário do
 // Tailwind v4 não é confiável (mesmo motivo de `SOMBRA_SLIDE_ATIVO`).
-const GRADIENTE_HERO =
+// Exportado — fonte única: o hero de paginas/PaginaDoAnime.jsx usa o mesmo
+// gradiente pra dissolver no mesmo `#17171b`.
+export const GRADIENTE_HERO =
   'linear-gradient(to top, #17171b, transparent 45%), linear-gradient(to top, #17171b, transparent 40%), linear-gradient(77deg, #17171b, transparent 60%)';
 // Sem arte horizontal (`semBanner`): só o pôster retrato borrado atrás do
 // texto — uma camada extra à esquerda mantém o texto legível sobre ele.
-const GRADIENTE_HERO_SEM_BANNER = `linear-gradient(to right, #17171b, transparent 60%), ${GRADIENTE_HERO}`;
+// Também exportado (mesmo fallback no hero de paginas/PaginaDoAnime.jsx).
+export const GRADIENTE_HERO_SEM_BANNER = `linear-gradient(to right, #17171b, transparent 60%), ${GRADIENTE_HERO}`;
 
 // Botão primário do hero (pílula clara, texto escuro, ícone play) — geometria
 // medida ao vivo no AnimeFire. Compartilhado entre o `<Link>` (anime já

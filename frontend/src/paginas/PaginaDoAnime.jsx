@@ -10,16 +10,20 @@ import {
   removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
-import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
-import { SOMBRA_SLIDE_ATIVO } from '../inicio/CarrosselDestaques.jsx';
+import {
+  GRADIENTE_HERO,
+  GRADIENTE_HERO_SEM_BANNER,
+  imagemEmAltaResolucao,
+  CLASSE_PILL_HERO,
+} from '../inicio/CarrosselDestaques.jsx';
 import { traduzirGenero } from '../inicio/generos.js';
-import { CLASSES_POR_PAGINA, LARGURA_CARTAO_AVULSO } from '../inicio/tamanhoDeCard.js';
+import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
 
 // Rótulo legível de `versaoAtiva`/`Episodio.versao` — inclui 'desconhecida'
@@ -116,12 +120,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     recarregar: recarregarAnime,
   } = useRecurso(() => obterAnime(animeId), [animeId]);
   const animeNaoEncontrado = erroAnime instanceof ErroDeApi && erroAnime.status === 404;
-
-  // Linha "ano • gênero" abaixo da sinopse — mesmo formato do card do
-  // carrossel da Home (inicio/CarrosselDestaques.jsx): ano seguido de até 3
-  // gêneros traduzidos, juntados por " • ", partes vazias omitidas.
-  const generosTraduzidos = (anime?.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
-  const meta = [anime?.ano, generosTraduzidos.join(', ')].filter(Boolean).join(' • ');
 
   const episodios = useRecurso(() => listarEpisodios(animeId), [animeId]);
 
@@ -388,6 +386,27 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     return [...linhasNumericas, ...linhasSemNumero];
   }, [episodios.dados, remotos.dados, versaoAtiva]);
 
+  // Dados derivados do bloco de conteúdo do hero (estilo AnimeFire, coluna
+  // única). `meta` é a linha stacked "ano • N episódios • versão" logo abaixo
+  // do título; os gêneros saem dela e viram pills próprias (`generosTraduzidos`,
+  // até 3, traduzidos por `traduzirGenero` — mesmo recorte do card do
+  // carrossel da Home). Declarado aqui (não junto de `anime`) porque a
+  // contagem depende de `linhas`, que já une episódios locais + remotos.
+  // `AnimeDetalheSaida` (backend/api/esquemas.py) não expõe título
+  // alternativo/romaji nem nota — por isso o hero não tem linha de subtítulo
+  // nem rating, ao contrário do AnimeFire. Rótulo da versão via `ROTULO_VERSAO`
+  // (mesmo mapa usado por LinhaDeEpisodio.jsx pra exibir a versão).
+  const generosTraduzidos = (anime?.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
+  const meta = [
+    anime?.ano,
+    linhas.length > 0
+      ? `${linhas.length} episódio${linhas.length === 1 ? '' : 's'}`
+      : null,
+    ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva,
+  ]
+    .filter(Boolean)
+    .join(' • ');
+
   // Fluxo de criação de job em modo "site" é síncrono no servidor e pode
   // levar até ~120s (resolver fonte + listar episódios dentro do próprio
   // request) — sem timeout curto, sem retry automático (abortar o fetch
@@ -544,114 +563,128 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           `termoBusca`/`aoMudarBusca`: esta página não tem uma lista pra
           filtrar, então a caixa de busca nem renderiza (ver
           `components/BarraDeNavegacao.jsx`). `transparente`: sem fundo no topo
-          (deixa a faixa panorâmica do header aparecer), escurece ao rolar. */}
+          (deixa a arte do hero aparecer sob a navbar), escurece ao rolar. */}
       <BarraDeNavegacao fase="revelado" transparente />
       {/* `bg-[#17171b]` + `min-h-screen`: mesmo fundo do `<main>` de
-          paginas/Galeria.jsx (fonte da verdade — cor do `body` do Disney+) —
-          é ele que faz a drop shadow dos cards (capa e grade de episódios)
-          aparecer; sobre um preto mais fechado a sombra 69% preta some. */}
-      <main className="min-h-screen bg-[#17171b] px-6 pb-16 pt-24 md:px-10">
-        {/* Header ampliado — vira o conteúdo central da página (capa e
-            título maiores, mais respiro) em vez de um preâmbulo estreito
-            acima da grade; lista de episódios continua abaixo, sem herdar
-            essa largura (max-w-4xl no container da lista, mais adiante) pra
-            não esticar linha de episódio a ponto de ficar ilegível em telas
-            largas. Padrão de página de detalhe (Disney+/Netflix): faixa
-            panorâmica no topo, capa + título logo abaixo com o topo da capa
-            invadindo a faixa. */}
-        <header className="mb-10">
-          {/* Faixa panorâmica full-bleed: `-mx-6 md:-mx-10` cancela o `px` do
-              <main> pra sangrar até as bordas da viewport; `-mt-24` cancela
-              todo o `pt-24` do <main> pra faixa subir até o topo e correr por
-              baixo da navbar (fixa/transparente no topo — ver
-              `components/BarraDeNavegacao.jsx`). As alturas embutem os ~96px
-              da navbar pra que a borda de baixo da faixa fique onde estava. O
-              fallback "sem banner" espelha o `semBanner` de
-              inicio/CarrosselDestaques.jsx: a cor dominante da capa vira o
-              fundo (`bg-surface` quando `capa_cor` é null — Kitsu ou
-              `color: null` da AniList), com a própria capa borrada e
-              escurecida por cima como textura. */}
-          <div className="relative -mx-6 -mt-24 h-64 overflow-hidden sm:h-80 md:-mx-10 lg:h-96">
-            {anime?.banner_path ? (
-              <img
-                src={anime.banner_path}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            ) : (
-              <div
-                className="absolute inset-0 bg-surface"
-                style={anime?.capa_cor ? { backgroundColor: anime.capa_cor } : undefined}
-              >
-                {anime?.capa_path && (
-                  <img
-                    src={anime.capa_path}
-                    alt=""
-                    className="absolute inset-0 h-full w-full object-cover scale-125 blur-lg brightness-[0.5] opacity-70"
-                  />
-                )}
+          paginas/Galeria.jsx (fonte da verdade — cor do `body` do Disney+) e a
+          MESMA cor em que o gradiente do hero (`GRADIENTE_HERO`) se dissolve
+          sem emenda. É ele que faz a drop shadow dos cards da grade de
+          episódios aparecer; sobre um preto mais fechado a sombra 69% preta
+          some. Sem `px` no `<main>` (mesma decisão de paginas/Galeria.jsx): o
+          hero é full-bleed e o resto do conteúdo repõe o gutter lateral com
+          `paddingInline: PADDING_TITULO` (`calc(3.7% + 10px)`, ./inicio/
+          tamanhoDeCard.js) — o MESMO gutter percentual da Home e do Meu
+          Catálogo, pra o texto do hero e os cards de episódio alinharem com as
+          fileiras/grades do resto do app em qualquer viewport. */}
+      <main className="min-h-screen bg-[#17171b] pb-16 pt-24">
+        {/* Hero full-bleed estilo AnimeFire (https://animefire.io/anime/…) —
+            é o cartão de visita da página: a arte horizontal do anime cobre
+            100% da largura, e o bloco de conteúdo fica empilhado numa ÚNICA
+            coluna (título → linha meta → pills de gênero → sinopse) ancorada
+            embaixo-à-esquerda sobre a arte. Sem pôster e sem layout de duas
+            colunas: o "capa de um lado / texto do outro" do Disney+ saiu.
+            Altura ~76svh (NÃO a viewport inteira): a barra de controles e o
+            topo da primeira fileira de cards de episódio já espiam acima da
+            dobra. Full-bleed de graça (o `<main>` não tem mais `px`); `-mt-24`
+            cancela o `pt-24` do <main> pra a arte subir por baixo da navbar
+            fixa/transparente. `min-h` em `svh` espelha o hero do carrossel
+            (inicio/CarrosselDestaques.jsx). `mb-6` curto: a seção de episódios
+            encosta logo abaixo. `flex flex-col justify-end`: o bloco de
+            conteúdo vive no rodapé e o <header> cresce (não corta) se a
+            sinopse empurrar. O fallback "sem banner" espelha o `semBanner` do
+            carrossel: a cor dominante da capa (`capa_cor`, `bg-surface` quando
+            null — Kitsu ou `color: null` da AniList) vira o fundo, com a
+            própria capa borrada/escurecida por cima como textura e o gradiente
+            ganhando uma camada extra à esquerda (`GRADIENTE_HERO_SEM_BANNER`)
+            pra manter o texto legível. */}
+        <header className="relative -mt-24 mb-6 flex min-h-[76svh] flex-col justify-end overflow-hidden">
+          {anime?.banner_path ? (
+            <img
+              // `imagemEmAltaResolucao` sobe o backdrop do TMDB de w1280 pra
+              // `original` — mesma função e mesmo motivo do hero do carrossel
+              // (w1280 sob `object-cover` num hero >=1920px é upscale visível);
+              // URL de outra origem passa intacta. `object-top`: a essa altura
+              // o `object-cover` centralizado cortaria a cabeça dos
+              // personagens no banner.
+              src={imagemEmAltaResolucao(anime.banner_path)}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover object-top"
+            />
+          ) : (
+            <div
+              className="absolute inset-0 bg-surface"
+              style={anime?.capa_cor ? { backgroundColor: anime.capa_cor } : undefined}
+            >
+              {anime?.capa_path && (
+                <img
+                  src={anime.capa_path}
+                  alt=""
+                  className="absolute inset-0 h-full w-full scale-125 object-cover object-top opacity-70 blur-lg brightness-[0.5]"
+                />
+              )}
+            </div>
+          )}
+          {/* Gradiente empilhado — o mesmo `::before` do carrossel
+              (`GRADIENTE_HERO` / `GRADIENTE_HERO_SEM_BANNER`, fonte única em
+              inicio/CarrosselDestaques.jsx): 3 (ou 4, sem banner) camadas com a
+              cor EXATA do fundo da página, dissolvendo o pé e a esquerda do
+              hero no `#17171b` do <main> sem emenda. Inline no `style` porque o
+              parser de multi-gradiente arbitrário do Tailwind v4 não é
+              confiável. */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{ background: anime?.banner_path ? GRADIENTE_HERO : GRADIENTE_HERO_SEM_BANNER }}
+          />
+
+          {/* Bloco de conteúdo — coluna única ancorada no rodapé do hero
+              (`justify-end` no <header>). `relative` pra pintar acima da arte e
+              do gradiente (ambos `absolute` e antes no DOM). `pt-24` reserva
+              respiro no topo pro gradiente. `paddingInline: PADDING_TITULO` é o
+              MESMO gutter do wrapper do conteúdo abaixo do hero (e da Home/Meu
+              Catálogo) — o título alinha exatamente com a borda dos cards de
+              episódio. */}
+          <div
+            style={{ paddingInline: PADDING_TITULO }}
+            className="relative flex flex-col items-start gap-4 pb-10 pt-24"
+          >
+            <h1
+              ref={focoTitulo}
+              tabIndex={-1}
+              className="max-w-4xl text-4xl font-semibold text-white outline-none sm:text-5xl lg:text-6xl"
+            >
+              {anime?.titulo ?? `Anime #${animeId}`}
+            </h1>
+            {meta && <p className="text-sm text-ink-muted sm:text-base">{meta}</p>}
+            {generosTraduzidos.length > 0 && (
+              // Pills de gênero — reusam `CLASSE_PILL_HERO` (fonte única do
+              // carrossel: `bg-white/10 backdrop-blur-sm text-white`), a mesma
+              // linguagem de pill do hero da Home.
+              <div className="flex flex-wrap gap-2">
+                {generosTraduzidos.map((genero) => (
+                  <span key={genero} className={CLASSE_PILL_HERO}>
+                    {genero}
+                  </span>
+                ))}
               </div>
             )}
-            {/* Gradiente de baixo pra cima (o conteúdo do header fica ABAIXO
-                da faixa, não à esquerda como no carrossel — daí `to-t`): funde
-                o pé da faixa no `#17171b` do <main>. */}
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#17171b] via-[#17171b]/60 to-transparent" />
-          </div>
-
-          {/* Capa + título sobre o `#17171b`, com `-mt-16` puxando só o topo
-              da capa pra dentro da faixa — o resto da capa e todo o
-              título/sinopse ficam abaixo dela. Layout mantido: capa+título de
-              um lado, "Remover do catálogo" do outro. */}
-          <div className="relative -mt-16 flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-              {anime?.capa_path && (
-                // Mesmo card do catálogo (paginas/Galeria.jsx → AnimeCard dentro
-                // do wrapper de sombra `SOMBRA_SLIDE_ATIVO` de
-                // inicio/GradeDeCatalogo.jsx), no MESMO tamanho da grade da
-                // Galeria (`CLASSES_POR_PAGINA.pequeno` define `--por-pagina`,
-                // `LARGURA_CARTAO_AVULSO` reproduz a largura do slot). `estatico`
-                // tira o hover/navegação; `semLegenda` tira o título (já está no
-                // <h1> ao lado); sem `aoRemover`, sem botão de X.
-                <div
-                  className={`flex-none ${CLASSES_POR_PAGINA.pequeno}`}
-                  style={{ width: LARGURA_CARTAO_AVULSO }}
-                >
-                  <div className="rounded-xl" style={{ boxShadow: SOMBRA_SLIDE_ATIVO }}>
-                    <AnimeCard anime={anime} estatico semLegenda />
-                  </div>
-                </div>
-              )}
-              {/* `sm:self-end`: alinha o título com a BASE da capa (a capa é
-                  o item alto da linha), não com o topo dela lá em cima na
-                  faixa. */}
-              <div className="sm:self-end">
-                <h1
-                  ref={focoTitulo}
-                  tabIndex={-1}
-                  className="mb-3 text-3xl font-semibold text-white outline-none sm:text-4xl md:text-5xl"
-                >
-                  {anime?.titulo ?? `Anime #${animeId}`}
-                </h1>
-                {anime?.sinopse && (
-                  <p className="max-w-2xl text-sm text-ink-muted sm:text-base">{anime.sinopse}</p>
-                )}
-                {meta && (
-                  <p className="mt-2 text-xs text-ink-muted sm:text-sm">{meta}</p>
-                )}
-              </div>
-            </div>
-            {!animeNaoEncontrado && (
-              <button
-                type="button"
-                onClick={() => setConfirmandoRemocao(true)}
-                className="flex-none rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 focus-visible:ring-2 focus-visible:ring-neon"
-              >
-                Remover do catálogo
-              </button>
+            {anime?.sinopse && (
+              // `line-clamp-3`: segura o <header> perto de 76svh mesmo com
+              // sinopse longa (ele é `min-h` e cresceria com o texto),
+              // preservando o "episódios espiando" acima da dobra.
+              <p className="line-clamp-3 max-w-2xl text-sm text-ink-muted sm:text-base">
+                {anime.sinopse}
+              </p>
             )}
           </div>
         </header>
 
+        {/* Conteúdo abaixo do hero (erros, avisos de carregamento, barra de
+            controles, grade/lista de episódios). O gutter lateral vem daqui —
+            `paddingInline: PADDING_TITULO` (o mesmo do bloco de conteúdo do
+            hero e das grades da Home/Meu Catálogo), não de um `px` no <main>,
+            que sangraria o hero full-bleed. Os diálogos ficam FORA deste
+            wrapper (são overlays fixos, não conteúdo de coluna). */}
+        <div style={{ paddingInline: PADDING_TITULO }}>
         {erroAnime && (
           <div
             role="alert"
@@ -700,7 +733,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         {!animeNaoEncontrado && (
           <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
             {remotos.dados?.dominio && <span>Episódios resolvidos via <span className="font-bold">{remotos.dados.dominio}</span></span>}
-            <span>Baixando como: <span className="font-bold">{ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva}</span></span>
+            {/* A versão ativa ("Legendado"/"Dublado") já aparece na linha meta
+                do hero (`ano • N episódios • versão`) — não repetir aqui. */}
             {anime?.versoes_disponiveis &&
               versaoAtiva !== 'desconhecida' &&
               !anime.versoes_disponiveis.includes(versaoAtiva) && (
@@ -716,6 +750,17 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
             >
               Trocar fonte
+            </button>
+            {/* "Remover do catálogo" — ação destrutiva, mora aqui ao lado de
+                "Trocar fonte" (não mais num canto do hero). Mesma geometria de
+                pill da barra (`rounded-md border-2 px-3 py-1 text-xs`), só o
+                tom vermelho a diferencia. */}
+            <button
+              type="button"
+              onClick={() => setConfirmandoRemocao(true)}
+              className="rounded-md border-2 border-red-500/50 px-3 py-1 text-xs text-red-400 outline-none transition-colors hover:border-red-400 hover:text-red-300 focus-visible:ring-2 focus-visible:ring-neon"
+            >
+              Remover do catálogo
             </button>
             <div
               className="ml-auto flex items-center gap-1"
@@ -784,6 +829,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         {linhas.length === 0 && !episodios.carregando && !remotos.carregando && (
           <p className="text-sm text-ink-muted">Nenhum episódio encontrado.</p>
         )}
+        </div>
 
         <DialogoDeFonteAmbigua
           aberto={fonteAmbigua != null}
