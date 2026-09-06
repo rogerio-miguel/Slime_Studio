@@ -36,6 +36,9 @@ _URL = "https://graphql.anilist.co"
 # para a thread do `to_thread` terminar normalmente dentro da janela do
 # `wait_for` em vez de ficar rodando órfã no thread pool até seu próprio teto.
 _TIMEOUT_S = 6
+# O WAF do Cloudflare da AniList passou a responder 403 a requests sem
+# `Referer` (confirmado em 2026-09-06). Só esse header basta para liberar.
+_HEADERS = {"Referer": "https://anilist.co/"}
 
 _QUERY_BUSCA = """
 query ($busca: String) {
@@ -247,7 +250,10 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento, ProvedorComFil
 
     def _executar(self, query: str, variaveis: dict) -> dict:
         resposta = requests.post(
-            _URL, json={"query": query, "variables": variaveis}, timeout=_TIMEOUT_S
+            _URL,
+            json={"query": query, "variables": variaveis},
+            headers=_HEADERS,
+            timeout=_TIMEOUT_S,
         )
         if resposta.status_code == 404:
             return {}
