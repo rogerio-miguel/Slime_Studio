@@ -835,7 +835,7 @@ async def test_buscar_em_com_variantes_para_na_primeira_variante_com_candidatos(
     monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencias=["Anime X"]
     )
 
     assert resultado == servico_busca.ResultadoDeFonte(
@@ -854,7 +854,7 @@ async def test_buscar_em_com_variantes_devolve_variante_vencedora_quando_nao_e_a
     monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencias=["Anime X"]
     )
 
     assert resultado.candidatos == [candidato]
@@ -873,7 +873,7 @@ async def test_buscar_em_com_variantes_falha_de_extracao_aborta_variantes_restan
     monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencias=["Anime X"]
     )
 
     assert resultado.indisponivel is True
@@ -889,7 +889,7 @@ async def test_buscar_em_com_variantes_nenhuma_variante_encontra_nada(sessionmak
     monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencias=["Anime X"]
     )
 
     assert resultado == servico_busca.ResultadoDeFonte(
@@ -918,7 +918,7 @@ async def test_buscar_em_com_variantes_descarta_candidato_que_nao_corresponde_a_
     monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencia="Anime X"
+        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencias=["Anime X"]
     )
 
     assert resultado.candidatos == []
@@ -933,9 +933,9 @@ async def test_buscar_em_com_variantes_ordena_validos_com_match_exato_primeiro(
     sessionmaker, monkeypatch
 ):
     """Sonda larga: uma única variante volta com 2 cards que passam por
-    `corresponde_ao_titulo` — o match exato e um mais longo que só compartilha
+    `corresponde_a_alguma_referencia` — o match exato e um mais longo que só compartilha
     o prefixo. O site os lista na ordem errada; `buscar_em_com_variantes`
-    ordena `validos` por `extractors/busca/correspondencia.py::proximidade_do_titulo` e
+    ordena `validos` por `extractors/busca/correspondencia.py::proximidade_a_referencias` e
     `candidatos[0]` é o exato (o que a UI mostra e a captura pega)."""
     _resiliencia_direta(monkeypatch)
     exato = ResultadoBusca(titulo_exibicao="Naruto", identificador="n", url="https://x/n")
@@ -946,7 +946,7 @@ async def test_buscar_em_com_variantes_ordena_validos_com_match_exato_primeiro(
     monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Naruto"], referencia="Naruto"
+        sessionmaker, "site-falso.io", ["Naruto"], referencias=["Naruto"]
     )
 
     assert resultado.candidatos == [exato, mais_longo]  # reordenado: exato à frente
@@ -985,7 +985,7 @@ async def test_buscar_por_site_com_variantes_cada_site_busca_de_forma_independen
     _configurar_extratores(monkeypatch, extrator_a, extrator_b)
 
     resultado = await servico_busca.buscar_por_site_com_variantes(
-        sessionmaker, ["Anime X: Sub", "Anime X"], referencia="Anime X"
+        sessionmaker, ["Anime X: Sub", "Anime X"], referencias=["Anime X"]
     )
 
     assert resultado == {
@@ -1022,7 +1022,7 @@ async def test_buscar_por_site_com_variantes_site_em_cooldown_nao_e_chamado(
         await sessao.commit()
 
     resultado = await servico_busca.buscar_por_site_com_variantes(
-        sessionmaker, ["Anime X"], referencia="Anime X"
+        sessionmaker, ["Anime X"], referencias=["Anime X"]
     )
 
     assert resultado["site-cooldown.io"].indisponivel is True
@@ -1043,7 +1043,7 @@ async def test_buscar_por_site_com_variantes_excecao_nao_tratada_marca_indisponi
     _configurar_extratores(monkeypatch, extrator)
 
     resultado = await servico_busca.buscar_por_site_com_variantes(
-        sessionmaker, ["Anime X"], referencia="Anime X"
+        sessionmaker, ["Anime X"], referencias=["Anime X"]
     )
 
     assert resultado == {
@@ -1064,7 +1064,7 @@ async def test_buscar_por_site_com_variantes_dominios_none_cobre_todo_extratores
     _configurar_extratores(monkeypatch, extrator_a, extrator_b)
 
     resultado = await servico_busca.buscar_por_site_com_variantes(
-        sessionmaker, ["Anime X"], referencia="Anime X"
+        sessionmaker, ["Anime X"], referencias=["Anime X"]
     )
 
     assert set(resultado) == {"site-a.io", "site-b.io"}
@@ -1085,7 +1085,7 @@ async def test_buscar_por_site_com_variantes_dominios_explicito_limita_busca(
     _configurar_extratores(monkeypatch, extrator_a, extrator_b)
 
     resultado = await servico_busca.buscar_por_site_com_variantes(
-        sessionmaker, ["Anime X"], referencia="Anime X", dominios=["site-a.io"]
+        sessionmaker, ["Anime X"], referencias=["Anime X"], dominios=["site-a.io"]
     )
 
     assert set(resultado) == {"site-a.io"}

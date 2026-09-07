@@ -14,7 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.erros import FalhaDeExtracao
 from extractors import circuit_breaker, resiliencia
 from extractors.base import ExtratorDeSite, ResultadoBusca
-from extractors.busca.correspondencia import corresponde_ao_titulo, proximidade_do_titulo
+from extractors.busca.correspondencia import (
+    corresponde_a_alguma_referencia,
+    proximidade_a_referencias,
+)
 from extractors.registro import EXTRATORES, obter_extrator
 
 _SessionMaker = async_sessionmaker[AsyncSession]
@@ -78,28 +81,30 @@ async def _separar_por_cooldown(
 
 
 async def buscar_em_com_variantes(
-    sessionmaker: _SessionMaker, dominio: str, variantes: list[str], *, referencia: str
+    sessionmaker: _SessionMaker, dominio: str, variantes: list[str], *, referencias: list[str]
 ) -> tuple[ResultadoDeFonte, str | None]:
     """Tenta cada variante em `dominio`, na ordem, e para na primeira que
-    devolver candidatos validados contra `referencia`
-    (`extractors/busca/correspondencia.py::corresponde_ao_titulo`). Devolve o
+    devolver candidatos validados contra `referencias`
+    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia` — o
+    card só precisa bater com UM dos nomes do anime). Devolve o
     `ResultadoDeFonte` e a variante que funcionou (`None` quando foi a variante
     0, o título original).
 
     `ResultadoDeFonte.candidatos` volta ordenado por
-    `extractors/busca/correspondencia.py::proximidade_do_titulo`: o match exato
-    de `referencia` primeiro, depois os que só compartilham prefixo, cada grupo
-    do comprimento mais próximo ao mais distante. Importa porque a sonda larga
-    (recall pela 1ª palavra em `variantes_de_busca`) faz uma variante devolver
-    vários cards legítimos e `candidatos[0]` é o que a UI mostra e a captura
-    tende a pegar. Sort estável — no empate, a ordem em que o site listou fica.
+    `extractors/busca/correspondencia.py::proximidade_a_referencias`: o match
+    exato da referência mais parecida primeiro, depois os que só compartilham
+    prefixo, cada grupo do comprimento mais próximo ao mais distante. Importa
+    porque a sonda larga (recall pela 1ª palavra em `variantes_de_busca`) faz
+    uma variante devolver vários cards legítimos e `candidatos[0]` é o que a UI
+    mostra e a captura tende a pegar. Sort estável — no empate, a ordem em que
+    o site listou fica.
 
-    `referencia` é keyword-only e sem default derivado de `variantes[0]` de
-    propósito: num chamador futuro a referência não será o primeiro elemento
-    da lista de variantes.
+    `referencias` é keyword-only e sem default derivado de `variantes` de
+    propósito: são os vários nomes do anime (romaji/inglês/nativo/sinônimos),
+    montados pelo chamador, não um recorte da lista de variantes de busca.
 
-    Candidatos que a busca devolve mas não correspondem a `referencia` são
-    descartados e o loop CONTINUA pra próxima variante — não é o mesmo caso
+    Candidatos que a busca devolve mas não correspondem a nenhuma referência
+    são descartados e o loop CONTINUA pra próxima variante — não é o mesmo caso
     de "site não achou nada" nessa variante, é "achou algo errado, tenta de
     novo" (nunca silencioso, CLAUDE.md §4): `descartados` acumula a
     contagem e vira `motivo` na resposta final se nenhuma variante validar.
@@ -131,8 +136,10 @@ async def buscar_em_com_variantes(
                 ),
                 None,
             )
-        validos = [c for c in candidatos if corresponde_ao_titulo(referencia, c.titulo_exibicao)]
-        validos.sort(key=lambda c: proximidade_do_titulo(referencia, c.titulo_exibicao))
+        validos = [
+            c for c in candidatos if corresponde_a_alguma_referencia(referencias, c.titulo_exibicao)
+        ]
+        validos.sort(key=lambda c: proximidade_a_referencias(referencias, c.titulo_exibicao))
         if validos:
             variante_vencedora = variante if indice > 0 else None
             return (
@@ -147,10 +154,10 @@ async def buscar_em_com_variantes(
     if descartados > 0:
         motivo = f"{descartados} candidato(s) descartado(s) por não corresponder ao título"
         logger.info(
-            "extrator %r descartou %d candidato(s) por não corresponder à referência %r",
+            "extrator %r descartou %d candidato(s) por não corresponder às referências %r",
             dominio,
             descartados,
-            referencia,
+            referencias,
         )
     return (
         ResultadoDeFonte(dominio=dominio, candidatos=[], indisponivel=False, motivo=motivo),
@@ -162,7 +169,7 @@ async def buscar_por_site_com_variantes(
     sessionmaker: _SessionMaker,
     variantes: list[str],
     *,
-    referencia: str,
+    referencias: list[str],
     dominios: list[str] | None = None,
 ) -> dict[str, ResultadoDeFonte]:
     """Busca em paralelo em cada site, cada um esgotando sua própria escada de
@@ -177,7 +184,8 @@ async def buscar_por_site_com_variantes(
     própria variante truncada correta, e o resultado do AnimeFire nunca
     aparecia mesmo tendo o anime. Aqui, cada fonte chama
     `buscar_em_com_variantes` (que já valida cada candidato contra
-    `referencia` via `extractors/busca/correspondencia.py::corresponde_ao_titulo`,
+    `referencias` via
+    `extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`,
     fatia 2) em paralelo com as demais — nenhum site interrompe ou "rouba a
     vez" da busca dos outros. O resultado é a união de todas as fontes onde o
     anime realmente existe, não a rodada de variante que respondeu primeiro.
@@ -194,7 +202,7 @@ async def buscar_por_site_com_variantes(
     respostas = await asyncio.gather(
         *(
             buscar_em_com_variantes(
-                sessionmaker, extrator.dominio, variantes, referencia=referencia
+                sessionmaker, extrator.dominio, variantes, referencias=referencias
             )
             for extrator in disponiveis
         ),
@@ -203,9 +211,9 @@ async def buscar_por_site_com_variantes(
     for extrator, resposta in zip(disponiveis, respostas, strict=True):
         if isinstance(resposta, BaseException):
             logger.warning(
-                "extrator %r falhou na busca por variantes (referência %r): %s",
+                "extrator %r falhou na busca por variantes (referências %r): %s",
                 extrator.dominio,
-                referencia,
+                referencias,
                 resposta,
             )
             resultados[extrator.dominio] = ResultadoDeFonte(
