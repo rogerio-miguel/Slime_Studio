@@ -168,6 +168,7 @@ async def remover_anime(
 
 @router_publico.get("", response_model=list[AnimeSaida])
 async def listar_animes(
+    aquecer: bool = False,
     sessao: AsyncSession = Depends(obter_sessao),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeSaida]:
@@ -176,15 +177,19 @@ async def listar_animes(
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
-    # Carona fire-and-forget: sonda a fonte real dos animes em lançamento cuja
-    # contagem está velha/ausente. O resultado entra no banco para a PRÓXIMA
-    # leitura do catálogo, não para esta (`api/servicos/sondagem.py`). Zero
-    # `await` de rede aqui — só a query agregada abaixo e o agendamento síncrono.
-    versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
-    servico_sondagem.agendar_sondagens(sessionmaker, animes, versoes)
-    # Aquece o `status_lancamento` (filtro do badge) dos animes que nunca foram
-    # abertos individualmente — sem isso ficam `NULL` e o badge nunca aparece.
-    servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
+    # Aquecimento opt-in via `?aquecer=true`: carona fire-and-forget que sonda a
+    # fonte real (scraping) dos animes em lançamento com contagem velha/ausente e
+    # aquece o `status_lancamento` (filtro do badge) via AniList/Kitsu. Só a
+    # Galeria (`paginas/Galeria.jsx`, rota `/animes` — catálogo completo com os
+    # badges) envia a flag; a Home (`paginas/Inicio.jsx`) chama sem ela e não
+    # paga esse custo a cada abertura. O resultado entra no banco para a PRÓXIMA
+    # leitura do catálogo, não para esta — logo o badge de "episódios novos" na
+    # Home reflete a última passada da Galeria. Zero `await` de rede aqui: a
+    # query de versões só alimenta o agendamento, que é síncrono.
+    if aquecer:
+        versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
+        servico_sondagem.agendar_sondagens(sessionmaker, animes, versoes)
+        servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
     # mapeados 1:1 com colunas de `Anime`); `episodios_novos` e `tem_episodios`
     # são derivados e precisam ser injetados à parte.

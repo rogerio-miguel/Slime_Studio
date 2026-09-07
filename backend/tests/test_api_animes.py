@@ -699,7 +699,42 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
     }
 
 
-# --- F12: GET /api/animes* agenda sondagem fire-and-forget da fonte real ---
+# --- F12: GET /api/animes agenda sondagem fire-and-forget da fonte real, opt-in
+# via `?aquecer=true` (só a Galeria manda a flag; a Home chama sem ela) ---
+
+
+async def test_listar_animes_so_agenda_carona_de_aquecimento_com_a_flag(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """A carona fire-and-forget (sondagem da fonte real + aquecimento de
+    `status_lancamento` via AniList/Kitsu) é opt-in via `?aquecer=true` — só a
+    Galeria a envia. Sem a flag, `GET /api/animes` devolve o catálogo e nada
+    mais: a Home não paga esse custo a cada abertura."""
+    sondagens: list[int] = []
+    refreshs: list[int] = []
+    monkeypatch.setattr(
+        "api.servicos.sondagem.agendar_sondagens",
+        lambda sessionmaker, animes, versoes: sondagens.append(len(animes)),
+    )
+    monkeypatch.setattr(
+        "api.servicos.descoberta.agendar_refreshs_do_catalogo",
+        lambda sessionmaker, animes: refreshs.append(len(animes)),
+    )
+    await _criar_anime_catalogado(
+        sessionmaker_api,
+        "Anime Aquecivel",
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+    )
+
+    sem_flag = await cliente.get("/api/animes")
+    assert sem_flag.status_code == 200
+    assert sondagens == []
+    assert refreshs == []
+
+    com_flag = await cliente.get("/api/animes?aquecer=true")
+    assert com_flag.status_code == 200
+    assert sondagens == [1]
+    assert refreshs == [1]
 
 
 def _espiar_sondagem(
@@ -740,7 +775,7 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
     await _mapear_fonte(sessionmaker_api, anime_id)
     await _capturar_episodio(sessionmaker_api, anime_id, numero=1)
 
-    primeira = await cliente.get("/api/animes")
+    primeira = await cliente.get("/api/animes?aquecer=true")
     assert primeira.status_code == 200
     item = next(i for i in primeira.json() if i["id"] == anime_id)
     assert item["episodios_novos"] == 0  # badge desta leitura: 1 na fonte, fronteira no ep 1
@@ -752,7 +787,7 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
         assert anime.episodios_na_fonte == 3
         assert anime.fonte_verificada_dominio == "animefire.io"
 
-    segunda = await cliente.get("/api/animes")
+    segunda = await cliente.get("/api/animes?aquecer=true")
     item = next(i for i in segunda.json() if i["id"] == anime_id)
     assert item["episodios_novos"] == 2  # 3 na fonte, fronteira no ep 1
 
@@ -770,7 +805,7 @@ async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 
-    resposta = await cliente.get("/api/animes")
+    resposta = await cliente.get("/api/animes?aquecer=true")
     await _drenar_sondagens()
 
     assert resposta.status_code == 200
@@ -794,7 +829,7 @@ async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha
     await _mapear_fonte(sessionmaker_api, anime_id)
 
     with caplog.at_level("WARNING"):
-        resposta = await cliente.get("/api/animes")
+        resposta = await cliente.get("/api/animes?aquecer=true")
         assert resposta.status_code == 200
         item = next(i for i in resposta.json() if i["id"] == anime_id)
         assert item["episodios_novos"] == 5  # badge antigo; falha de site não derruba a home
@@ -816,7 +851,9 @@ async def test_listar_animes_duas_chamadas_concorrentes_deduplicam_sondagem(
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 
-    await asyncio.gather(cliente.get("/api/animes"), cliente.get("/api/animes"))
+    await asyncio.gather(
+        cliente.get("/api/animes?aquecer=true"), cliente.get("/api/animes?aquecer=true")
+    )
     await _drenar_sondagens()
 
     assert chamadas == [(anime_id, VersaoEpisodio.LEGENDADO)]  # 1 task, não 2

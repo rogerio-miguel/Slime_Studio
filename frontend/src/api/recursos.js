@@ -3,8 +3,12 @@
 // HTTP) fica só aqui, nunca espalhada pelas páginas/componentes.
 import { requisitar } from './cliente.js';
 
-export function listarAnimes() {
-  return requisitar('/api/animes');
+// `aquecer` (opt-in) liga a carona fire-and-forget do backend — sondagem da
+// fonte real + aquecimento de `status_lancamento` via AniList/Kitsu. Só a
+// Galeria (rota `/animes`, catálogo completo com os badges) passa `true`; a
+// Home chama sem a flag e não paga esse custo a cada abertura.
+export function listarAnimes({ aquecer = false } = {}) {
+  return requisitar(aquecer ? '/api/animes?aquecer=true' : '/api/animes');
 }
 
 export function listarAnimesEmAlta() {
