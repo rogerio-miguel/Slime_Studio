@@ -20,6 +20,7 @@ from api.main import criar_app
 from api.servicos import descoberta, sondagem
 from core.config import Config
 from db.engine import criar_engine
+from integrations import servico as servico_metadados
 from models.base import Base
 
 
@@ -83,6 +84,17 @@ async def _isola_refreshs_de_lancamento():
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await tarefa
     descoberta._refreshs_de_lancamento_em_voo.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isola_cooldown_de_provedor(monkeypatch: pytest.MonkeyPatch):
+    """`integrations.servico._cooldown_por_provedor` é estado de módulo (circuit
+    breaker "lite" em memória — `falhas_consecutivas`/`cooldown_ate` por
+    provedor). Um teste que faz um provedor fake estourar `ConnectionError`/
+    `TimeoutError` deixa o provedor "degradado" no dict por até 15s de
+    `time.monotonic` reais — o suficiente para curto-circuitar chamadas de
+    testes seguintes na mesma execução. Zera antes de cada teste."""
+    monkeypatch.setattr(servico_metadados, "_cooldown_por_provedor", {})
 
 
 @pytest.fixture(autouse=True)

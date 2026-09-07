@@ -29,6 +29,19 @@ PROVEDORES: tuple[ProvedorDeMetadados, ...] = (_anilist, KitsuProvider())
 # acima para busca por título/id.
 PROVEDORES_DE_FEED: tuple[ProvedorDeMetadados, ...] = (_anilist,)
 
+# Subconjunto para a resolução do título canônico da busca em fontes
+# (`api/servicos/busca.py::_resolver_titulos_canonicos`, base de
+# `_referencias_de_anime`/`_termos_de_busca`): essa resolução precisa ser rápida
+# e determinística — é enriquecimento best-effort sob teto curto
+# (`_TETO_METADADOS_S`), NÃO pré-condição da busca. O `buscar_titulos` do Kitsu
+# é mais pobre que o da AniList (menos sinônimos, sem título nativo) e, com o
+# Kitsu instável (read timeout em toda chamada), o fallback só adiciona latência
+# de timeout antes de a busca degradar para o título digitado de qualquer jeito.
+# Kitsu segue em `PROVEDORES` acima para busca de metadados por título/id
+# (capa/sinopse/lançamento) e enriquecimento do catálogo — só a busca de
+# TÍTULOS para o scraping é que é AniList-only.
+PROVEDORES_DE_TITULO: tuple[ProvedorDeMetadados, ...] = (_anilist,)
+
 # Fileiras temáticas da Home — curadoria por popularidade real por tag na
 # AniList, filtrada por distintividade (cortadas tags genéricas que já se
 # sobrepõem com Gêneros). Repetição de anime entre fileiras é permitida

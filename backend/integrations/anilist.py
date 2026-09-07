@@ -61,7 +61,8 @@ query ($busca: String) {
 _QUERY_TITULOS = """
 query ($busca: String) {
   Media(search: $busca, type: ANIME) {
-    title { romaji english }
+    title { romaji english native }
+    synonyms
   }
 }
 """
@@ -234,7 +235,12 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento, ProvedorComFil
         titulo_ingles = _texto_ou_none(titulo_bruto.get("english"))
         if titulo_romaji is None and titulo_ingles is None:
             return None
-        return TitulosDeAnime(titulo_romaji=titulo_romaji, titulo_ingles=titulo_ingles)
+        return TitulosDeAnime(
+            titulo_romaji=titulo_romaji,
+            titulo_ingles=titulo_ingles,
+            titulo_nativo=_texto_ou_none(titulo_bruto.get("native")),
+            sinonimos=_sinonimos(media.get("synonyms")),
+        )
 
     def listar_em_alta(self) -> list[AnimeEmAlta]:
         return _pagina_para_animes_em_alta(self._executar(_QUERY_EM_ALTA, {}), "em alta")
@@ -394,6 +400,15 @@ def _texto_ou_none(texto: str | None) -> str | None:
         return None
     limpo = texto.strip()
     return limpo or None
+
+
+def _sinonimos(brutos: object) -> tuple[str, ...]:
+    """`synonyms` da AniList pode vir `null` (não lista) ou com entradas
+    vazias/só espaço — mesma filtragem defensiva de `genres` em
+    `_item_para_anime_em_alta`, preservando a ordem que a AniList devolve."""
+    if not isinstance(brutos, list):
+        return ()
+    return tuple(s for s in brutos if isinstance(s, str) and s.strip())
 
 
 def _sanitizar_sinopse(bruta: str | None) -> str | None:

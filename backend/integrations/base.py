@@ -76,10 +76,18 @@ class MetadadosDeAnime:
 class TitulosDeAnime:
     """Títulos conhecidos do anime em um provedor — usados só para expandir o
     termo de busca nos sites de extração (`api/servicos/busca.py`), nunca
-    persistidos: `Anime.titulo` é o título local, não o do provedor."""
+    persistidos: `Anime.titulo` é o título local, não o do provedor.
+
+    `titulo_nativo` é o título no idioma original (japonês em kanji/kana) e
+    `sinonimos` são títulos alternativos que o provedor conhece (abreviações,
+    títulos regionais) — só o AniList preenche os dois; o Kitsu deixa nos
+    defaults (`None` / tupla vazia). Tupla, não lista, pela mesma imutabilidade
+    de `AnimeEmAlta.generos`."""
 
     titulo_romaji: str | None
     titulo_ingles: str | None
+    titulo_nativo: str | None = None
+    sinonimos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

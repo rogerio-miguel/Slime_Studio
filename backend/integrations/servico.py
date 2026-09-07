@@ -1,5 +1,8 @@
 """Serviço de metadados externos: cadeia de fallback AniList -> Kitsu com
-timeout por provedor, e cache em memória de processo do feed "em alta".
+timeout por provedor (só AniList em `buscar_titulos` — ver `PROVEDORES_DE_TITULO`
+em `registro.py`; o fallback para o Kitsu continua valendo em
+`buscar_por_titulo` e nas buscas por id), e cache em memória de processo do
+feed "em alta".
 
 Também orquestra o overlay de banner de TMDB por cima do resultado de
 metadados/feed, ANTES de gravar qualquer cache — ver a seção "overlay de
@@ -14,6 +17,9 @@ montagem acima, é chamado por episódio, não por registro de metadados/feed.
 
 Único lugar de `integrations/` com `asyncio.to_thread`/`asyncio.wait_for`
 (mesma separação de `extractors/resiliencia.py` para os extratores de site).
+`_chamar` é também o único ponto que lê/escreve o cooldown de provedor
+(`_cooldown_por_provedor`, circuit breaker "lite" em memória de processo — ver
+o comentário da seção logo abaixo de `_ERROS_DE_PROVEDOR`).
 
 Cache do feed "em alta": sem precedente de cache em memória no projeto — os
 dois candidatos óbvios (`extractors/circuit_breaker.py`,
@@ -50,6 +56,7 @@ from integrations.registro import (
     FILEIRAS_TEMATICAS,
     PROVEDORES,
     PROVEDORES_DE_FEED,
+    PROVEDORES_DE_TITULO,
     provedores_de_arte,
 )
 from integrations.tmdb import (
@@ -107,6 +114,59 @@ _ERROS_DE_PROVEDOR: tuple[type[Exception], ...] = (
     RuntimeError,
     TimeoutError,
 )
+
+# --- cooldown de provedor (circuit breaker "lite", em memória de processo) ---
+#
+# Depois de N falhas de rede/timeout CONSECUTIVAS de um provedor, as chamadas
+# seguintes a ele curto-circuitam na hora (sem tocar a rede) por uma janela
+# crescente, até uma sonda de meio-aberto (a 1ª chamada depois de o cooldown
+# expirar) reabrir. Existe porque cada chamada a um provedor degradado custa
+# 6-8s de timeout (`_TIMEOUT_POR_PROVEDOR_S` + timeout interno do `requests` de
+# cada adapter), e caminhos como a Home disparam ~13 queries AniList quase
+# simultâneas.
+#
+# Em memória de processo (dict de módulo, relógio `time.monotonic`) — MESMA
+# justificativa do `_cache_em_alta` abaixo (API JSON pública, sem necessidade de
+# sobreviver a restart). NÃO reusa `extractors/circuit_breaker.py`: aquele é
+# SQLite e acoplado a `EstadoSite`/domínio de site com bypass anti-bot
+# (CLAUDE.md §1 — as duas famílias de adapter não se cruzam). Espelha só o
+# vocabulário: `falhas_consecutivas`, backoff crescente + cooldown cheio, estado
+# DERIVADO de `cooldown_ate > agora` (nunca um bool próprio).
+#
+# Backoff suave (decisão do usuário; vs. `(30, 120, 600)` + 3600s do breaker de
+# sites): 1ª falha 15s, 2ª 60s, 3ª 300s, 4ª em diante 900s (cooldown cheio).
+_BACKOFF_DE_COOLDOWN_S: tuple[int, ...] = (15, 60, 300)
+_LIMITE_PARA_COOLDOWN_CHEIO = len(_BACKOFF_DE_COOLDOWN_S)
+_COOLDOWN_CHEIO_S = 900
+
+
+class ProvedorEmCooldown(RuntimeError):
+    """Curto-circuito: o provedor acumulou `falhas_consecutivas` e está em
+    cooldown — a chamada falha na hora, sem tocar a rede. Subclasse de
+    `RuntimeError` (já em `_ERROS_DE_PROVEDOR`), então `_buscar_em_cadeia`, os
+    loops de feed e as buscas por id já a tratam como "provedor falhou": caem
+    para o próximo provedor / marcam falho / levantam `FalhaDeMetadados` se
+    todos falharam. Não conta como falha nova (não incrementa o contador)."""
+
+
+# `nome do provedor -> (falhas_consecutivas, cooldown_ate em time.monotonic())`.
+# Lido e escrito SÓ no contexto async de `_chamar` (antes/depois do
+# `await asyncio.to_thread(...)`), NUNCA dentro da thread — o event loop é
+# single-thread, então não há corrida e nenhum lock é necessário (mesma garantia
+# de `_arte_desabilitada_por_auth`). `tests/conftest.py::_isola_cooldown_de_provedor`
+# (autouse) zera este dict entre testes (estado de módulo).
+_cooldown_por_provedor: dict[str, tuple[int, float]] = {}
+
+
+def _nivel_de_log_de_falha(excecao: BaseException | None) -> int:
+    """`DEBUG` quando a falha é um curto-circuito de cooldown já anunciado uma
+    vez por `_registrar_falha_de_provedor` (`ProvedorEmCooldown`, direto ou como
+    `__cause__` de um `FalhaDeMetadados`) — logar cada chamada curto-circuitada
+    em `WARNING` repoluiria o log, que é o que o cooldown existe pra consertar.
+    `WARNING` para qualquer falha real de provedor (comportamento inalterado —
+    `ProvedorEmCooldown` é um tipo novo, então isto é no-op pro que já existia)."""
+    return logging.DEBUG if isinstance(excecao, ProvedorEmCooldown) else logging.WARNING
+
 
 # `(expira_em_monotonic, itens)` — `None` até o primeiro sucesso.
 _cache_em_alta: tuple[float, list[AnimeEmAlta]] | None = None
@@ -184,12 +244,22 @@ async def buscar_por_titulo(titulo: str) -> MetadadosDeAnime | None:
 
 
 async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
-    """Tenta cada provedor de `PROVEDORES` em ordem até achar títulos
-    alternativos (romaji/inglês) para `titulo` — usado por
-    `api/servicos/busca.py` para reexpandir uma busca vazia nos sites de
-    extração; ver `_buscar_em_cadeia` para a semântica de fallback."""
+    """Tenta cada provedor de `PROVEDORES_DE_TITULO` (só a AniList — ver o
+    comentário da tupla em `registro.py`) em ordem até achar títulos
+    alternativos (romaji/inglês/nativo/sinônimos) para `titulo` — usado por
+    `api/servicos/busca.py::_resolver_titulos_canonicos` como base da escada de
+    termos e das referências de validação da busca em fontes.
+
+    Ao contrário de `buscar_por_titulo`, NÃO cai para o Kitsu: a resolução do
+    título canônico é enriquecimento best-effort sob teto curto, e a AniList
+    fora do ar deve degradar direto (`FalhaDeMetadados` → o chamador segue só
+    com o título digitado), sem pagar a latência de timeout do Kitsu instável.
+    Ver `_buscar_em_cadeia` para a semântica de fallback dentro da tupla."""
     return await _buscar_em_cadeia(
-        lambda provedor: provedor.buscar_titulos, titulo, descricao="busca de títulos"
+        lambda provedor: provedor.buscar_titulos,
+        titulo,
+        descricao="busca de títulos",
+        provedores=PROVEDORES_DE_TITULO,
     )
 
 
@@ -217,7 +287,8 @@ async def buscar_lancamento_por_anilist_id(anilist_id: int) -> LancamentoDeAnime
                 provedor, provedor.buscar_lancamento_por_anilist_id, anilist_id
             )
         except _ERROS_DE_PROVEDOR as excecao:
-            logger.warning(
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
                 "provedor de metadados %r falhou ao buscar lançamento de anilist_id=%s: %s",
                 provedor.nome,
                 anilist_id,
@@ -259,7 +330,8 @@ async def buscar_metadados_por_anilist_id(anilist_id: int) -> MetadadosDeAnime |
                 provedor, provedor.buscar_metadados_por_anilist_id, anilist_id
             )
         except _ERROS_DE_PROVEDOR as excecao:
-            logger.warning(
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
                 "provedor de metadados %r falhou ao buscar metadados de anilist_id=%s: %s",
                 provedor.nome,
                 anilist_id,
@@ -285,24 +357,30 @@ async def _buscar_em_cadeia[T](
     titulo: str,
     *,
     descricao: str,
+    provedores: tuple[ProvedorDeMetadados, ...] | None = None,
 ) -> T | None:
-    """Tenta cada provedor de `PROVEDORES` em ordem, chamando `operacao(provedor)`
-    com `titulo`. Um provedor que responde mas não encontra o título (`None`)
-    não é falha — cai para o próximo provedor tentar, mesma filosofia de
+    """Tenta cada provedor de `provedores` em ordem, chamando `operacao(provedor)`
+    com `titulo`. `provedores=None` (padrão) usa a cadeia completa `PROVEDORES`
+    — resolvida a cada chamada, para os testes poderem monkeypatchar
+    `servico.PROVEDORES`; `buscar_titulos` passa `PROVEDORES_DE_TITULO` (só
+    AniList). Um provedor que responde mas não encontra o título (`None`) não é
+    falha — cai para o próximo provedor tentar, mesma filosofia de
     `extractors/resolucao.py` (busca vazia não é erro). Só levanta
     `FalhaDeMetadados` se todos os provedores falharem de fato (rede/HTTP/
     timeout); se todos responderem sem encontrar, devolve `None` (título não
     existe em nenhum provedor conhecido). `descricao` entra na mensagem de
     log/erro para diferenciar qual operação falhou.
     """
+    cadeia = provedores if provedores is not None else PROVEDORES
     algum_respondeu = False
     ultimo_erro: Exception | None = None
 
-    for provedor in PROVEDORES:
+    for provedor in cadeia:
         try:
             resultado = await _chamar(provedor, operacao(provedor), titulo)
         except _ERROS_DE_PROVEDOR as excecao:
-            logger.warning(
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
                 "provedor de metadados %r falhou em %s de %r: %s",
                 provedor.nome,
                 descricao,
@@ -353,7 +431,8 @@ async def listar_em_alta() -> list[AnimeEmAlta]:
             try:
                 itens = await _chamar(provedor, provedor.listar_em_alta)
             except _ERROS_DE_PROVEDOR as excecao:
-                logger.warning(
+                logger.log(
+                    _nivel_de_log_de_falha(excecao),
                     "provedor de metadados %r falhou ao listar 'em alta': %s",
                     provedor.nome,
                     excecao,
@@ -395,7 +474,8 @@ async def listar_proxima_temporada() -> list[AnimeEmAlta]:
             try:
                 itens = await _chamar(provedor, provedor.listar_proxima_temporada)
             except _ERROS_DE_PROVEDOR as excecao:
-                logger.warning(
+                logger.log(
+                    _nivel_de_log_de_falha(excecao),
                     "provedor de metadados %r falhou ao listar 'próxima temporada': %s",
                     provedor.nome,
                     excecao,
@@ -449,8 +529,13 @@ async def listar_fileiras_tematicas() -> dict[str, list[AnimeEmAlta]]:
             try:
                 return fileira.chave, await listar_fileira_tematica(fileira.chave)
             except FalhaDeMetadados as excecao:
-                logger.warning(
-                    "fileira temática %r omitida do agregado: %s", fileira.chave, excecao
+                # `__cause__` é o erro do provedor por baixo do `FalhaDeMetadados`
+                # — `DEBUG` quando foi só um curto-circuito de cooldown.
+                logger.log(
+                    _nivel_de_log_de_falha(excecao.__cause__),
+                    "fileira temática %r omitida do agregado: %s",
+                    fileira.chave,
+                    excecao,
                 )
                 return fileira.chave, None
 
@@ -476,7 +561,8 @@ async def _buscar_fileira_tematica_sem_cache(fileira: FileiraTematica) -> list[A
         try:
             itens = await _chamar(provedor, provedor.listar_fileira_tematica, fileira)
         except _ERROS_DE_PROVEDOR as excecao:
-            logger.warning(
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
                 "provedor de metadados %r falhou ao listar fileira temática %r: %s",
                 provedor.nome,
                 fileira.chave,
@@ -601,7 +687,8 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
             _desabilitar_arte_por_auth(provedor, excecao)
             return None
         except _ERROS_DE_PROVEDOR as excecao:
-            logger.warning(
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
                 "provedor de arte %r falhou ao buscar arte de %r: %s",
                 provedor.nome,
                 titulo,
@@ -671,7 +758,8 @@ async def buscar_still_de_episodio(
             _desabilitar_arte_por_auth(provedor, excecao)
             return None
         except _ERROS_DE_PROVEDOR as excecao:
-            logger.warning(
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
                 "provedor de arte %r falhou ao buscar still do episódio %s de %r: %s",
                 provedor.nome,
                 numero_absoluto,
@@ -764,7 +852,9 @@ async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T
     try:
         arte = await buscar_arte_por_titulo(titulo, ano)
     except _ERROS_DE_PROVEDOR as excecao:
-        logger.warning("overlay de arte falhou para %r: %s", titulo, excecao)
+        logger.log(
+            _nivel_de_log_de_falha(excecao), "overlay de arte falhou para %r: %s", titulo, excecao
+        )
         return registro
 
     if arte is None:
@@ -817,14 +907,107 @@ async def _sobrepor_arte_em_lote(itens: list[AnimeEmAlta]) -> list[AnimeEmAlta]:
     return resultado
 
 
+def _http_indica_provedor_fora_do_ar(excecao: requests.HTTPError) -> bool:
+    """`True` só para 429 e 5xx — provedor sobrecarregado ou fora do ar, conta
+    como falha do cooldown. Os demais 4xx significam "requisição recusada", não
+    "provedor caiu": não mexem no cooldown (o `raise_for_status()` real dos
+    adapters sempre anexa `.response`; um `HTTPError` sem status vira "não é
+    indisponibilidade")."""
+    codigo = getattr(getattr(excecao, "response", None), "status_code", None)
+    return codigo == 429 or (codigo is not None and 500 <= codigo < 600)
+
+
+def _cooldown_ate(nome: str) -> float | None:
+    """`cooldown_ate` (relógio `time.monotonic`) se `nome` está em cooldown
+    AGORA, senão `None`. Estado DERIVADO de `cooldown_ate > agora` — nunca um
+    bool armazenado (mesma decisão de `extractors/circuit_breaker.py`)."""
+    estado = _cooldown_por_provedor.get(nome)
+    if estado is None:
+        return None
+    _falhas, cooldown_ate = estado
+    return cooldown_ate if time.monotonic() < cooldown_ate else None
+
+
+def _abortar_se_em_cooldown(nome: str) -> None:
+    """Levanta `ProvedorEmCooldown` na hora se `nome` está em cooldown — sem
+    tocar a rede e sem contar como falha nova. `logger.debug` no máximo: a
+    degradação já saiu em `WARNING` uma vez em `_registrar_falha_de_provedor`."""
+    cooldown_ate = _cooldown_ate(nome)
+    if cooldown_ate is None:
+        return
+    restante = cooldown_ate - time.monotonic()
+    logger.debug("provedor %r em cooldown (faltam %.0fs) — curto-circuito", nome, restante)
+    raise ProvedorEmCooldown(
+        f"{nome} em cooldown do circuit breaker (faltam {restante:.0f}s)"
+    )
+
+
+def _registrar_sucesso_de_provedor(nome: str) -> None:
+    """Zera `falhas_consecutivas` e fecha o cooldown de `nome`. Sem registro
+    prévio não há o que zerar. Só uma resposta bem-sucedida chama isto — uma
+    resposta-com-erro que não é indisponibilidade (4xx não-429, `RuntimeError`
+    de formato inesperado) apenas propaga, sem mexer no contador."""
+    _cooldown_por_provedor.pop(nome, None)
+
+
+def _registrar_falha_de_provedor(nome: str, erro: Exception) -> None:
+    """Incrementa `falhas_consecutivas` e reprograma `cooldown_ate` no degrau de
+    backoff correspondente. Um `logger.warning` por falha REAL (a transição para
+    — ou o aprofundamento do — cooldown), nunca por chamada curto-circuitada."""
+    falhas = _cooldown_por_provedor.get(nome, (0, 0.0))[0] + 1
+    espera = _backoff_de_cooldown_s(falhas)
+    _cooldown_por_provedor[nome] = (falhas, time.monotonic() + espera)
+    logger.warning(
+        "provedor de metadados %r degradado (%sª falha consecutiva: %s) — "
+        "curto-circuitando chamadas pelos próximos %ss",
+        nome,
+        falhas,
+        erro,
+        espera,
+    )
+
+
+def _backoff_de_cooldown_s(falhas_consecutivas: int) -> int:
+    if falhas_consecutivas > _LIMITE_PARA_COOLDOWN_CHEIO:
+        return _COOLDOWN_CHEIO_S
+    return _BACKOFF_DE_COOLDOWN_S[falhas_consecutivas - 1]
+
+
 async def _chamar[T](
     provedor: ProvedorDeMetadados | ProvedorDeArte, operacao: Callable[..., T], *args: object
 ) -> T:
+    """Wrapper único de `integrations/` para `asyncio.to_thread` + `wait_for` — e
+    único ponto onde o cooldown de provedor (`_cooldown_por_provedor`) é lido e
+    escrito, sempre no event loop (antes/depois do `await`), nunca dentro da
+    thread (ver o comentário de `_cooldown_por_provedor`).
+
+    Curto-circuita com `ProvedorEmCooldown` quando o provedor está degradado.
+    Só falha de indisponibilidade (timeout do `wait_for`, `ConnectionError` /
+    `Timeout` do `requests`, HTTP 429/5xx) alimenta o cooldown; só uma resposta
+    bem-sucedida o zera. Todo o resto (4xx não-429, `RuntimeError` de formato
+    inesperado, `TmdbNaoAutorizado`) apenas propaga — o provedor respondeu, não
+    é "fora do ar", e não é recuperação confirmada tampouco.
+    """
+    # ANTES do `try`: um curto-circuito não deve passar pelo tratamento de
+    # falha abaixo (não conta como falha nova, não chama `registrar_sucesso`).
+    _abortar_se_em_cooldown(provedor.nome)
+
     try:
-        return await asyncio.wait_for(
+        resultado = await asyncio.wait_for(
             asyncio.to_thread(operacao, *args), timeout=_TIMEOUT_POR_PROVEDOR_S
         )
     except TimeoutError as excecao:
+        _registrar_falha_de_provedor(provedor.nome, excecao)
         raise TimeoutError(
             f"{provedor.nome} excedeu o teto de {_TIMEOUT_POR_PROVEDOR_S}s"
         ) from excecao
+    except (requests.ConnectionError, requests.Timeout) as excecao:
+        _registrar_falha_de_provedor(provedor.nome, excecao)
+        raise
+    except requests.HTTPError as excecao:
+        if _http_indica_provedor_fora_do_ar(excecao):
+            _registrar_falha_de_provedor(provedor.nome, excecao)
+        raise
+
+    _registrar_sucesso_de_provedor(provedor.nome)
+    return resultado

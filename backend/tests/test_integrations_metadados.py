@@ -437,14 +437,30 @@ def test_anilist_listar_proxima_temporada_formato_inesperado(monkeypatch: pytest
 
 
 def test_anilist_buscar_titulos(monkeypatch: pytest.MonkeyPatch):
-    corpo = {"data": {"Media": {"title": {"romaji": "Tensei", "english": "Reincarnated"}}}}
+    corpo = {
+        "data": {
+            "Media": {
+                "title": {
+                    "romaji": "Tensei",
+                    "english": "Reincarnated",
+                    "native": "転生したら",
+                },
+                "synonyms": ["TenSura", "Slime Isekai"],
+            }
+        }
+    }
     monkeypatch.setattr(
         "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo)
     )
 
     resultado = AniListProvider().buscar_titulos("Slime")
 
-    assert resultado == TitulosDeAnime(titulo_romaji="Tensei", titulo_ingles="Reincarnated")
+    assert resultado == TitulosDeAnime(
+        titulo_romaji="Tensei",
+        titulo_ingles="Reincarnated",
+        titulo_nativo="転生したら",
+        sinonimos=("TenSura", "Slime Isekai"),
+    )
 
 
 def test_anilist_buscar_titulos_so_romaji_presente(monkeypatch: pytest.MonkeyPatch):
@@ -456,6 +472,35 @@ def test_anilist_buscar_titulos_so_romaji_presente(monkeypatch: pytest.MonkeyPat
     resultado = AniListProvider().buscar_titulos("Slime")
 
     assert resultado == TitulosDeAnime(titulo_romaji="Tensei", titulo_ingles=None)
+    assert resultado.titulo_nativo is None
+    assert resultado.sinonimos == ()
+
+
+def test_anilist_buscar_titulos_synonyms_null_ou_com_lixo(monkeypatch: pytest.MonkeyPatch):
+    """`synonyms` pode vir `null` (não lista) ou com entradas vazias/só espaço/
+    não-string — tudo filtrado, ordem preservada; `native` ausente vira `None`."""
+    corpo_null = {
+        "data": {"Media": {"title": {"romaji": "Tensei", "english": None}, "synonyms": None}}
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo_null)
+    )
+    assert AniListProvider().buscar_titulos("Slime").sinonimos == ()
+
+    corpo_lixo = {
+        "data": {
+            "Media": {
+                "title": {"romaji": "Tensei", "english": None},
+                "synonyms": ["Bom", "  ", "", None, "Outro"],
+            }
+        }
+    }
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post", lambda *a, **k: _RespostaFalsa(corpo=corpo_lixo)
+    )
+    resultado = AniListProvider().buscar_titulos("Slime")
+    assert resultado.sinonimos == ("Bom", "Outro")
+    assert resultado.titulo_nativo is None
 
 
 def test_anilist_buscar_titulos_media_null_devolve_none(monkeypatch: pytest.MonkeyPatch):
@@ -1069,6 +1114,9 @@ def test_kitsu_buscar_titulos_usa_en_jp_e_en(monkeypatch: pytest.MonkeyPatch):
         titulo_romaji="Tensei Shitara Slime Datta Ken",
         titulo_ingles="That Time I Got Reincarnated as a Slime",
     )
+    # Caminho degradado: Kitsu não expõe título nativo nem sinônimos.
+    assert resultado.titulo_nativo is None
+    assert resultado.sinonimos == ()
 
 
 def test_kitsu_listar_em_alta_sem_en_jp_cai_para_canonical_title(monkeypatch: pytest.MonkeyPatch):
@@ -1686,24 +1734,31 @@ async def test_servico_nao_encontrado_em_nenhum_provedor_devolve_none(
     assert await servico.buscar_por_titulo("Slime") is None
 
 
-async def test_servico_buscar_titulos_cai_para_kitsu_quando_anilist_falha(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_servico_buscar_titulos_usa_so_anilist(monkeypatch: pytest.MonkeyPatch):
+    """Caminho feliz do novo contrato: `buscar_titulos` percorre só
+    `PROVEDORES_DE_TITULO` (AniList) e devolve o que ela resolveu."""
     esperado = TitulosDeAnime(titulo_romaji="Tensei", titulo_ingles="Reincarnated")
-    anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
-    kitsu = _ProvedorFake("kitsu", titulos=esperado)
-    monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
+    anilist = _ProvedorFake("anilist", titulos=esperado)
+    monkeypatch.setattr(servico, "PROVEDORES_DE_TITULO", (anilist,))
 
     resultado = await servico.buscar_titulos("Slime")
 
     assert resultado is esperado
 
 
-async def test_servico_buscar_titulos_levanta_falha_de_metadados_quando_todos_falham(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_servico_buscar_titulos_nao_cai_para_kitsu(monkeypatch: pytest.MonkeyPatch):
+    """`buscar_titulos` percorre só `PROVEDORES_DE_TITULO` (AniList) — a
+    resolução do título canônico da busca em fontes é AniList-only (ver o
+    comentário da tupla em `registro.py`). AniList falhando NÃO cai para o
+    Kitsu, mesmo que ele resolveria: propaga `FalhaDeMetadados` (todos os
+    provedores da tupla de título falharam) para
+    `api/servicos/busca.py::_resolver_titulos_canonicos` degradar para o título
+    digitado."""
     anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
-    kitsu = _ProvedorFake("kitsu", erro=requests.ConnectionError("falhou"))
+    kitsu = _ProvedorFake(
+        "kitsu", titulos=TitulosDeAnime(titulo_romaji="Tensei", titulo_ingles="Reincarnated")
+    )
+    monkeypatch.setattr(servico, "PROVEDORES_DE_TITULO", (anilist,))
     monkeypatch.setattr(servico, "PROVEDORES", (anilist, kitsu))
 
     with pytest.raises(FalhaDeMetadados):
