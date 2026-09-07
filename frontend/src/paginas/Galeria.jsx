@@ -89,7 +89,14 @@ export default function Galeria() {
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
-  const { dados: animes, carregando, erro, recarregar } = useRecurso(listarAnimes, []);
+  // `aquecer: true` — esta é a única página que dispara a carona fire-and-forget
+  // do backend (sondagem da fonte real + aquecimento de `status_lancamento`); a
+  // Home chama `listarAnimes()` sem a flag. `recarregar` do `useRecurso` segue
+  // funcionando: reexecuta este mesmo `buscar`.
+  const { dados: animes, carregando, erro, recarregar } = useRecurso(
+    () => listarAnimes({ aquecer: true }),
+    []
+  );
 
   const [generoSelecionado, setGeneroSelecionado] = useState('');
   const [statusSelecionado, setStatusSelecionado] = useState('');
