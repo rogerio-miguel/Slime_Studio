@@ -3,6 +3,17 @@
 mesma resolução de fonte e listagem de `api/servicos/jobs.py::criar_job_site`;
 diferente dela, não persiste nenhum `Episodio`/`Job` — é só consulta.
 
+Divergência deliberada de `criar_job_site` (2026-09-07): esta listagem resolve
+os títulos canônicos do anime no provedor de metadados (AniList) ANTES da
+resolução de fonte e passa a lista pronta como `titulos_alternativos=` para
+`resolver_fonte_do_anime` — sem isso, um site que indexa o anime só pelo título
+inglês/romaji (ex. AnimeFire cataloga "Villainess Level 99..." para *Akuyaku
+Reijou Level 99*) não é alcançado pela busca ao vivo e a resolução cai pro
+próximo site, enquanto "Trocar fonte" (`api/servicos/busca.py`, que já resolve
+canônico) o encontra. `criar_job_site` NÃO resolve canônico de propósito (ver o
+comentário no call site de lá): no fluxo normal esta listagem roda antes, grava
+a `FonteAnime`, e a captura só reusa o mapeamento.
+
 Não importa `fastapi`: devolve `EpisodiosRemotosResultado` ou levanta erro de
 `core/erros.py`; `api/rotas/animes.py` traduz para `HTTPException`/schemas.
 
@@ -20,12 +31,17 @@ from dataclasses import dataclass, replace
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+# `_referencias_de_anime` reusado de `busca.py` (mesmo par de módulos de
+# orquestração cross-camada) — monta a lista slug-única de todos os nomes do
+# anime, com o título cadastrado como âncora na posição 0.
+from api.servicos.busca import _referencias_de_anime
 from core.enums import VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from extractors.base import EpisodioRemoto
 from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
 from extractors.servico import filtrar_por_versao, listar_episodios_em
 from integrations import servico as servico_metadados
+from integrations.base import TitulosDeAnime
 from models.anime import Anime
 
 logger = logging.getLogger(__name__)
@@ -35,6 +51,12 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 # Mesmo teto de `api/servicos/jobs.py::_TETO_CRIACAO_SITE_S` — rede de segurança
 # acima dos timeouts internos dos extratores, não a primeira linha de defesa.
 _TETO_LISTAGEM_REMOTA_S = 60
+
+# Sub-teto só do round-trip de `buscar_titulos` (resolução do título canônico),
+# consumido ANTES e FORA do `wait_for` de `_TETO_LISTAGEM_REMOTA_S` — mesmo
+# arranjo e mesmo valor de `api/servicos/busca.py::_TETO_METADADOS_S`: uma
+# AniList pendurada não pode segurar a resolução de fonte antes de ela começar.
+_TETO_METADADOS_S = 9
 
 # Mesma concorrência/deadline de `api/servicos/capas.py::_consultar_capas` —
 # outro enriquecimento best-effort sobre `integrations/servico.py`, mesma
@@ -68,9 +90,15 @@ async def listar_episodios_remotos(
     `VersaoIndisponivel` (nenhum site serve `versao`) vira `VersaoIndisponivelError`
     — o handler de `api/main.py` traduz pra 409.
     """
+    # Resolve os nomes canônicos do anime no provedor ANTES da resolução de
+    # fonte (best-effort, teto próprio FORA do `wait_for` abaixo — mesmo arranjo
+    # de `api/servicos/busca.py`): a busca ao vivo em `resolver_fonte_do_anime`
+    # precisa varrer as variantes do título inglês/romaji, não só do cadastrado.
+    titulos = await _resolver_titulos_canonicos(anime.titulo)
+    referencias = _referencias_de_anime(titulos, anime.titulo)
     try:
         resultado = await asyncio.wait_for(
-            resolver_fonte_do_anime(sessionmaker, anime, versao),
+            resolver_fonte_do_anime(sessionmaker, anime, versao, titulos_alternativos=referencias),
             timeout=_TETO_LISTAGEM_REMOTA_S,
         )
     except TimeoutError as excecao:
@@ -115,6 +143,30 @@ async def listar_episodios_remotos(
     episodios = await _sobrepor_stills_de_episodios(anime, episodios)
 
     return EpisodiosRemotosResultado(dominio=resultado.dominio, episodios=episodios)
+
+
+async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
+    """Resolve os nomes canônicos de `titulo` na AniList
+    (`integrations.servico.buscar_titulos` — percorre só `PROVEDORES_DE_TITULO`,
+    Kitsu fora) para alimentar `_referencias_de_anime`, espelhando
+    `api/servicos/busca.py::_resolver_titulos_canonicos`.
+
+    Best-effort: qualquer falha (rede, timeout de `_TETO_METADADOS_S`, provedor
+    fora do ar, formato inesperado) degrada para `None` e a resolução de fonte
+    segue só com o título cadastrado como referência — o comportamento anterior
+    a esta mudança. Captura ampla e intencional (CLAUDE.md §4 — degrada
+    explícito com `logger.warning`, não silencioso): resolver o canônico é
+    enriquecimento, não pré-condição; o provedor fora do ar não pode derrubar a
+    listagem de episódios da fonte."""
+    try:
+        return await asyncio.wait_for(
+            servico_metadados.buscar_titulos(titulo), timeout=_TETO_METADADOS_S
+        )
+    except Exception as excecao:
+        logger.warning(
+            "resolução de título canônico best-effort falhou para %r: %s", titulo, excecao
+        )
+        return None
 
 
 async def _sobrepor_stills_de_episodios(

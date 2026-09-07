@@ -59,11 +59,30 @@ class VersaoIndisponivel:
 
 
 async def resolver_fonte_do_anime(
-    sessionmaker: _SessionMaker, anime: Anime, versao: VersaoEpisodio
+    sessionmaker: _SessionMaker,
+    anime: Anime,
+    versao: VersaoEpisodio,
+    titulos_alternativos: list[str] | None = None,
 ) -> FonteResolvida | ConfirmacaoNecessaria | VersaoIndisponivel:
     """`versao` é a versão PEDIDA pelo cliente — só `LEGENDADO`/`DUBLADO`
     (nunca `DESCONHECIDA`, que não é uma versão pedível, só um estado de
     `Episodio` de fonte não-diferenciada).
+
+    `titulos_alternativos` são todos os nomes conhecidos do anime (digitado,
+    romaji, inglês, nativo, sinônimos), já resolvidos no provedor de metadados
+    por quem chama — `extractors/` não cruza a fronteira de `integrations/`
+    (CLAUDE.md §1), então a lista vem pronta de
+    `api/servicos/fontes.py::listar_episodios_remotos` (via
+    `api/servicos/busca.py::_referencias_de_anime`), com o título cadastrado na
+    posição 0 como âncora. `None` (default) = caminho SEM resolução canônica
+    (captura em `api/servicos/jobs.py`, fallback de job no worker): degrada para
+    só o título cadastrado, byte a byte o comportamento anterior a esta mudança.
+
+    Sem canônico, um site que indexa o anime só pelo título inglês (ex.
+    AnimeFire cataloga "Villainess Level 99..." para *Akuyaku Reijou Level 99*)
+    não é alcançado pela busca ao vivo, e a resolução cai para o próximo site
+    enquanto "Trocar fonte" (que já resolve canônico) o encontra — a
+    divergência que esta lista corrige.
 
     1. `FonteAnime` já mapeadas: entre as capazes de servir `versao` (uma
        CONFIRMADA da versão pedida ou uma `NAO_DIFERENCIADA`, em QUALQUER site
@@ -71,12 +90,13 @@ async def resolver_fonte_do_anime(
        nem prioridade de site nem exatidão de versão se sobrepõem a uma
        escolha manual mais recente ("Trocar fonte"), ver `_resolver_em_mapeadas`.
     2. Nenhum mapeamento serve: percorre `EXTRATORES` em ordem, buscando ao
-       vivo. Sites que diferenciam versão (`diferencia_versao=True`)
-       particionam os candidatos por versão e desambiguam dentro da
-       partição pedida; a outra partição é persistida de graça quando também
-       desambigua sem custo de rede extra. Sites que não diferenciam seguem
-       o comportamento de sempre (desambigua no pool inteiro,
-       `NAO_DIFERENCIADA`).
+       vivo com a escada de variantes de TODOS os nomes do anime
+       (`_variantes_das_referencias`). Sites que diferenciam versão
+       (`diferencia_versao=True`) particionam os candidatos por versão e
+       desambiguam dentro da partição pedida; a outra partição é persistida de
+       graça quando também desambigua sem custo de rede extra. Sites que não
+       diferenciam seguem o comportamento de sempre (desambigua no pool
+       inteiro, `NAO_DIFERENCIADA`).
     3. Nenhum site (mapeado ou buscado) serve a versão pedida -> `VersaoIndisponivel`.
     """
     if versao not in (VersaoEpisodio.LEGENDADO, VersaoEpisodio.DUBLADO):
@@ -85,6 +105,10 @@ async def resolver_fonte_do_anime(
             f" DUBLADO, recebido {versao!r}"
         )
     versao_confirmada = _MAPA_VERSAO_EPISODIO_PARA_FONTE[versao]
+
+    # `titulos_alternativos` já traz `anime.titulo` como primeiro elemento
+    # quando presente; `None`/vazio degrada para só o título cadastrado.
+    referencias = titulos_alternativos or [anime.titulo]
 
     mapeadas = await _fontes_mapeadas_ordenadas(sessionmaker, anime.id)
     resolvida = _resolver_em_mapeadas(mapeadas, versao_confirmada)
@@ -95,20 +119,20 @@ async def resolver_fonte_do_anime(
         if await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio):
             continue
 
-        candidatos = await _buscar_variantes(sessionmaker, extrator, anime.titulo)
+        candidatos = await _buscar_variantes(sessionmaker, extrator, referencias)
         if not candidatos:
             continue
 
         if extrator.diferencia_versao:
             resultado = await _resolver_no_site_que_diferencia(
-                sessionmaker, anime, extrator, indice, candidatos, versao
+                sessionmaker, anime, referencias, extrator, indice, candidatos, versao
             )
             if resultado is not None:
                 return resultado
             continue  # partição pedida vazia neste site — não desiste, tenta o próximo
 
         return await _resolver_no_site_nao_diferenciado(
-            sessionmaker, anime, extrator, indice, candidatos
+            sessionmaker, anime, referencias, extrator, indice, candidatos
         )
 
     return VersaoIndisponivel(versao=versao)
@@ -151,6 +175,13 @@ async def proximo_site_para(
     if resolvida is not None:
         return resolvida
 
+    # Fallback de job em andamento roda no worker, sem acesso a `integrations/`
+    # (fronteira de Clean Architecture, CLAUDE.md §1) — a descoberta ao vivo aqui
+    # valida só contra o título cadastrado, nunca os títulos canônicos do
+    # provedor; `resolver_fonte_do_anime` (chamado da API) é quem recebe a lista
+    # completa via `titulos_alternativos`.
+    referencias = [anime.titulo]
+
     dominios_ja_conhecidos = {fonte.site_dominio for fonte in mapeadas} | ja_tentados
     for indice, extrator in enumerate(EXTRATORES):
         if extrator.dominio in dominios_ja_conhecidos:
@@ -158,19 +189,19 @@ async def proximo_site_para(
         if await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio):
             continue
 
-        candidatos = await _buscar_variantes(sessionmaker, extrator, anime.titulo)
+        candidatos = await _buscar_variantes(sessionmaker, extrator, referencias)
         if not candidatos:
             continue
 
         if extrator.diferencia_versao and versao != VersaoEpisodio.DESCONHECIDA:
             resultado = await _resolver_no_site_que_diferencia(
-                sessionmaker, anime, extrator, indice, candidatos, versao
+                sessionmaker, anime, referencias, extrator, indice, candidatos, versao
             )
             if isinstance(resultado, FonteResolvida):
                 return resultado
             continue  # ConfirmacaoNecessaria ou partição vazia: sem quem confirme, pula
 
-        escolhido = _desambiguar(anime.titulo, candidatos)
+        escolhido = _desambiguar(referencias, candidatos)
         if escolhido is None:
             continue
 
@@ -192,18 +223,52 @@ async def proximo_site_para(
     return None
 
 
+def _variantes_das_referencias(referencias: list[str]) -> list[str]:
+    """Escada de busca combinada de TODOS os nomes do anime: concatena a
+    `extractors/busca/termos.py::variantes_de_busca` de cada referência na ordem
+    da lista (digitado, romaji, inglês, nativo, sinônimos), deduplicando por
+    `core/texto.py::slugificar` e preservando a primeira ocorrência.
+
+    Espelha `api/servicos/busca.py::_termos_de_busca` (que `extractors/` não
+    pode importar — fronteira de `integrations/`). A posição 0 CRUA de cada
+    referência sobrevive ao dedup: `_referencias_de_anime` já entrega a lista
+    slug-única, então a raw-0 de uma referência nunca colide com a raw-0 de
+    outra — só variantes DERIVADAS (cortes de subtítulo, prefixos) se sobrepõem
+    entre referências e são as únicas descartadas aqui.
+
+    Com `referencias == [anime.titulo]` (caminho sem canônico) o resultado é
+    `variantes_de_busca(anime.titulo)` inalterado: `variantes_de_busca` já
+    deduplica por slug, então o segundo passe é no-op."""
+    escada: list[str] = []
+    slugs_vistos: set[str] = set()
+    for referencia in referencias:
+        for variante in variantes_de_busca(referencia):
+            slug = slugificar(variante)
+            if slug in slugs_vistos:
+                continue
+            slugs_vistos.add(slug)
+            escada.append(variante)
+    return escada
+
+
 async def _buscar_variantes(
-    sessionmaker: _SessionMaker, extrator: ExtratorDeSite, titulo: str
+    sessionmaker: _SessionMaker, extrator: ExtratorDeSite, referencias: list[str]
 ) -> list[ResultadoBusca]:
-    """Tenta cada variante de `variantes_de_busca(titulo)`, na ordem, e para na
-    primeira que devolver candidatos que correspondem ao título
-    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`, com
-    `titulo` como referência única), não qualquer candidato — o
-    bloco de recall de `variantes_de_busca` sonda por prefixo curto (1ª
-    palavra), então uma variante devolve cards de outros animes que só
-    compartilham o prefixo; sem o filtro, `_desambiguar`/`_desambiguar_por_versao`
-    receberia esse pool largo e cairia em `None` (slug exato não único) →
-    `ConfirmacaoNecessaria`/site pulado com muito mais frequência.
+    """Tenta cada variante da escada combinada de todos os nomes do anime
+    (`_variantes_das_referencias`), na ordem, e para na primeira que devolver
+    candidatos que correspondem a ALGUMA referência
+    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`),
+    não qualquer candidato — o bloco de recall de `variantes_de_busca` sonda por
+    prefixo curto (1ª palavra), então uma variante devolve cards de outros
+    animes que só compartilham o prefixo; sem o filtro,
+    `_desambiguar`/`_desambiguar_por_versao` receberia esse pool largo e cairia
+    em `None` (slug exato não único) → `ConfirmacaoNecessaria`/site pulado com
+    muito mais frequência.
+
+    `referencias` tem `anime.titulo` na posição 0; quando é a lista completa
+    (resolução canônica upfront em `api/servicos/fontes.py`), a escada varre
+    também o título inglês/romaji, alcançando o site que indexa o anime só nesse
+    idioma, e a validação aceita o card grafado em qualquer um dos nomes.
 
     Corrige também a assimetria em que só o AnimeFire tratava subtítulo
     internamente (na busca) e o AnimesDrive nunca via variante nenhuma.
@@ -214,7 +279,7 @@ async def _buscar_variantes(
     `extractors/busca/servico.py::buscar_em_com_variantes`, que captura
     `FalhaDeExtracao` e devolve `indisponivel`; aqui a exceção sobe de
     propósito)."""
-    for variante in variantes_de_busca(titulo):
+    for variante in _variantes_das_referencias(referencias):
         candidatos = await resiliencia.chamar(
             sessionmaker,
             extrator,
@@ -222,7 +287,9 @@ async def _buscar_variantes(
             nome_operacao="buscar",
         )
         validos = [
-            c for c in candidatos if corresponde_a_alguma_referencia([titulo], c.titulo_exibicao)
+            c
+            for c in candidatos
+            if corresponde_a_alguma_referencia(referencias, c.titulo_exibicao)
         ]
         if validos:
             return validos
@@ -296,13 +363,17 @@ def _proxima_mapeada_capaz(
 async def _resolver_no_site_que_diferencia(
     sessionmaker: _SessionMaker,
     anime: Anime,
+    referencias: list[str],
     extrator: ExtratorDeSite,
     indice: int,
     candidatos: list[ResultadoBusca],
     versao_pedida: VersaoEpisodio,
 ) -> FonteResolvida | ConfirmacaoNecessaria | None:
     """`None` = partição da versão pedida veio vazia neste site (site não tem
-    essa versão) — o chamador decide se continua pro próximo site."""
+    essa versão) — o chamador decide se continua pro próximo site.
+
+    `referencias` = todos os nomes do anime (título cadastrado na posição 0),
+    threaded até `_desambiguar_por_versao`."""
     por_versao: dict[VersaoEpisodio, list[ResultadoBusca]] = {}
     for candidato in candidatos:
         if candidato.versao is not None:
@@ -312,7 +383,7 @@ async def _resolver_no_site_que_diferencia(
     if not particao_pedida:
         return None
 
-    escolhido = _desambiguar_por_versao(anime.titulo, particao_pedida)
+    escolhido = _desambiguar_por_versao(referencias, particao_pedida)
     if escolhido is None:
         return ConfirmacaoNecessaria(dominio=extrator.dominio, candidatos=particao_pedida)
 
@@ -335,7 +406,7 @@ async def _resolver_no_site_que_diferencia(
     )
     particao_outra = por_versao.get(outra_versao, [])
     if particao_outra:
-        escolhido_outra = _desambiguar_por_versao(anime.titulo, particao_outra)
+        escolhido_outra = _desambiguar_por_versao(referencias, particao_outra)
         if escolhido_outra is not None:
             # `bump_recencia=False`: isto é cache oportunista ("dado grátis"),
             # não uma confirmação — se `outra_versao` já tinha uma linha
@@ -371,13 +442,17 @@ async def _resolver_no_site_que_diferencia(
 async def _resolver_no_site_nao_diferenciado(
     sessionmaker: _SessionMaker,
     anime: Anime,
+    referencias: list[str],
     extrator: ExtratorDeSite,
     indice: int,
     candidatos: list[ResultadoBusca],
 ) -> FonteResolvida | ConfirmacaoNecessaria:
     """Comportamento idêntico ao de antes desta fase — sem particionamento por
-    versão, fonte gravada sempre como `NAO_DIFERENCIADA`."""
-    escolhido = _desambiguar(anime.titulo, candidatos)
+    versão, fonte gravada sempre como `NAO_DIFERENCIADA`.
+
+    `referencias` = todos os nomes do anime (título cadastrado na posição 0),
+    threaded até `_desambiguar`."""
+    escolhido = _desambiguar(referencias, candidatos)
     if escolhido is None:
         return ConfirmacaoNecessaria(dominio=extrator.dominio, candidatos=candidatos)
 
@@ -409,41 +484,59 @@ def _versao_de_fonte_do_candidato_generico(
     return _MAPA_VERSAO_EPISODIO_PARA_FONTE[candidato.versao]
 
 
-def _desambiguar(titulo_anime: str, candidatos: list[ResultadoBusca]) -> ResultadoBusca | None:
+def _desambiguar(
+    referencias: list[str], candidatos: list[ResultadoBusca]
+) -> ResultadoBusca | None:
+    """Desambiguação ESTRITA: um candidato só é auto-escolhido se o slug do seu
+    `titulo_exibicao` bate por IGUALDADE (não contenção de prefixo) o slug de
+    alguma referência, e se ele é o ÚNICO nesse caso — mais de um match devolve
+    `None` (→ `ConfirmacaoNecessaria`/site pulado), preservando a semântica de
+    "match único" de antes.
+
+    Estrita de propósito: `corresponde_a_alguma_referencia` (contenção de
+    prefixo + tolerância a grafia colada) já filtrou o pool em
+    `_buscar_variantes`; aqui, onde o veredito decide qual card baixar,
+    afrouxar para prefixo faria um card que só COMEÇA como o anime ser
+    escolhido sozinho. Com `referencias == [anime.titulo]` (sem canônico) o
+    conjunto tem um slug só e o teste vira a igualdade exata de antes."""
     if len(candidatos) == 1:
         return candidatos[0]
 
-    slug_anime = slugificar(titulo_anime)
+    slugs_referencia = {slugificar(referencia) for referencia in referencias}
     correspondentes = [
-        candidato for candidato in candidatos if slugificar(candidato.titulo_exibicao) == slug_anime
+        candidato
+        for candidato in candidatos
+        if slugificar(candidato.titulo_exibicao) in slugs_referencia
     ]
     return correspondentes[0] if len(correspondentes) == 1 else None
 
 
 def _desambiguar_por_versao(
-    titulo_anime: str, candidatos: list[ResultadoBusca]
+    referencias: list[str], candidatos: list[ResultadoBusca]
 ) -> ResultadoBusca | None:
-    """Mesma lógica de `_desambiguar`, mas compara o slug do candidato SEM o
-    marcador de versão (ex. "Nome Dublado" -> "Nome") contra o slug base do
-    anime — os candidatos aqui já vêm de uma partição por versão de um site
-    que diferencia, então título/slug do candidato costuma carregar o
-    marcador que o título do anime cadastrado não tem.
+    """Mesma lógica de `_desambiguar` (desambiguação ESTRITA por igualdade de
+    slug — ver a docstring de lá), mas compara o slug do candidato SEM o
+    marcador de versão (ex. "Nome Dublado" -> "Nome") contra o slug de cada
+    referência (todos os nomes do anime) — os candidatos aqui já vêm de uma
+    partição por versão de um site que diferencia, então título/slug do
+    candidato costuma carregar o marcador que o título do anime cadastrado não
+    tem.
 
     Remove o marcador do `identificador` (slug), não do `titulo_exibicao`: o
     título de exibição varia de formatação por site — AnimeFire envolve o
     marcador em parênteses ("Nome (Dublado)"), fora da fronteira de token
     `-`/espaço que `remover_marcador_de_versao` exige, então nunca seria
-    removido do título e o slug resultante nunca bateria com `slug_anime`. O
-    identificador já é slug (hifens), onde o marcador sempre está isolado por
-    `-`/início/fim — mesma convenção nos dois sites hoje."""
+    removido do título e o slug resultante nunca bateria com referência
+    nenhuma. O identificador já é slug (hifens), onde o marcador sempre está
+    isolado por `-`/início/fim — mesma convenção nos dois sites hoje."""
     if len(candidatos) == 1:
         return candidatos[0]
 
-    slug_anime = slugificar(titulo_anime)
+    slugs_referencia = {slugificar(referencia) for referencia in referencias}
     correspondentes = [
         candidato
         for candidato in candidatos
-        if slugificar(remover_marcador_de_versao(candidato.identificador)) == slug_anime
+        if slugificar(remover_marcador_de_versao(candidato.identificador)) in slugs_referencia
     ]
     return correspondentes[0] if len(correspondentes) == 1 else None
 
