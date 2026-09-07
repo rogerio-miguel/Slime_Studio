@@ -1241,7 +1241,8 @@ async def test_agendar_refreshs_do_catalogo_aquece_status_nao_lancado(
     assert sorted(chamadas) == [11, 22]
 
 
-# --- F14: aquecimento por TÍTULO dos animes sem `anilist_id` ---
+# --- F14: aquecimento por TÍTULO dos animes sem `anilist_id` (via `GET
+# /api/animes?aquecer=true` — a carona é opt-in, só a Galeria manda a flag) ---
 
 
 async def test_agendar_refreshs_do_catalogo_busca_por_titulo_tem_teto_proprio(
@@ -1321,7 +1322,7 @@ async def test_listar_animes_aquece_por_titulo_hit_corroborado_persiste_id_e_blo
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    resposta = await cliente.get("/api/animes")
+    resposta = await cliente.get("/api/animes?aquecer=true")
     assert resposta.status_code == 200
     await _drenar_refreshs_de_lancamento()
 
@@ -1363,7 +1364,7 @@ async def test_listar_animes_aquece_por_titulo_sem_corroboracao_nao_grava_anilis
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    resposta = await cliente.get("/api/animes")
+    resposta = await cliente.get("/api/animes?aquecer=true")
     assert resposta.status_code == 200
     await _drenar_refreshs_de_lancamento()
 
@@ -1404,7 +1405,7 @@ async def test_listar_animes_aquece_por_titulo_remove_marcador_de_versao_do_term
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    resposta = await cliente.get("/api/animes")
+    resposta = await cliente.get("/api/animes?aquecer=true")
     assert resposta.status_code == 200
     await _drenar_refreshs_de_lancamento()
 
@@ -1428,7 +1429,7 @@ async def test_listar_animes_aquece_por_titulo_cache_negativo_bloqueia_rebusca_n
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    primeira = await cliente.get("/api/animes")
+    primeira = await cliente.get("/api/animes?aquecer=true")
     assert primeira.status_code == 200
     await _drenar_refreshs_de_lancamento()
 
@@ -1437,7 +1438,7 @@ async def test_listar_animes_aquece_por_titulo_cache_negativo_bloqueia_rebusca_n
         assert anime.lancamento_atualizado_em is not None  # cache negativo carimbado
         assert anime.status_lancamento is None  # nada foi achado
 
-    segunda = await cliente.get("/api/animes")
+    segunda = await cliente.get("/api/animes?aquecer=true")
     assert segunda.status_code == 200
     await _drenar_refreshs_de_lancamento()
 
@@ -1462,7 +1463,7 @@ async def test_listar_animes_aquece_por_titulo_falha_de_provedor_nao_carimba(
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
     with caplog.at_level("WARNING"):
-        primeira = await cliente.get("/api/animes")
+        primeira = await cliente.get("/api/animes?aquecer=true")
         assert primeira.status_code == 200
         # `gather` sem `return_exceptions` — re-levantaria se a corotina propagasse
         await _drenar_refreshs_de_lancamento()
@@ -1472,7 +1473,7 @@ async def test_listar_animes_aquece_por_titulo_falha_de_provedor_nao_carimba(
         anime = await sessao.get(Anime, anime_id)
         assert anime.lancamento_atualizado_em is None  # falha não carimba
 
-    segunda = await cliente.get("/api/animes")
+    segunda = await cliente.get("/api/animes?aquecer=true")
     assert segunda.status_code == 200
     await _drenar_refreshs_de_lancamento()
     assert chamadas == ["Provedor Fora Do Ar", "Provedor Fora Do Ar"]  # tenta de novo
