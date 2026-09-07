@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -310,6 +311,11 @@ async def _proximo_com_episodio(
         episodios_remotos = await listar_episodios_em(
             sessionmaker, proxima_fonte.dominio, proxima_fonte.identificador
         )
+        # A fonte numera o anime inteiro de forma contínua entre temporadas;
+        # `numero_episodio` é `Episodio.numero` (por temporada). Recorta antes
+        # de casar — mesmo recorte de `api/servicos/fontes.py` e `jobs.py`;
+        # passthrough quando `numero_temporada is None`.
+        episodios_remotos = recortar_para_temporada(episodios_remotos, anime.numero_temporada)
         correspondentes = filtrar_por_numero_e_versao(episodios_remotos, numero_episodio, versao)
         if len(correspondentes) > 1:
             # Mais de um rótulo mapeia pro mesmo `numero` (ex. "7"/"07" —
@@ -366,3 +372,57 @@ def filtrar_por_versao(
     if not rotulados:
         return episodios
     return [ep for ep in rotulados if ep.versao == versao]
+
+
+def recortar_para_temporada(
+    episodios: list[EpisodioRemoto], numero_temporada: int | None
+) -> list[EpisodioRemoto]:
+    """Recorta uma listagem contínua da fonte para uma única temporada e a
+    renumera para casar com `Episodio.numero` (por temporada, reiniciando em 1).
+
+    A fonte (ex. AnimeFire) trata o anime inteiro como uma entrada e numera os
+    episódios de forma absoluta e contínua entre temporadas; cada temporada é
+    uma linha `Anime` separada no nosso banco. Seis casos, nesta ordem:
+
+    1. `numero_temporada is None` (o anime é temporada única no nosso banco) →
+       listagem devolvida intacta.
+    2. Nenhum episódio carrega `temporada` (fonte sem esse conceito —
+       `animesdrive`/`meusanimes`) → listagem devolvida intacta.
+    3. Há episódios rotulados com a temporada pedida → renumera só eles (caso 6).
+    4. Nenhum episódio da temporada pedida e a fonte só tem uma temporada (o
+       rótulo de season da fonte diverge do nosso) → listagem devolvida intacta.
+    5. Nenhum episódio da temporada pedida e a fonte tem várias → `warning` com
+       as temporadas disponíveis e lista vazia (esta temporada não existe nesta
+       fonte).
+    6. Renumera o recorte: onde `numero_na_temporada` existe e difere de
+       `numero`, `numero` passa a ser o valor por temporada e o contínuo
+       original vai para `numero_absoluto`; os demais passam intactos. Roda
+       mesmo quando o recorte não reduziu a lista — cobre a entrada que é uma
+       temporada só mas numera a partir de um valor maior que 1.
+    """
+    if numero_temporada is None:
+        return episodios
+
+    temporadas = {ep.temporada for ep in episodios if ep.temporada is not None}
+    if not temporadas:
+        return episodios
+
+    alvo = [ep for ep in episodios if ep.temporada == numero_temporada]
+    if not alvo:
+        if len(temporadas) == 1:
+            return episodios
+        logger.warning(
+            "recorte de temporada: temporada %d pedida ausente na fonte "
+            "(disponíveis: %s, %d episódios no total) — devolvendo lista vazia",
+            numero_temporada,
+            sorted(temporadas),
+            len(episodios),
+        )
+        return []
+
+    return [
+        replace(ep, numero=ep.numero_na_temporada, numero_absoluto=ep.numero)
+        if ep.numero_na_temporada is not None and ep.numero_na_temporada != ep.numero
+        else ep
+        for ep in alvo
+    ]

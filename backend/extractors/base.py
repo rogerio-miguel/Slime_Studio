@@ -29,11 +29,25 @@ class ResultadoBusca:
 
 @dataclass(frozen=True, slots=True)
 class EpisodioRemoto:
+    """Um episódio como a fonte o expõe, antes e depois do recorte por temporada.
+
+    Invariantes de numeração:
+
+    - **Antes do recorte** (`extractors/servico.py::recortar_para_temporada`):
+      `numero`/`rotulo` são sempre a numeração contínua da fonte — absoluta
+      entre temporadas, quando a fonte tem esse conceito — e
+      `numero_absoluto is None`.
+    - **Depois do recorte**: `numero` casa com `Episodio.numero` (por temporada,
+      reiniciando em 1) e a numeração contínua original passa a morar em
+      `numero_absoluto`.
+    """
+
     # Texto/label cru do episódio como aparece na fonte (ex.: "7", "07",
     # "Especial") — chave de dedup em cada adapter (`animefire.py`,
     # `animesdrive.py`): rótulos com zero à esquerda ("07") não são
     # necessariamente o mesmo episódio que "7", então a chave nunca é
-    # `int(numero)` (colapsaria os dois indevidamente).
+    # `int(numero)` (colapsaria os dois indevidamente). Nunca reescrito pelo
+    # recorte — permanece o label cru da fonte por contrato.
     rotulo: str
     # `None` quando `rotulo` não é puramente numérico (ex. "Especial",
     # "OVA 2") — episódio ainda aparece normalmente na listagem (decisão do
@@ -48,6 +62,18 @@ class EpisodioRemoto:
     # thumb pra esse episódio). String crua — nunca baixada pra disco; a fatia de
     # API serve via proxy `/api/thumb`.
     thumb_url: str | None = None
+    # Número da temporada tal como a fonte rotula (`season`) — preenchido pelo
+    # adapter. `None` quando a fonte não tem conceito de temporada
+    # (`animesdrive`, `meusanimes`), que instanciam sem os três campos abaixo.
+    temporada: int | None = None
+    # Número do episódio dentro da `temporada` (reinicia em 1 a cada temporada)
+    # — preenchido pelo adapter. `None` sempre que `temporada` for `None`.
+    numero_na_temporada: int | None = None
+    # Numeração contínua original da fonte, preservada aqui quando o recorte
+    # (`extractors/servico.py::recortar_para_temporada`) reescreve `numero` para
+    # o valor por temporada. `None` antes do recorte — nunca preenchido pelo
+    # adapter.
+    numero_absoluto: int | None = None
 
 
 class FormatoDeMidia(StrEnum):

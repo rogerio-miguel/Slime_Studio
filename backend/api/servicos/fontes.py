@@ -39,7 +39,7 @@ from core.enums import VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from extractors.base import EpisodioRemoto
 from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
-from extractors.servico import filtrar_por_versao, listar_episodios_em
+from extractors.servico import filtrar_por_versao, listar_episodios_em, recortar_para_temporada
 from integrations import servico as servico_metadados
 from integrations.base import TitulosDeAnime
 from models.anime import Anime
@@ -134,6 +134,14 @@ async def listar_episodios_remotos(
             permite_retentativa=True,
         ) from excecao
 
+    # A fonte (ex. AnimeFire) numera o anime inteiro de forma contínua entre
+    # temporadas; cada temporada é uma linha `Anime` própria. Recorta a
+    # listagem para `anime.numero_temporada` e renumera `numero` para o valor
+    # por temporada (o contínuo original vai pra `numero_absoluto`). Primeiro
+    # passo da cadeia — `filtrar_por_versao` e o overlay de still abaixo já
+    # operam sobre o recorte; passthrough quando `numero_temporada is None`.
+    episodios = recortar_para_temporada(episodios, anime.numero_temporada)
+
     # Uma página pode cobrir as duas versões (ex. AnimesDrive quando legendado
     # e dublado compartilham a mesma listagem) — sem este filtro, a grade
     # remota misturaria episódios da versão errada. Mesma proteção que o
@@ -174,8 +182,10 @@ async def _sobrepor_stills_de_episodios(
 ) -> list[EpisodioRemoto]:
     """Overlay best-effort de thumb TMDB (Fatia 5, `PLANO_ARTE_TMDB.md`) sobre
     `EpisodioRemoto.thumb_url`: tenta a still do TMDB pelo número absoluto de
-    cada episódio e preserva o `thumb_url` que o extractor já trouxe quando o
-    TMDB não acha (id não resolvido, temporada fora do range, still nulo) ou
+    cada episódio (`numero_absoluto` quando o recorte de temporada já
+    renumerou `numero`, senão o próprio `numero`) e preserva o `thumb_url` que
+    o extractor já trouxe quando o TMDB não acha (id não resolvido, temporada
+    fora do range, still nulo) ou
     quando o lote não termina a tempo. Episódio sem `numero` (rótulo não
     numérico, ex. "Especial") não tem como mapear pro TMDB — mantém o
     `thumb_url` original sem tentar.
@@ -194,10 +204,18 @@ async def _sobrepor_stills_de_episodios(
 
     async def _buscar_um(indice: int) -> tuple[int, str | None]:
         episodio = episodios[indice]
+        # `buscar_still_de_episodio` espera o número absoluto sobre a série
+        # inteira (ela resolve season/ep via `TabelaDeTemporadas`). Após o
+        # recorte de temporada `episodio.numero` é por-temporada e o absoluto
+        # fica em `numero_absoluto`; sem recorte, `numero_absoluto is None` e
+        # `numero` já é o absoluto — comportamento idêntico ao anterior.
+        numero_absoluto = (
+            episodio.numero_absoluto if episodio.numero_absoluto is not None else episodio.numero
+        )
         async with semaforo:
             try:
                 still = await servico_metadados.buscar_still_de_episodio(
-                    anime.titulo, anime.ano, episodio.numero
+                    anime.titulo, anime.ano, numero_absoluto
                 )
             except Exception as excecao:
                 # Captura ampla e intencional (mesmo espírito de
