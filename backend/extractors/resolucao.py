@@ -14,7 +14,7 @@ from core.enums import VersaoDeFonte, VersaoEpisodio
 from core.texto import slugificar
 from extractors import circuit_breaker, resiliencia
 from extractors.base import ExtratorDeSite, ResultadoBusca
-from extractors.busca.correspondencia import corresponde_ao_titulo
+from extractors.busca.correspondencia import corresponde_a_alguma_referencia
 from extractors.busca.termos import variantes_de_busca
 from extractors.registro import EXTRATORES
 from extractors.versao import remover_marcador_de_versao
@@ -197,7 +197,8 @@ async def _buscar_variantes(
 ) -> list[ResultadoBusca]:
     """Tenta cada variante de `variantes_de_busca(titulo)`, na ordem, e para na
     primeira que devolver candidatos que correspondem ao título
-    (`extractors/busca/correspondencia.py::corresponde_ao_titulo`), não qualquer candidato — o
+    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`, com
+    `titulo` como referência única), não qualquer candidato — o
     bloco de recall de `variantes_de_busca` sonda por prefixo curto (1ª
     palavra), então uma variante devolve cards de outros animes que só
     compartilham o prefixo; sem o filtro, `_desambiguar`/`_desambiguar_por_versao`
@@ -220,7 +221,9 @@ async def _buscar_variantes(
             lambda cliente, ex=extrator, v=variante: ex.buscar(cliente, v),
             nome_operacao="buscar",
         )
-        validos = [c for c in candidatos if corresponde_ao_titulo(titulo, c.titulo_exibicao)]
+        validos = [
+            c for c in candidatos if corresponde_a_alguma_referencia([titulo], c.titulo_exibicao)
+        ]
         if validos:
             return validos
     return []

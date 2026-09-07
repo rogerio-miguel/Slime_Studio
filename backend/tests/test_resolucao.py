@@ -485,8 +485,8 @@ async def test_variante_curta_devolve_card_de_outro_anime_nao_resolve_o_site(
     pela 1ª palavra): buscando "Naruto Shippuden", o site só devolve o card
     "Naruto" — outro anime que compartilha o prefixo. `_desambiguar` aceitaria
     esse único candidato pelo atalho de item único; `_buscar_variantes` filtra
-    por `corresponde_ao_titulo` antes (card de 1 palavra não valida referência
-    de 2+ palavras) e o site não vira fonte."""
+    por `corresponde_a_alguma_referencia` antes (card de 1 palavra não valida
+    referência de 2+ palavras) e o site não vira fonte."""
     extrator = _ExtratorFalso(
         "animefire.io",
         candidatos=[
@@ -714,8 +714,8 @@ async def test_site_que_diferencia_confirmacao_necessaria_restrita_a_particao_pe
     DUBLADO tem um único candidato — a `ConfirmacaoNecessaria` só deve trazer
     os candidatos LEGENDADO, sem misturar o DUBLADO.
 
-    Os 3 candidatos correspondem ao título por `corresponde_ao_titulo` (o
-    filtro de `_buscar_variantes` não pré-resolve a ambiguidade), mas nenhum
+    Os 3 candidatos correspondem ao título por `corresponde_a_alguma_referencia`
+    (o filtro de `_buscar_variantes` não pré-resolve a ambiguidade), mas nenhum
     identificador bate exato com o slug do anime — `_desambiguar_por_versao`
     devolve `None` dentro da partição pedida."""
     candidatos = [

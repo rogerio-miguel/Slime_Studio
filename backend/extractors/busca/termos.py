@@ -14,6 +14,12 @@ dois blocos:
   divergem entre o título canônico e o slug do site (confirmado ao vivo:
   "dogul" acha o card "Dogulwang", "dogul-wang" não).
 
+Todo candidato menos a posição 0 (que é `titulo` exato) é aparado por
+`_aparar_pontuacao`: esses mesmos sites não indexam pontuação na borda de um
+token, então o ponto final ou o ":" de subtítulo herdado do título no fim de
+um corte/prefixo só derruba o recall (confirmado ao vivo:
+"?s=...Chikaimashita.:..." devolve 0, o card existe).
+
 A lista NÃO é monotônica em tamanho: o bloco de precisão vem inteiro antes do
 de recall e costuma ser mais longo que o começo dele ("Nome 2nd Season" antes
 de "Nome"). É intencional — a ordem é "mais provável de casar" primeiro, não
@@ -75,6 +81,12 @@ def variantes_de_busca(titulo: str) -> list[str]:
     2. Recall — `_prefixos_crescentes` sobre o candidato já mais reduzido do
        bloco 1: a 1ª palavra, as 2 primeiras, as 3 primeiras.
 
+    A posição 0 é sempre `titulo` exato (sonda de texto completo — alguns
+    sites a querem crua); todo candidato DERIVADO (os cortes do bloco 1 e os
+    prefixos do bloco 2) passa por `_aparar_pontuacao`, que tira a pontuação
+    de borda herdada do título (ponto final, ":" de subtítulo) — os sites de
+    busca não a indexam e ela só derruba o recall.
+
     A lista não é monotônica em tamanho — o bloco 1 pode devolver candidatos
     mais longos que os primeiros do bloco 2. Não reordenar por tamanho: a
     ordem é por probabilidade de casar, não por comprimento.
@@ -83,7 +95,7 @@ def variantes_de_busca(titulo: str) -> list[str]:
     usa a grafia com espaço" NÃO é coberta (separar palavra composta exigiria
     dicionário). A inversa (local com espaço → site colado) é: cai na busca
     pela 1ª palavra + validação por chave normalizada em
-    `extractors/busca/correspondencia.py::corresponde_ao_titulo`.
+    `extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`.
     """
     titulo = titulo.strip()
     candidatos = [titulo]
@@ -106,7 +118,10 @@ def variantes_de_busca(titulo: str) -> list[str]:
     # Bloco de recall: prefixos crescentes sobre o candidato já mais reduzido.
     candidatos.extend(_prefixos_crescentes(candidatos[-1]))
 
-    return _deduplicar_por_slug(candidatos)
+    # Posição 0 crua (contrato); todo derivado aparado da pontuação de borda
+    # que herdou do título e que os sites de busca não indexam.
+    aparados = [candidatos[0], *(_aparar_pontuacao(c) for c in candidatos[1:])]
+    return _deduplicar_por_slug(aparados)
 
 
 # Slug com menos caracteres que isto como prefixo (ex. "Ao", "Re", "K" — 1ª
@@ -175,6 +190,25 @@ def _remover_marcadores_temporada_parte(texto: str) -> str:
         anterior = atual
         atual = _REGEX_MARCADOR_TEMPORADA_PARTE.sub("", atual).strip()
     return atual
+
+
+# Pontuação que os sites de busca não indexam quando aparece na BORDA de um
+# token: some do slug do AnimeFire e não conta como termo no WordPress do
+# AnimesDrive. Aparada só do início/fim de cada palavra dos candidatos
+# derivados, NUNCA do miolo — ":" em "Re:Zero", "/" em "Fate/stay" e "-" em
+# "Keishou-sen" são significativos (mesmo cuidado do `_REGEX_SEPARADOR_SUBTITULO`,
+# que exige espaço para tratar ":"/"-" como separador). Hífen fica de fora da
+# lista de propósito: encurtar "Keishou-sen" não ajuda nenhum site.
+_PONTUACAO_DE_BORDA = ".,;:!?~…\"'“”‘’«»"
+
+
+def _aparar_pontuacao(texto: str) -> str:
+    """Tira `_PONTUACAO_DE_BORDA` do início e do fim de cada palavra de `texto`,
+    preservando a pontuação medial. Palavra que fica vazia (era só pontuação)
+    sai; se não sobrar nada, devolve `texto.strip()` — a lista de
+    `variantes_de_busca` nunca pode conter termo vazio."""
+    palavras = [palavra.strip(_PONTUACAO_DE_BORDA) for palavra in texto.split()]
+    return " ".join(palavra for palavra in palavras if palavra) or texto.strip()
 
 
 def _deduplicar_por_slug(candidatos: list[str]) -> list[str]:

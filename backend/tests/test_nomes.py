@@ -1,11 +1,15 @@
 """Testes de `extractors/busca/termos.py` e `extractors/busca/correspondencia.py`
 — domínio puro, sem rede. `PLANO_PADRONIZACAO_FONTES.md` D-A1/D-A2/D-A3/D-A6
-(`variantes_de_busca`) e Fatia 1 do plano de correspondência de card
-(`corresponde_ao_titulo`)."""
+(`variantes_de_busca`) e plano de correspondência de card
+(`corresponde_a_alguma_referencia`, validação contra vários nomes do anime)."""
 
 import pytest
 
-from extractors.busca.correspondencia import corresponde_ao_titulo, proximidade_do_titulo
+from core.texto import slugificar
+from extractors.busca.correspondencia import (
+    corresponde_a_alguma_referencia,
+    proximidade_a_referencias,
+)
 from extractors.busca.termos import variantes_de_busca
 
 
@@ -165,9 +169,56 @@ def test_lista_completa_interacao_marcador_de_temporada_com_recall():
 def test_grafia_colada_no_site_vira_busca_pela_primeira_palavra():
     """Título local com espaço ("Dogul Wang") e site que grafa colado
     ("Dogulwang"): a busca pela 1ª palavra ("Dogul", slug de 5 chars) é o que
-    faz o card aparecer — `corresponde_ao_titulo` valida depois por chave
-    normalizada."""
+    faz o card aparecer — `corresponde_a_alguma_referencia` valida depois por
+    chave normalizada."""
     assert variantes_de_busca("Dogul Wang") == ["Dogul Wang", "Dogul"]
+
+
+def test_pontuacao_de_borda_nao_vaza_para_cortes_e_prefixos():
+    """Romaji longo cujo `_REGEX_SEPARADOR_SUBTITULO` corta em ".: " deixando o
+    ponto final colado no fim do principal — antes, o corte e os prefixos
+    herdavam o ponto e a querystring do site ia com pontuação literal
+    (confirmado ao vivo: "?s=...Chikaimashita.:..." devolve 0, o card existe).
+    A posição 0 continua crua (contrato); os derivados saem aparados, e um
+    deles slugifica para um prefixo do slug real do card."""
+    titulo = (
+        "Buchigire Reijou wa Houfuku wo Chikaimashita.: "
+        "Madousho no Chikara de Sokoku wo Tataki Tsubushimasu"
+    )
+    variantes = variantes_de_busca(titulo)
+
+    assert variantes[0] == titulo  # posição 0 exata
+    assert all("." not in v and ":" not in v for v in variantes[1:])
+    assert "Buchigire Reijou wa Houfuku wo Chikaimashita" in variantes
+
+    slug_do_card = (
+        "buchigire-reijou-wa-houfuku-wo-chikaimashita-madousho-no-chikara-"
+        "de-sokoku-wo-tatakitsubushimasu"
+    )
+    # o título cru slugificado NÃO casa (contração "tatakitsubushimasu"), mas
+    # algum termo aparado é um prefixo limpo do slug do card
+    assert not slug_do_card.startswith(slugificar(titulo))
+    assert any(slugificar(v) and slug_do_card.startswith(slugificar(v)) for v in variantes)
+
+
+def test_dois_pontos_medial_sobrevive_ao_aparo_de_pontuacao():
+    """Regressão: ":" colado ("Re:Zero") é medial, não pontuação de borda —
+    `_aparar_pontuacao` não o remove nem deixa "Re" solto como 1º prefixo
+    (mesmo risco de prefix-match do `_REGEX_SEPARADOR_SUBTITULO`)."""
+    variantes = variantes_de_busca("Re:Zero kara Hajimeru Isekai Seikatsu")
+
+    assert variantes[0] == "Re:Zero kara Hajimeru Isekai Seikatsu"
+    assert "Re:Zero" in variantes
+    assert "Re" not in variantes
+
+
+def test_hifen_interno_sobrevive_ao_aparo_de_pontuacao():
+    """Regressão: hífen interno de palavra composta ("Keishou-sen") não está em
+    `_PONTUACAO_DE_BORDA` — sobrevive ao aparo na posição 0 e no prefixo."""
+    variantes = variantes_de_busca("Keishou-sen no Monshou")
+
+    assert variantes[0] == "Keishou-sen no Monshou"
+    assert "Keishou-sen" in variantes
 
 
 _REFERENCIA_COM_SUBTITULO = (
@@ -186,7 +237,7 @@ _REFERENCIA_COM_SUBTITULO = (
         ("One Piece", "One Piece (Dublado)"),
     ],
 )
-def test_corresponde_ao_titulo_aceita_card_truncado_ou_com_marcador_de_versao(
+def test_corresponde_a_alguma_ref_aceita_card_truncado_ou_com_marcador_de_versao(
     referencia, candidato
 ):
     """Card de site de busca costuma vir truncado antes do subtítulo, com
@@ -194,48 +245,69 @@ def test_corresponde_ao_titulo_aceita_card_truncado_ou_com_marcador_de_versao(
     wa"), com macron em vez de vogal dobrada ("Sūgū" vs "Suuguu"), ou com
     marcador de versão colado ("(Dublado)") — nenhum desses casos pode
     reprovar um card que é genuinamente o mesmo anime."""
-    assert corresponde_ao_titulo(referencia, candidato) is True
+    assert corresponde_a_alguma_referencia([referencia], candidato) is True
 
 
-def test_corresponde_ao_titulo_vale_nos_dois_sentidos_de_prefixo():
+def test_corresponde_a_alguma_ref_vale_nos_dois_sentidos_de_prefixo():
     """A relação é `ref.startswith(cand) or cand.startswith(ref)` — vale
     tanto quando o candidato é o prefixo da referência (card truncado)
     quanto quando a referência é o prefixo do candidato (referência salva
     truncada, card do site com o título completo)."""
     referencia = "One Piece"
     candidato = "One Piece (Dublado)"
-    assert corresponde_ao_titulo(referencia, candidato) is True
-    assert corresponde_ao_titulo(candidato, referencia) is True
+    assert corresponde_a_alguma_referencia([referencia], candidato) is True
+    assert corresponde_a_alguma_referencia([candidato], referencia) is True
 
 
-def test_corresponde_ao_titulo_rejeita_card_que_so_compartilha_prefixo_curto():
+def test_corresponde_a_alguma_ref_rejeita_card_que_so_compartilha_prefixo_curto():
     """"Futsutsuka na" sozinho é um prefixo comum demais — um card de anime
     genuinamente diferente que só compartilha esse começo não pode passar
     como se fosse o mesmo título (falso-positivo de busca por prefixo, ver
     `_prefixos_crescentes`)."""
     candidato_de_outro_anime = "Futsutsuka na Akademi de Mahou wo Narau Ken"
-    assert corresponde_ao_titulo(_REFERENCIA_COM_SUBTITULO, candidato_de_outro_anime) is False
+    assert (
+        corresponde_a_alguma_referencia([_REFERENCIA_COM_SUBTITULO], candidato_de_outro_anime)
+        is False
+    )
 
 
-def test_corresponde_ao_titulo_sem_base_de_comparacao_na_referencia_degrada_pra_aceitar():
+def test_corresponde_a_alguma_ref_sem_base_de_comparacao_na_referencia_degrada_pra_aceitar():
     """Título só com caracteres que `slugificar` não preserva (ex. kanji sem
     romanização) não dá chave nenhuma pra comparar — sem base pra rejeitar,
     degrada pra aceitar."""
-    assert corresponde_ao_titulo("本", "Qualquer Card Candidato") is True
+    assert corresponde_a_alguma_referencia(["本"], "Qualquer Card Candidato") is True
 
 
-def test_corresponde_ao_titulo_candidato_sem_base_mas_referencia_valida_rejeita():
+def test_corresponde_a_alguma_ref_candidato_sem_base_mas_referencia_valida_rejeita():
     """Referência tem chave normal, mas o candidato não tem nenhuma — não há
     como validar a correspondência, e aqui a falta de base é do lado que
     está sendo checado, não do lado de referência: rejeita."""
-    assert corresponde_ao_titulo("One Piece", "本") is False
+    assert corresponde_a_alguma_referencia(["One Piece"], "本") is False
 
 
-def test_corresponde_ao_titulo_strings_vazias_ou_so_espaco_degradam_pra_aceitar():
-    """Sem chave dos dois lados — a checagem de `referencia` vem primeiro e
+def test_corresponde_a_alguma_ref_strings_vazias_ou_so_espaco_degradam_pra_aceitar():
+    """Sem chave dos dois lados — a checagem de referência vem primeiro e
     já não tem base pra rejeitar."""
-    assert corresponde_ao_titulo("", "") is True
-    assert corresponde_ao_titulo("   ", "   ") is True
+    assert corresponde_a_alguma_referencia([""], "") is True
+    assert corresponde_a_alguma_referencia(["   "], "   ") is True
+
+
+def test_corresponde_a_alguma_ref_lista_vazia_degrada_pra_aceitar():
+    """Nenhuma referência pra validar contra — mesmo veredito de "referência
+    sem chave": sem base pra rejeitar, aceita (CLAUDE.md §4, decisão
+    explícita). Um chamador que monta a lista de nomes do provedor pode acabar
+    com ela vazia (anime sem nenhum título alternativo)."""
+    assert corresponde_a_alguma_referencia([], "Qualquer Card Candidato") is True
+
+
+def test_corresponde_a_alguma_ref_basta_uma_referencia_da_lista_bater():
+    """O card vem grafado no título inglês do provedor; a referência em
+    português que o usuário digitou não bate por chave nenhuma, mas o título
+    inglês (também na lista) bate — basta uma correspondência pra validar o
+    card como o mesmo anime. Se nenhuma bate, segue rejeitando."""
+    referencias = ["Rei das Cavernas: A Ascensao", "Tomb Raider King"]
+    assert corresponde_a_alguma_referencia(referencias, "Tomb Raider King") is True
+    assert corresponde_a_alguma_referencia(referencias, "Solo Leveling") is False
 
 
 @pytest.mark.parametrize(
@@ -246,16 +318,26 @@ def test_corresponde_ao_titulo_strings_vazias_ou_so_espaco_degradam_pra_aceitar(
         ("Naruto Shippuden", "Naruto"),
     ],
 )
-def test_corresponde_ao_titulo_rejeita_card_de_uma_palavra_para_referencia_composta(
+def test_corresponde_a_alguma_ref_rejeita_card_de_uma_palavra_vs_ref_composta(
     referencia, candidato
 ):
     """A escada de prefixos crescentes (busca começando pela 1ª palavra) faz os
     sites devolverem muitos cards de uma palavra — "One" numa busca por "One
     Piece" — e a contenção de prefixo sozinha os aceitaria ("one" é prefixo de
     "onepiece"). Um card de UMA palavra é sinal fraco demais pra auto-aceitar
-    contra uma `referencia` de 2+ palavras quando o mesmo veredito decide qual
+    contra uma referência de 2+ palavras quando o mesmo veredito decide qual
     episódio baixar. Contagem no texto original, antes da normalização."""
-    assert corresponde_ao_titulo(referencia, candidato) is False
+    assert corresponde_a_alguma_referencia([referencia], candidato) is False
+
+
+def test_corresponde_a_alguma_ref_guard_de_uma_palavra_vale_por_referencia():
+    """O guard de card de uma palavra vs. referência de 2+ palavras é aplicado
+    por referência: se TODA referência composta reprovaria o card, ele
+    continua rejeitado — nenhuma "salva" a outra. Mas uma referência de uma
+    palavra na lista valida o card de uma palavra."""
+    so_compostas = ["Naruto Shippuden", "Naruto: O Filme"]
+    assert corresponde_a_alguma_referencia(so_compostas, "Naruto") is False
+    assert corresponde_a_alguma_referencia([*so_compostas, "Naruto"], "Naruto") is True
 
 
 @pytest.mark.parametrize(
@@ -271,47 +353,70 @@ def test_corresponde_ao_titulo_rejeita_card_de_uma_palavra_para_referencia_compo
         ("Bleach", "Bleach"),
     ],
 )
-def test_corresponde_ao_titulo_guard_de_uma_palavra_nao_endurece_casos_legitimos(
+def test_corresponde_a_alguma_ref_guard_de_uma_palavra_nao_endurece_casos_legitimos(
     referencia, candidato
 ):
-    assert corresponde_ao_titulo(referencia, candidato) is True
+    assert corresponde_a_alguma_referencia([referencia], candidato) is True
 
 
 @pytest.mark.parametrize(
     ("referencia", "candidato", "esperado_primeiro_criterio"),
     [
-        # chave normalizada idêntica -> 0 (o `_deduplicar_por_slug` colapsa
-        # grafia colada/separada na mesma chave "dogulwang")
+        # chave normalizada idêntica -> 0 (grafia colada/separada colapsa na
+        # mesma chave "dogulwang")
         ("Naruto", "Naruto", 0),
         ("DogulWang", "Dogul Wang", 0),
         # só compartilha prefixo -> 1, sempre depois de qualquer match idêntico
         ("Naruto", "Naruto Shippuden", 1),
         ("One Piece", "One Piece: A Grande Era Pirata", 1),
-        # `referencia` sem chave (vazia/só espaço) nunca conta como idêntica —
+        # referência sem chave (vazia/só espaço) nunca conta como idêntica —
         # o `ref and` impede que candidatos de chave vazia empatem em 0
         ("", "", 1),
         ("   ", "Qualquer Card", 1),
     ],
 )
-def test_proximidade_do_titulo_pontua_identico_antes_de_prefixo(
+def test_proximidade_a_referencias_pontua_identico_antes_de_prefixo(
     referencia, candidato, esperado_primeiro_criterio
 ):
     """1º critério da tupla: 0 quando a chave normalizada é idêntica à da
-    `referencia` (match exato), 1 quando só há contenção de prefixo. Chave
+    referência (match exato), 1 quando só há contenção de prefixo. Chave
     idêntica ainda zera o 2º critério (mesma chave, diferença de comprimento 0)."""
-    proximidade = proximidade_do_titulo(referencia, candidato)
+    proximidade = proximidade_a_referencias([referencia], candidato)
     assert proximidade[0] == esperado_primeiro_criterio
     if esperado_primeiro_criterio == 0:
         assert proximidade == (0, 0)
 
 
-def test_proximidade_do_titulo_ordena_do_match_exato_ao_mais_distante():
+def test_proximidade_a_referencias_ordena_do_match_exato_ao_mais_distante():
     """`sorted` com a chave: match exato primeiro (`(0, 0)`), depois os que só
     compartilham prefixo por menor diferença de comprimento — o card truncado
     mais perto da referência antes da continuação bem mais longa."""
     candidatos = ["Naruto Shippuden Ultimate Ninja Storm", "Naruto Shippuden", "Naruto"]
-    assert sorted(candidatos, key=lambda t: proximidade_do_titulo("Naruto", t)) == [
+    assert sorted(candidatos, key=lambda t: proximidade_a_referencias(["Naruto"], t)) == [
         "Naruto",
         "Naruto Shippuden",
         "Naruto Shippuden Ultimate Ninja Storm",
     ]
+
+
+def test_proximidade_a_referencias_escolhe_a_melhor_referencia():
+    """Com várias referências, o candidato pontua pela mais parecida — a menor
+    (mais próxima) tupla entre todas. O card bate exatamente uma referência e
+    só compartilha prefixo com a outra: vale o `(0, 0)` da exata."""
+    referencias = ["Naruto Shippuden", "Naruto"]
+    assert proximidade_a_referencias(referencias, "Naruto") == (0, 0)
+    # na ordenação, o card que casa exato uma referência vem antes do que só
+    # compartilha prefixo com todas
+    candidatos = ["Naruto Shippuden Ultimate Ninja Storm", "Naruto"]
+    assert sorted(candidatos, key=lambda t: proximidade_a_referencias(referencias, t)) == [
+        "Naruto",
+        "Naruto Shippuden Ultimate Ninja Storm",
+    ]
+
+
+def test_proximidade_a_referencias_lista_vazia_nunca_pontua_como_match_exato():
+    """Sem referência nenhuma o candidato foi aceito por
+    `corresponde_a_alguma_referencia` (degrada pra aceitar), mas não pode
+    fingir match exato: 1º critério sempre 1, fica atrás de qualquer match
+    real na ordenação."""
+    assert proximidade_a_referencias([], "Qualquer Card")[0] == 1
