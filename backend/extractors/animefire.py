@@ -195,8 +195,12 @@ class AnimeFireProvider(ExtratorDeSite):
                 dominio=self.dominio,
             )
 
+        temporadas_distintas = {ep.temporada for ep in episodios if ep.temporada is not None}
         logger.info(
-            "AnimeFire: %d episódio(s) encontrados para %r", len(episodios), identificador
+            "AnimeFire: %d episódio(s) em %d temporada(s) encontrados para %r",
+            len(episodios),
+            len(temporadas_distintas),
+            identificador,
         )
 
         # AnimeFire já lista os episódios do mais antigo pro mais novo na
@@ -292,6 +296,8 @@ class AnimeFireProvider(ExtratorDeSite):
                 url=self._url_sintetica_de_episodio(identificador, id_episodio, versao),
                 versao=versao,
                 thumb_url=thumb_url,
+                temporada=numero_da_temporada,
+                numero_na_temporada=numero_na_temporada,
             )
             for versao in versoes
         ]
