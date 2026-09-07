@@ -106,6 +106,13 @@ async def criar_job_site(
     `EpisodioJaExiste`.
     """
     try:
+        # `titulos_alternativos` fica no default (`None`): a captura NÃO resolve
+        # o título canônico. `resolver_fonte_do_anime` consulta as `FonteAnime`
+        # já mapeadas primeiro e os helpers `_resolver_no_site_*` persistem a
+        # fonte resolvida — no fluxo normal a página do anime
+        # (`api/servicos/fontes.py::listar_episodios_remotos`, que resolve o
+        # canônico) roda antes e grava o site, então a captura cai em
+        # `_resolver_em_mapeadas` e reusa o mapeamento.
         resultado = await asyncio.wait_for(
             resolver_fonte_do_anime(sessionmaker, anime, versao), timeout=_TETO_CRIACAO_SITE_S
         )

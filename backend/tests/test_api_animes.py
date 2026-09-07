@@ -37,6 +37,22 @@ async def _criar_anime(sessionmaker: _SessionMaker, titulo: str) -> int:
         return anime.id
 
 
+@pytest.fixture(autouse=True)
+def _resolucao_de_titulo_canonico_sem_rede(monkeypatch: pytest.MonkeyPatch):
+    """`api/servicos/fontes.py::listar_episodios_remotos` resolve os nomes
+    canônicos do anime (`integrations.servico.buscar_titulos`, só AniList) ANTES
+    da resolução de fonte e SEMPRE — sem stub, os testes de `episodios-remotos`
+    bateriam em AniList de verdade. Devolve `None` ("provedor respondeu, não
+    achou"), o que degrada `_referencias_de_anime` para só o título cadastrado —
+    o comportamento que estes testes já assumem. Mesmo padrão de
+    `tests/test_api_buscar_fontes.py`."""
+
+    async def _sem_titulos(titulo):
+        return None
+
+    monkeypatch.setattr("integrations.servico.buscar_titulos", _sem_titulos)
+
+
 async def test_listar_episodios_remotos_caminho_feliz(
     cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
@@ -44,7 +60,7 @@ async def test_listar_episodios_remotos_caminho_feliz(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Remoto")
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.io",
             identificador="42",
@@ -86,7 +102,7 @@ async def test_listar_episodios_remotos_fonte_ambigua_409(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Remoto Ambíguo")
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return ConfirmacaoNecessaria(
             dominio="animefire.io",
             candidatos=[
@@ -120,7 +136,7 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ori
     tenta — mantém o original sem chamar o overlay."""
     anime_id = await _criar_anime(sessionmaker_api, "Anime Com Still")
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.io",
             identificador="42",
