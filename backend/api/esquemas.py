@@ -126,6 +126,15 @@ class AnimeSaida(BaseModel):
     proximo_ep_em: datetime | None = None
     estreia_em: date | None = None
     tem_episodios: bool = False
+    # Agrupamento por franquia no catálogo (`paginas/Galeria.jsx`, Fase 5) — 1:1
+    # com as colunas homônimas de `Anime` via `model_validate`, mesmo default
+    # nullable do resto (animes antigos têm as colunas NULL). `serie_ancora` é um
+    # `anilist_id` da T1 (não um `Anime.id` local, pode apontar pra fora do
+    # catálogo): o front agrupa por ele, com fallback pro slug do título sem
+    # marcador de temporada quando NULL. `numero_temporada` escolhe o card
+    # representante do grupo (a maior temporada).
+    serie_ancora: int | None = None
+    numero_temporada: int | None = None
     # Gêneros crus da AniList (tradução pt-BR é no frontend, `inicio/generos.js`)
     # — 1:1 com a coluna homônima via `model_validate`, igual a `status_lancamento`
     # acima. Nullable (não normalizado a `[]` aqui): animes sem esse metadado
@@ -182,6 +191,17 @@ class FileiraTematicaSaida(BaseModel):
     itens: list[AnimeEmAltaSaida]
 
 
+class TemporadaIrmaSaida(BaseModel):
+    """Uma temporada da mesma franquia (`Anime.serie_ancora` em comum) — item do
+    seletor de temporada da página do anime (Fase 5). `numero_temporada` pode ser
+    NULL (marcador do título ausente e walk de `relations` sem resultado); o
+    front cai no `titulo` como rótulo nesse caso."""
+
+    id: int
+    numero_temporada: int | None
+    titulo: str
+
+
 class AnimeDetalheSaida(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -216,6 +236,15 @@ class AnimeDetalheSaida(BaseModel):
     versao_confirmada_mais_recente: VersaoEpisodio | None
     # Estado de lançamento da AniList (1:1 com a coluna homônima).
     status_lancamento: StatusLancamento | None = None
+    # Seletor de temporada da página do anime (Fase 5). `serie_ancora`/
+    # `numero_temporada` saem 1:1 das colunas homônimas; `temporadas` lista as
+    # temporadas irmãs (mesmo `serie_ancora`, inclui a própria) já ordenadas por
+    # número, para a troca de temporada via navegação de rota (`/anime/:id`).
+    # Vazia quando `serie_ancora` é NULL (franquia não resolvida) ou só há uma
+    # temporada catalogada — o front esconde o seletor nesses casos.
+    serie_ancora: int | None = None
+    numero_temporada: int | None = None
+    temporadas: list[TemporadaIrmaSaida] = []
 
 
 
