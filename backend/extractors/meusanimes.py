@@ -47,15 +47,15 @@ _MAX_RESULTADOS = 20
 _HOST_PLAYER = "serv01.meusdoramas.club"
 # `<iframe src="https://serv01.meusdoramas.club/#/video/{tmdb}/{temporada}/{episodio}/">`
 _REGEX_PLAYER = re.compile(re.escape(_HOST_PLAYER) + r"/#/video/(\d+)/(\d+)/(\d+)")
-# Temporada + número por temporada saem do path da URL do episódio, não do texto
-# do link (sempre "Episódio N", e ausente em rótulos não numéricos). O tema usa
-# `/e/{slug}-s{NN}-episodio-{n}/` quando o anime tem temporada declarada
-# (`-s02-` → temporada 2, `episodio-1` → 1º episódio DAQUELA temporada — o número
-# reinicia por temporada). O `-s` é obrigatório no casamento: sem ele, um slug
-# terminado em dígito ("mob-psycho-100") seria lido como "temporada 100".
-_REGEX_TEMPORADA_E_EPISODIO = re.compile(r"-s(\d+)-episodio-(\d+)/?$", re.IGNORECASE)
-# Fallback pra URL sem `-sNN-`: só o número do episódio, sem conceito de
-# temporada (comportamento histórico do adapter).
+# Temporada e número por temporada saem da MARCAÇÃO do tema DooPlay, não do
+# texto do link (sempre "Episódio N", e ausente em rótulos não numéricos): cada
+# `div.se-c` é uma temporada, com `<span class="se-t">{N}</span>` no cabeçalho
+# (`div.se-q`), e cada `<li>` traz um `<div class="numerando">{temporada} -
+# {episodio}</div>`. Antes o adapter lia isso do path da URL
+# (`/e/{slug}-s{NN}-episodio-{n}/`), mas o MeusAnimes passou a servir
+# `/e/{slug}-{temporada}-episodio-{n}/` (sem o `-s`) — a marcação do bloco é o
+# sinal estável.
+# Fallback pro número do episódio quando não há `div.numerando` legível.
 _REGEX_NUMERO_EPISODIO = re.compile(r"episodio-(\d+)")
 # `blogger.com`/`*.blogger.com` + path `/video.g` — a forma de `videoUrl` que o
 # `get-video.php` devolve na prática; qualquer outra string http(s) é usada
@@ -143,13 +143,15 @@ class MeusAnimesProvider(ExtratorDeSite):
             total_brutos = 0
             # Uma lista por div.se-c (temporada), em ordem de documento. Cada
             # entrada é `(temporada, numero_na_temporada, EpisodioRemoto)` — a
-            # temporada e o número por temporada vêm carimbados da URL quando ela
-            # traz `-sNN-` e só vivem nesta tupla interna: `_numerar_absoluto`
-            # (sem `temporada`) e `_recortar_bloco` (com `temporada`) as
-            # consomem e devolvem `EpisodioRemoto`s puros. O dedup por href e a
-            # contagem de brutos são globais (atravessam os blocos).
+            # temporada vem do cabeçalho do bloco (`.se-t`) e o número por
+            # temporada do `.numerando`; só vivem nesta tupla interna:
+            # `_numerar_absoluto` (sem `temporada`) e `_recortar_bloco` (com
+            # `temporada`) as consomem e devolvem `EpisodioRemoto`s puros. O
+            # dedup por href e a contagem de brutos são globais (atravessam os
+            # blocos).
             blocos: list[list[tuple[int | None, int | None, EpisodioRemoto]]] = []
             for bloco_temporada in temporadas:
+                temporada_do_bloco = _temporada_do_bloco(bloco_temporada)
                 episodios_do_bloco: list[tuple[int | None, int | None, EpisodioRemoto]] = []
                 for li in bloco_temporada.select("ul.episodios > li"):
                     tag_a = li.select_one(".episodiotitle a[href]")
@@ -162,23 +164,27 @@ class MeusAnimesProvider(ExtratorDeSite):
                     vistos.add(href)
 
                     caminho = urllib.parse.urlparse(href).path
-                    match_temporada = _REGEX_TEMPORADA_E_EPISODIO.search(caminho)
-                    match_numero = _REGEX_NUMERO_EPISODIO.search(caminho)
-                    if match_temporada is not None:
-                        temporada_do_ep = int(match_temporada.group(1))
-                        numero_na_temporada = int(match_temporada.group(2))
-                        rotulo = match_temporada.group(2)
+                    # Temporada: cabeçalho do bloco (`.se-t`), com fallback pro
+                    # 1º número do `.numerando` ("{T} - {E}"). Episódio dentro
+                    # da temporada: último número do `.numerando`, com fallback
+                    # pro `episodio-{n}` do path.
+                    temp_numerando, numero_na_temporada = _temporada_e_episodio_do_numerando(li)
+                    if numero_na_temporada is None:
+                        match_numero = _REGEX_NUMERO_EPISODIO.search(caminho)
+                        numero_na_temporada = (
+                            int(match_numero.group(1)) if match_numero is not None else None
+                        )
+                    temporada_do_ep = (
+                        temporada_do_bloco if temporada_do_bloco is not None else temp_numerando
+                    )
+
+                    if numero_na_temporada is not None:
+                        rotulo = str(numero_na_temporada)
                         # Provisório (por temporada) — vira absoluto em
                         # `_numerar_absoluto`, ou fica assim no recorte.
                         numero = numero_na_temporada
-                    elif match_numero is not None:
-                        temporada_do_ep = None
-                        numero_na_temporada = None
-                        rotulo = match_numero.group(1)
-                        numero = int(rotulo)
                     else:
                         temporada_do_ep = None
-                        numero_na_temporada = None
                         rotulo = caminho.rstrip("/").rsplit("/", 1)[-1]
                         numero = None
                         logger.info(
@@ -313,6 +319,29 @@ def _extrair_identificador(url_anime: str) -> str:
     return urllib.parse.urlparse(url_anime).path.split("/a/", 1)[-1].strip("/")
 
 
+def _temporada_do_bloco(bloco: object) -> int | None:
+    """Número da temporada de um `div.se-c` pelo `<span class="se-t">` do
+    cabeçalho (`div.se-q`). `None` quando ausente ou não numérico."""
+    tag = bloco.select_one(".se-q .se-t")
+    if tag is None:
+        return None
+    match = re.search(r"\d+", tag.get_text())
+    return int(match.group()) if match is not None else None
+
+
+def _temporada_e_episodio_do_numerando(li: object) -> tuple[int | None, int | None]:
+    """`(temporada, episodio)` do `div.numerando` de um `<li>` — o tema o
+    renderiza como "{temporada} - {episodio}". Com só um número, é
+    `(None, episodio)`; sem `div.numerando` ou sem dígito, `(None, None)`."""
+    tag = li.select_one(".numerando")
+    numeros = [int(n) for n in re.findall(r"\d+", tag.get_text())] if tag is not None else []
+    if len(numeros) >= 2:
+        return numeros[0], numeros[-1]
+    if len(numeros) == 1:
+        return None, numeros[0]
+    return None, None
+
+
 def _eh_token_blogger(url: str) -> bool:
     analisada = urllib.parse.urlparse(url)
     hospedeiro = analisada.hostname or ""
@@ -327,11 +356,11 @@ _BlocoDeParse = list[tuple[int | None, int | None, EpisodioRemoto]]
 
 
 def _carimbo_confiavel(blocos: list[_BlocoDeParse]) -> list[int] | None:
-    """As temporadas dos blocos (em ordem de documento) quando o carimbo `-sNN-`
-    da URL é confiável, senão `None`. Confiável só quando TODO bloco `div.se-c`
-    expõe exatamente uma temporada E as temporadas dos blocos são duas a duas
-    distintas — é tudo-ou-nada de propósito: carimbar só alguns blocos numeraria
-    episódios de forma inconsistente."""
+    """As temporadas dos blocos (em ordem de documento) quando o marcador de
+    temporada (`.se-t`/`.numerando`) é confiável, senão `None`. Confiável só
+    quando TODO bloco `div.se-c` expõe exatamente uma temporada E as temporadas
+    dos blocos são duas a duas distintas — é tudo-ou-nada de propósito: carimbar
+    só alguns blocos numeraria episódios de forma inconsistente."""
     temporadas_por_bloco = [{t for t, _n, _ep in bloco if t is not None} for bloco in blocos]
     if not all(len(t) == 1 for t in temporadas_por_bloco):
         return None
@@ -343,7 +372,7 @@ def _carimbo_confiavel(blocos: list[_BlocoDeParse]) -> list[int] | None:
 
 def _numerar_absoluto(blocos: list[_BlocoDeParse], identificador: str) -> list[EpisodioRemoto]:
     """Reescreve o `numero` provisório (por temporada) para o número ABSOLUTO
-    contínuo entre temporadas, quando o carimbo `-sNN-` da URL é confiável
+    contínuo entre temporadas, quando o marcador de temporada é confiável
     (`_carimbo_confiavel`); senão devolve a lista achatada em ordem de documento
     com o `numero` cru.
 
@@ -361,7 +390,7 @@ def _numerar_absoluto(blocos: list[_BlocoDeParse], identificador: str) -> list[E
     if temporadas is None:
         if len(blocos) > 1:
             logger.warning(
-                "MeusAnimes: %d temporadas não carimbáveis da URL para %r —"
+                "MeusAnimes: %d temporadas sem marcador confiável para %r —"
                 " achatando em ordem de documento",
                 len(blocos),
                 identificador,
@@ -376,7 +405,8 @@ def _numerar_absoluto(blocos: list[_BlocoDeParse], identificador: str) -> list[E
             resultado.append(replace(ep, numero=offset + n) if n is not None else ep)
         offset += max(numeros_no_bloco) if numeros_no_bloco else 0
     logger.info(
-        "MeusAnimes: %d temporada(s) carimbada(s) da URL para %r (temporadas: %s)",
+        "MeusAnimes: %d temporada(s) reconhecida(s) para %r (temporadas: %s) —"
+        " numeração absoluta contínua",
         len(blocos),
         identificador,
         sorted(temporadas),
@@ -387,10 +417,11 @@ def _numerar_absoluto(blocos: list[_BlocoDeParse], identificador: str) -> list[E
 def _recortar_bloco(
     blocos: list[_BlocoDeParse], temporada: int, identificador: str
 ) -> list[EpisodioRemoto]:
-    """Recorta para `temporada` usando o carimbo `-sNN-` da URL. Contrato de
-    degradação de `ExtratorDeSite.listar_episodios`: sem carimbo confiável
+    """Recorta para `temporada` usando o marcador de temporada do bloco
+    (`.se-t`/`.numerando`). Contrato de degradação de
+    `ExtratorDeSite.listar_episodios`: sem marcador confiável
     (`_carimbo_confiavel`) a fonte é tratada como "uma temporada só" e a
-    listagem inteira volta numerada contínua; com carimbo, devolve só o bloco
+    listagem inteira volta numerada contínua; com marcador, devolve só o bloco
     da temporada pedida (com `numero` já por temporada), ou `[]`/listagem
     inteira conforme a temporada exista ou não entre as disponíveis."""
     blocos = [bloco for bloco in blocos if bloco]
@@ -400,8 +431,8 @@ def _recortar_bloco(
     temporadas = _carimbo_confiavel(blocos)
     if temporadas is None:
         logger.info(
-            "MeusAnimes: temporada %d pedida mas o carimbo -sNN- não é confiável para %r"
-            " — devolvendo a listagem inteira",
+            "MeusAnimes: temporada %d pedida mas o marcador de temporada não é confiável"
+            " para %r — devolvendo a listagem inteira",
             temporada,
             identificador,
         )
@@ -410,7 +441,7 @@ def _recortar_bloco(
     if temporada not in temporadas:
         if len(temporadas) == 1:
             logger.info(
-                "MeusAnimes: temporada %d pedida não bate o carimbo da fonte (única: %d)"
+                "MeusAnimes: temporada %d pedida não bate o marcador da fonte (única: %d)"
                 " para %r — devolvendo a listagem inteira",
                 temporada,
                 temporadas[0],
@@ -431,11 +462,11 @@ def _recortar_bloco(
 
 
 def _ordenar_episodios(episodios: list[EpisodioRemoto]) -> list[EpisodioRemoto]:
-    """Ordena por `numero` crescente (já ABSOLUTO entre temporadas quando a
-    fonte carimba — ver `_numerar_absoluto`); rótulos não numéricos
+    """Ordena por `numero` crescente (já ABSOLUTO entre temporadas quando o
+    marcador é confiável — ver `_numerar_absoluto`); rótulos não numéricos
     (`numero=None`) vão pro fim, sem seção separada, só não intercalados.
     `sorted` é estável, então episódios de mesmo `numero` — só acontece quando
-    várias temporadas foram achatadas sem carimbo — mantêm a ordem de documento."""
+    várias temporadas foram achatadas sem marcador — mantêm a ordem de documento."""
     return sorted(
         episodios,
         key=lambda episodio: (
