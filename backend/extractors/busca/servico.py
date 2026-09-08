@@ -16,6 +16,7 @@ from extractors import circuit_breaker, resiliencia
 from extractors.base import ExtratorDeSite, ResultadoBusca
 from extractors.busca.correspondencia import (
     corresponde_a_alguma_referencia,
+    e_nome_do_anime,
     proximidade_a_referencias,
 )
 from extractors.registro import EXTRATORES, obter_extrator
@@ -45,12 +46,22 @@ class ResultadoDeFonte:
     (`indisponivel=False`, `candidatos=[]`) de "não consegui nem tentar"
     (`indisponivel=True`, cooldown ou exceção não tratada) — os dois colapsavam
     para o mesmo `[]` antes desta mudança, violando a regra de erro nunca
-    silencioso (CLAUDE.md §4)."""
+    silencioso (CLAUDE.md §4).
+
+    `correspondencia_incerta=True` é um terceiro estado: `candidatos` NÃO
+    bateram nenhuma referência canônica, mas vieram de uma busca por um termo
+    que É um nome do anime (`buscar_em_com_variantes`, degrau de sonda
+    precisa) — provável acerto sob um título fora do provedor de metadados
+    (ex. só PT-BR). Invariante: `candidatos` é homogêneo — ou todos validados
+    (`correspondencia_incerta=False`) ou todos incertos (`True`), nunca
+    misturado. `ResultadoBusca` (caminho de captura) não carrega essa
+    distinção; ela morre aqui e vira um aviso na UI via a rota."""
 
     dominio: str
     candidatos: list[ResultadoBusca]
     indisponivel: bool
     motivo: str | None
+    correspondencia_incerta: bool = False
 
 
 async def _separar_por_cooldown(
@@ -80,6 +91,15 @@ async def _separar_por_cooldown(
     return disponiveis, por_dominio
 
 
+# Teto de cards de "correspondência incerta" devolvidos por site quando NENHUMA
+# variante validou contra as referências (ver `buscar_em_com_variantes`). O
+# degrau existe pra não perder o anime indexado só sob um título fora do
+# provedor de metadados; 5 cobre o caso real (site com 1-2 grafias do mesmo
+# anime, achadas por sondas precisas distintas) sem transformar um punhado de
+# sondas num despejo de lixo numa lista que o usuário ainda precisa escolher.
+_MAXIMO_INCERTOS = 5
+
+
 async def buscar_em_com_variantes(
     sessionmaker: _SessionMaker, dominio: str, variantes: list[str], *, referencias: list[str]
 ) -> tuple[ResultadoDeFonte, str | None]:
@@ -97,7 +117,10 @@ async def buscar_em_com_variantes(
     porque a sonda larga (recall pela 1ª palavra em `variantes_de_busca`) faz
     uma variante devolver vários cards legítimos e `candidatos[0]` é o que a UI
     mostra e a captura tende a pegar. Sort estável — no empate, a ordem em que
-    o site listou fica.
+    o site listou fica. (No degrau de correspondência incerta abaixo os
+    candidatos NÃO passam por esse sort — nenhum bate referência, então
+    `proximidade_a_referencias` não os separa; ficam na ordem em que o site os
+    listou, escada de variantes adentro.)
 
     `referencias` é keyword-only e sem default derivado de `variantes` de
     propósito: são os vários nomes do anime (romaji/inglês/nativo/sinônimos),
@@ -109,12 +132,25 @@ async def buscar_em_com_variantes(
     novo" (nunca silencioso, CLAUDE.md §4): `descartados` acumula a
     contagem e vira `motivo` na resposta final se nenhuma variante validar.
 
+    Exceção ao descarte (degrau de "correspondência incerta"): se ao fim da
+    escada NENHUMA variante produziu card validado, mas alguma variante que É
+    um nome canônico do anime
+    (`extractors/busca/correspondencia.py::e_nome_do_anime` — sonda precisa,
+    não prefixo curto da escada de recall) trouxe card(s), esses card(s)
+    voltam num `ResultadoDeFonte(correspondencia_incerta=True)`, deduplicados
+    por `identificador` e truncados a `_MAXIMO_INCERTOS`. Cobre o site que
+    indexa o anime só sob um título que o provedor de metadados não conhece
+    (ex. só em PT-BR). A variante vencedora devolvida é `None` nesse caso — não
+    houve uma única variante "certa", e o chamador não deve montar banner de
+    troca de termo (`api/servicos/busca.py`).
+
     `FalhaDeExtracao` de qualquer variante aborta as restantes — mesmo
     critério de "indisponível" usado por `_separar_por_cooldown` (nunca
     silencioso, CLAUDE.md §4): uma falha de extração não é "não achei nada",
     é "não consegui nem tentar"."""
     extrator = obter_extrator(dominio)
     descartados = 0
+    incertos: list[ResultadoBusca] = []
     for indice, variante in enumerate(variantes):
         try:
             candidatos = await resiliencia.chamar(
@@ -148,7 +184,36 @@ async def buscar_em_com_variantes(
                 ),
                 variante_vencedora,
             )
-        descartados += len(candidatos)  # não achou match válido nesta variante — segue tentando
+        # Nenhum card desta variante bateu as referências: todos são órfãos.
+        # Só viram "incertos" quando a variante de origem é uma sonda precisa (o
+        # termo buscado É um nome canônico do anime) — prefixo curto da escada de
+        # recall, origem real do lixo, nunca entra.
+        descartados += len(candidatos)
+        if candidatos and e_nome_do_anime(variante, referencias):
+            incertos.extend(candidatos)
+
+    if incertos:
+        incertos = _deduplicar_candidatos(incertos)[:_MAXIMO_INCERTOS]
+        logger.info(
+            "extrator %r devolveu %d correspondência(s) incerta(s): termo buscado é um"
+            " nome canônico do anime, mas nenhum card bateu as referências %r",
+            dominio,
+            len(incertos),
+            referencias,
+        )
+        return (
+            ResultadoDeFonte(
+                dominio=dominio,
+                candidatos=incertos,
+                indisponivel=False,
+                motivo=(
+                    f"{len(incertos)} correspondência(s) incerta(s): busca por nome"
+                    " canônico do anime, nenhum card batendo as referências"
+                ),
+                correspondencia_incerta=True,
+            ),
+            None,
+        )
 
     motivo = None
     if descartados > 0:
@@ -163,6 +228,22 @@ async def buscar_em_com_variantes(
         ResultadoDeFonte(dominio=dominio, candidatos=[], indisponivel=False, motivo=motivo),
         None,
     )
+
+
+def _deduplicar_candidatos(candidatos: list[ResultadoBusca]) -> list[ResultadoBusca]:
+    """Remove `ResultadoBusca` repetidos por `identificador` (o id do anime
+    naquele site), preservando a primeira ocorrência e a ordem. Usado só no
+    caminho de "correspondência incerta" de `buscar_em_com_variantes`, onde os
+    candidatos são acumulados de VÁRIAS variantes de sonda precisa (romaji e
+    inglês, por exemplo) e o mesmo card pode voltar em mais de uma."""
+    vistos: set[str] = set()
+    unicos: list[ResultadoBusca] = []
+    for candidato in candidatos:
+        if candidato.identificador in vistos:
+            continue
+        vistos.add(candidato.identificador)
+        unicos.append(candidato)
+    return unicos
 
 
 async def buscar_por_site_com_variantes(

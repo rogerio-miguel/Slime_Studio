@@ -181,14 +181,14 @@ async def _sobrepor_stills_de_episodios(
     anime: Anime, episodios: list[EpisodioRemoto]
 ) -> list[EpisodioRemoto]:
     """Overlay best-effort de thumb TMDB (Fatia 5, `PLANO_ARTE_TMDB.md`) sobre
-    `EpisodioRemoto.thumb_url`: tenta a still do TMDB pelo número absoluto de
-    cada episódio (`numero_absoluto` quando o recorte de temporada já
-    renumerou `numero`, senão o próprio `numero`) e preserva o `thumb_url` que
-    o extractor já trouxe quando o TMDB não acha (id não resolvido, temporada
-    fora do range, still nulo) ou
-    quando o lote não termina a tempo. Episódio sem `numero` (rótulo não
-    numérico, ex. "Especial") não tem como mapear pro TMDB — mantém o
-    `thumb_url` original sem tentar.
+    `EpisodioRemoto.thumb_url`: quando o recorte de temporada renumerou o
+    episódio (`numero_absoluto` preenchido), pede a still pelo par
+    `(anime.numero_temporada, episodio.numero)`; senão, pelo número absoluto
+    (`episodio.numero`, temporada resolvida pelo TMDB). Preserva o `thumb_url`
+    que o extractor já trouxe quando o TMDB não acha (id não resolvido,
+    temporada fora do range, still nulo) ou quando o lote não termina a tempo.
+    Episódio sem `numero` (rótulo não numérico, ex. "Especial") não tem como
+    mapear pro TMDB — mantém o `thumb_url` original sem tentar.
 
     Mesma mecânica de concorrência/deadline de
     `api/servicos/capas.py::_consultar_capas`: `asyncio.wait` (não
@@ -204,18 +204,16 @@ async def _sobrepor_stills_de_episodios(
 
     async def _buscar_um(indice: int) -> tuple[int, str | None]:
         episodio = episodios[indice]
-        # `buscar_still_de_episodio` espera o número absoluto sobre a série
-        # inteira (ela resolve season/ep via `TabelaDeTemporadas`). Após o
-        # recorte de temporada `episodio.numero` é por-temporada e o absoluto
-        # fica em `numero_absoluto`; sem recorte, `numero_absoluto is None` e
-        # `numero` já é o absoluto — comportamento idêntico ao anterior.
-        numero_absoluto = (
-            episodio.numero_absoluto if episodio.numero_absoluto is not None else episodio.numero
-        )
+        # Se o recorte de temporada renumerou o episódio (`numero_absoluto`
+        # preenchido), `episodio.numero` já é o número dentro da temporada e
+        # `anime.numero_temporada` é o `n` dela — o TMDB vai direto à season.
+        # Senão, `episodio.numero` é a numeração absoluta e a temporada é
+        # resolvida pelo próprio TMDB (`temporada=None`).
+        temporada = anime.numero_temporada if episodio.numero_absoluto is not None else None
         async with semaforo:
             try:
                 still = await servico_metadados.buscar_still_de_episodio(
-                    anime.titulo, anime.ano, numero_absoluto
+                    anime.titulo, anime.ano, episodio.numero, temporada
                 )
             except Exception as excecao:
                 # Captura ampla e intencional (mesmo espírito de

@@ -17,6 +17,7 @@ descarta); não deduplicar os dois construindo um sobre o outro.
 """
 
 import re
+from dataclasses import dataclass
 
 # Mapa de numeral romano reconhecido -> número da temporada. Só II/III/IV:
 # "I" sozinho colide demais com outras coisas (inicial de nome, algarismo
@@ -83,6 +84,59 @@ def separar_temporada(titulo: str) -> tuple[str, int | None]:
     if atual == titulo:
         return titulo, None
     return atual, numero
+
+
+@dataclass(frozen=True, slots=True)
+class PosicaoNaSerie:
+    """Posição de uma temporada dentro da franquia — resultado de
+    `conciliar_posicao`, gravado em `Anime.numero_temporada`/`Anime.serie_ancora`
+    por `db/catalogo.py::aplicar_posicao_na_serie`."""
+
+    numero_temporada: int | None
+    serie_ancora: int | None
+
+
+def conciliar_posicao(
+    *,
+    marcador: int | None,
+    ordinal_do_grafo: int | None,
+    ancora_do_grafo: int | None,
+    anilist_id: int | None,
+) -> PosicaoNaSerie:
+    """Concilia o número de temporada do marcador do título (`separar_temporada`)
+    com o resultado do walk de `relations`
+    (`integrations/servico.py::resolver_serie`).
+
+    Regra única: **o marcador do título sempre vence** — é o número que o
+    produtor literalmente nomeou, e é a mesma convenção comercial que a fonte
+    (AnimeFire) usa para numerar `seasons[]`. O grafo só preenche o vazio:
+
+    - `numero_temporada` = `marcador` se existir, senão `ordinal_do_grafo` (pode
+      seguir `None`; para o contrato do adapter de fonte, `None` = "não recorta").
+    - `serie_ancora` = `ancora_do_grafo`, exceto: `None` quando o grafo não
+      resolveu nada; e `None` quando o marcador indica temporada >= 2 mas a
+      âncora do grafo é o próprio `anilist_id` (guarda anti-auto-âncora — o walk
+      não achou prequel apesar de o título dizer T2+; ancorar em si mesmo faria
+      dessa temporada um card de franquia próprio na Fase 5). Âncora igual ao
+      próprio id COM ordinal 1 e sem marcador é mantida: é anime de temporada
+      única legítimo, e é essa âncora que faz o recorte funcionar na T1.
+
+    Divergência entre `marcador` e `ordinal_do_grafo` não é resolvida aqui (fica
+    o marcador); cabe ao chamador logá-la — este módulo é domínio puro, sem
+    logging.
+    """
+    numero_temporada = marcador if marcador is not None else ordinal_do_grafo
+
+    serie_ancora = ancora_do_grafo
+    if (
+        serie_ancora is not None
+        and marcador is not None
+        and marcador >= 2
+        and ancora_do_grafo == anilist_id
+    ):
+        serie_ancora = None
+
+    return PosicaoNaSerie(numero_temporada=numero_temporada, serie_ancora=serie_ancora)
 
 
 def _numero_do_match(match: re.Match[str]) -> int | None:

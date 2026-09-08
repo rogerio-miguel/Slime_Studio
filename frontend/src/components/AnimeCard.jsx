@@ -78,6 +78,13 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // badge/título (padrão da linha de estreia de inicio/CartaoDeEstreia.jsx). Usado
 // pelos resultados de "outras fontes" da busca (paginas/Inicio.jsx) pra mostrar
 // o domínio do site de extração dentro do card, sobre o degradê.
+// `aviso` (opcional, string): kicker curto em âmbar no topo do mesmo bloco de
+// rodapé — mesmo tom "precisa de atenção" de components/IndicadorDeAtencao.jsx e
+// do OverlayDeStatus 'alerta' de components/LinhaDeEpisodio.jsx (não há token de
+// erro/danger no @theme). Texto visível, no fluxo de leitura de tela — não um
+// ícone mudo. Usado pelos resultados de "correspondência incerta" da busca de
+// fontes (paginas/Inicio.jsx): o site indexou o anime só sob um título que não
+// bate nenhuma referência canônica. Ausente → nada renderizado a mais.
 // `estatico` (opcional): renderiza o MESMO card, mas sem navegação (não é
 // `<Link>` nem `<button>`), sem a animação de hover/foco (escala + borda que
 // acende) e sem o overlay de borda neon. `semLegenda` (opcional): esconde o
@@ -94,6 +101,7 @@ export default function AnimeCard({
   semLegenda = false,
   sobreposicao,
   fonte,
+  aviso,
 }) {
   const idCatalogado = anime.id ?? anime.anime_id ?? null;
   const capa = anime.capa_path ?? anime.capa_url ?? null;
@@ -141,6 +149,11 @@ export default function AnimeCard({
           guard de BadgeDeEpisodiosNovos devolve `null` nesse caso. */}
       {!semLegenda && (
         <div className="relative mt-auto flex flex-col gap-1">
+          {aviso && (
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
+              {aviso}
+            </p>
+          )}
           {fonte && (
             <p className="text-xs font-semibold uppercase tracking-wide text-white/70">
               {fonte}

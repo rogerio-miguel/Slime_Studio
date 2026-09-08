@@ -33,7 +33,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import requests
 
@@ -46,10 +46,13 @@ from integrations.base import (
     FileiraTematica,
     LancamentoDeAnime,
     MetadadosDeAnime,
+    NoDeSerie,
     ProvedorComFileirasTematicas,
     ProvedorComLancamento,
+    ProvedorComRelacoes,
     ProvedorDeArte,
     ProvedorDeMetadados,
+    RelacoesDeAnime,
     TitulosDeAnime,
 )
 from integrations.registro import (
@@ -135,6 +138,8 @@ _ERROS_DE_PROVEDOR: tuple[type[Exception], ...] = (
 #
 # Backoff suave (decisão do usuário; vs. `(30, 120, 600)` + 3600s do breaker de
 # sites): 1ª falha 15s, 2ª 60s, 3ª 300s, 4ª em diante 900s (cooldown cheio).
+# Uma onda concorrente de falhas conta como UMA (ver `_registrar_falha_de_provedor`):
+# o degrau só aprofunda na sonda de meio-aberto após o cooldown expirar.
 _BACKOFF_DE_COOLDOWN_S: tuple[int, ...] = (15, 60, 300)
 _LIMITE_PARA_COOLDOWN_CHEIO = len(_BACKOFF_DE_COOLDOWN_S)
 _COOLDOWN_CHEIO_S = 900
@@ -207,27 +212,62 @@ _fileiras_por_chave: dict[str, FileiraTematica] = {
 # entre testes (estado de módulo).
 _memo_arte: dict[tuple[str, int | None], tuple[float, ArteDeAnime | None]] = {}
 
-# Memo de dois níveis do overlay de still de episódio (Fatia 5,
-# PLANO_ARTE_TMDB.md): `_memo_temporadas` cacheia a `TabelaDeTemporadas`
-# (id da série TMDB + primeiro episódio absoluto de cada temporada) por
-# (slug do título, ano) — evita repetir `_resolver_serie`+`GET /tv/{id}` por
-# episódio. `_memo_still` cacheia o still final por (slug do título, ano,
-# numero_absoluto); a primeira consulta de QUALQUER episódio de uma temporada
-# popula o still de TODOS os episódios dela de uma vez
-# (`TmdbProvider.stills_da_temporada` devolve a temporada inteira), então uma
-# página com N episódios da mesma temporada paga só 1
-# `GET /tv/{id}/season/{n}`. Mesmo TTL (`_TTL_ARTE_S`) e mesma política de
-# limite (`_LIMITE_MEMO_ARTE`, limpa o dict inteiro ao estourar) do memo de
-# arte acima. `tests/test_integrations_metadados.py` tem fixture autouse que
+# Memo do overlay de still de episódio (PLANO_ARTE_TMDB.md Fatia 5). Chave de
+# `_memo_still`: `(slug do título, ano, temporada, numero)`, onde `temporada`
+# é `int` quando o chamador sabe o `n` da temporada (`Anime.numero_temporada`,
+# Fase 3) e `numero` é o episódio DENTRO dela; ou `None` (caminho legado) e
+# `numero` é a numeração absoluta sobre a série inteira. Os dois caminhos
+# nunca colidem (o `None` no 3º elemento os separa). A primeira consulta de
+# QUALQUER episódio de uma temporada popula o still de TODOS os episódios dela
+# de uma vez (`TmdbProvider.stills_da_temporada` devolve a temporada inteira),
+# então uma página com N episódios da mesma temporada paga só 1
+# `GET /tv/{id}/season/{n}`.
+#
+# `_memo_temporadas` cacheia a `TabelaDeTemporadas` (id da série + primeiro
+# episódio absoluto por temporada) por `(slug, ano)` — usado SÓ no caminho
+# legado (`temporada is None`), pra não repetir `_resolver_serie`+`GET /tv/{id}`
+# por episódio. Com `temporada` conhecida esse passo não existe.
+#
+# Mesmo TTL (`_TTL_ARTE_S`) e política de limite (`_LIMITE_MEMO_ARTE`) do memo
+# de arte acima. `tests/test_integrations_metadados.py` tem fixture autouse que
 # zera os três memos entre testes.
 _memo_temporadas: dict[tuple[str, int | None], tuple[float, TabelaDeTemporadas | None]] = {}
-_memo_still: dict[tuple[str, int | None, int], tuple[float, str | None]] = {}
+_memo_still: dict[tuple[str, int | None, int | None, int], tuple[float, str | None]] = {}
 
 # Latch: liga na primeira `TmdbNaoAutorizado` (token errado/revogado) e nunca
 # desliga sozinho — um token ruim não muda em runtime, só reiniciando o
 # processo com um token corrigido. Evita dezenas de warnings por feed quando a
 # má configuração já foi identificada uma vez (loga em ERROR só na virada).
 _arte_desabilitada_por_auth = False
+
+# --- walk de série (grafo `relations` da AniList, Fase 3) ---
+#
+# `resolver_serie` anda o grafo de `relations` SÓ PARA TRÁS (arestas PREQUEL de
+# temporada de TV) até o nó sem prequel — a temporada 1 da franquia. Ir para
+# frente (SEQUEL) responderia a mesma pergunta pelo dobro do custo. Cada hop é
+# uma chamada AniList sob `_chamar` (teto + cooldown de provedor); memo de
+# processo por `anilist_id` amortiza a franquia inteira (a caminhada grava a
+# posição de todos os nós do caminho, não só a do alvo). Mesma justificativa de
+# memo em memória do `_memo_arte`; mesma política de limpeza (limpa o dict
+# inteiro ao estourar o limite, sem LRU). `test_integrations_metadados.py` tem
+# fixture autouse que zera este memo entre testes.
+
+
+@dataclass(frozen=True, slots=True)
+class SerieResolvida:
+    ancora: int  # `anilist_id` da temporada 1 (== o próprio id quando não há prequel de TV)
+    ordinal: int  # posição narrativa na franquia, 1-based
+
+
+_MAX_HOPS_DE_SERIE = 12
+_TTL_SERIE_S = 24 * 3600
+_LIMITE_MEMO_SERIE = 4000
+_memo_serie: dict[int, tuple[float, SerieResolvida]] = {}
+
+
+class _SerieAmbigua(Exception):
+    """Um nó tem mais de um prequel de TV e as datas não bastam para desempatar
+    — o walk para sem âncora (a correção manual desses casos é a Fase 6)."""
 
 
 async def buscar_por_titulo(titulo: str) -> MetadadosDeAnime | None:
@@ -261,6 +301,29 @@ async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
         descricao="busca de títulos",
         provedores=PROVEDORES_DE_TITULO,
     )
+
+
+async def listar_por_busca(titulo: str) -> list[AnimeEmAlta]:
+    """Candidatos de uma busca livre por `titulo` — alimenta a busca da Home
+    (`GET /api/animes/buscar`). Só `PROVEDORES_DE_TITULO` (a AniList; o Kitsu
+    não expõe busca em lista).
+
+    Best-effort e SEM cache: é termo do usuário, baixa repetição, e a busca da
+    Home não pode quebrar por AniList fora do ar. Qualquer erro de provedor
+    (`_ERROS_DE_PROVEDOR` — rede, timeout, cooldown, formato inesperado)
+    degrada para `[]` com `logger.warning` (CLAUDE.md §4 — degrada explícito,
+    não silencioso)."""
+    for provedor in PROVEDORES_DE_TITULO:
+        try:
+            return await _chamar(provedor, provedor.listar_por_busca, titulo)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.warning(
+                "provedor de metadados %r falhou na busca em lista de %r: %s",
+                provedor.nome,
+                titulo,
+                excecao,
+            )
+    return []
 
 
 async def buscar_lancamento_por_anilist_id(anilist_id: int) -> LancamentoDeAnime | None:
@@ -705,10 +768,11 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
 
 # --- overlay de still de episódio (TMDB, Fatia 5 do PLANO_ARTE_TMDB.md) ---
 #
-# `buscar_still_de_episodio` recebe `numero_absoluto` (numeração absoluta
-# SOBRE A SÉRIE INTEIRA, via `TabelaDeTemporadas`/`localizar_temporada`) e
-# resolve sozinho a temporada e o episódio dentro dela — infraestrutura de
-# still de episódio, não tocada pela reversão de capa pra AniList.
+# `buscar_still_de_episodio` tem dois caminhos: com `temporada` (o `n` da
+# temporada, `Anime.numero_temporada`) vai direto a `GET /tv/{id}/season/{n}`
+# e `numero` é o episódio dentro dela; sem `temporada` (legado, quando
+# `numero_temporada` é desconhecido) `numero` é a numeração absoluta e a
+# temporada é resolvida por `TabelaDeTemporadas`/`localizar_temporada`.
 
 
 def _gravar_memo_temporadas(
@@ -721,7 +785,9 @@ def _gravar_memo_temporadas(
     _memo_temporadas[chave] = (time.monotonic() + _TTL_ARTE_S, tabela)
 
 
-def _gravar_memo_still(chave: tuple[str, int | None, int], still: str | None) -> None:
+def _gravar_memo_still(
+    chave: tuple[str, int | None, int | None, int], still: str | None
+) -> None:
     """Mesma política de `_gravar_memo_arte`: grava inclusive `None` (cache
     negativo), limpa o dict inteiro ao estourar `_LIMITE_MEMO_ARTE`."""
     if len(_memo_still) >= _LIMITE_MEMO_ARTE:
@@ -730,21 +796,21 @@ def _gravar_memo_still(chave: tuple[str, int | None, int], still: str | None) ->
 
 
 async def buscar_still_de_episodio(
-    titulo: str, ano: int | None, numero_absoluto: int
+    titulo: str, ano: int | None, numero: int, temporada: int | None
 ) -> str | None:
-    """Thumb TMDB do episódio `numero_absoluto` (numeração absoluta local) de
-    `titulo`/`ano` — overlay best-effort consumido por
-    `api/servicos/fontes.py::listar_episodios_remotos` sobre
-    `EpisodioRemoto.thumb_url` (Fatia 5 do plano de arte TMDB). `None` sempre
-    que não achar ou o provedor falhar — quem chama decide o fallback (o
-    `thumb_url` original do extractor). Compartilha o latch de autenticação
-    (`_arte_desabilitada_por_auth`) com `buscar_arte_por_titulo`: um token rejeitado
-    desabilita os dois overlays de uma vez, não só o de banner.
+    """Thumb TMDB do episódio `numero` de `titulo`/`ano` — overlay best-effort
+    consumido por `api/servicos/fontes.py::listar_episodios_remotos` sobre
+    `EpisodioRemoto.thumb_url`. Com `temporada` dada, `numero` é o episódio
+    dentro da temporada; sem ela, `numero` é a numeração absoluta local. `None`
+    sempre que não achar ou o provedor falhar — quem chama decide o fallback
+    (o `thumb_url` original do extractor). Compartilha o latch de autenticação
+    (`_arte_desabilitada_por_auth`) com `buscar_arte_por_titulo`: um token
+    rejeitado desabilita os dois overlays de uma vez, não só o de banner.
     """
     if _arte_desabilitada_por_auth:
         return None
 
-    chave_still = (slugificar(titulo), ano, numero_absoluto)
+    chave_still = (slugificar(titulo), ano, temporada, numero)
     memo = _memo_still.get(chave_still)
     if memo is not None:
         expira_em, still = memo
@@ -753,16 +819,18 @@ async def buscar_still_de_episodio(
 
     for provedor in provedores_de_arte():
         try:
-            still = await _buscar_still_de_um_provedor(provedor, titulo, ano, numero_absoluto)
+            still = await _buscar_still_de_um_provedor(provedor, titulo, ano, numero, temporada)
         except TmdbNaoAutorizado as excecao:
             _desabilitar_arte_por_auth(provedor, excecao)
             return None
         except _ERROS_DE_PROVEDOR as excecao:
             logger.log(
                 _nivel_de_log_de_falha(excecao),
-                "provedor de arte %r falhou ao buscar still do episódio %s de %r: %s",
+                "provedor de arte %r falhou ao buscar still do episódio %s (temporada %s) "
+                "de %r: %s",
                 provedor.nome,
-                numero_absoluto,
+                numero,
+                temporada,
                 titulo,
                 excecao,
             )
@@ -775,26 +843,40 @@ async def buscar_still_de_episodio(
 
 
 async def _buscar_still_de_um_provedor(
-    provedor: ProvedorDeArte, titulo: str, ano: int | None, numero_absoluto: int
+    provedor: ProvedorDeArte, titulo: str, ano: int | None, numero: int, temporada: int | None
 ) -> str | None:
-    """`TmdbProvider` (hoje o único `ProvedorDeArte`) ganha o caminho com
-    cache em dois níveis: resolve/reusa a `TabelaDeTemporadas` via
-    `_memo_temporadas` pra achar a temporada de `numero_absoluto` sem nova
-    consulta HTTP quando já resolvida antes; então busca (ou reusa do memo) os
-    stills de TODA a temporada de uma vez
-    (`TmdbProvider.stills_da_temporada`), populando `_memo_still` pros outros
-    episódios dela — não só o pedido. Qualquer outro `ProvedorDeArte`
-    hipotético cai na chamada direta e simples do método da ABC, sem o bônus
-    de cache por temporada (não há como fatiar uma temporada que ele não
-    expõe)."""
+    """`TmdbProvider` (hoje o único `ProvedorDeArte`) busca os stills de TODA a
+    temporada de uma vez (`TmdbProvider.stills_da_temporada`) e popula
+    `_memo_still` pros outros episódios dela, não só o pedido:
+
+    - com `temporada` conhecida, vai direto (`stills_da_temporada_por_titulo`),
+      sem `TabelaDeTemporadas`;
+    - sem ela (legado), resolve/reusa a `TabelaDeTemporadas` via
+      `_memo_temporadas` pra achar a temporada de `numero` (absoluto).
+
+    Qualquer outro `ProvedorDeArte` hipotético cai na chamada direta e simples
+    do método da ABC, sem o bônus de cache por temporada."""
+    slug = slugificar(titulo)
+
     if not isinstance(provedor, TmdbProvider):
         still = await _chamar(
-            provedor, provedor.buscar_still_de_episodio, titulo, ano, numero_absoluto
+            provedor, provedor.buscar_still_de_episodio, titulo, ano, numero, temporada
         )
-        _gravar_memo_still((slugificar(titulo), ano, numero_absoluto), still)
+        _gravar_memo_still((slug, ano, temporada, numero), still)
         return still
 
-    chave_temporada = (slugificar(titulo), ano)
+    if temporada is not None:
+        stills = await _chamar(
+            provedor, provedor.stills_da_temporada_por_titulo, titulo, ano, temporada
+        )
+        if stills is None:
+            _gravar_memo_still((slug, ano, temporada, numero), None)
+            return None
+        for numero_local, still_url in stills.items():
+            _gravar_memo_still((slug, ano, temporada, numero_local), still_url)
+        return stills.get(numero)
+
+    chave_temporada = (slug, ano)
     memo_tabela = _memo_temporadas.get(chave_temporada)
     if memo_tabela is not None and time.monotonic() < memo_tabela[0]:
         tabela = memo_tabela[1]
@@ -805,7 +887,7 @@ async def _buscar_still_de_um_provedor(
     if tabela is None:
         return None
 
-    localizacao = localizar_temporada(tabela.temporadas, numero_absoluto)
+    localizacao = localizar_temporada(tabela.temporadas, numero)
     if localizacao is None:
         return None
     numero_da_temporada, numero_na_temporada = localizacao
@@ -817,19 +899,19 @@ async def _buscar_still_de_um_provedor(
         # Negativo só do episódio pedido (não dá pra "fatiar" uma temporada
         # que não veio) — evita repescar esta mesma temporada só por causa
         # deste episódio específico dentro do TTL.
-        _gravar_memo_still((slugificar(titulo), ano, numero_absoluto), None)
+        _gravar_memo_still((slug, ano, None, numero), None)
         return None
 
     # Popula o still de TODOS os episódios da temporada de uma vez — não só o
     # pedido — evitando repescar `/tv/{id}/season/{n}` pros próximos episódios
-    # da mesma temporada (motivo de existir `_memo_temporadas`/`_memo_still`).
+    # da mesma temporada.
     primeiro_absoluto = next(
         primeiro
-        for numero, primeiro, _contagem in tabela.temporadas
-        if numero == numero_da_temporada
+        for numero_temp, primeiro, _contagem in tabela.temporadas
+        if numero_temp == numero_da_temporada
     )
     for numero_local, still_url in stills.items():
-        chave = (slugificar(titulo), ano, primeiro_absoluto + numero_local - 1)
+        chave = (slug, ano, None, primeiro_absoluto + numero_local - 1)
         _gravar_memo_still(chave, still_url)
 
     return stills.get(numero_na_temporada)
@@ -907,6 +989,137 @@ async def _sobrepor_arte_em_lote(itens: list[AnimeEmAlta]) -> list[AnimeEmAlta]:
     return resultado
 
 
+# --- walk de série (grafo `relations`, Fase 3) ---
+
+
+def _gravar_memo_serie(caminho: list[NoDeSerie]) -> None:
+    """`caminho` vai do alvo (índice 0) até a âncora (último item, sem prequel).
+    Grava a posição de CADA nó do caminho — a âncora fica `ordinal=1`, o alvo
+    `ordinal=len(caminho)` — para que uma franquia de N temporadas custe ~1
+    caminhada, não N. Limpa o dict inteiro ao estourar `_LIMITE_MEMO_SERIE`
+    (política de `_gravar_memo_arte`, sem LRU)."""
+    if len(_memo_serie) >= _LIMITE_MEMO_SERIE:
+        _memo_serie.clear()
+    ancora = caminho[-1].anilist_id
+    total = len(caminho)
+    expira_em = time.monotonic() + _TTL_SERIE_S
+    for indice, no in enumerate(caminho):
+        serie = SerieResolvida(ancora=ancora, ordinal=total - indice)
+        _memo_serie[no.anilist_id] = (expira_em, serie)
+
+
+def _chave_de_data(no: NoDeSerie) -> tuple[int, int]:
+    """`(ano, mes)` de `no` para ordenação — só chamado depois de garantir
+    `no.ano is not None`; `mes` ausente vira 0 (ordena antes de qualquer mês
+    conhecido do mesmo ano)."""
+    return (no.ano, no.mes or 0)
+
+
+def _escolher_prequel(relacoes: RelacoesDeAnime) -> NoDeSerie | None:
+    """Próximo nó do walk (para trás): `None` quando `relacoes.no` não tem
+    prequel de TV (é a âncora). Com mais de um prequel, escolhe o mais recente
+    ainda anterior ao nó atual; sem nenhum anterior, o mais recente no geral.
+    Levanta `_SerieAmbigua` quando nenhum candidato tem data — não há como
+    ordenar."""
+    prequels = relacoes.prequels
+    if not prequels:
+        return None
+    if len(prequels) == 1:
+        return prequels[0]
+
+    com_data = [p for p in prequels if p.ano is not None]
+    if not com_data:
+        raise _SerieAmbigua
+
+    if relacoes.no.ano is not None:
+        limite = (relacoes.no.ano, relacoes.no.mes or 0)
+        anteriores = [p for p in com_data if _chave_de_data(p) < limite]
+        if anteriores:
+            return max(anteriores, key=_chave_de_data)
+    return max(com_data, key=_chave_de_data)
+
+
+async def _buscar_relacoes_em_cadeia(
+    capazes: list[ProvedorComRelacoes], anilist_id: int
+) -> RelacoesDeAnime | None:
+    """Primeiro provedor capaz que responde vence; falha de provedor
+    (`_ERROS_DE_PROVEDOR` — rede, timeout, cooldown, formato inesperado) é
+    logada e a cadeia segue. `None` quando todos falharam OU nenhum conhece o
+    id — o walk trata os dois igual ("pare, sem âncora")."""
+    for provedor in capazes:
+        try:
+            return await _chamar(provedor, provedor.buscar_relacoes, anilist_id)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de metadados %r falhou ao buscar relações de anilist_id=%s: %s",
+                provedor.nome,
+                anilist_id,
+                excecao,
+            )
+    return None
+
+
+async def resolver_serie(anilist_id: int) -> SerieResolvida | None:
+    """`(ancora, ordinal)` de `anilist_id` — a âncora é o `anilist_id` da
+    temporada 1 da franquia (== `anilist_id` quando o próprio anime não tem
+    prequel de TV), o ordinal é a posição narrativa 1-based.
+
+    Anda o grafo de `relations` da AniList SÓ PARA TRÁS (arestas PREQUEL de
+    `Media` ANIME em formato `TV`/`TV_SHORT` — o adapter já filtra). Best-effort:
+    devolve `None` (nunca um ordinal parcial) diante de qualquer falha de
+    provedor, ciclo no grafo, teto de `_MAX_HOPS_DE_SERIE` hops ou desempate
+    impossível entre prequels. Só sucesso é cacheado (falha por cooldown é
+    transitória); o memo é populado para todos os nós do caminho.
+    """
+    memo = _memo_serie.get(anilist_id)
+    if memo is not None:
+        expira_em, serie = memo
+        if time.monotonic() < expira_em:
+            return serie
+
+    capazes = [p for p in PROVEDORES if isinstance(p, ProvedorComRelacoes)]
+    if not capazes:
+        return None
+
+    caminho: list[NoDeSerie] = []
+    visitados: set[int] = set()
+    id_atual = anilist_id
+    for _ in range(_MAX_HOPS_DE_SERIE + 1):
+        if id_atual in visitados:
+            logger.warning("walk de série: ciclo em anilist_id=%s — parando sem âncora", anilist_id)
+            return None
+        visitados.add(id_atual)
+
+        relacoes = await _buscar_relacoes_em_cadeia(capazes, id_atual)
+        if relacoes is None:
+            return None
+        caminho.append(relacoes.no)
+
+        try:
+            proximo = _escolher_prequel(relacoes)
+        except _SerieAmbigua:
+            logger.warning(
+                "walk de série: anilist_id=%s tem %d prequels de TV e datas insuficientes "
+                "para desempate — parando sem âncora",
+                id_atual,
+                len(relacoes.prequels),
+            )
+            return None
+
+        if proximo is None:
+            _gravar_memo_serie(caminho)
+            return SerieResolvida(ancora=caminho[-1].anilist_id, ordinal=len(caminho))
+        id_atual = proximo.anilist_id
+
+    logger.warning(
+        "walk de série: anilist_id=%s excedeu %d hops — cadeia anômala, parando sem âncora",
+        anilist_id,
+        _MAX_HOPS_DE_SERIE,
+    )
+    return None
+
+
 def _http_indica_provedor_fora_do_ar(excecao: requests.HTTPError) -> bool:
     """`True` só para 429 e 5xx — provedor sobrecarregado ou fora do ar, conta
     como falha do cooldown. Os demais 4xx significam "requisição recusada", não
@@ -953,7 +1166,17 @@ def _registrar_sucesso_de_provedor(nome: str) -> None:
 def _registrar_falha_de_provedor(nome: str, erro: Exception) -> None:
     """Incrementa `falhas_consecutivas` e reprograma `cooldown_ate` no degrau de
     backoff correspondente. Um `logger.warning` por falha REAL (a transição para
-    — ou o aprofundamento do — cooldown), nunca por chamada curto-circuitada."""
+    — ou o aprofundamento do — cooldown), nunca por chamada curto-circuitada.
+
+    Falha que chega com o provedor JÁ em cooldown ativo é ignorada: pertence à
+    mesma onda concorrente que acabou de abrir o breaker (um caminho como a Home
+    dispara N chamadas quase simultâneas — todas passam `_abortar_se_em_cooldown`
+    antes de a primeira registrar a falha, e sem este guard as N incrementariam
+    o contador em sequência, pulando os degraus 15s→60s→300s direto pro cooldown
+    cheio de 900s). O aprofundamento real do degrau vem da sonda de meio-aberto
+    (a 1ª chamada depois de o cooldown expirar), quando não há cooldown ativo."""
+    if _cooldown_ate(nome) is not None:
+        return
     falhas = _cooldown_por_provedor.get(nome, (0, 0.0))[0] + 1
     espera = _backoff_de_cooldown_s(falhas)
     _cooldown_por_provedor[nome] = (falhas, time.monotonic() + espera)

@@ -34,9 +34,10 @@ class EpisodioRemoto:
     Invariantes de numeração:
 
     - **Antes do recorte** (`extractors/servico.py::recortar_para_temporada`):
-      `numero`/`rotulo` são sempre a numeração contínua da fonte — absoluta
-      entre temporadas, quando a fonte tem esse conceito — e
-      `numero_absoluto is None`.
+      `numero` é sempre a numeração contínua da fonte — absoluta entre
+      temporadas, quando a fonte tem esse conceito — e `numero_absoluto is None`.
+      `rotulo` PODE divergir de `numero`: no MeusAnimes é o número por temporada
+      cru da URL (reinicia a cada temporada) enquanto `numero` já é o absoluto.
     - **Depois do recorte**: `numero` casa com `Episodio.numero` (por temporada,
       reiniciando em 1) e a numeração contínua original passa a morar em
       `numero_absoluto`.
@@ -64,7 +65,10 @@ class EpisodioRemoto:
     thumb_url: str | None = None
     # Número da temporada tal como a fonte rotula (`season`) — preenchido pelo
     # adapter. `None` quando a fonte não tem conceito de temporada
-    # (`animesdrive`, `meusanimes`), que instanciam sem os três campos abaixo.
+    # (`animesdrive`), que instancia sem os três campos abaixo. O `meusanimes`
+    # preenche `temporada`/`numero_na_temporada` quando a URL do episódio traz
+    # `-sNN-` (`meusanimes.blog/e/...-s02-episodio-1/`), e os deixa `None` quando
+    # não traz.
     temporada: int | None = None
     # Número do episódio dentro da `temporada` (reinicia em 1 a cada temporada)
     # — preenchido pelo adapter. `None` sempre que `temporada` for `None`.

@@ -23,6 +23,7 @@ existe aqui) e erro de parsing vira `EstruturaDoSiteMudou` via
 import logging
 import re
 import urllib.parse
+from dataclasses import replace
 
 from bs4 import BeautifulSoup
 
@@ -46,8 +47,15 @@ _MAX_RESULTADOS = 20
 _HOST_PLAYER = "serv01.meusdoramas.club"
 # `<iframe src="https://serv01.meusdoramas.club/#/video/{tmdb}/{temporada}/{episodio}/">`
 _REGEX_PLAYER = re.compile(re.escape(_HOST_PLAYER) + r"/#/video/(\d+)/(\d+)/(\d+)")
-# Número do episódio vem do path da URL (`/e/{slug}-{temporada}-episodio-{n}/`),
-# não do texto do link (sempre "Episódio N", e ausente em rótulos não numéricos).
+# Temporada + número por temporada saem do path da URL do episódio, não do texto
+# do link (sempre "Episódio N", e ausente em rótulos não numéricos). O tema usa
+# `/e/{slug}-s{NN}-episodio-{n}/` quando o anime tem temporada declarada
+# (`-s02-` → temporada 2, `episodio-1` → 1º episódio DAQUELA temporada — o número
+# reinicia por temporada). O `-s` é obrigatório no casamento: sem ele, um slug
+# terminado em dígito ("mob-psycho-100") seria lido como "temporada 100".
+_REGEX_TEMPORADA_E_EPISODIO = re.compile(r"-s(\d+)-episodio-(\d+)/?$", re.IGNORECASE)
+# Fallback pra URL sem `-sNN-`: só o número do episódio, sem conceito de
+# temporada (comportamento histórico do adapter).
 _REGEX_NUMERO_EPISODIO = re.compile(r"episodio-(\d+)")
 # `blogger.com`/`*.blogger.com` + path `/video.g` — a forma de `videoUrl` que o
 # `get-video.php` devolve na prática; qualquer outra string http(s) é usada
@@ -133,9 +141,19 @@ class MeusAnimesProvider(ExtratorDeSite):
             temporadas = bloco_seasons.select("div.se-c") if bloco_seasons is not None else []
             vistos: set[str] = set()
             total_brutos = 0
-            episodios: list[EpisodioRemoto] = []
-            for temporada in temporadas:
-                for li in temporada.select("ul.episodios > li"):
+            # Uma lista de episódios por div.se-c (temporada), em ordem de
+            # documento. Temporada e número por temporada vêm carimbados da URL
+            # quando ela traz `-sNN-`; `_numerar_absoluto` decide adiante se dá
+            # pra confiar nesse carimbo e reescreve `numero` para o valor
+            # ABSOLUTO contínuo entre temporadas. A lista volta achatada e
+            # ordenada por número — separar por temporada é responsabilidade do
+            # recorte a jusante (`extractors/servico.py::recortar_para_temporada`).
+            # O dedup por href e a contagem de brutos são globais (atravessam os
+            # blocos).
+            blocos: list[list[EpisodioRemoto]] = []
+            for bloco_temporada in temporadas:
+                episodios_do_bloco: list[EpisodioRemoto] = []
+                for li in bloco_temporada.select("ul.episodios > li"):
                     tag_a = li.select_one(".episodiotitle a[href]")
                     if tag_a is None:
                         continue
@@ -146,11 +164,23 @@ class MeusAnimesProvider(ExtratorDeSite):
                     vistos.add(href)
 
                     caminho = urllib.parse.urlparse(href).path
-                    match = _REGEX_NUMERO_EPISODIO.search(caminho)
-                    if match is not None:
-                        rotulo = match.group(1)
+                    match_temporada = _REGEX_TEMPORADA_E_EPISODIO.search(caminho)
+                    match_numero = _REGEX_NUMERO_EPISODIO.search(caminho)
+                    if match_temporada is not None:
+                        temporada_do_ep = int(match_temporada.group(1))
+                        numero_na_temporada = int(match_temporada.group(2))
+                        rotulo = match_temporada.group(2)
+                        # Provisório (por temporada) — vira absoluto em
+                        # `_numerar_absoluto`.
+                        numero = numero_na_temporada
+                    elif match_numero is not None:
+                        temporada_do_ep = None
+                        numero_na_temporada = None
+                        rotulo = match_numero.group(1)
                         numero = int(rotulo)
                     else:
+                        temporada_do_ep = None
+                        numero_na_temporada = None
                         rotulo = caminho.rstrip("/").rsplit("/", 1)[-1]
                         numero = None
                         logger.info(
@@ -161,32 +191,30 @@ class MeusAnimesProvider(ExtratorDeSite):
                         )
                     tag_img = li.select_one(".imagen img")
                     src_thumb = tag_img.get("src", "").strip() if tag_img is not None else ""
-                    episodios.append(
+                    episodios_do_bloco.append(
                         EpisodioRemoto(
-                            rotulo=rotulo, numero=numero, url=href, thumb_url=src_thumb or None
+                            rotulo=rotulo,
+                            numero=numero,
+                            url=href,
+                            thumb_url=src_thumb or None,
+                            temporada=temporada_do_ep,
+                            numero_na_temporada=numero_na_temporada,
                         )
                     )
+                blocos.append(episodios_do_bloco)
         except AttributeError as excecao:
             raise EstruturaDoSiteMudou(
                 f"estrutura da listagem de episódios do MeusAnimes mudou: {excecao}",
                 dominio=self.dominio,
             ) from excecao
 
+        episodios = _numerar_absoluto(blocos, identificador)
+
         if bloco_seasons is None or not episodios:
             raise EstruturaDoSiteMudou(
                 f"nenhum episódio encontrado para {identificador!r} no MeusAnimes"
                 f" (#seasons {'ausente' if bloco_seasons is None else 'sem episódios'})",
                 dominio=self.dominio,
-            )
-
-        if len(temporadas) > 1:
-            # A maioria dos animes é temporada única (dub/leg são entradas
-            # separadas, não temporadas). Havendo mais de uma, achata tudo em
-            # ordem de documento — não tenta separar nem escolher uma.
-            logger.info(
-                "MeusAnimes: %d temporadas achatadas em ordem de documento para %r",
-                len(temporadas),
-                identificador,
             )
 
         logger.info(
@@ -289,10 +317,83 @@ def _eh_token_blogger(url: str) -> bool:
     return tem_host and analisada.path == "/video.g"
 
 
+def _numerar_absoluto(
+    blocos: list[list[EpisodioRemoto]], identificador: str
+) -> list[EpisodioRemoto]:
+    """Reescreve o `numero` provisório (por temporada) de cada episódio para o
+    número ABSOLUTO contínuo entre temporadas, quando dá pra confiar na
+    temporada que a URL carimba; senão devolve a lista achatada em ordem de
+    documento sem nenhum carimbo de temporada.
+
+    Carimbável só quando TODO bloco `div.se-c` expõe exatamente uma temporada
+    (via `-sNN-` na URL, ignorando episódios de rótulo não numérico) E as
+    temporadas dos blocos são duas a duas distintas. É tudo-ou-nada de
+    propósito: carimbar só alguns blocos numeraria episódios de forma
+    inconsistente e o recorte a jusante
+    (`extractors/servico.py::recortar_para_temporada`) erraria a fatia.
+
+    O `numero` absoluto é `offset_do_bloco + numero_na_temporada`, com o
+    `offset` acumulando `max(numero_na_temporada)` dos blocos anteriores em
+    ordem de documento (contador por offset, não posicional — resiste a rótulo
+    não numérico no meio e a buraco de numeração). Temporada única → `offset=0`
+    → `numero` idêntico ao comportamento anterior.
+
+    Retorna sempre a lista achatada (todos os blocos concatenados em ordem de
+    documento); separar por temporada é trabalho do recorte.
+    """
+    blocos = [bloco for bloco in blocos if bloco]
+    if not blocos:
+        return []
+
+    temporadas_por_bloco = [
+        {ep.temporada for ep in bloco if ep.temporada is not None} for bloco in blocos
+    ]
+    temporadas_unicas = [next(iter(t)) for t in temporadas_por_bloco if len(t) == 1]
+    todo_bloco_tem_uma_temporada = all(len(t) == 1 for t in temporadas_por_bloco)
+    temporadas_distintas_entre_blocos = len(set(temporadas_unicas)) == len(blocos)
+    carimbavel = todo_bloco_tem_uma_temporada and temporadas_distintas_entre_blocos
+
+    if not carimbavel:
+        if len(blocos) > 1:
+            logger.warning(
+                "MeusAnimes: %d temporadas não carimbáveis da URL para %r —"
+                " achatando em ordem de documento",
+                len(blocos),
+                identificador,
+            )
+        return [
+            replace(ep, temporada=None, numero_na_temporada=None)
+            for bloco in blocos
+            for ep in bloco
+        ]
+
+    resultado: list[EpisodioRemoto] = []
+    offset = 0
+    for bloco in blocos:
+        numeros_no_bloco = [
+            ep.numero_na_temporada for ep in bloco if ep.numero_na_temporada is not None
+        ]
+        for ep in bloco:
+            if ep.numero_na_temporada is not None:
+                resultado.append(replace(ep, numero=offset + ep.numero_na_temporada))
+            else:
+                resultado.append(ep)
+        offset += max(numeros_no_bloco) if numeros_no_bloco else 0
+    logger.info(
+        "MeusAnimes: %d temporada(s) carimbada(s) da URL para %r (temporadas: %s)",
+        len(blocos),
+        identificador,
+        sorted(temporadas_unicas),
+    )
+    return resultado
+
+
 def _ordenar_episodios(episodios: list[EpisodioRemoto]) -> list[EpisodioRemoto]:
-    """Numéricos em ordem crescente primeiro, rótulos não numéricos (numero=None)
-    no fim — sem seção separada, só não intercalados. `sorted` é estável, então
-    rótulos de mesmo número (temporadas achatadas) mantêm a ordem de documento."""
+    """Ordena por `numero` crescente (já ABSOLUTO entre temporadas quando a
+    fonte carimba — ver `_numerar_absoluto`); rótulos não numéricos
+    (`numero=None`) vão pro fim, sem seção separada, só não intercalados.
+    `sorted` é estável, então episódios de mesmo `numero` — só acontece quando
+    várias temporadas foram achatadas sem carimbo — mantêm a ordem de documento."""
     return sorted(
         episodios,
         key=lambda episodio: (

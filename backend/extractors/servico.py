@@ -410,6 +410,15 @@ def recortar_para_temporada(
     alvo = [ep for ep in episodios if ep.temporada == numero_temporada]
     if not alvo:
         if len(temporadas) == 1:
+            logger.info(
+                "recorte de temporada: temporada %d pedida não bate o rótulo de season "
+                "da fonte (única temporada rotulada: %s) — devolvendo a listagem inteira "
+                "(%d episódios); numa fonte que carimba temporada de forma confiável "
+                "(ex. MeusAnimes) isto pode devolver episódios da temporada errada",
+                numero_temporada,
+                sorted(temporadas),
+                len(episodios),
+            )
             return episodios
         logger.warning(
             "recorte de temporada: temporada %d pedida ausente na fonte "

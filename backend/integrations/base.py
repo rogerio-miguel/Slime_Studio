@@ -130,6 +130,34 @@ class FileiraTematica:
     tag: str  # nome cru da tag AniList (ex: "Found Family")
 
 
+@dataclass(frozen=True, slots=True)
+class NoDeSerie:
+    """Um nó do grafo de `relations` da AniList — uma `Media` TV da franquia.
+
+    `titulo` (romaji) é só para log/diagnóstico do walk, NUNCA persistido
+    (mesma regra de `MetadadosDeAnime.titulo_romaji`). `ano`/`mes` vêm de
+    `startDate` e servem ao desempate quando um nó tem mais de um prequel TV
+    (`integrations/servico.py::resolver_serie`); `dia` não é necessário — uma
+    franquia não lança duas temporadas no mesmo mês."""
+
+    anilist_id: int
+    titulo: str
+    ano: int | None
+    mes: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class RelacoesDeAnime:
+    """Vizinhança de `no` no grafo de `relations`, já reduzida ao que o walk de
+    série usa: só os prequels que são `Media` do tipo ANIME em formato de
+    temporada (`TV`/`TV_SHORT`). O adapter (`anilist.py`) aplica esse filtro —
+    este módulo é domínio puro e não conhece o vocabulário de `format` da
+    AniList."""
+
+    no: NoDeSerie
+    prequels: tuple[NoDeSerie, ...]
+
+
 class ProvedorDeMetadados(ABC):
     """Uma implementação por provedor (`anilist.py`, `kitsu.py`), síncrona —
     o `asyncio.to_thread`/timeout que a torna não-bloqueante mora só em
@@ -146,6 +174,14 @@ class ProvedorDeMetadados(ABC):
         """Busca metadados por título; `None` é resultado normal (título não
         encontrado neste provedor), não erro — mesma convenção de
         `extractors.base.ExtratorDeSite.buscar`."""
+
+    def listar_por_busca(self, titulo: str) -> list[AnimeEmAlta]:
+        """Candidatos de uma busca livre por `titulo` (a busca da Home) —
+        mesmo formato de `listar_em_alta`. Capability opcional com
+        implementação PADRÃO `[]` (mesmo padrão de
+        `buscar_metadados_por_anilist_id`): só provedores com busca paginada a
+        sobrescrevem — hoje só `anilist.py` (o Kitsu não expõe busca em lista)."""
+        return []
 
     @abstractmethod
     def listar_em_alta(self) -> list[AnimeEmAlta]:
@@ -213,13 +249,17 @@ class ProvedorDeArte(ABC):
         (AniList/Kitsu, que já modela capa por temporada corretamente)."""
 
     def buscar_still_de_episodio(
-        self, titulo: str, ano: int | None, numero_absoluto: int
+        self, titulo: str, ano: int | None, numero: int, temporada: int | None
     ) -> str | None:
-        """Thumb do episódio `numero_absoluto` (numeração absoluta local, não
-        por temporada); capability opcional com implementação PADRÃO `None`
-        (não abstrata, mesmo padrão de
-        `ProvedorDeMetadados.buscar_metadados_por_anilist_id`) — reservada
-        para a Fatia 5 do plano de arte TMDB. Só `TmdbProvider` a sobrescreve."""
+        """Thumb do episódio `numero` de `titulo`/`ano`. Com `temporada` dada
+        (o `n` da temporada, `Anime.numero_temporada`), `numero` é o número do
+        episódio DENTRO da temporada (1-based); com `temporada is None`,
+        `numero` é a numeração absoluta local sobre a série inteira e o
+        provedor resolve a temporada sozinho.
+
+        Capability opcional com implementação PADRÃO `None` (não abstrata,
+        mesmo padrão de `ProvedorDeMetadados.buscar_metadados_por_anilist_id`).
+        Só `TmdbProvider` a sobrescreve."""
         return None
 
 
@@ -235,6 +275,22 @@ class ProvedorComLancamento(ABC):
     def buscar_lancamento_por_anilist_id(self, anilist_id: int) -> LancamentoDeAnime | None:
         """Estado de lançamento do anime de id AniList `anilist_id`; `None`
         quando o provedor não conhece esse id."""
+
+
+class ProvedorComRelacoes(ABC):
+    """Capability opcional: só provedores que expõem o grafo de `relations`
+    (prequel/sequel entre `Media`) a implementam — hoje só `anilist.py`
+    (o Kitsu não modela relações entre temporadas).
+    `integrations/servico.py::resolver_serie` filtra `PROVEDORES` por
+    `isinstance(p, ProvedorComRelacoes)` antes de consultar. Síncrona pela
+    mesma razão de `ProvedorDeMetadados` (o `to_thread`/timeout mora só no
+    serviço)."""
+
+    @abstractmethod
+    def buscar_relacoes(self, anilist_id: int) -> RelacoesDeAnime | None:
+        """Vizinhança de `anilist_id` no grafo de `relations`, com os prequels
+        já filtrados a `Media` ANIME em formato de temporada (`TV`/`TV_SHORT`);
+        `None` quando o provedor não conhece esse id."""
 
 
 class ProvedorComFileirasTematicas(ABC):

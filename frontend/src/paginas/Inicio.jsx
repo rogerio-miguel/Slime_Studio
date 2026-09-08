@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  buscarEmFontes,
-  confirmarFonte,
+  buscarAnimes,
   criarAnime,
   listarAnimes,
   listarAnimesEmAlta,
@@ -66,11 +65,13 @@ import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 // de produto anterior) — ver import comentado abaixo.
 //
 // Busca ao vivo (navbar, controlada aqui): digitar substitui inteiramente
-// "Destaques da temporada" por uma grade de resultados sobre o catálogo
-// local (`listarAnimes`) — o feed de provedor não tem busca. Sem
-// `aoRemover` nos resultados, de propósito: a gestão do catálogo (remover)
-// fica centralizada em `Galeria.jsx`/`PaginaDoAnime.jsx`, esta página não
-// duplica isso.
+// "Destaques da temporada" por (1) uma grade sobre o catálogo LOCAL
+// (`listarAnimes`, filtro em memória a cada tecla) e (2) "Adicionar da
+// biblioteca" — busca na AniList (`buscarAnimes`, só no Enter), cujos cards
+// materializam o anime no catálogo ao clicar (`materializarEIrPara`, mesmo
+// fluxo dos cards do feed). Sem `aoRemover` nos resultados, de propósito: a
+// gestão do catálogo (remover) fica centralizada em
+// `Galeria.jsx`/`PaginaDoAnime.jsx`, esta página não duplica isso.
 //
 // Fronteira Clean Architecture (D5 do plano): esta página e tudo em
 // src/inicio/ só importam de src/api/, components/ e react-router-dom —
@@ -93,7 +94,7 @@ function amostraAleatoria(lista, tamanho) {
 
 export default function Inicio() {
   const navigate = useNavigate();
-  const idResultadosFontes = useId();
+  const idResultadosBiblioteca = useId();
   const { fase, movimentoReduzido, revelar } = useIntroPorVideo();
   const location = useLocation();
 
@@ -179,70 +180,43 @@ export default function Inicio() {
     [catalogo.dados, termoBuscaNormalizado]
   );
 
-  // Busca em outras fontes (sites de extração, ainda não catalogados): ao
-  // contrário do filtro local acima (ao vivo, a cada tecla), só dispara no
-  // submit (Enter na navbar) — evita martelar sites externos a cada tecla.
-  // Limpa junto com o campo pra não deixar resultado de busca antiga visível
-  // depois que o usuário apaga tudo.
+  // Busca na biblioteca (AniList): ao contrário do filtro local acima (ao
+  // vivo, a cada tecla), só dispara no submit (Enter na navbar) — evita
+  // martelar a AniList a cada tecla. Limpa junto com o campo pra não deixar
+  // resultado de busca antiga visível depois que o usuário apaga tudo.
   const [termoBuscaSubmetido, setTermoBuscaSubmetido] = useState('');
   useEffect(() => {
     if (termoBuscaNormalizado === '') setTermoBuscaSubmetido('');
   }, [termoBuscaNormalizado]);
 
-  const submeterBuscaEmFontes = useCallback(() => {
+  const submeterBusca = useCallback(() => {
     setTermoBuscaSubmetido(termoBusca.trim());
   }, [termoBusca]);
 
-  const buscaEmFontes = useRecurso(
-    () =>
-      termoBuscaSubmetido
-        ? buscarEmFontes(termoBuscaSubmetido, 'padrao')
-        : Promise.resolve({
-            resultados: [],
-            fontes: [],
-            termo_alternativo: null,
-            dominio_alternativo: null,
-          }),
+  const buscaBiblioteca = useRecurso(
+    () => (termoBuscaSubmetido ? buscarAnimes(termoBuscaSubmetido) : Promise.resolve([])),
     [termoBuscaSubmetido]
   );
-  const resultadosFontes = buscaEmFontes.dados?.resultados ?? [];
-  const fontesConsultadas = buscaEmFontes.dados?.fontes ?? [];
-  // Preenchido quando os resultados vieram de um termo diferente do digitado
-  // (variante de regex reduzida ou, por último, título alternativo do mesmo
-  // anime via provedor — romaji/inglês) — avisa o usuário em vez de trocar o
-  // resultado em silêncio (busca fuzzy pode casar anime errado).
-  const termoAlternativo = buscaEmFontes.dados?.termo_alternativo ?? null;
-  // Preenchido quando quem respondeu não foi o site padrão (ex. teve que
-  // cair pro AnimesDrive) — sinal a mais além do termo: o usuário também
-  // precisa saber que a fonte não é a de sempre, não só que o termo mudou.
-  const dominioAlternativo = buscaEmFontes.dados?.dominio_alternativo ?? null;
-  const fontesIndisponiveis = fontesConsultadas.filter((fonte) => fonte.indisponivel);
-  // Toda fonte consultada falhou/está em cooldown — "não consegui nem
-  // tentar", diferente de "busquei e não achei nada" (pelo menos uma fonte
-  // respondeu de fato). `fontesConsultadas.length > 0` evita marcar como
-  // "nenhuma fonte disponível" antes da resposta chegar (array vazio inicial).
-  const todasFontesIndisponiveis =
-    fontesConsultadas.length > 0 && fontesIndisponiveis.length === fontesConsultadas.length;
+  const resultadosBiblioteca = buscaBiblioteca.dados ?? [];
 
   // Guarda contra o campo ter sido editado depois do último Enter: enquanto
   // `termoBusca` diverge de `termoBuscaSubmetido`, os cards de
-  // `buscaEmFontes.dados` são de uma busca antiga e não devem ser renderizados
-  // (risco de materializar o anime errado) — a seção mostra um aviso de
-  // "desatualizado" no lugar até o usuário apertar Enter de novo.
-  const resultadosDeFonteDesatualizados =
+  // `buscaBiblioteca.dados` são de uma busca antiga e não devem ser
+  // renderizados (risco de materializar o anime errado) — a seção mostra um
+  // aviso de "desatualizado" no lugar até o usuário apertar Enter de novo.
+  const resultadosDesatualizados =
     termoBuscaSubmetido !== '' && termoBusca.trim() !== termoBuscaSubmetido;
+  const buscaBibliotecaAtiva = termoBuscaSubmetido !== '' && !resultadosDesatualizados;
 
-  // Helper compartilhado por materializarEIrPara/materializarFonteEIrPara: os
-  // dois fluxos só diferem na chave usada e na chamada que de fato cria/
-  // confirma o anime — guard de concorrência, estado de erro e navegação pro
-  // anime criado são idênticos.
+  // Guard de concorrência + estado de erro + navegação pro anime criado,
+  // compartilhado pelos cards do feed e pelos resultados da biblioteca.
   const materializar = useCallback(
-    async (chave, criarEConfirmar) => {
+    async (chave, criar) => {
       if (chaveEmMaterializacao != null) return;
       setChaveEmMaterializacao(chave);
       setErroMaterializacao(null);
       try {
-        const criado = await criarEConfirmar();
+        const criado = await criar();
         navigate(`/anime/${criado.id}`);
       } catch (erroCapturado) {
         console.error('falha ao adicionar anime ao catálogo', erroCapturado);
@@ -254,12 +228,13 @@ export default function Inicio() {
     [chaveEmMaterializacao, navigate]
   );
 
-  // Ação disparada pelos cards da grade "Destaques da temporada": materializa
-  // o item do feed no catálogo local (`POST /api/admin/animes`, get-or-create
-  // por slug no servidor — reenvio acidental não duplica) e navega pro anime
-  // criado. Banner e cor dominante vão no payload (o feed "em alta" os traz por
-  // item) pra alimentar o hero de `PaginaDoAnime`; a sinopse continua fora — o
-  // feed não a fornece e ela é preenchida no primeiro carregamento da página.
+  // Ação dos cards do feed ("Destaques da temporada") E dos resultados da
+  // busca na biblioteca: materializa o item AniList no catálogo local
+  // (`POST /api/admin/animes`, get-or-create por slug no servidor — reenvio
+  // acidental não duplica; um resultado de busca já catalogado só navega) e vai
+  // pro anime. Banner e cor dominante vão no payload pra alimentar o hero de
+  // `PaginaDoAnime`; a sinopse continua fora — a AniList não a traz no feed/
+  // busca em lista e ela é preenchida no primeiro carregamento da página.
   const materializarEIrPara = useCallback(
     (item) =>
       materializar(item.anilist_id ?? item.titulo_romaji, () =>
@@ -272,37 +247,6 @@ export default function Inicio() {
           generos: item.generos ?? undefined,
         })
       ),
-    [materializar]
-  );
-
-  // Mesma lógica de materialização acima, mas para um candidato de site de
-  // extração (subseção "Resultados em outras fontes"): cria o anime e já
-  // confirma a fonte (`POST .../fontes/confirmar`) — sem isso, o job de
-  // captura pediria confirmação de novo na página do anime.
-  //
-  // `capaUrl` precisa vir junto: `resultado.capa_url` já saiu resolvido do
-  // backend (`api/servicos/busca.py::enriquecer_capas` cobre qualquer fonte
-  // sem capa própria via AniList/Kitsu antes de chegar aqui) — sem repassar,
-  // `criarAnime` chega sem capa nenhuma e força `enriquecer_anime_criado` a
-  // reconsultar o provedor do zero por título, uma segunda tentativa
-  // best-effort independente que pode falhar silenciosamente e descartar a
-  // capa que já tínhamos em mãos.
-  const materializarFonteEIrPara = useCallback(
-    (resultado) =>
-      materializar(`${resultado.dominio}:${resultado.identificador}`, async () => {
-        const criado = await criarAnime({
-          titulo: resultado.titulo_exibicao,
-          capaUrl: resultado.capa_url ?? undefined,
-        });
-        await confirmarFonte(criado.id, {
-          dominio: resultado.dominio,
-          identificador: resultado.identificador,
-          tituloExibicao: resultado.titulo_exibicao,
-          url: resultado.url,
-          versao: resultado.versao ?? null,
-        });
-        return criado;
-      }),
     [materializar]
   );
 
@@ -470,7 +414,7 @@ export default function Inicio() {
         transparente
         termoBusca={termoBusca}
         aoMudarBusca={setTermoBusca}
-        aoSubmeterBusca={submeterBuscaEmFontes}
+        aoSubmeterBusca={submeterBusca}
       />
 
       <main
@@ -536,18 +480,17 @@ export default function Inicio() {
               />
             )}
 
-            <section aria-labelledby={idResultadosFontes}>
+            <section aria-labelledby={idResultadosBiblioteca}>
               <h2
-                id={idResultadosFontes}
+                id={idResultadosBiblioteca}
                 style={{ paddingInline: PADDING_TITULO }}
                 className="mt-12 text-2xl font-semibold text-white"
               >
-                Resultados em outras fontes
+                Adicionar da biblioteca
               </h2>
-              {/* Textos de estado da busca em fontes — condições inalteradas.
-                  Wrapper só pra repor o `paddingInline`; cada mensagem leva o
-                  próprio `mt-[22px]`. A grade de resultados fica FORA deste
-                  wrapper (o `paddingInline` dobraria o gutter dos cards). */}
+              {/* Textos de estado — wrapper só repõe o `paddingInline`; a grade
+                  de resultados fica FORA dele (o `paddingInline` dobraria o
+                  gutter dos cards). */}
               <div style={{ paddingInline: PADDING_TITULO }}>
                 {erroMaterializacao && (
                   <div role="alert" className="mt-[22px]">
@@ -556,113 +499,57 @@ export default function Inicio() {
                 )}
                 {termoBuscaSubmetido === '' && (
                   <p className="mt-[22px] text-sm text-ink-muted">
-                    Aperte Enter para buscar em outras fontes.
+                    Aperte Enter para buscar na biblioteca.
                   </p>
                 )}
-                {termoBuscaSubmetido !== '' && resultadosDeFonteDesatualizados && (
+                {termoBuscaSubmetido !== '' && resultadosDesatualizados && (
                   <p className="mt-[22px] text-sm text-ink-muted">
-                    Aperte Enter para atualizar os resultados em outras fontes.
+                    Aperte Enter para atualizar os resultados.
                   </p>
                 )}
-                {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.carregando && (
-                  <p className="mt-[22px] text-sm text-ink-muted">Buscando em outras fontes…</p>
+                {buscaBibliotecaAtiva && buscaBiblioteca.carregando && (
+                  <p className="mt-[22px] text-sm text-ink-muted">Buscando na biblioteca…</p>
                 )}
-                {termoBuscaSubmetido !== '' && !resultadosDeFonteDesatualizados && buscaEmFontes.erro && (
+                {buscaBibliotecaAtiva && buscaBiblioteca.erro && (
                   <div
                     role="alert"
                     className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
                   >
-                    Não foi possível buscar em outras fontes.{' '}
-                    <button type="button" onClick={buscaEmFontes.recarregar} className="underline">
+                    Não foi possível buscar na biblioteca.{' '}
+                    <button type="button" onClick={buscaBiblioteca.recarregar} className="underline">
                       Tentar novamente
                     </button>
                   </div>
                 )}
-                {termoBuscaSubmetido !== '' &&
-                  !resultadosDeFonteDesatualizados &&
-                  !buscaEmFontes.carregando &&
-                  !buscaEmFontes.erro &&
-                  resultadosFontes.length === 0 &&
-                  todasFontesIndisponiveis && (
-                    <div
-                      role="alert"
-                      className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-                    >
-                      <p>
-                        Nenhuma fonte está disponível agora
-                        {fontesIndisponiveis.some((fonte) => fonte.motivo)
-                          ? ': ' +
-                            fontesIndisponiveis
-                              .map((fonte) =>
-                                fonte.motivo ? `${fonte.dominio} (${fonte.motivo})` : fonte.dominio
-                              )
-                              .join('; ')
-                          : '.'}
-                      </p>
-                      <button type="button" onClick={buscaEmFontes.recarregar} className="underline">
-                        Tentar novamente
-                      </button>
-                    </div>
-                  )}
-                {termoBuscaSubmetido !== '' &&
-                  !resultadosDeFonteDesatualizados &&
-                  !buscaEmFontes.carregando &&
-                  !buscaEmFontes.erro &&
-                  resultadosFontes.length === 0 &&
-                  !todasFontesIndisponiveis && (
+                {buscaBibliotecaAtiva &&
+                  !buscaBiblioteca.carregando &&
+                  !buscaBiblioteca.erro &&
+                  resultadosBiblioteca.length === 0 && (
                     <p className="mt-[22px] text-sm text-ink-muted">
-                      Nenhum anime encontrado em outras fontes para “{termoBuscaSubmetido}”.
+                      Nada encontrado na biblioteca para “{termoBuscaSubmetido}”.
                     </p>
                   )}
               </div>
-              {termoBuscaSubmetido !== '' &&
-                !resultadosDeFonteDesatualizados &&
-                !buscaEmFontes.carregando &&
-                !buscaEmFontes.erro &&
-                resultadosFontes.length > 0 && (
-                  <>
-                    {(termoAlternativo || dominioAlternativo) && (
-                      <p
-                        style={{ paddingInline: PADDING_TITULO }}
-                        className="mt-[22px] text-sm text-ink-muted"
-                      >
-                        {termoAlternativo ? (
-                          <>
-                            Nenhum resultado para “{termoBuscaSubmetido}”. Mostrando resultados
-                            para “{termoAlternativo}”
-                            {dominioAlternativo && <> em {dominioAlternativo}</>}.
-                          </>
-                        ) : (
-                          <>Resultados de {dominioAlternativo}.</>
-                        )}
-                      </p>
-                    )}
-                    <GradeDeCatalogo
-                      itens={resultadosFontes}
-                      tamanho="pequeno"
-                      chaveDoItem={(resultado) => `${resultado.dominio}:${resultado.identificador}`}
-                      renderItem={(resultado) => {
-                        const chave = `${resultado.dominio}:${resultado.identificador}`;
-                        return (
-                          <AnimeCard
-                            anime={{ titulo: resultado.titulo_exibicao, capa_url: resultado.capa_url }}
-                            aoAtivar={() => materializarFonteEIrPara(resultado)}
-                            desabilitado={chaveEmMaterializacao === chave}
-                            fonte={resultado.dominio}
-                          />
-                        );
-                      }}
-                    />
-                    {fontesIndisponiveis.length > 0 && (
-                      <p
-                        style={{ paddingInline: PADDING_TITULO }}
-                        className="mt-4 text-xs text-ink-muted"
-                      >
-                        Não foi possível consultar:{' '}
-                        {fontesIndisponiveis.map((fonte) => fonte.dominio).join(', ')}.
-                      </p>
-                    )}
-                  </>
+              {buscaBibliotecaAtiva &&
+                !buscaBiblioteca.carregando &&
+                !buscaBiblioteca.erro &&
+                resultadosBiblioteca.length > 0 && (
+                  <GradeDeCatalogo
+                    itens={resultadosBiblioteca}
+                    tamanho="pequeno"
+                    chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
+                    renderItem={(item) => {
+                      const chave = item.anilist_id ?? item.titulo_romaji;
+                      return (
+                        <AnimeCard
+                          anime={{ titulo: item.titulo_romaji, capa_url: item.capa_url }}
+                          aoAtivar={() => materializarEIrPara(item)}
+                          desabilitado={chaveEmMaterializacao === chave}
+                          aviso={item.anime_id != null ? 'Já no catálogo' : undefined}
+                        />
+                      );
+                    }}
+                  />
                 )}
             </section>
           </section>

@@ -23,6 +23,14 @@ export function listarFileirasTematicas() {
   return requisitar('/api/animes/fileiras-tematicas');
 }
 
+// Busca livre na biblioteca de metadados (AniList) — alimenta a busca da Home.
+// Mesmo formato de item do feed "em alta" (`{ titulo_romaji, capa_url,
+// banner_url, anilist_id, anime_id, generos, capa_cor, ... }`); `anime_id` vem
+// preenchido quando aquela temporada já está no catálogo local.
+export function buscarAnimes(titulo) {
+  return requisitar(`/api/animes/buscar?titulo=${encodeURIComponent(titulo)}`);
+}
+
 export function obterAnime(animeId) {
   return requisitar(`/api/animes/${animeId}`);
 }
@@ -43,19 +51,14 @@ export function listarEpisodiosRemotos(animeId, versao) {
   return requisitar(`/api/admin/animes/${animeId}/episodios-remotos${query}`);
 }
 
-// Busca ao vivo em sites de extração (ainda não catalogado localmente).
-// `escopo` espelha o parâmetro do backend (`padrao|todas`, default `padrao`):
-// `padrao` é o motor sequencial de fonte única (Home, subseção "Resultados em
-// outras fontes"); `todas` varre todos os domínios/versões numa única rodada
-// de variante vencedora (DialogoDeTrocaDeFonte). Resolve para
-// `{ resultados, fontes }` (não mais um array direto): `resultados` são os
-// candidatos achatados de todas as fontes disponíveis, `fontes` é o status de
-// cada site consultado (`{ dominio, indisponivel, motivo }`) — distingue
-// "busquei e não achei nada" de "não consegui nem tentar" (cooldown/erro).
-export function buscarEmFontes(titulo, escopo = 'padrao') {
-  return requisitar(
-    `/api/animes/buscar-fontes?titulo=${encodeURIComponent(titulo)}&escopo=${encodeURIComponent(escopo)}`
-  );
+// Busca ao vivo em sites de extração (DialogoDeTrocaDeFonte): varre todos os
+// domínios/versões e devolve a UNIÃO das fontes onde o anime existe. Resolve
+// para `{ resultados, fontes }`: `resultados` são os candidatos achatados,
+// `fontes` é o status de cada site consultado (`{ dominio, indisponivel,
+// motivo }`) — distingue "busquei e não achei nada" de "não consegui nem
+// tentar" (cooldown/erro).
+export function buscarEmFontes(titulo) {
+  return requisitar(`/api/animes/buscar-fontes?titulo=${encodeURIComponent(titulo)}`);
 }
 
 export function marcarAssistido(episodioId) {

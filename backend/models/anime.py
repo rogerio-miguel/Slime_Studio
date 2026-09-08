@@ -27,17 +27,30 @@ class Anime(Base):
     # `Episodio.capa_path` segue a mesma convenção; renomear os dois
     # expandiria o escopo desta leva, então só documentado aqui.
     capa_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Número `n` do endpoint TMDB `/tv/{id}/season/{n}` que corresponde a esta
-    # temporada — NÃO é ordinal narrativo arbitrário, é o `n` literal do
-    # endpoint. `NULL` significa "desconhecido", nunca tratado como `1`.
-    # Derivado do título via `core/temporada.py::separar_temporada` no momento
-    # da criação do anime (`db.catalogo.obter_ou_criar_anime_id`); pode ser
-    # corrigido manualmente depois. NÃO alimenta mais `capa_path` — a AniList
-    # já modela cada temporada como uma entrada própria (capa correta por
-    # construção), então a capa voltou a ser exclusividade dela; este campo
-    # fica como metadado estrutural (ex. para agrupar/ordenar temporadas do
-    # mesmo anime), sem uso de resolução de arte hoje.
+    # Ordinal NARRATIVO da temporada dentro da franquia (1, 2, 3…) — NÃO o `n`
+    # do endpoint TMDB (era esse o sentido antigo). `NULL` significa
+    # "desconhecido" e, no contrato do adapter de fonte
+    # (`extractors/base.py::ExtratorDeSite.listar_episodios`), `NULL` NUNCA
+    # recorta a listagem — devolve a fonte inteira (degradação segura).
+    # Derivado do marcador do título (`core/temporada.py::separar_temporada`) na
+    # criação do anime (`db.catalogo.obter_ou_criar_anime_id`); o walk de
+    # `relations` da AniList (`core/temporada.py::conciliar_posicao` via
+    # `db.catalogo.aplicar_posicao_na_serie`) só preenche quando já está `NULL`
+    # — o marcador do título sempre vence. Pode ser corrigido manualmente
+    # depois. Também alimenta o still de episódio via TMDB
+    # (`/tv/{id}/season/{n}/episode/{m}`) e o agrupamento por franquia.
     numero_temporada: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # `anilist_id` da temporada 1 da franquia (T1 == o próprio anime quando não
+    # há prequel). É um `anilist_id`, NÃO um `Anime.id` local, e PODE apontar
+    # para uma temporada que não está no catálogo (catalogamos só a T3, a T1
+    # nunca foi materializada) — por isso não é FK. Não-única: várias linhas
+    # compartilham o mesmo valor (é o ponto — agrupa a franquia num card só na
+    # camada de apresentação). `NULL` quando o anime não tem `anilist_id`, a
+    # AniList estava indisponível no walk, o grafo tinha ciclo, ou o marcador
+    # do título indica ≥ 2 mas o walk não achou prequel (guarda anti-auto-
+    # âncora — nunca aponta para si mesmo nesse caso). Preenchida por
+    # `db.catalogo.aplicar_posicao_na_serie` (materialização + backfill).
+    serie_ancora: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     # Mesma convenção enganosa de `capa_path`: guarda a URL da arte horizontal
     # (`bannerImage` da AniList), não um caminho em disco. Alimenta o hero da
     # página do anime; `capa_cor` (`coverImage.color` da AniList, ex. "#e4a15d")
