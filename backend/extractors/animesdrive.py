@@ -180,8 +180,14 @@ class AnimesDriveProvider(ExtratorDeSite):
             ) from excecao
 
     def listar_episodios(
-        self, cliente: ClienteDeSite, identificador: str
+        self, cliente: ClienteDeSite, identificador: str, temporada: int | None
     ) -> list[EpisodioRemoto]:
+        # `temporada` é IGNORADA: no AnimesDrive cada temporada é uma entrada de
+        # catálogo própria (`identificador` já aponta pra certa) e a numeração
+        # de `-episodio-N` já é 1-based dentro dela. O markup não expõe nenhum
+        # dado de season, então não há como recortar uma página multi-temporada
+        # — devolver a listagem inteira é a degradação segura do contrato de
+        # `ExtratorDeSite.listar_episodios`.
         url_anime = f"{self.BASE_URL}/anime/{identificador}"
         html = cliente.obter_html(url_anime, timeout_s=_TIMEOUT_S)
 

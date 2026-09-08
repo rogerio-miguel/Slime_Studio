@@ -13,6 +13,7 @@ Decisão registrada: busca (`buscar`) devolvendo zero resultados **não** é err
 """
 
 import logging
+from dataclasses import replace
 from html import unescape
 from urllib.parse import parse_qs, urlparse
 
@@ -153,7 +154,7 @@ class AnimeFireProvider(ExtratorDeSite):
         ]
 
     def listar_episodios(
-        self, cliente: ClienteDeSite, identificador: str
+        self, cliente: ClienteDeSite, identificador: str, temporada: int | None
     ) -> list[EpisodioRemoto]:
         url = f"{_API_URL}/anime/{identificador}"
         dados = cliente.obter_json(url, timeout_s=_TIMEOUT_S)
@@ -177,36 +178,75 @@ class AnimeFireProvider(ExtratorDeSite):
             dados_do_anime.get("seasons"), url
         )
 
+        # `(numero_da_temporada, numero_na_temporada, episódio)` — a temporada e
+        # o número por temporada só vivem nesta tupla interna durante o parse;
+        # `_recortar_para_temporada` os consome e devolve `EpisodioRemoto`s puros.
         vistos: set[tuple[str, VersaoEpisodio | None]] = set()
-        episodios: list[EpisodioRemoto] = []
+        brutos: list[tuple[int, int, EpisodioRemoto]] = []
         for episodio_bruto in episodios_brutos:
-            for episodio in self._episodios_do_item(
+            for temp, numero_na_temp, episodio in self._episodios_do_item(
                 episodio_bruto, identificador, primeiro_episodio_por_temporada, url
             ):
                 chave = (episodio.rotulo, episodio.versao)
                 if chave in vistos:
                     continue
                 vistos.add(chave)
-                episodios.append(episodio)
+                brutos.append((temp, numero_na_temp, episodio))
 
-        if not episodios:
+        if not brutos:
             raise EstruturaDoSiteMudou(
                 f"nenhum episódio encontrado para {identificador!r} no AnimeFire",
                 dominio=self.dominio,
             )
 
-        temporadas_distintas = {ep.temporada for ep in episodios if ep.temporada is not None}
         logger.info(
             "AnimeFire: %d episódio(s) em %d temporada(s) encontrados para %r",
-            len(episodios),
-            len(temporadas_distintas),
+            len(brutos),
+            len({temp for temp, _n, _ep in brutos}),
             identificador,
         )
 
         # AnimeFire já lista os episódios do mais antigo pro mais novo na
-        # resposta (mesma ordem observada na página humana antiga) — sem
-        # reordenar aqui.
-        return episodios
+        # resposta — sem reordenar; o recorte preserva a ordem.
+        return self._recortar_para_temporada(brutos, temporada, identificador)
+
+    def _recortar_para_temporada(
+        self,
+        brutos: list[tuple[int, int, EpisodioRemoto]],
+        temporada: int | None,
+        identificador: str,
+    ) -> list[EpisodioRemoto]:
+        """Contrato de degradação de `ExtratorDeSite.listar_episodios`. O
+        AnimeFire numera `data.episodes[].number` reiniciando a cada temporada
+        (`season`), então o recorte é filtrar por `season` e usar esse `number`
+        nativo como `numero` — sem renumerar. `rotulo` continua sendo o número
+        ABSOLUTO da série (preserva `Episodio.numero_fonte`)."""
+        if temporada is None:
+            return [ep for _t, _n, ep in brutos]
+
+        disponiveis = sorted({t for t, _n, _ep in brutos})
+        alvo = [(numero_na_temp, ep) for t, numero_na_temp, ep in brutos if t == temporada]
+        if not alvo:
+            if len(disponiveis) == 1:
+                logger.info(
+                    "AnimeFire: temporada %d pedida não bate o rótulo de season da fonte "
+                    "(única: %d) para %r — devolvendo a listagem inteira (%d episódios)",
+                    temporada,
+                    disponiveis[0],
+                    identificador,
+                    len(brutos),
+                )
+                return [ep for _t, _n, ep in brutos]
+            logger.warning(
+                "AnimeFire: temporada %d ausente na fonte para %r (disponíveis: %s) — "
+                "devolvendo lista vazia",
+                temporada,
+                identificador,
+                disponiveis,
+            )
+            return []
+
+        return [replace(ep, numero=numero_na_temp) for numero_na_temp, ep in alvo]
 
     def _mapa_primeiro_episodio_por_temporada(
         self, temporadas: object, url: str
@@ -238,12 +278,13 @@ class AnimeFireProvider(ExtratorDeSite):
         identificador: str,
         primeiro_episodio_por_temporada: dict[int, int],
         url: str,
-    ) -> list[EpisodioRemoto]:
-        """Um item de `data.episodes[]` vira um ou dois `EpisodioRemoto`,
-        conforme o campo `audio` menciona dublado, legendado, ou ambos — mesmo
-        critério de `_resultados_do_item` (busca), duplicado aqui em vez de
-        compartilhado por método: aquele é código de uma fatia irmã em
-        migração paralela, não é pra mexer nele nesta fatia."""
+    ) -> list[tuple[int, int, EpisodioRemoto]]:
+        """Um item de `data.episodes[]` vira uma ou duas tuplas
+        `(numero_da_temporada, numero_na_temporada, EpisodioRemoto)`, conforme o
+        campo `audio` menciona dublado, legendado, ou ambos — mesmo critério de
+        `_resultados_do_item` (busca), duplicado aqui em vez de compartilhado por
+        método: aquele é código de uma fatia irmã em migração paralela, não é
+        pra mexer nele nesta fatia."""
         try:
             id_episodio = episodio_bruto["id"]
             numero_na_temporada = episodio_bruto["number"]
@@ -290,14 +331,16 @@ class AnimeFireProvider(ExtratorDeSite):
             versoes = [None]
 
         return [
-            EpisodioRemoto(
-                rotulo=rotulo,
-                numero=numero_absoluto,
-                url=self._url_sintetica_de_episodio(identificador, id_episodio, versao),
-                versao=versao,
-                thumb_url=thumb_url,
-                temporada=numero_da_temporada,
-                numero_na_temporada=numero_na_temporada,
+            (
+                numero_da_temporada,
+                numero_na_temporada,
+                EpisodioRemoto(
+                    rotulo=rotulo,
+                    numero=numero_absoluto,
+                    url=self._url_sintetica_de_episodio(identificador, id_episodio, versao),
+                    versao=versao,
+                    thumb_url=thumb_url,
+                ),
             )
             for versao in versoes
         ]

@@ -29,26 +29,21 @@ class ResultadoBusca:
 
 @dataclass(frozen=True, slots=True)
 class EpisodioRemoto:
-    """Um episódio como a fonte o expõe, antes e depois do recorte por temporada.
+    """Um episódio como a fonte o expõe, já recortado para a temporada pedida
+    pelo adapter (`ExtratorDeSite.listar_episodios`).
 
-    Invariantes de numeração:
-
-    - **Antes do recorte** (`extractors/servico.py::recortar_para_temporada`):
-      `numero` é sempre a numeração contínua da fonte — absoluta entre
-      temporadas, quando a fonte tem esse conceito — e `numero_absoluto is None`.
-      `rotulo` PODE divergir de `numero`: no MeusAnimes é o número por temporada
-      cru da URL (reinicia a cada temporada) enquanto `numero` já é o absoluto.
-    - **Depois do recorte**: `numero` casa com `Episodio.numero` (por temporada,
-      reiniciando em 1) e a numeração contínua original passa a morar em
-      `numero_absoluto`.
+    - `numero` é 1-based dentro da temporada pedida quando `listar_episodios`
+      recebeu uma `temporada`; é a numeração contínua da fonte (absoluta entre
+      temporadas, quando a fonte tem esse conceito) quando `temporada is None`.
+      Casa com `Episodio.numero` no primeiro caso.
+    - `rotulo` é sempre o texto/label cru da fonte (ex.: "7", "07", "Especial")
+      e NUNCA é reescrito — é a chave de dedup de cada adapter (rótulos com zero
+      à esquerda não são necessariamente o mesmo episódio) e PODE divergir de
+      `numero`: no AnimeFire continua sendo o número absoluto da série; no
+      MeusAnimes, o número por temporada cru da URL. `api/servicos/jobs.py`
+      deriva `Episodio.numero_fonte` de `int(rotulo)`.
     """
 
-    # Texto/label cru do episódio como aparece na fonte (ex.: "7", "07",
-    # "Especial") — chave de dedup em cada adapter (`animefire.py`,
-    # `animesdrive.py`): rótulos com zero à esquerda ("07") não são
-    # necessariamente o mesmo episódio que "7", então a chave nunca é
-    # `int(numero)` (colapsaria os dois indevidamente). Nunca reescrito pelo
-    # recorte — permanece o label cru da fonte por contrato.
     rotulo: str
     # `None` quando `rotulo` não é puramente numérico (ex. "Especial",
     # "OVA 2") — episódio ainda aparece normalmente na listagem (decisão do
@@ -63,21 +58,6 @@ class EpisodioRemoto:
     # thumb pra esse episódio). String crua — nunca baixada pra disco; a fatia de
     # API serve via proxy `/api/thumb`.
     thumb_url: str | None = None
-    # Número da temporada tal como a fonte rotula (`season`) — preenchido pelo
-    # adapter. `None` quando a fonte não tem conceito de temporada
-    # (`animesdrive`), que instancia sem os três campos abaixo. O `meusanimes`
-    # preenche `temporada`/`numero_na_temporada` quando a URL do episódio traz
-    # `-sNN-` (`meusanimes.blog/e/...-s02-episodio-1/`), e os deixa `None` quando
-    # não traz.
-    temporada: int | None = None
-    # Número do episódio dentro da `temporada` (reinicia em 1 a cada temporada)
-    # — preenchido pelo adapter. `None` sempre que `temporada` for `None`.
-    numero_na_temporada: int | None = None
-    # Numeração contínua original da fonte, preservada aqui quando o recorte
-    # (`extractors/servico.py::recortar_para_temporada`) reescreve `numero` para
-    # o valor por temporada. `None` antes do recorte — nunca preenchido pelo
-    # adapter.
-    numero_absoluto: int | None = None
 
 
 class FormatoDeMidia(StrEnum):
@@ -153,9 +133,27 @@ class ExtratorDeSite(ABC):
 
     @abstractmethod
     def listar_episodios(
-        self, cliente: ClienteDeSite, identificador: str
+        self, cliente: ClienteDeSite, identificador: str, temporada: int | None
     ) -> list[EpisodioRemoto]:
-        """Lista episódios do anime já identificado neste site (via `buscar` anterior)."""
+        """Lista os episódios do anime já identificado neste site (via `buscar`
+        anterior), recortados para `temporada` e numerados de 1.
+
+        Contrato de degradação — obrigatório em TODO adapter, já que é aqui que
+        mora o conhecimento dos defeitos de cada site:
+
+        - `temporada is None` → devolve a listagem inteira da fonte, `numero` na
+          numeração contínua dela (o anime é temporada única no nosso catálogo,
+          ou o ordinal narrativo é desconhecido).
+        - a fonte expõe a temporada pedida → devolve só ela, `numero`
+          reiniciando em 1.
+        - a fonte expõe UMA temporada só e ela não bate `temporada` → devolve a
+          listagem inteira com `logger.info` (o rótulo de season da fonte
+          diverge do nosso; numa fonte que carimba temporada de forma confiável
+          isto pode trazer a temporada errada).
+        - a fonte expõe VÁRIAS temporadas e nenhuma bate `temporada` → `[]` com
+          `logger.warning` listando as disponíveis (esta temporada não existe
+          nesta fonte).
+        """
 
     @abstractmethod
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:

@@ -130,7 +130,7 @@ class MeusAnimesProvider(ExtratorDeSite):
             ) from excecao
 
     def listar_episodios(
-        self, cliente: ClienteDeSite, identificador: str
+        self, cliente: ClienteDeSite, identificador: str, temporada: int | None
     ) -> list[EpisodioRemoto]:
         url_anime = f"{self.BASE_URL}/a/{identificador}/"
         html = cliente.obter_html(url_anime, timeout_s=_TIMEOUT_S)
@@ -141,18 +141,16 @@ class MeusAnimesProvider(ExtratorDeSite):
             temporadas = bloco_seasons.select("div.se-c") if bloco_seasons is not None else []
             vistos: set[str] = set()
             total_brutos = 0
-            # Uma lista de episódios por div.se-c (temporada), em ordem de
-            # documento. Temporada e número por temporada vêm carimbados da URL
-            # quando ela traz `-sNN-`; `_numerar_absoluto` decide adiante se dá
-            # pra confiar nesse carimbo e reescreve `numero` para o valor
-            # ABSOLUTO contínuo entre temporadas. A lista volta achatada e
-            # ordenada por número — separar por temporada é responsabilidade do
-            # recorte a jusante (`extractors/servico.py::recortar_para_temporada`).
-            # O dedup por href e a contagem de brutos são globais (atravessam os
-            # blocos).
-            blocos: list[list[EpisodioRemoto]] = []
+            # Uma lista por div.se-c (temporada), em ordem de documento. Cada
+            # entrada é `(temporada, numero_na_temporada, EpisodioRemoto)` — a
+            # temporada e o número por temporada vêm carimbados da URL quando ela
+            # traz `-sNN-` e só vivem nesta tupla interna: `_numerar_absoluto`
+            # (sem `temporada`) e `_recortar_bloco` (com `temporada`) as
+            # consomem e devolvem `EpisodioRemoto`s puros. O dedup por href e a
+            # contagem de brutos são globais (atravessam os blocos).
+            blocos: list[list[tuple[int | None, int | None, EpisodioRemoto]]] = []
             for bloco_temporada in temporadas:
-                episodios_do_bloco: list[EpisodioRemoto] = []
+                episodios_do_bloco: list[tuple[int | None, int | None, EpisodioRemoto]] = []
                 for li in bloco_temporada.select("ul.episodios > li"):
                     tag_a = li.select_one(".episodiotitle a[href]")
                     if tag_a is None:
@@ -171,7 +169,7 @@ class MeusAnimesProvider(ExtratorDeSite):
                         numero_na_temporada = int(match_temporada.group(2))
                         rotulo = match_temporada.group(2)
                         # Provisório (por temporada) — vira absoluto em
-                        # `_numerar_absoluto`.
+                        # `_numerar_absoluto`, ou fica assim no recorte.
                         numero = numero_na_temporada
                     elif match_numero is not None:
                         temporada_do_ep = None
@@ -192,13 +190,15 @@ class MeusAnimesProvider(ExtratorDeSite):
                     tag_img = li.select_one(".imagen img")
                     src_thumb = tag_img.get("src", "").strip() if tag_img is not None else ""
                     episodios_do_bloco.append(
-                        EpisodioRemoto(
-                            rotulo=rotulo,
-                            numero=numero,
-                            url=href,
-                            thumb_url=src_thumb or None,
-                            temporada=temporada_do_ep,
-                            numero_na_temporada=numero_na_temporada,
+                        (
+                            temporada_do_ep,
+                            numero_na_temporada,
+                            EpisodioRemoto(
+                                rotulo=rotulo,
+                                numero=numero,
+                                url=href,
+                                thumb_url=src_thumb or None,
+                            ),
                         )
                     )
                 blocos.append(episodios_do_bloco)
@@ -208,17 +208,20 @@ class MeusAnimesProvider(ExtratorDeSite):
                 dominio=self.dominio,
             ) from excecao
 
-        episodios = _numerar_absoluto(blocos, identificador)
-
-        if bloco_seasons is None or not episodios:
+        if bloco_seasons is None or not any(blocos):
             raise EstruturaDoSiteMudou(
                 f"nenhum episódio encontrado para {identificador!r} no MeusAnimes"
                 f" (#seasons {'ausente' if bloco_seasons is None else 'sem episódios'})",
                 dominio=self.dominio,
             )
 
+        if temporada is None:
+            episodios = _numerar_absoluto(blocos, identificador)
+        else:
+            episodios = _recortar_bloco(blocos, temporada, identificador)
+
         logger.info(
-            "MeusAnimes: %d episódio(s) brutos encontrados para %r, %d após dedup",
+            "MeusAnimes: %d episódio(s) brutos encontrados para %r, %d após dedup/recorte",
             total_brutos,
             identificador,
             len(episodios),
@@ -317,43 +320,45 @@ def _eh_token_blogger(url: str) -> bool:
     return tem_host and analisada.path == "/video.g"
 
 
-def _numerar_absoluto(
-    blocos: list[list[EpisodioRemoto]], identificador: str
-) -> list[EpisodioRemoto]:
-    """Reescreve o `numero` provisório (por temporada) de cada episódio para o
-    número ABSOLUTO contínuo entre temporadas, quando dá pra confiar na
-    temporada que a URL carimba; senão devolve a lista achatada em ordem de
-    documento sem nenhum carimbo de temporada.
+# `(temporada, numero_na_temporada, EpisodioRemoto)` — a forma interna do parse
+# de `listar_episodios`, antes de `_numerar_absoluto`/`_recortar_bloco`
+# resolverem `numero` e descartarem os dois primeiros.
+_BlocoDeParse = list[tuple[int | None, int | None, EpisodioRemoto]]
 
-    Carimbável só quando TODO bloco `div.se-c` expõe exatamente uma temporada
-    (via `-sNN-` na URL, ignorando episódios de rótulo não numérico) E as
-    temporadas dos blocos são duas a duas distintas. É tudo-ou-nada de
-    propósito: carimbar só alguns blocos numeraria episódios de forma
-    inconsistente e o recorte a jusante
-    (`extractors/servico.py::recortar_para_temporada`) erraria a fatia.
+
+def _carimbo_confiavel(blocos: list[_BlocoDeParse]) -> list[int] | None:
+    """As temporadas dos blocos (em ordem de documento) quando o carimbo `-sNN-`
+    da URL é confiável, senão `None`. Confiável só quando TODO bloco `div.se-c`
+    expõe exatamente uma temporada E as temporadas dos blocos são duas a duas
+    distintas — é tudo-ou-nada de propósito: carimbar só alguns blocos numeraria
+    episódios de forma inconsistente."""
+    temporadas_por_bloco = [{t for t, _n, _ep in bloco if t is not None} for bloco in blocos]
+    if not all(len(t) == 1 for t in temporadas_por_bloco):
+        return None
+    temporadas = [next(iter(t)) for t in temporadas_por_bloco]
+    if len(set(temporadas)) != len(blocos):
+        return None
+    return temporadas
+
+
+def _numerar_absoluto(blocos: list[_BlocoDeParse], identificador: str) -> list[EpisodioRemoto]:
+    """Reescreve o `numero` provisório (por temporada) para o número ABSOLUTO
+    contínuo entre temporadas, quando o carimbo `-sNN-` da URL é confiável
+    (`_carimbo_confiavel`); senão devolve a lista achatada em ordem de documento
+    com o `numero` cru.
 
     O `numero` absoluto é `offset_do_bloco + numero_na_temporada`, com o
     `offset` acumulando `max(numero_na_temporada)` dos blocos anteriores em
     ordem de documento (contador por offset, não posicional — resiste a rótulo
     não numérico no meio e a buraco de numeração). Temporada única → `offset=0`
     → `numero` idêntico ao comportamento anterior.
-
-    Retorna sempre a lista achatada (todos os blocos concatenados em ordem de
-    documento); separar por temporada é trabalho do recorte.
     """
     blocos = [bloco for bloco in blocos if bloco]
     if not blocos:
         return []
 
-    temporadas_por_bloco = [
-        {ep.temporada for ep in bloco if ep.temporada is not None} for bloco in blocos
-    ]
-    temporadas_unicas = [next(iter(t)) for t in temporadas_por_bloco if len(t) == 1]
-    todo_bloco_tem_uma_temporada = all(len(t) == 1 for t in temporadas_por_bloco)
-    temporadas_distintas_entre_blocos = len(set(temporadas_unicas)) == len(blocos)
-    carimbavel = todo_bloco_tem_uma_temporada and temporadas_distintas_entre_blocos
-
-    if not carimbavel:
+    temporadas = _carimbo_confiavel(blocos)
+    if temporadas is None:
         if len(blocos) > 1:
             logger.warning(
                 "MeusAnimes: %d temporadas não carimbáveis da URL para %r —"
@@ -361,31 +366,68 @@ def _numerar_absoluto(
                 len(blocos),
                 identificador,
             )
-        return [
-            replace(ep, temporada=None, numero_na_temporada=None)
-            for bloco in blocos
-            for ep in bloco
-        ]
+        return [ep for bloco in blocos for _t, _n, ep in bloco]
 
     resultado: list[EpisodioRemoto] = []
     offset = 0
     for bloco in blocos:
-        numeros_no_bloco = [
-            ep.numero_na_temporada for ep in bloco if ep.numero_na_temporada is not None
-        ]
-        for ep in bloco:
-            if ep.numero_na_temporada is not None:
-                resultado.append(replace(ep, numero=offset + ep.numero_na_temporada))
-            else:
-                resultado.append(ep)
+        numeros_no_bloco = [n for _t, n, _ep in bloco if n is not None]
+        for _t, n, ep in bloco:
+            resultado.append(replace(ep, numero=offset + n) if n is not None else ep)
         offset += max(numeros_no_bloco) if numeros_no_bloco else 0
     logger.info(
         "MeusAnimes: %d temporada(s) carimbada(s) da URL para %r (temporadas: %s)",
         len(blocos),
         identificador,
-        sorted(temporadas_unicas),
+        sorted(temporadas),
     )
     return resultado
+
+
+def _recortar_bloco(
+    blocos: list[_BlocoDeParse], temporada: int, identificador: str
+) -> list[EpisodioRemoto]:
+    """Recorta para `temporada` usando o carimbo `-sNN-` da URL. Contrato de
+    degradação de `ExtratorDeSite.listar_episodios`: sem carimbo confiável
+    (`_carimbo_confiavel`) a fonte é tratada como "uma temporada só" e a
+    listagem inteira volta numerada contínua; com carimbo, devolve só o bloco
+    da temporada pedida (com `numero` já por temporada), ou `[]`/listagem
+    inteira conforme a temporada exista ou não entre as disponíveis."""
+    blocos = [bloco for bloco in blocos if bloco]
+    if not blocos:
+        return []
+
+    temporadas = _carimbo_confiavel(blocos)
+    if temporadas is None:
+        logger.info(
+            "MeusAnimes: temporada %d pedida mas o carimbo -sNN- não é confiável para %r"
+            " — devolvendo a listagem inteira",
+            temporada,
+            identificador,
+        )
+        return _numerar_absoluto(blocos, identificador)
+
+    if temporada not in temporadas:
+        if len(temporadas) == 1:
+            logger.info(
+                "MeusAnimes: temporada %d pedida não bate o carimbo da fonte (única: %d)"
+                " para %r — devolvendo a listagem inteira",
+                temporada,
+                temporadas[0],
+                identificador,
+            )
+            return _numerar_absoluto(blocos, identificador)
+        logger.warning(
+            "MeusAnimes: temporada %d ausente na fonte para %r (disponíveis: %s) —"
+            " devolvendo lista vazia",
+            temporada,
+            identificador,
+            sorted(temporadas),
+        )
+        return []
+
+    bloco_alvo = blocos[temporadas.index(temporada)]
+    return [replace(ep, numero=n) if n is not None else ep for _t, n, ep in bloco_alvo]
 
 
 def _ordenar_episodios(episodios: list[EpisodioRemoto]) -> list[EpisodioRemoto]:

@@ -27,11 +27,7 @@ from core.erros import (
 from db import catalogo
 from db.fila import criar_job as criar_job_na_fila
 from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
-from extractors.servico import (
-    filtrar_por_numero_e_versao,
-    listar_episodios_em,
-    recortar_para_temporada,
-)
+from extractors.servico import filtrar_por_numero_e_versao, listar_episodios_em
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -143,7 +139,12 @@ async def criar_job_site(
 
     try:
         episodios_remotos = await asyncio.wait_for(
-            listar_episodios_em(sessionmaker, resultado.dominio, resultado.identificador),
+            listar_episodios_em(
+                sessionmaker,
+                resultado.dominio,
+                resultado.identificador,
+                anime.numero_temporada,
+            ),
             timeout=_TETO_CRIACAO_SITE_S,
         )
     except TimeoutError as excecao:
@@ -153,14 +154,10 @@ async def criar_job_site(
             permite_retentativa=True,
         ) from excecao
 
-    # A fonte numera o anime inteiro de forma contínua entre temporadas, mas
-    # cada temporada é uma linha `Anime` própria — recorta a listagem para
-    # `anime.numero_temporada` e renumera `ep.numero` para o valor por
-    # temporada. Pós-recorte `ep.numero` já casa com `numero` (o pedido do
-    # cliente) e com `Episodio.numero`, então `filtrar_por_numero_e_versao`
-    # abaixo não muda; passthrough quando `numero_temporada is None`. Mesmo
-    # recorte de `api/servicos/fontes.py::listar_episodios_remotos`.
-    episodios_remotos = recortar_para_temporada(episodios_remotos, anime.numero_temporada)
+    # O adapter já devolveu a temporada de `anime.numero_temporada` numerada de
+    # 1 (contrato de `ExtratorDeSite.listar_episodios`), então `ep.numero` casa
+    # com `numero` (o pedido do cliente) e com `Episodio.numero` — mesmo caminho
+    # de `api/servicos/fontes.py::listar_episodios_remotos`.
 
     # `Episodio.versao` deriva do que a fonte resolvida realmente é
     # (`resultado.versao_da_fonte`), nunca do `versao` pedido pelo cliente —
@@ -192,15 +189,13 @@ async def criar_job_site(
         )
 
     # `numero_fonte` guarda "o número original como o site mostrou"
-    # (ESPECIFICACAO.md §4, auditoria/debug). Após o recorte de temporada
-    # `correspondente.numero` é por-temporada e o contínuo original fica em
-    # `numero_absoluto`; sem recorte, `numero_absoluto is None` e `numero` já
-    # é o original — comportamento idêntico ao anterior.
-    numero_na_fonte = (
-        correspondente.numero_absoluto
-        if correspondente.numero_absoluto is not None
-        else correspondente.numero
-    )
+    # (ESPECIFICACAO.md §4, auditoria/debug) — é o `rotulo` cru do adapter, que
+    # nunca é reescrito pelo recorte de temporada (`EpisodioRemoto`). `None`
+    # quando o rótulo não é puramente numérico (ex. "07" continua virando 7).
+    try:
+        numero_na_fonte = int(correspondente.rotulo)
+    except ValueError:
+        numero_na_fonte = None
 
     episodio_existente = await _localizar_episodio_por_identidade(
         sessionmaker, anime.id, numero, tipo, versao_do_episodio
