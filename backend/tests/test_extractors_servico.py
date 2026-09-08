@@ -756,7 +756,7 @@ async def test_baixar_episodio_sem_prazo_preserva_comportamento_anterior(
     async def _conferir_fake(link):
         chamadas_conferencia.append(link)
 
-    async def _baixar_fake(link, destino, ffmpeg):
+    async def _baixar_fake(link, destino, ffmpeg, ffprobe=None):
         return destino
 
     chamadas_dentro_do_prazo: list[float] = []
