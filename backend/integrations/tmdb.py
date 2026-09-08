@@ -100,21 +100,28 @@ class TmdbProvider(ProvedorDeArte):
         return ArteDeAnime(banner_url=banner_url)
 
     def buscar_still_de_episodio(
-        self, titulo: str, ano: int | None, numero_absoluto: int
+        self, titulo: str, ano: int | None, numero: int, temporada: int | None
     ) -> str | None:
-        """Thumb do episódio `numero_absoluto` (numeração absoluta local, não
-        por temporada) — Fatia 5 do plano. Reusa `tabela_de_temporadas`/
-        `stills_da_temporada` (que por sua vez reusam `_resolver_serie`, não
-        duplicam a busca da Fatia 1). `None` em qualquer passo LÓGICO que não
-        resolva (série não encontrada, temporada fora do range coberto,
-        `still_path` nulo); exceções de rede/autenticação de `_executar`
-        seguem a mesma convenção de `buscar_arte_por_titulo` — propagam pro
-        chamador (`integrations/servico.py`), não são engolidas aqui."""
+        """Thumb do episódio `numero`. Com `temporada` dada, vai direto a
+        `GET /tv/{id}/season/{temporada}` (via `stills_da_temporada_por_titulo`),
+        sem a volta por `TabelaDeTemporadas`/numeração absoluta. Com
+        `temporada is None`, `numero` é a numeração absoluta local e a
+        temporada é resolvida por `tabela_de_temporadas`/`localizar_temporada`
+        (fallback quando `Anime.numero_temporada` é desconhecido).
+
+        `None` em qualquer passo LÓGICO que não resolva (série não encontrada,
+        temporada fora do range, `still_path` nulo); exceções de rede/
+        autenticação de `_executar` propagam pro chamador
+        (`integrations/servico.py`), não são engolidas aqui."""
+        if temporada is not None:
+            stills = self.stills_da_temporada_por_titulo(titulo, ano, temporada)
+            return stills.get(numero) if stills is not None else None
+
         tabela = self.tabela_de_temporadas(titulo, ano)
         if tabela is None:
             return None
 
-        localizacao = localizar_temporada(tabela.temporadas, numero_absoluto)
+        localizacao = localizar_temporada(tabela.temporadas, numero)
         if localizacao is None:
             return None
         numero_da_temporada, numero_na_temporada = localizacao
@@ -123,6 +130,24 @@ class TmdbProvider(ProvedorDeArte):
         if stills is None:
             return None
         return stills.get(numero_na_temporada)
+
+    def stills_da_temporada_por_titulo(
+        self, titulo: str, ano: int | None, temporada: int
+    ) -> dict[int, str | None] | None:
+        """Stills de TODOS os episódios da `temporada` (número real da
+        temporada) da série que casa `titulo`/`ano` — resolve a série
+        (`_resolver_serie`, mesma busca de `buscar_arte_por_titulo`) e chama
+        `GET /tv/{id}/season/{temporada}` direto. Usado quando o chamador já
+        sabe o número da temporada (`Anime.numero_temporada`), dispensando a
+        `TabelaDeTemporadas`. `integrations/servico.py` popula o memo de stills
+        da temporada inteira com o dict devolvido."""
+        serie = self._resolver_serie(titulo, ano)
+        if serie is None:
+            return None
+        id_da_serie = serie.get("id")
+        if not isinstance(id_da_serie, int):
+            return None
+        return self.stills_da_temporada(id_da_serie, temporada)
 
     def tabela_de_temporadas(self, titulo: str, ano: int | None) -> TabelaDeTemporadas | None:
         """`GET /tv/{id}` -> `seasons[]` -> tabela "primeiro episódio absoluto

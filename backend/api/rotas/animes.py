@@ -20,13 +20,11 @@ from api.esquemas import (
     EpisodioRemotoSaida,
     EpisodioSaida,
     EpisodiosRemotosSaida,
-    EscopoBusca,
     FileiraTematicaSaida,
     FonteConsultadaSaida,
     ResultadoBuscaFonteSaida,
 )
 from api.servicos import busca as servico_busca
-from api.servicos import capas as servico_capas
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
@@ -35,7 +33,6 @@ from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
 from core.config import Config
 from core.enums import VersaoDeFonte, VersaoEpisodio
-from core.texto import slugificar
 from db.catalogo import obter_ou_criar_anime_id
 from extractors.base import ResultadoBusca
 from extractors.registro import EXTRATORES
@@ -265,36 +262,46 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
     )
 
 
+# `/buscar` precisa vir ANTES de `/{anime_id}` — mesma armadilha de `/em-alta`:
+# um `{anime_id}` declarado primeiro casaria com `anime_id="buscar"`.
+@router_publico.get("/buscar", response_model=list[AnimeEmAltaSaida])
+async def buscar_animes(
+    titulo: str = Query(..., max_length=200),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[AnimeEmAltaSaida]:
+    """Busca livre de anime na biblioteca de metadados (AniList) — alimenta a
+    busca da Home. Cada temporada é uma entrada AniList própria (o catálogo
+    local agrupa por franquia numa fase futura); `anime_id` vem preenchido
+    quando aquela temporada já está catalogada. Mesmo schema de saída do feed
+    "em alta"."""
+    if not titulo.strip():
+        return []
+    pares = await servico_descoberta.listar_busca_com_catalogo(sessionmaker, titulo.strip())
+    return [_para_saida_em_alta(item, anime_id) for item, anime_id in pares]
+
+
 # `/buscar-fontes` precisa vir ANTES de `/{anime_id}` — mesma armadilha de
 # `/em-alta` acima: um `{anime_id}` declarado primeiro casaria com
 # `anime_id="buscar-fontes"`.
 @router_publico.get("/buscar-fontes", response_model=BuscaEmFontesSaida)
 async def buscar_animes_em_fontes(
     titulo: str = Query(..., max_length=200),
-    escopo: EscopoBusca = Query("padrao"),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> BuscaEmFontesSaida:
-    """Busca ao vivo em sites de extração (ainda não catalogado localmente).
-    `escopo=padrao` (default): motor sequencial por site da Fase A, alimenta
-    a subseção "Resultados em outras fontes" da Home. `escopo=todas`: cada
-    site busca em paralelo, esgotando de forma independente e exaustiva sua
-    própria escada de variantes, sem que um "roube a vez" do outro (INV-1',
-    `extractors.busca.servico.buscar_por_site_com_variantes`) — alimenta o diálogo
-    "Trocar fonte" (D-B1, PLANO_PADRONIZACAO_FONTES.md — mesmo response
-    assembly abaixo nos dois escopos, só a estratégia de iteração de site
-    difere). `fontes` traz o status de cada site consultado (disponível ou
-    não, com motivo) — a UI usa isso pra distinguir "não achei nada" de "não
-    consegui nem tentar" (CLAUDE.md §4, erro nunca silencioso)."""
+    """Busca ao vivo em sites de extração — alimenta o diálogo "Trocar fonte":
+    cada site busca em paralelo, esgotando de forma independente e exaustiva sua
+    própria escada de variantes, sem que um "roube a vez" do outro
+    (`extractors.busca.servico.buscar_por_site_com_variantes`). Devolve a UNIÃO
+    das fontes onde o anime existe. `fontes` traz o status de cada site
+    consultado (disponível ou não, com motivo) — a UI usa isso pra distinguir
+    "não achei nada" de "não consegui nem tentar" (CLAUDE.md §4, erro nunca
+    silencioso)."""
     if not titulo.strip():
         return BuscaEmFontesSaida(resultados=[], fontes=[])
 
-    if escopo == "todas":
-        busca = await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(
-            sessionmaker, titulo
-        )
-    else:
-        busca = await servico_busca.buscar_com_titulos_alternativos(sessionmaker, titulo)
-    capas = await servico_capas.capas_por_titulo(busca.fontes)
+    fontes = await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(
+        sessionmaker, titulo
+    )
     return BuscaEmFontesSaida(
         resultados=[
             ResultadoBuscaFonteSaida(
@@ -302,21 +309,19 @@ async def buscar_animes_em_fontes(
                 identificador=candidato.identificador,
                 url=candidato.url,
                 dominio=fonte.dominio,
-                capa_url=capas.get(slugificar(candidato.titulo_exibicao)),
                 versao=candidato.versao,
                 site_diferencia_versao=_diferencia_versao(fonte.dominio),
+                correspondencia_incerta=fonte.correspondencia_incerta,
             )
-            for fonte in busca.fontes
+            for fonte in fontes
             for candidato in fonte.candidatos
         ],
         fontes=[
             FonteConsultadaSaida(
                 dominio=fonte.dominio, indisponivel=fonte.indisponivel, motivo=fonte.motivo
             )
-            for fonte in busca.fontes
+            for fonte in fontes
         ],
-        termo_alternativo=busca.termo_alternativo,
-        dominio_alternativo=busca.dominio_alternativo,
     )
 
 

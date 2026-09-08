@@ -12,6 +12,7 @@ decide o que fazer com isso (cai para o próximo provedor).
 """
 
 import html
+import logging
 import re
 from datetime import UTC, date, datetime
 
@@ -23,11 +24,16 @@ from integrations.base import (
     FileiraTematica,
     LancamentoDeAnime,
     MetadadosDeAnime,
+    NoDeSerie,
     ProvedorComFileirasTematicas,
     ProvedorComLancamento,
+    ProvedorComRelacoes,
     ProvedorDeMetadados,
+    RelacoesDeAnime,
     TitulosDeAnime,
 )
+
+logger = logging.getLogger(__name__)
 
 _URL = "https://graphql.anilist.co"
 # Estritamente menor que o `wait_for` externo de
@@ -63,6 +69,29 @@ query ($busca: String) {
   Media(search: $busca, type: ANIME) {
     title { romaji english native }
     synonyms
+  }
+}
+"""
+
+# Busca livre do usuário na Home — lista de candidatos, não o top-1 de
+# `_QUERY_BUSCA`. Mesmo bloco de campos de `_QUERY_EM_ALTA` (parser
+# compartilhado `_pagina_para_animes_em_alta`); `sort: SEARCH_MATCH` devolve na
+# ordem de relevância da própria AniList.
+_QUERY_BUSCA_LISTA = """
+query ($busca: String) {
+  Page(page: 1, perPage: 24) {
+    media(search: $busca, type: ANIME, sort: SEARCH_MATCH) {
+      id
+      title { romaji english }
+      coverImage { extraLarge color }
+      bannerImage
+      genres
+      seasonYear
+      startDate { year }
+      status
+      episodes
+      nextAiringEpisode { episode airingAt }
+    }
   }
 }
 """
@@ -142,6 +171,28 @@ query ($id: Int) {
 }
 """
 
+_QUERY_RELACOES = """
+query ($id: Int) {
+  Media(id: $id, type: ANIME) {
+    id
+    title { romaji }
+    startDate { year month }
+    relations {
+      edges {
+        relationType(version: 2)
+        node {
+          id
+          type
+          format
+          title { romaji }
+          startDate { year month }
+        }
+      }
+    }
+  }
+}
+"""
+
 _QUERY_METADADOS_POR_ID = """
 query ($id: Int) {
   Media(id: $id, type: ANIME) {
@@ -168,8 +219,20 @@ _STATUS_ANILIST: dict[str, StatusLancamento] = {
 _REGEX_TAG_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _REGEX_TAG_HTML = re.compile(r"<[^>]+>")
 
+# Formatos de `Media` que contam como "temporada" para o walk de série
+# (`integrations/servico.py::resolver_serie`): filme, OVA, ONA, especial e
+# música são descartados como aresta de prequel — spin-off/recap não avança o
+# ordinal narrativo, e a correção manual desses casos é a Fase 6. `TV_SHORT`
+# entra: série de curtas ainda é temporada numerada (ex. "Yama no Susume").
+_FORMATOS_DE_SERIE = frozenset({"TV", "TV_SHORT"})
 
-class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento, ProvedorComFileirasTematicas):
+
+class AniListProvider(
+    ProvedorDeMetadados,
+    ProvedorComLancamento,
+    ProvedorComFileirasTematicas,
+    ProvedorComRelacoes,
+):
     @property
     def nome(self) -> str:
         return "anilist"
@@ -242,6 +305,10 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento, ProvedorComFil
             sinonimos=_sinonimos(media.get("synonyms")),
         )
 
+    def listar_por_busca(self, titulo: str) -> list[AnimeEmAlta]:
+        dados = self._executar(_QUERY_BUSCA_LISTA, {"busca": titulo})
+        return _pagina_para_animes_em_alta(dados, "busca por título")
+
     def listar_em_alta(self) -> list[AnimeEmAlta]:
         return _pagina_para_animes_em_alta(self._executar(_QUERY_EM_ALTA, {}), "em alta")
 
@@ -253,6 +320,42 @@ class AniListProvider(ProvedorDeMetadados, ProvedorComLancamento, ProvedorComFil
     def listar_fileira_tematica(self, fileira: FileiraTematica) -> list[AnimeEmAlta]:
         dados = self._executar(_QUERY_POR_TAG, {"tag": fileira.tag})
         return _pagina_para_animes_em_alta(dados, f"fileira temática {fileira.chave!r}")
+
+    def buscar_relacoes(self, anilist_id: int) -> RelacoesDeAnime | None:
+        dados = self._executar(_QUERY_RELACOES, {"id": anilist_id})
+        media = dados.get("Media") if isinstance(dados, dict) else None
+        if not isinstance(media, dict):
+            return None
+
+        no = _no_de_serie(media)
+        if no is None:
+            return None
+
+        relacoes = media.get("relations") or {}
+        arestas = relacoes.get("edges") if isinstance(relacoes, dict) else None
+        prequels: list[NoDeSerie] = []
+        for aresta in arestas or []:
+            if not isinstance(aresta, dict) or aresta.get("relationType") != "PREQUEL":
+                continue
+            node = aresta.get("node")
+            if not isinstance(node, dict) or node.get("type") != "ANIME":
+                continue
+            candidato = _no_de_serie(node)
+            if candidato is None:
+                continue
+            if node.get("format") not in _FORMATOS_DE_SERIE:
+                logger.info(
+                    "walk de série: prequel %r (id=%s, format=%s) de id=%s descartado "
+                    "— não é temporada de TV",
+                    candidato.titulo,
+                    candidato.anilist_id,
+                    node.get("format"),
+                    anilist_id,
+                )
+                continue
+            prequels.append(candidato)
+
+        return RelacoesDeAnime(no=no, prequels=tuple(prequels))
 
     def _executar(self, query: str, variaveis: dict) -> dict:
         resposta = requests.post(
@@ -318,6 +421,25 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
             g for g in (item.get("genres") or []) if isinstance(g, str) and g.strip()
         ),
         lancamento=_extrair_lancamento(item),
+    )
+
+
+def _no_de_serie(media: dict) -> NoDeSerie | None:
+    """`NoDeSerie` de um bloco `Media`/`node` do grafo de `relations` — `None`
+    quando falta o `id` (sem ele o nó não entra no walk). `startDate` pode vir
+    ausente, `None` ou parcial; mesmo estilo defensivo de `_extrair_ano`."""
+    ident = media.get("id")
+    if not isinstance(ident, int):
+        return None
+    inicio = media.get("startDate")
+    if not isinstance(inicio, dict):
+        inicio = {}
+    ano, mes = inicio.get("year"), inicio.get("month")
+    return NoDeSerie(
+        anilist_id=ident,
+        titulo=(media.get("title") or {}).get("romaji") or "",
+        ano=ano if isinstance(ano, int) else None,
+        mes=mes if isinstance(mes, int) else None,
     )
 
 

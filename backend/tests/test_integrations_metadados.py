@@ -1678,6 +1678,7 @@ def _limpa_overlay_de_arte(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(servico, "_memo_arte", {})
     monkeypatch.setattr(servico, "_memo_temporadas", {})
     monkeypatch.setattr(servico, "_memo_still", {})
+    monkeypatch.setattr(servico, "_memo_serie", {})
     monkeypatch.setattr(servico, "_arte_desabilitada_por_auth", False)
 
 
@@ -1722,6 +1723,33 @@ async def test_servico_levanta_falha_de_metadados_quando_todos_falham(
 
     with pytest.raises(FalhaDeMetadados):
         await servico.buscar_por_titulo("Slime")
+
+
+def test_onda_concorrente_de_falhas_nao_aprofunda_o_degrau_de_backoff():
+    """Falhas "irmãs" da mesma onda concorrente (cooldown já ativo, aberto pela
+    primeira delas) não incrementam `falhas_consecutivas` — sem esse guard, uma
+    Home que dispara N chamadas quase simultâneas pularia os degraus
+    15s→60s→300s direto pro cooldown cheio de 900s ao primeiro soluço de rede."""
+    servico._registrar_falha_de_provedor("tmdb", requests.ConnectionError("1"))
+    estado_apos_primeira = servico._cooldown_por_provedor["tmdb"]
+    assert estado_apos_primeira[0] == 1
+
+    for _ in range(5):
+        servico._registrar_falha_de_provedor("tmdb", requests.ConnectionError("irmã"))
+
+    assert servico._cooldown_por_provedor["tmdb"] == estado_apos_primeira
+
+
+def test_sonda_de_meio_aberto_falhando_aprofunda_o_degrau():
+    """Depois de o cooldown expirar, uma nova falha (a sonda de meio-aberto) SIM
+    aprofunda o degrau — é o único caminho que escala o backoff."""
+    servico._registrar_falha_de_provedor("tmdb", requests.ConnectionError("1"))
+    falhas, _ = servico._cooldown_por_provedor["tmdb"]
+    servico._cooldown_por_provedor["tmdb"] = (falhas, time.monotonic() - 1)
+
+    servico._registrar_falha_de_provedor("tmdb", requests.ConnectionError("2"))
+
+    assert servico._cooldown_por_provedor["tmdb"][0] == 2
 
 
 async def test_servico_nao_encontrado_em_nenhum_provedor_devolve_none(

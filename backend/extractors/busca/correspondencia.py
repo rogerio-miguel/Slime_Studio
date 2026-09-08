@@ -7,6 +7,9 @@ ALGUMA das referências de título passadas (o mesmo anime tem vários nomes —
 romaji, inglês, nativo, sinônimos de provedor — e o card do site pode estar
 grafado em qualquer um deles), em vez de só compartilhar um prefixo curto com
 outro anime (falso-positivo real de site com busca por prefixo);
+`e_nome_do_anime` diz se o TERMO de busca usado era, ele mesmo, um nome
+canônico do anime (sonda precisa) — o chamador usa isso pra decidir o destino
+de um card órfão que não bateu nenhuma referência;
 `proximidade_a_referencias` ordena os cards já aprovados, do mais próximo da
 referência mais parecida ao mais distante.
 """
@@ -112,6 +115,30 @@ def _chave_de_comparacao(texto: str) -> str:
     slug = slugificar(texto)
     sem_hifen = slug.replace("-", "")
     return _REGEX_VOGAL_LONGA.sub(lambda correspondencia: correspondencia.group(0)[0], sem_hifen)
+
+
+def e_nome_do_anime(variante: str, referencias: list[str]) -> bool:
+    """`True` quando `variante` — o termo de busca que o site efetivamente
+    recebeu — É, ela mesma, um dos nomes canônicos do anime: o slug
+    (`core/texto.py::slugificar`, o mesmo normalizador que `_chave_de_comparacao`
+    usa por dentro) de `variante` está no conjunto dos slugs de `referencias`.
+
+    Checagem de "sonda precisa", consumida por
+    `extractors/busca/servico.py::buscar_em_com_variantes` para decidir o
+    destino de um card ÓRFÃO (não bateu `corresponde_a_alguma_referencia` com
+    referência nenhuma): quando o termo buscado era um nome canônico COMPLETO —
+    não um prefixo curto da escada de recall de `extractors/busca/termos.py`,
+    que é a origem real dos falsos-positivos — o card órfão vira
+    "correspondência incerta" (o site pode indexar o anime só sob um título que
+    o provedor de metadados não conhece, ex. só em PT-BR) em vez de ser
+    descartado. Prefixo curto nunca satisfaz esta checagem, então nunca
+    contribui para os incertos. `referencias` vazia ou `variante` que slugifica
+    pra vazio (kanji) → `False`: sem base pra afirmar "sonda precisa".
+    """
+    slug_variante = slugificar(variante)
+    return bool(slug_variante) and slug_variante in {
+        slugificar(referencia) for referencia in referencias
+    }
 
 
 def proximidade_a_referencias(

@@ -159,6 +159,21 @@ async def listar_proxima_temporada_com_catalogo(
     return await _cruzar_com_catalogo(sessionmaker, itens)
 
 
+async def listar_busca_com_catalogo(
+    sessionmaker: _SessionMaker, titulo: str
+) -> list[tuple[AnimeEmAlta, int | None]]:
+    """Busca livre do usuário (`integrations.servico.listar_por_busca`, só a
+    AniList) pareada com `Anime.id` local — alimenta a busca da Home
+    (`GET /api/animes/buscar`).
+
+    Ao contrário dos feeds acima, NÃO propaga `FalhaDeMetadados`: a camada de
+    `integrations/` já degrada AniList fora do ar para `[]` (busca do usuário,
+    não pode quebrar a Home). Sem refresh oportunista de lançamento — resultado
+    de busca é transitório, o anime cruzado nem sempre está em lançamento."""
+    itens = await servico.listar_por_busca(titulo)
+    return await _cruzar_com_catalogo(sessionmaker, itens)
+
+
 async def _cruzar_com_catalogo(
     sessionmaker: _SessionMaker, itens: list[AnimeEmAlta]
 ) -> list[tuple[AnimeEmAlta, int | None]]:

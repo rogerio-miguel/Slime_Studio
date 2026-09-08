@@ -46,14 +46,14 @@ function construirLinhas(candidatos) {
 // modal — Escada de Minimalismo, CLAUDE.md §4). Racional completo da troca
 // manual de fonte (por que é "solução barata", o que fica de fora) mora em
 // PaginaDoAnime.jsx, junto do estado que orquestra este diálogo — este
-// arquivo só cuida da busca (reaproveita `buscarEmFontes`, a mesma função da
-// Home) e da apresentação dos candidatos.
+// arquivo só cuida da busca em fontes (`buscarEmFontes`, hoje o único
+// consumidor de `/api/animes/buscar-fontes`) e da apresentação dos candidatos.
 //
 // Busca automática ao abrir, com o título do anime (`tituloAnime`) — mas
 // editável: a variante dublada de um site pode ter título de exibição
 // diferente do título "limpo" do anime (ex. AnimesDrive "X Dublado") e não
 // bater na busca por padrão. Reenvio só no submit do form (Enter/botão), não
-// a cada tecla, mesmo padrão de `Inicio.jsx::submeterBuscaEmFontes`.
+// a cada tecla.
 export default function DialogoDeTrocaDeFonte({
   aberto,
   tituloAnime,
@@ -91,7 +91,7 @@ export default function DialogoDeTrocaDeFonte({
   const busca = useRecurso(
     () =>
       aberto && termoSubmetido
-        ? buscarEmFontes(termoSubmetido, 'todas')
+        ? buscarEmFontes(termoSubmetido)
         : Promise.resolve({ resultados: [] }),
     [aberto, termoSubmetido]
   );
@@ -179,16 +179,12 @@ export default function DialogoDeTrocaDeFonte({
                   key={chave}
                   className="flex items-center gap-3 rounded-lg border border-border-chrome p-3"
                 >
-                  {candidato.capa_url && (
-                    <img
-                      src={candidato.capa_url}
-                      alt=""
-                      className="h-14 w-10 flex-none rounded object-cover"
-                    />
-                  )}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-white">{candidato.titulo_exibicao}</p>
                     <p className="text-xs text-ink-muted">{candidato.dominio}</p>
+                    {candidato.correspondencia_incerta && (
+                      <p className="text-xs font-semibold text-amber-300">Correspondência incerta</p>
+                    )}
                   </div>
                   {/* Site não diferencia versão (ex. AnimeFire) — os dois
                   botões continuam existindo, mas o rótulo deixa claro que é a
@@ -229,16 +225,12 @@ export default function DialogoDeTrocaDeFonte({
                 key={chave}
                 className="flex items-center gap-3 rounded-lg border border-border-chrome p-3"
               >
-                {principal.capa_url && (
-                  <img
-                    src={principal.capa_url}
-                    alt=""
-                    className="h-14 w-10 flex-none rounded object-cover"
-                  />
-                )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm text-white">{principal.titulo_exibicao}</p>
                   <p className="text-xs text-ink-muted">{principal.dominio}</p>
+                  {principal.correspondencia_incerta && (
+                    <p className="text-xs font-semibold text-amber-300">Correspondência incerta</p>
+                  )}
                 </div>
                 <div className="flex flex-none flex-col items-end gap-1">
                   {['legendado', 'dublado']

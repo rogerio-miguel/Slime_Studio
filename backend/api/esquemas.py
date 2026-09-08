@@ -218,14 +218,6 @@ class AnimeDetalheSaida(BaseModel):
     status_lancamento: StatusLancamento | None = None
 
 
-# Parâmetro `escopo` de `GET /api/animes/buscar-fontes` (D-B1,
-# PLANO_PADRONIZACAO_FONTES.md — Fase B). `Literal` (não `str` + `if` manual)
-# pra ganhar 422 de graça do FastAPI/Pydantic num valor inválido (caso de
-# borda 1 da Fase B). `"padrao"`: motor sequencial por site da Fase A (Home).
-# `"todas"`: motor paralelo × variantes da fatia 1 de `extractors/busca/servico.py`
-# (diálogo "Trocar fonte").
-EscopoBusca = Literal["padrao", "todas"]
-
 
 class ConfirmarFonteRequest(BaseModel):
     dominio: str
@@ -249,18 +241,21 @@ class ResultadoBuscaFonteSaida(BaseModel):
     identificador: str
     url: str
     dominio: str
-    # `extractors/` não resolve mais capa (Fatia 3 de PLANO_ARTE_TMDB.md) —
-    # preenchida por enriquecimento best-effort via metadado de provedor
-    # externo (`api/servicos/capas.py::capas_por_titulo`, capa já resolvida
-    # pela cadeia TMDB→AniList). `None` quando o provedor não achou capa pra
-    # este título.
-    capa_url: str | None = None
     # `None` quando o site não diferencia versão ou nenhum marcador foi
     # detectado neste candidato específico (`extractors.base.ResultadoBusca.versao`).
     versao: VersaoEpisodio | None = None
     # Capability do site que resolveu este candidato (`ExtratorDeSite.diferencia_versao`)
     # — a UI usa isso pra decidir se oferece a escolha legendado/dublado.
     site_diferencia_versao: bool = False
+    # `True` quando este candidato veio pelo degrau de "correspondência incerta"
+    # (`extractors/busca/servico.py::buscar_em_com_variantes`): o site não
+    # devolveu NENHUM card batendo as referências canônicas do anime, mas este
+    # veio de uma busca por um termo que É um nome canônico (não um prefixo
+    # curto) — provável acerto sob um título que o provedor de metadados não
+    # conhece (ex. só PT-BR). A UI mostra um aviso e deixa o usuário decidir.
+    # Homogêneo por fonte: se o site teve ao menos um card validado, todos os
+    # candidatos daquela fonte saem com `False`.
+    correspondencia_incerta: bool = False
 
 
 class FonteConsultadaSaida(BaseModel):
@@ -281,25 +276,6 @@ class BuscaEmFontesSaida(BaseModel):
 
     resultados: list[ResultadoBuscaFonteSaida]
     fontes: list[FonteConsultadaSaida]
-    # Preenchido quando os resultados vieram de um termo diferente do digitado
-    # — variante de regex reduzida (`extractors.busca.termos.variantes_de_busca`, ex.
-    # sem subtítulo/sufixo de temporada) ou, se nenhuma variante achou nada,
-    # título alternativo do mesmo anime (romaji/inglês, via provedor de
-    # metadados). `None` = resultados vieram do termo exatamente digitado.
-    # Exceção: sempre `None` quando `escopo=todas` — com cada site esgotando
-    # sua própria escada de variantes em paralelo (INV-1',
-    # `buscar_em_todas_as_fontes_com_titulos_alternativos` em
-    # `api/servicos/busca.py`) não há uma única variante/rodada vencedora pra
-    # reportar, ver docstring de lá pro racional completo.
-    termo_alternativo: str | None = None
-    # Preenchido quando quem respondeu não foi o site padrão (índice 0 de
-    # `extractors.registro.EXTRATORES`, ex. AnimeFire) — distingue "achei com
-    # um termo diferente no MESMO site" de "tive que cair pra OUTRO site",
-    # sinal que a Home usa pro aviso de resultado alternativo.
-    # Exceção: sempre `None` quando `escopo=todas`, mesmo motivo do campo
-    # acima — ver `api/servicos/busca.py::
-    # buscar_em_todas_as_fontes_com_titulos_alternativos`.
-    dominio_alternativo: str | None = None
 
 
 class EpisodioRemotoSaida(BaseModel):
