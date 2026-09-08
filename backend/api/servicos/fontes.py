@@ -39,7 +39,7 @@ from core.enums import VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from extractors.base import EpisodioRemoto
 from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
-from extractors.servico import filtrar_por_versao, listar_episodios_em, recortar_para_temporada
+from extractors.servico import filtrar_por_versao, listar_episodios_em
 from integrations import servico as servico_metadados
 from integrations.base import TitulosDeAnime
 from models.anime import Anime
@@ -124,7 +124,12 @@ async def listar_episodios_remotos(
 
     try:
         episodios = await asyncio.wait_for(
-            listar_episodios_em(sessionmaker, resultado.dominio, resultado.identificador),
+            listar_episodios_em(
+                sessionmaker,
+                resultado.dominio,
+                resultado.identificador,
+                anime.numero_temporada,
+            ),
             timeout=_TETO_LISTAGEM_REMOTA_S,
         )
     except TimeoutError as excecao:
@@ -134,13 +139,9 @@ async def listar_episodios_remotos(
             permite_retentativa=True,
         ) from excecao
 
-    # A fonte (ex. AnimeFire) numera o anime inteiro de forma contínua entre
-    # temporadas; cada temporada é uma linha `Anime` própria. Recorta a
-    # listagem para `anime.numero_temporada` e renumera `numero` para o valor
-    # por temporada (o contínuo original vai pra `numero_absoluto`). Primeiro
-    # passo da cadeia — `filtrar_por_versao` e o overlay de still abaixo já
-    # operam sobre o recorte; passthrough quando `numero_temporada is None`.
-    episodios = recortar_para_temporada(episodios, anime.numero_temporada)
+    # O adapter já devolveu a temporada de `anime.numero_temporada` numerada de
+    # 1 (contrato de `ExtratorDeSite.listar_episodios`) — `filtrar_por_versao` e
+    # o overlay de still abaixo operam direto sobre isso.
 
     # Uma página pode cobrir as duas versões (ex. AnimesDrive quando legendado
     # e dublado compartilham a mesma listagem) — sem este filtro, a grade
@@ -181,14 +182,14 @@ async def _sobrepor_stills_de_episodios(
     anime: Anime, episodios: list[EpisodioRemoto]
 ) -> list[EpisodioRemoto]:
     """Overlay best-effort de thumb TMDB (Fatia 5, `PLANO_ARTE_TMDB.md`) sobre
-    `EpisodioRemoto.thumb_url`: quando o recorte de temporada renumerou o
-    episódio (`numero_absoluto` preenchido), pede a still pelo par
-    `(anime.numero_temporada, episodio.numero)`; senão, pelo número absoluto
-    (`episodio.numero`, temporada resolvida pelo TMDB). Preserva o `thumb_url`
-    que o extractor já trouxe quando o TMDB não acha (id não resolvido,
-    temporada fora do range, still nulo) ou quando o lote não termina a tempo.
-    Episódio sem `numero` (rótulo não numérico, ex. "Especial") não tem como
-    mapear pro TMDB — mantém o `thumb_url` original sem tentar.
+    `EpisodioRemoto.thumb_url`: pede a still pelo par `(anime.numero_temporada,
+    episodio.numero)` — o adapter já devolveu `numero` por temporada quando
+    `numero_temporada` está preenchido, e a numeração contínua da fonte quando
+    não (aí `temporada=None` e o TMDB resolve a season pelo número absoluto).
+    Preserva o `thumb_url` que o extractor já trouxe quando o TMDB não acha (id
+    não resolvido, temporada fora do range, still nulo) ou quando o lote não
+    termina a tempo. Episódio sem `numero` (rótulo não numérico, ex. "Especial")
+    não tem como mapear pro TMDB — mantém o `thumb_url` original sem tentar.
 
     Mesma mecânica de concorrência/deadline de
     `api/servicos/capas.py::_consultar_capas`: `asyncio.wait` (não
@@ -204,16 +205,13 @@ async def _sobrepor_stills_de_episodios(
 
     async def _buscar_um(indice: int) -> tuple[int, str | None]:
         episodio = episodios[indice]
-        # Se o recorte de temporada renumerou o episódio (`numero_absoluto`
-        # preenchido), `episodio.numero` já é o número dentro da temporada e
-        # `anime.numero_temporada` é o `n` dela — o TMDB vai direto à season.
-        # Senão, `episodio.numero` é a numeração absoluta e a temporada é
-        # resolvida pelo próprio TMDB (`temporada=None`).
-        temporada = anime.numero_temporada if episodio.numero_absoluto is not None else None
+        # `anime.numero_temporada` dado → `episodio.numero` é por temporada (o
+        # adapter recortou), TMDB vai direto à season. `None` → `episodio.numero`
+        # é a numeração absoluta e o TMDB resolve a season sozinho.
         async with semaforo:
             try:
                 still = await servico_metadados.buscar_still_de_episodio(
-                    anime.titulo, anime.ano, episodio.numero, temporada
+                    anime.titulo, anime.ano, episodio.numero, anime.numero_temporada
                 )
             except Exception as excecao:
                 # Captura ampla e intencional (mesmo espírito de
