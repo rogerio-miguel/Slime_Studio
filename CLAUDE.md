@@ -48,7 +48,7 @@ Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga
 ---
 
 ## 5. Comandos de Validação
-A skill `transicao` lê esta seção para saber o que rodar ao gerar um checkpoint.
+A skill `checkpoint` lê esta seção para saber o que rodar ao gerar um checkpoint.
 
 | Escopo | Comando |
 |---|---|
@@ -61,55 +61,58 @@ A skill `transicao` lê esta seção para saber o que rodar ao gerar um checkpoi
 
 ## 6. Orquestração (Custo/Desempenho)
 
-A sessão principal orquestra; ela não é o executor padrão. Ao receber um pedido, faça a triagem
-e siga **um** dos dois caminhos abaixo. Anuncie qual escolheu, em uma linha, antes de agir.
+**O executor padrão é a sessão principal.** Delegar a subagente é a exceção, não a regra —
+cada delegação abre um contexto frio que recarrega tudo do zero, e a medição mostrou que
+delegar por padrão saía mais caro (em tokens e em tempo) do que executar direto. Ao receber
+um pedido, execute-o você mesmo se consegue enxergar a mudança inteira e o padrão a seguir.
+Só saia desse caminho pelos gatilhos objetivos abaixo.
 
 ### Princípio de custo (o que decide tudo abaixo)
-O contexto da sessão principal é cobrado em **todo** turno seguinte. Output de tool lido inline
-fica lá para sempre; output de tool de um subagente não entra — só o resumo entra. Por isso:
-**delegue o que precisa ser lido mas não precisa ser lembrado.** Um mapeamento de código que
-serve para uma decisão e depois vira ruído é o caso clássico: vale mais um relatório de
-200 linhas do `explorer` do que 20 arquivos despejados no contexto principal.
-O inverso também vale: o que a sessão principal *já tem* em contexto não deve ser re-lido por
-ninguém — repassar ao subagente é mais barato que mandá-lo redescobrir.
+Duas coisas custam, e uma não anula a outra:
+- **Contexto grande na sessão principal** — cobrado em todo turno seguinte. Ler 20 arquivos
+  inline para uma decisão pontual infla o custo de toda a sessão dali para frente.
+- **Cada hop de subagente** — recarrega contexto frio, o subagente re-deriva o que você já
+  sabia, e o resultado ainda volta para você conferir.
 
-### Caminho direto
-Use quando **todas** forem verdadeiras:
-- A mudança é trivial e de escopo óbvio (poucas linhas, 1 arquivo).
-- Segue padrão já estabelecido no projeto — não há decisão de design a tomar.
-- O contexto necessário já está na conversa ou em arquivos referenciados via `@arquivo`.
+Delegar só vale quando o subagente **lê muito e devolve pouco**. É o caso do `explorer`:
+varre 20 arquivos, devolve um resumo de 200 linhas. Não é o caso de mandar um subagente
+fazer uma edição de 2 arquivos que você mesmo faria em 3 turnos.
 
-Nesse caminho a sessão principal executa direto, sem `explorer` e sem `architect`.
-Orquestrar uma tarefa de 3 linhas custa contextos extras onde um resolveria.
+### Caminho direto (padrão)
+A sessão principal executa, sem `explorer` e sem `architect`. Use sempre que:
+- Você consegue enxergar a mudança inteira e o padrão que ela segue — mesmo que toque
+  vários arquivos, contanto que seja mecânico/repetitivo.
+- O contexto necessário já está na conversa, ou dá para obter com poucas leituras
+  direcionadas (`@arquivo`, um `grep`, abrir 2-3 arquivos).
+- É um bugfix pontual, um ajuste localizado, uma feature pequena que segue padrão existente.
 
-### Caminho orquestrado
-Qualquer coisa que não passe no teste acima. Sequência:
+### Quando delegar (exceção)
+- **`explorer`** — quando responder ao pedido exigiria muitas leituras/buscas (mapear uma
+  convenção espalhada, achar todos os usos de algo, entender um subsistema que você não
+  conhece) e esse material vira ruído no contexto depois. Paralelize escopos independentes
+  (um `explorer` cada, na mesma leva). Se a informação já está na conversa, não delegue.
+- **`implementer`** — só para trabalho que toca **vários arquivos** ou é um **refactor/feature
+  definido** grande o bastante para inflar demais o seu contexto se feito inline. Passe a ele
+  a lista de arquivos e o plano — ele não deve re-explorar. Bugfix pontual e mudança de 1-2
+  arquivos **não** vão para o `implementer`: é mais barato no caminho direto.
+- **`architect`** — só quando um critério objetivo do próprio agente bate (mais de uma camada
+  sem padrão para replicar, decisão de design nova, ou bug sem causa óbvia **após** uma
+  tentativa direta que falhou). É o agente mais caro do kit (Opus, ~2,05x Sonnet). Escopo já
+  claro nunca passa por aqui. Na dúvida, o loop principal tenta direto primeiro.
 
-1. **`explorer`** — só se faltar contexto. Se a informação já está na conversa, pule.
-   Paralelize: escopos independentes viram um `explorer` cada, na mesma leva, não em série.
-2. **`architect`** — só se ao menos um critério objetivo do agente for atendido (mais de uma
-   camada afetada, ausência de padrão estabelecido, ou bug sem causa óbvia **após** uma tentativa
-   direta do `implementer`). Não escalar "por segurança": escopo já claro vai direto ao passo 3.
-   É o agente mais caro do kit (Opus, ~2,05x o custo por turno de Sonnet) — na dúvida entre
-   `architect` e pular direto ao `implementer`, o critério objetivo decide, não a cautela.
-3. **`implementer`** — sempre. Recebe o plano do `architect` quando houve um, ou a instrução
-   direta quando não houve. Repasse o contexto que você já tem em vez de deixá-lo redescobrir.
-   Não existe um `reviewer` separado no kit: o `implementer` se autorrevisa o próprio diff
-   (edge cases, segurança, validação de entrada) antes de reportar concluído — poupa a chamada
-   extra que seria um segundo subagente recarregando o mesmo contexto do zero.
-   Escopo grande demais numa chamada só é o mesmo problema de leitura direta, um nível abaixo:
-   "implemente a Fase X inteira" num único `implementer` acumula contexto turno a turno igual ao
-   loop principal faria sem delegar (medido neste projeto: um caso real chegou a 354 turnos / 53M
-   tokens numa única cadeia). Fatie por unidade natural do trabalho (arquivo, rota, endpoint,
-   componente) e trate cada fatia como uma chamada própria — não como um pacote só a validar no fim.
+Sem `reviewer` separado: o `implementer` autorrevisa o próprio diff (edge cases, segurança,
+validação de entrada) antes de reportar. No caminho direto, essa revisão cética do diff é
+sua.
 
-### Falhas e reentrada
-- `implementer` sinalizou escopo ambíguo → volte ao passo 2 (`architect`), não improvise a decisão.
-- `implementer` falhou uma tentativa direta em bug → agora o `architect` é justificado (causa-raiz).
-- Rodada de correção depois de um `implementer` já concluído → prefira abrir um `implementer` novo
-  com prompt focado só no diff/achado pontual, em vez de retomar o mesmo agente da implementação
-  original. Retomar recarrega o histórico inteiro a cada vez e é o que faz o custo de uma tarefa
-  grande crescer sem limite.
+### Fatiamento e reentrada
+- Um `implementer` com escopo grande demais ("implemente a Fase X inteira") acumula contexto
+  turno a turno como o loop principal faria (medido neste projeto: 354 turnos / 53M numa
+  cadeia; o `maxTurns` do frontmatter **não** corta isso — bug conhecido do Claude Code).
+  Fatie por unidade natural (arquivo, rota, endpoint, componente), uma chamada por fatia.
+- Rodada de correção depois de um subagente concluído → abra um `implementer` novo focado só
+  no achado, ou faça no caminho direto. Não retome o agente antigo via `SendMessage`:
+  recarrega o histórico inteiro a cada vez.
+- Subagente sinalizou ambiguidade de design → `architect`, não improvise.
 
 ---
 
@@ -129,4 +132,5 @@ A integração `claude-in-chrome` só deve ser usada para inspeção/depuração
 
 _Gerado pela skill `bootstrap` do kit `claude-toolkit` (versão 0.3.0) em 2026-08-10.
 Seção 6 (Orquestração) atualizada manualmente em 2026-08-25 para o pipeline sem `reviewer`
-separado (fundido ao `implementer` na v0.7.0 do kit)._
+separado (fundido ao `implementer` na v0.7.0 do kit), e em 2026-09-07 para a doutrina da
+v0.9.0 — caminho direto vira o padrão, delegar é exceção por gatilho objetivo._
