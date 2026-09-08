@@ -34,6 +34,7 @@ from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
 from core.config import Config
 from core.enums import VersaoDeFonte, VersaoEpisodio
+from core.franquia import slug_de_franquia
 from db.catalogo import obter_ou_criar_anime_id
 from extractors.base import ResultadoBusca
 from extractors.registro import EXTRATORES
@@ -382,22 +383,55 @@ async def obter_anime(
 
 
 async def _temporadas_irmas(sessao: AsyncSession, anime: Anime) -> list[TemporadaIrmaSaida]:
-    """Temporadas da mesma franquia que `anime` (mesmo `serie_ancora`, inclui a
-    própria), ordenadas por `numero_temporada` (NULL por último). Lista vazia
-    quando `serie_ancora` é NULL — franquia não resolvida, sem agrupamento a
-    oferecer (o fallback por slug do título é só client-side, na Galeria)."""
-    if anime.serie_ancora is None:
+    """Temporadas da mesma franquia que `anime` (inclui a própria), ordenadas por
+    `numero_temporada` (NULL por último). Franquia = componente conexo onde dois
+    animes se ligam por compartilhar `serie_ancora` OU o slug do título base
+    (`core/franquia.py`) — o segundo sinal cobre o walk de `relations` que erra
+    com OVA/ONA/split-cour no meio (Fase 6). Grupo unitário (só a própria
+    temporada) volta como `[]` — nada a oferecer no seletor.
+
+    Varre o catálogo inteiro (dezenas de linhas, uso pessoal) a cada leitura de
+    detalhe — barato o bastante pra não justificar índice/materialização.
+    Espelha o agrupamento de `frontend/src/inicio/franquia.js`."""
+    linhas = (
+        await sessao.execute(
+            select(Anime.id, Anime.numero_temporada, Anime.titulo, Anime.serie_ancora)
+        )
+    ).all()
+
+    pai: dict[object, object] = {}
+
+    def acha(no: object) -> object:
+        pai.setdefault(no, no)
+        while pai[no] != no:
+            pai[no] = pai[pai[no]]
+            no = pai[no]
+        return no
+
+    def une(a: object, b: object) -> None:
+        pai[acha(a)] = acha(b)
+
+    for linha in linhas:
+        no = ("id", linha.id)
+        acha(no)
+        slug = slug_de_franquia(linha.titulo)
+        if slug:
+            une(no, ("slug", slug))
+        if linha.serie_ancora is not None:
+            une(no, ("anc", linha.serie_ancora))
+
+    raiz = acha(("id", anime.id))
+    grupo = [linha for linha in linhas if acha(("id", linha.id)) == raiz]
+    if len(grupo) < 2:
         return []
-    resultado = await sessao.execute(
-        select(Anime.id, Anime.numero_temporada, Anime.titulo)
-        .where(Anime.serie_ancora == anime.serie_ancora)
-        .order_by(Anime.numero_temporada.asc().nulls_last(), Anime.id)
+    grupo.sort(
+        key=lambda linha: (linha.numero_temporada is None, linha.numero_temporada or 0, linha.id)
     )
     return [
         TemporadaIrmaSaida(
             id=linha.id, numero_temporada=linha.numero_temporada, titulo=linha.titulo
         )
-        for linha in resultado.all()
+        for linha in grupo
     ]
 
 

@@ -1,13 +1,12 @@
 // Agrupamento do catálogo por franquia (Fase 5) — o catálogo
 // (`paginas/Galeria.jsx`) mostra 1 card por franquia, não 1 por temporada.
 //
-// Chave de agrupamento: `Anime.serie_ancora` (um `anilist_id` da T1,
-// compartilhado por todas as temporadas da franquia — ver
-// `backend/models/anime.py`). Quando NULL (franquia não resolvida pelo walk de
-// `relations` da AniList), cai no slug do título SEM o marcador de temporada,
-// espelhando `core/temporada.py::separar_temporada` + `core/texto.py::slugificar`
-// do backend. É só um fallback: `scripts/backfill_serie.py` preenche
-// `serie_ancora` para o grosso do catálogo.
+// Dois sinais unidos (union-find): duas temporadas são da mesma franquia se
+// compartilham `Anime.serie_ancora` (walk de `relations` da AniList) OU o slug
+// do título SEM o marcador de temporada. O segundo sinal existe porque o walk
+// erra com OVA/ONA/split-cour no meio da cadeia (Fase 6): uma temporada fica com
+// âncora, a irmã fica com `serie_ancora` NULL (ou outra âncora). Espelha
+// `backend/core/franquia.py` + `_temporadas_irmas` de `api/rotas/animes.py`.
 
 // Espelha o subconjunto de `_REGEX_MARCADOR_TEMPORADA` de `core/temporada.py`
 // que importa para agrupar (marcador no FIM do título, fronteira de token por
@@ -39,9 +38,8 @@ function slugificar(texto) {
     .replace(/^-+|-+$/g, '');
 }
 
-export function chaveDeFranquia(anime) {
-  if (anime.serie_ancora != null) return `ancora:${anime.serie_ancora}`;
-  return `slug:${slugificar(tituloSemMarcadores(anime.titulo))}`;
+function slugDeFranquia(titulo) {
+  return slugificar(tituloSemMarcadores(titulo));
 }
 
 // Agrupa uma lista de `AnimeSaida` (`GET /api/animes`) em franquias. Cada item
@@ -61,12 +59,31 @@ export function chaveDeFranquia(anime) {
 //   - `idsDaFranquia`: ids de todas as temporadas (remoção da franquia inteira).
 //   - `contagemDeTemporadas`: quantas temporadas no grupo.
 export function agruparEmFranquias(animes) {
+  const pai = new Map();
+  const acha = (no) => {
+    if (!pai.has(no)) pai.set(no, no);
+    while (pai.get(no) !== no) {
+      pai.set(no, pai.get(pai.get(no)));
+      no = pai.get(no);
+    }
+    return no;
+  };
+  const une = (a, b) => pai.set(acha(a), acha(b));
+
+  for (const anime of animes) {
+    const no = `id:${anime.id}`;
+    acha(no);
+    const slug = slugDeFranquia(anime.titulo);
+    if (slug) une(no, `slug:${slug}`);
+    if (anime.serie_ancora != null) une(no, `anc:${anime.serie_ancora}`);
+  }
+
   const grupos = new Map();
   for (const anime of animes) {
-    const chave = chaveDeFranquia(anime);
-    const grupo = grupos.get(chave);
+    const raiz = acha(`id:${anime.id}`);
+    const grupo = grupos.get(raiz);
     if (grupo) grupo.push(anime);
-    else grupos.set(chave, [anime]);
+    else grupos.set(raiz, [anime]);
   }
   return [...grupos.values()].map(montarFranquia);
 }
