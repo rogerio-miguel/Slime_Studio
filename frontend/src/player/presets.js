@@ -64,6 +64,23 @@ export const PRESETS = {
         buildStandardPipeline({ device, inputTexture, dims, Restore: CNNVL, Upscale: CNNx2VL });
     },
   },
+  // Igual ao 'a-vl' sem o passe CNNx2VL: com a fonte já em ~1080p e o alvo
+  // mirando a tela, o x2 gera 2160p que o Downscale final joga fora de volta
+  // — supersampling caro, não resolução. Tirar o x2 mantém a fonte inteira
+  // entrando na CNN de restauração (o que limpa o anime) e corta ~metade do
+  // custo. Degrau "mais fluidez sem trocar de algoritmo" da escada automática.
+  'a-vl-1x': {
+    label: 'Anime4K A · VL (sem upscale)',
+    escalaMax: 1, // sem CNNx2: a CNN devolve na resolução da fonte, nunca mais
+    build(dims) {
+      return (device, inputTexture) => {
+        const clamp = new ClampHighlights({ device, inputTexture });
+        const restore = new CNNVL({ device, inputTexture: clamp.getOutputTexture() });
+        const down = new Downscale({ device, inputTexture: restore.getOutputTexture(), targetDimensions: dims });
+        return [clamp, restore, down];
+      };
+    },
+  },
   'aa-vl': {
     label: 'Anime4K A+A · VL',
     build(dims) {
@@ -140,34 +157,44 @@ export const PRESETS = {
   },
 };
 
-// Ordem de fallback por custo de GPU decrescente — o degrau mais pesado
-// (melhor qualidade) primeiro. Consumido hoje por SeletorDePreset.jsx; o
-// TODO de degradação automática (useTelemetriaDeVideo.js) também vai
-// percorrer esta lista quando for implementado.
-export const ESCADA_DE_DEGRADACAO = ['aa-vl-deblur', 'aa-vl', 'a-vl', 'b-vl', 'c-vl', 'a-m', 'original'];
+// Ordem por custo de GPU decrescente — o degrau mais pesado (melhor
+// qualidade) primeiro. Consumido por SeletorDePreset.jsx só para ordenar o
+// <select> manual.
+export const ESCADA_DE_DEGRADACAO = ['aa-vl-deblur', 'aa-vl', 'a-vl', 'b-vl', 'c-vl', 'a-vl-1x', 'a-m', 'original'];
+
+// Degraus da degradação automática (modo "Automático" do seletor, percorrido
+// por useControleAdaptativo.js) — subconjunto da escada manual, só os saltos
+// cujo corte de custo de GPU paga a reconstrução do GPUDevice na troca. Fora
+// daqui de propósito: 'aa-vl' (só ~6% mais leve que o topo), 'b-vl' (mesmo
+// custo de 'a-vl'), 'c-vl'/'aa-vl-denoise' (mudam o look — trocar look no meio
+// do episódio é pior que perder um pouco de detalhe).
+export const DEGRAUS_ADAPTATIVOS = ['aa-vl-deblur', 'a-vl', 'a-vl-1x', 'a-m', 'original'];
 
 export const PRESET_PADRAO = 'aa-vl-deblur';
 
-// Resolução-alvo do Downscale de cada preset. Por padrão mira a resolução
-// nativa do vídeo (comportamento antigo) — mas isso faz o navegador aplicar
-// um SEGUNDO resize (compositor, bilinear genérico) por cima do que o shader
-// Anime4K já produziu, pra encaixar no tamanho CSS do .frame; em telas com
-// devicePixelRatio > 1 esse segundo resize pode até estar ampliando os
-// pixels nativos além do que existem, borrando o resultado.
+// Resolução-alvo do Downscale final de cada preset.
 //
-// Mira sempre o tamanho físico equivalente a TELA CHEIA (o maior que o
-// .frame algum dia vai ocupar nesta sessão), não o tamanho atual — de
-// propósito, mesmo em modo janela. Motivo: o bundle real da lib
-// (checado via curl, não documentação) mostra que render() cria um
-// GPUDevice novo e reconfigura o canvas a cada chamada, sem devolver
-// nenhum handle pra parar o requestVideoFrameCallback recursivo da chamada
-// anterior — reconstruir o pipeline ao entrar/sair de tela cheia vazaria o
-// device antigo e deixaria dois loops rodando ao mesmo tempo. Miramos o
-// maior caso de uma vez em troca: baixar de uma resolução maior pro
-// tamanho da janela é seguro (downscale não borra — é o mesmo princípio de
-// supersampling); só subir resolução borraria, e isso nunca acontece nessa
-// abordagem. "original" fica de fora: é a referência "1080p puro sem
-// shader", mudar a resolução dele quebraria o propósito de controle.
+// Mira sempre o tamanho equivalente a TELA CHEIA (o maior que o .frame algum
+// dia vai ocupar nesta sessão), não o tamanho atual — de propósito, mesmo em
+// modo janela. Motivo: o bundle real da lib (checado via curl, não
+// documentação) mostra que render() cria um GPUDevice novo e reconfigura o
+// canvas a cada chamada, sem devolver handle pra parar o
+// requestVideoFrameCallback recursivo da chamada anterior — reconstruir o
+// pipeline ao entrar/sair de tela cheia vazaria o device antigo e deixaria
+// dois loops rodando. Miramos o maior caso de uma vez; baixar de uma
+// resolução maior pro tamanho da janela é seguro (downscale não borra).
+//
+// Dois tetos sobre esse alvo:
+//  - Resolução CSS da tela, SEM multiplicar por devicePixelRatio. Num painel
+//    1080p o DPR > 1 vem de zoom do navegador / escalonamento do SO, não de
+//    pixels físicos a mais — supersamplear por cima disso numa GPU fraca
+//    custa caro sem ganho visível. (Um painel HiDPI real vai querer o fator
+//    de volta; revisitar quando aparecer.)
+//  - `escalaMax` do preset: quanto a CNN de upscale multiplica a fonte (2 nos
+//    presets com CNNx2, 1 no 'a-vl-1x'). Passar disso é o Downscale final
+//    *magnificando* com bilinear — borra e gasta à toa.
+//
+// "original" fica de fora: é a referência "fonte pura sem shader".
 export function calcularDimensoesDeSaida(presetId, video) {
   if (presetId === 'original') {
     return { width: video.videoWidth, height: video.videoHeight };
@@ -175,11 +202,11 @@ export function calcularDimensoesDeSaida(presetId, video) {
   const videoAspect = video.videoWidth / video.videoHeight;
   const screenCssWidth = window.screen?.width || window.innerWidth;
   const screenCssHeight = window.screen?.height || window.innerHeight;
-  // Maior largura CSS que o canvas pode chegar a ocupar: em tela cheia ele é
-  // "contained", então o limite é o menor entre a largura da tela e a largura
-  // que a altura da tela comporta nessa proporção.
-  const fullscreenCssWidth = Math.min(screenCssWidth, screenCssHeight * videoAspect);
-  const width = Math.round(fullscreenCssWidth * (window.devicePixelRatio || 1));
+  // Em tela cheia o canvas é "contained": o limite é o menor entre a largura
+  // da tela e a largura que a altura da tela comporta nessa proporção.
+  const alvoCss = Math.min(screenCssWidth, screenCssHeight * videoAspect);
+  const escalaMax = PRESETS[presetId]?.escalaMax ?? 2;
+  const width = Math.round(Math.min(alvoCss, video.videoWidth * escalaMax));
   const height = Math.round(width / videoAspect);
   return { width, height };
 }
