@@ -2,6 +2,8 @@
 estáticas (strings neste arquivo) servidas pelo `ClienteFalso` da fixture
 `cliente_falso` (`conftest.py`)."""
 
+import re
+
 import pytest
 
 from core.enums import VersaoEpisodio
@@ -165,17 +167,24 @@ def _thumb_fake(href: str) -> str:
 def _pagina_de_temporadas(*temporadas: list[str]) -> str:
     """Envelopa cada temporada (lista de hrefs de episódio) num `div.se-c`
     dentro de `#seasons` — a estrutura real do tema DooPlay de onde
-    `listar_episodios` lê."""
+    `listar_episodios` lê. O `div.numerando` ("{temporada} - {episodio}") só
+    entra pros hrefs que trazem `episodio-{n}` (rótulo não numérico não ganha o
+    widget de numeração no site real)."""
     blocos = []
     for indice, hrefs in enumerate(temporadas, start=1):
-        itens = "".join(
-            f"<li class='mark-1'>"
-            f"<div class='imagen'><img src='{_thumb_fake(href)}'></div>"
-            f"<div class='numerando'>{indice} - {i}</div>"
-            f"<div class='episodiotitle'><a href='{href}'>Episódio {i}</a>"
-            f"<span class='date'>Oct. 02, 2018</span></div></li>"
-            for i, href in enumerate(hrefs, start=1)
-        )
+        itens = ""
+        for posicao, href in enumerate(hrefs, start=1):
+            match = re.search(r"episodio-(\d+)", href)
+            numerando = (
+                f"<div class='numerando'>{indice} - {match.group(1)}</div>" if match else ""
+            )
+            itens += (
+                f"<li class='mark-1'>"
+                f"<div class='imagen'><img src='{_thumb_fake(href)}'></div>"
+                f"{numerando}"
+                f"<div class='episodiotitle'><a href='{href}'>Episódio {posicao}</a>"
+                f"<span class='date'>Oct. 02, 2018</span></div></li>"
+            )
         blocos.append(
             f"<div class='se-c'>"
             f"<div class='se-q'><span class='se-t se-o'>{indice}</span>"
@@ -186,7 +195,7 @@ def _pagina_de_temporadas(*temporadas: list[str]) -> str:
     return f"<div id='seasons'>{''.join(blocos)}</div>"
 
 
-def test_listar_episodios_uma_temporada_ordena_e_extrai_numero_do_path(extrator, cliente_falso):
+def test_listar_episodios_uma_temporada_ordena_e_extrai_numero(extrator, cliente_falso):
     identificador = "tensei-shitara-slime-datta-ken-dublado"
     html = _pagina_de_temporadas(
         [
@@ -198,7 +207,7 @@ def test_listar_episodios_uma_temporada_ordena_e_extrai_numero_do_path(extrator,
     url_anime = f"{extrator.BASE_URL}/a/{identificador}/"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert episodios == [
         EpisodioRemoto(
@@ -233,7 +242,7 @@ def test_listar_episodios_url_sem_numero_entra_com_numero_none_no_fim(extrator, 
     url_anime = f"{extrator.BASE_URL}/a/{identificador}/"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert [(e.rotulo, e.numero) for e in episodios] == [
         ("1", 1),
@@ -241,9 +250,7 @@ def test_listar_episodios_url_sem_numero_entra_com_numero_none_no_fim(extrator, 
     ]
 
 
-def test_listar_episodios_multiplas_temporadas_achata_em_ordem_de_documento_e_loga(
-    extrator, cliente_falso, caplog
-):
+def _pagina_naruto(extrator, cliente_falso):
     identificador = "naruto"
     html = _pagina_de_temporadas(
         [
@@ -256,19 +263,38 @@ def test_listar_episodios_multiplas_temporadas_achata_em_ordem_de_documento_e_lo
         ],
     )
     url_anime = f"{extrator.BASE_URL}/a/{identificador}/"
-    cliente = cliente_falso(html_por_url={url_anime: html})
+    return identificador, cliente_falso(html_por_url={url_anime: html})
+
+
+def test_listar_episodios_multiplas_temporadas_sem_temporada_numera_absoluto(
+    extrator, cliente_falso, caplog
+):
+    """`temporada=None`: as temporadas do `.se-t`/`.numerando` viram numeração
+    absoluta contínua (T2 ep1 → 3), na ordem de documento."""
+    identificador, cliente = _pagina_naruto(extrator, cliente_falso)
 
     with caplog.at_level("INFO"):
-        episodios = extrator.listar_episodios(cliente, identificador)
+        episodios = extrator.listar_episodios(cliente, identificador, None)
 
-    # Sort estável: dentro de cada número, a ordem de documento (T1 antes de T2).
-    assert [e.url for e in episodios] == [
-        "https://meusanimes.blog/e/naruto-1-episodio-1/",
-        "https://meusanimes.blog/e/naruto-2-episodio-1/",
-        "https://meusanimes.blog/e/naruto-1-episodio-2/",
-        "https://meusanimes.blog/e/naruto-2-episodio-2/",
+    assert [(e.numero, e.url) for e in episodios] == [
+        (1, "https://meusanimes.blog/e/naruto-1-episodio-1/"),
+        (2, "https://meusanimes.blog/e/naruto-1-episodio-2/"),
+        (3, "https://meusanimes.blog/e/naruto-2-episodio-1/"),
+        (4, "https://meusanimes.blog/e/naruto-2-episodio-2/"),
     ]
-    assert "2 temporadas" in caplog.text
+    assert "2 temporada(s) reconhecida(s)" in caplog.text
+
+
+def test_listar_episodios_recorta_para_a_temporada_pedida(extrator, cliente_falso):
+    """`temporada=2`: só o bloco da T2, renumerado por temporada (1, 2)."""
+    identificador, cliente = _pagina_naruto(extrator, cliente_falso)
+
+    episodios = extrator.listar_episodios(cliente, identificador, 2)
+
+    assert [(e.numero, e.url) for e in episodios] == [
+        (1, "https://meusanimes.blog/e/naruto-2-episodio-1/"),
+        (2, "https://meusanimes.blog/e/naruto-2-episodio-2/"),
+    ]
 
 
 def test_listar_episodios_deduplica_por_url_repetida(extrator, cliente_falso):
@@ -280,7 +306,7 @@ def test_listar_episodios_deduplica_por_url_repetida(extrator, cliente_falso):
     url_anime = f"{extrator.BASE_URL}/a/{identificador}/"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert [e.url for e in episodios] == [
         "https://meusanimes.blog/e/bleach-1-episodio-1/",
@@ -307,7 +333,7 @@ def test_listar_episodios_extrai_thumb_do_li_e_none_quando_ausente(extrator, cli
     url_anime = f"{extrator.BASE_URL}/a/{identificador}/"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert [(e.numero, e.thumb_url) for e in episodios] == [(1, thumb), (2, None)]
 
@@ -322,7 +348,7 @@ def test_listar_episodios_sem_bloco_seasons_levanta_estrutura_do_site_mudou(
     )
 
     with pytest.raises(EstruturaDoSiteMudou) as info:
-        extrator.listar_episodios(cliente, identificador)
+        extrator.listar_episodios(cliente, identificador, None)
 
     assert info.value.dominio == "meusanimes"
     assert info.value.permite_retentativa is False
@@ -338,7 +364,7 @@ def test_listar_episodios_com_seasons_vazio_levanta_estrutura_do_site_mudou(
     )
 
     with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador)
+        extrator.listar_episodios(cliente, identificador, None)
 
 
 # --- resolver_midia ------------------------------------------------------------
