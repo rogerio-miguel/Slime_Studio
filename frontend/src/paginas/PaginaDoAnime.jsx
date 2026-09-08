@@ -654,6 +654,42 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             >
               {anime?.titulo ?? `Anime #${animeId}`}
             </h1>
+            {/* Seletor de temporada (Fase 5) — `anime.temporadas` é a lista das
+                temporadas irmãs da franquia (mesmo `serie_ancora`, já ordenada
+                por número, inclui a atual). Trocar de temporada é NAVEGAÇÃO de
+                rota (`/anime/:outroId`): a página inteira já re-chaveia em
+                `animeId` via `useRecurso`, e a URL fica compartilhável por
+                temporada. Só renderiza com 2+ temporadas catalogadas. Pills na
+                mesma linguagem de `CLASSE_PILL_HERO`; a atual é `<span
+                aria-current>` inerte, as outras são `<button>` que navega. */}
+            {anime?.temporadas?.length > 1 && (
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Temporada">
+                {anime.temporadas.map((temporada) => {
+                  const rotulo =
+                    temporada.numero_temporada != null
+                      ? `Temporada ${temporada.numero_temporada}`
+                      : temporada.titulo;
+                  return temporada.id === animeId ? (
+                    <span
+                      key={temporada.id}
+                      aria-current="true"
+                      className="rounded-md border-2 border-neon bg-white/10 px-3 py-1 text-xs font-semibold text-white backdrop-blur-sm"
+                    >
+                      {rotulo}
+                    </span>
+                  ) : (
+                    <button
+                      key={temporada.id}
+                      type="button"
+                      onClick={() => navigate(`/anime/${temporada.id}`)}
+                      className="rounded-md border-2 border-border-chrome bg-white/5 px-3 py-1 text-xs font-semibold text-ink-muted backdrop-blur-sm outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+                    >
+                      {rotulo}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             {meta && <p className="text-sm text-ink-muted sm:text-base">{meta}</p>}
             {generosTraduzidos.length > 0 && (
               // Pills de gênero — reusam `CLASSE_PILL_HERO` (fonte única do
