@@ -126,6 +126,12 @@ class AnimeSaida(BaseModel):
     proximo_ep_em: datetime | None = None
     estreia_em: date | None = None
     tem_episodios: bool = False
+    # `True` quando o usuário TERMINOU de ver o anime: a contagem de episódios
+    # REGULAR assistidos alcança a contagem da fonte (`api/servicos/
+    # lancamentos.py::ids_totalmente_assistidos`). Derivado (não é coluna),
+    # injetado na rota. O catálogo (`paginas/Galeria.jsx`) usa pra marcar a tag
+    # "Assistido" no card; `False` também pra anime sem nenhum episódio.
+    assistido: bool = False
     # Agrupamento por franquia no catálogo (`paginas/Galeria.jsx`, Fase 5) — 1:1
     # com as colunas homônimas de `Anime` via `model_validate`, mesmo default
     # nullable do resto (animes antigos têm as colunas NULL). `serie_ancora` é um
@@ -195,11 +201,17 @@ class TemporadaIrmaSaida(BaseModel):
     """Uma temporada da mesma franquia (`Anime.serie_ancora` em comum) — item do
     seletor de temporada da página do anime (Fase 5). `numero_temporada` pode ser
     NULL (marcador do título ausente e walk de `relations` sem resultado); o
-    front cai no `titulo` como rótulo nesse caso."""
+    front cai no `titulo` como rótulo nesse caso. `estreia_em`/`ano` só vêm
+    preenchidos quando este objeto é a `proxima_temporada` de `AnimeDetalheSaida`
+    (aviso de estreia no hero) — nos itens do seletor são sempre `None`. `ano` é
+    o fallback quando a AniList ainda não fechou a data completa: o aviso vira
+    "Nª temporada estreia em 2026" (mesma degradação de `CartaoDeEstreia`)."""
 
     id: int
     numero_temporada: int | None
     titulo: str
+    estreia_em: date | None = None
+    ano: int | None = None
 
 
 class AnimeDetalheSaida(BaseModel):
@@ -245,7 +257,13 @@ class AnimeDetalheSaida(BaseModel):
     serie_ancora: int | None = None
     numero_temporada: int | None = None
     temporadas: list[TemporadaIrmaSaida] = []
-
+    # Temporada seguinte da franquia que ainda não estreou mas já tem data
+    # completa (`estreia_em` no futuro) OU pelo menos o ano (`ano >= ano atual`)
+    # — alimenta o aviso "Nª temporada estreia em ..." no hero da página do
+    # anime, com o ano como fallback quando a AniList ainda não fechou a data.
+    # `None` quando não há nenhuma nesse estado. `estreia_em`/`ano` do objeto
+    # vêm preenchidos só aqui.
+    proxima_temporada: TemporadaIrmaSaida | None = None
 
 
 class ConfirmarFonteRequest(BaseModel):

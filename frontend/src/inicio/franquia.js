@@ -42,6 +42,21 @@ function slugDeFranquia(titulo) {
   return slugificar(tituloSemMarcadores(titulo));
 }
 
+// `tituloSemMarcadores` cobre os marcadores explícitos ("X Season 2", "X II").
+// A AniList também nomeia temporada com um número solto no fim ("... desu 2"),
+// que `tituloSemMarcadores` deixa passar de propósito — um dígito solto sem
+// marcador de palavra na frente pode ser parte do nome ("Steins;Gate 0",
+// "86", "91 Days"). Quando o `numero_temporada` da temporada é conhecido, dá
+// pra tirar com segurança só o dígito que casa esse número (nunca o "0" de
+// "Steins;Gate 0", que não é temporada 0). Usado no título exibido do card de
+// franquia e do H1 da página do anime quando a franquia tem 2+ temporadas.
+export function tituloBaseDeTemporada(titulo, numeroTemporada) {
+  const base = tituloSemMarcadores(titulo);
+  if (numeroTemporada == null) return base;
+  const semNumero = base.replace(new RegExp(`\\s+0*${numeroTemporada}\\s*$`), '').trimEnd();
+  return semNumero === '' ? base : semNumero;
+}
+
 // Agrupa uma lista de `AnimeSaida` (`GET /api/animes`) em franquias. Cada item
 // devolvido é o ANIME REPRESENTANTE do grupo (maior `numero_temporada`, `NULL`
 // conta como 0) — com `id`/`capa_path`/`status_lancamento`/`proximo_ep_em` da
@@ -52,6 +67,9 @@ function slugDeFranquia(titulo) {
 //   - `episodios_novos`: soma de todas as temporadas (o badge só olha "> 0").
 //   - `tem_episodios`: `true` se QUALQUER temporada tem episódio (decide o card
 //     de estreia inerte).
+//   - `assistido`: `true` quando alguma temporada tem episódio E toda temporada
+//     com episódio está `assistido` pelo backend (terminou de ver — todos os eps
+//     da fonte vistos, sem buraco) — o card ganha a tag "Assistido".
 //   - `generos`: união dos gêneros de todas as temporadas (filtro por gênero).
 //   - `statusDaFranquia`: todos os `status_lancamento` distintos (filtro por
 //     status — bate se qualquer temporada bate).
@@ -88,16 +106,39 @@ export function agruparEmFranquias(animes) {
   return [...grupos.values()].map(montarFranquia);
 }
 
+// Uma temporada é "acessível" quando dá pra fazer algo com ela na página do
+// anime: já tem episódio capturado, OU já saiu do estado "não lançado" (aí a
+// PaginaDoAnime resolve fonte / enfileira captura). Uma T2 ainda `nao_lancado`
+// e sem captura é só um bookmark de "Próximas estreias" — não pode ser a cara
+// (nem o alvo de clique) da franquia se existe uma temporada anterior de
+// verdade. Mesmo predicado que `paginas/Galeria.jsx` usa pra decidir
+// CartaoDeEstreia inerte × AnimeCard navegável, só que por temporada.
+function temporadaAcessivel(temporada) {
+  return Boolean(temporada.tem_episodios) || temporada.status_lancamento !== 'nao_lancado';
+}
+
 function montarFranquia(temporadas) {
-  const representante = temporadas.reduce((maior, atual) =>
-    (atual.numero_temporada ?? 0) > (maior.numero_temporada ?? 0) ? atual : maior
-  );
+  const maisRecente = (maior, atual) =>
+    (atual.numero_temporada ?? 0) > (maior.numero_temporada ?? 0) ? atual : maior;
+  // Representa a última temporada ACESSÍVEL; só cai pra última em número
+  // absoluto quando a franquia inteira ainda é estreia futura (aí o card
+  // vira CartaoDeEstreia de propósito).
+  const acessiveis = temporadas.filter(temporadaAcessivel);
+  const representante = (acessiveis.length > 0 ? acessiveis : temporadas).reduce(maisRecente);
   const varias = temporadas.length > 1;
+  const episodiosNovos = temporadas.reduce((soma, t) => soma + (t.episodios_novos ?? 0), 0);
+  const temEpisodios = temporadas.some((t) => t.tem_episodios);
   return {
     ...representante,
-    titulo: varias ? tituloSemMarcadores(representante.titulo) : representante.titulo,
-    episodios_novos: temporadas.reduce((soma, t) => soma + (t.episodios_novos ?? 0), 0),
-    tem_episodios: temporadas.some((t) => t.tem_episodios),
+    titulo: varias
+      ? tituloBaseDeTemporada(representante.titulo, representante.numero_temporada)
+      : representante.titulo,
+    episodios_novos: episodiosNovos,
+    tem_episodios: temEpisodios,
+    // Franquia "assistida": tem conteúdo e TODA temporada com episódio já foi
+    // terminada (o `assistido` do backend já exige "todos os eps da fonte
+    // vistos", então aqui é só o `every`).
+    assistido: temEpisodios && temporadas.every((t) => !t.tem_episodios || t.assistido),
     generos: [...new Set(temporadas.flatMap((t) => t.generos ?? []))],
     statusDaFranquia: [...new Set(temporadas.map((t) => t.status_lancamento).filter(Boolean))],
     titulosDaFranquia: temporadas.map((t) => t.titulo),

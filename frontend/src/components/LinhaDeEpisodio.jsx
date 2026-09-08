@@ -280,15 +280,29 @@ function RotuloEpisodio({ numero, rotulo, titulo }) {
   );
 }
 
-// "✓ assistido": o episódio foi visto até o fim (`assistido_em`) — distinto da
+// "Assistido": o episódio foi visto até o fim (`assistido_em`) — distinto da
 // pista de "pronto pra assistir" (IndicadorDePlay, centralizada sobre a thumb).
-// Mesmo texto e estilo nos ramos `pronto` e `liberadoOuDescartado`.
+// Pill de fundo neon (mesmo `bg-neon` do accent do app); mesmo estilo nos ramos
+// `pronto` e `liberadoOuDescartado`.
 function BadgeAssistido() {
   return (
-    <span className="shrink-0 text-sm font-semibold text-white" aria-label="já assistido">
-      ✓ assistido
+    <span
+      className="shrink-0 bg-black/60 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-white"
+      aria-label="já assistido"
+    >
+      Assistido
     </span>
   );
+}
+
+// Scrim sobre a miniatura quando o episódio já foi assistido — SÓ modo grade
+// (no modo lista o BadgeAssistido no trailing já dá o contraste). Escurece o
+// card pra ele recuar dos não assistidos, mesmo `bg-[#0b0b0d]/60` do overlay de
+// "assistido" do card de catálogo (components/AnimeCard.jsx). Fica ANTES do
+// IndicadorDePlay, do rodapé em degradê e da borda neon na árvore — nada disso
+// é esmaecido, só a imagem. `aria-hidden`: o BadgeAssistido carrega o rótulo.
+function ScrimAssistido() {
+  return <span aria-hidden="true" className="absolute inset-0 bg-[#0b0b0d]/60" />;
 }
 
 // Verbo de captura como texto — renderizado SÓ no modo lista. No modo grade
@@ -439,6 +453,7 @@ export default function LinhaDeEpisodio({
         estadoDeRota={{ episodio: { numero, animeId, animeTitulo, titulo: episodio.titulo } }}
       >
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
+        {emGrade && episodio.assistido_em && <ScrimAssistido />}
         <IndicadorDePlay emGrade={emGrade} temThumb={!!thumb} />
         <FaixaDeConteudo
           modo={modo}
@@ -527,6 +542,7 @@ export default function LinhaDeEpisodio({
     const conteudo = (
       <>
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
+        {emGrade && liberadoOuDescartado.assistido_em && <ScrimAssistido />}
         {overlayCapturando}
         <FaixaDeConteudo
           modo={modo}
