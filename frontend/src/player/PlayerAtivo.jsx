@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import BarraDeControles from './BarraDeControles.jsx';
 import HudTelemetria from './HudTelemetria.jsx';
 import GlowAmbiente from './GlowAmbiente.jsx';
-import { PRESET_PADRAO, PRESETS } from './presets.js';
+import { DEGRAUS_ADAPTATIVOS, PRESET_PADRAO, PRESETS } from './presets.js';
 import { useFonteDeVideo } from './hooks/useFonteDeVideo.js';
 import { useMotorAnime4k } from './hooks/useMotorAnime4k.js';
+import { useControleAdaptativo } from './hooks/useControleAdaptativo.js';
 import { useAudioCinema } from './hooks/useAudioCinema.js';
 import { useTelemetriaDeVideo } from './hooks/useTelemetriaDeVideo.js';
 import { useAtalhosDeTeclado } from './hooks/useAtalhosDeTeclado.js';
@@ -43,17 +44,53 @@ export default function PlayerAtivo({
   const frameRef = useRef(null);
   const palcoRef = useRef(null);
 
-  const [presetAtual, setPresetAtual] = usePreferencia('slime.preset', PRESET_PADRAO);
+  // 'auto' = degradação adaptativa (useControleAdaptativo percorre
+  // DEGRAUS_ADAPTATIVOS); qualquer outro valor = um preset fixo escolhido na
+  // mão. Chave nova de propósito: 'slime.preset' antigo continua órfão no
+  // localStorage, mas reusá-lo faria o teste ao vivo começar em modo manual
+  // sem sinal de por quê.
+  const [qualidade, setQualidade] = usePreferencia('slime.qualidade', 'auto');
   const [hudVisivel, setHudVisivel] = usePreferencia('slime.hudVisivel', false);
+  // Piso que a GPU aguentou por último — semeia o degrau inicial pra não sondar
+  // do topo (e travar) toda vez que abre um episódio.
+  const [degrauAutoSalvo, setDegrauAutoSalvo] = usePreferencia('slime.degrauAuto', 0);
+  const auto = qualidade === 'auto';
 
   const dimensoesDaFonte = useFonteDeVideo(videoRef, fonte, aoFalhar);
+
+  const { indiceDeDegrau, diagnostico, degradarPorFalhaDeGpu } = useControleAdaptativo({
+    videoRef,
+    ativo: auto,
+    chaveDeSessao: fonte,
+    degrauSalvo: degrauAutoSalvo,
+    aoDegrauEstavel: setDegrauAutoSalvo,
+  });
+
+  const presetManual = PRESETS[qualidade] ? qualidade : PRESET_PADRAO;
+  const presetAtual = auto ? DEGRAUS_ADAPTATIVOS[indiceDeDegrau] : presetManual;
+
+  // Falha de render()/`device.lost` (via useMotorAnime4k): em modo automático
+  // desce um degrau em vez de matar o player; só propaga como fatal no piso
+  // ou em modo manual. Identidade estável — se dependesse de `presetAtual` o
+  // efeito do motor reconstruiria a sessão a cada troca de degrau.
+  const autoRef = useRef(auto);
+  useEffect(() => {
+    autoRef.current = auto;
+  }, [auto]);
+  const aoFalharDoMotor = useCallback(
+    (erro) => {
+      if (autoRef.current && degradarPorFalhaDeGpu()) return;
+      aoFalhar(erro);
+    },
+    [aoFalhar, degradarPorFalhaDeGpu]
+  );
 
   const { adaptador } = useMotorAnime4k({
     videoRef,
     canvasRef,
     presetId: presetAtual,
     dimensoesDaFonte,
-    aoFalhar,
+    aoFalhar: aoFalharDoMotor,
   });
 
   const audioCinema = useAudioCinema(videoRef);
@@ -133,14 +170,16 @@ export default function PlayerAtivo({
         </div>
         <HudTelemetria
           visivel={hudVisivel}
+          modo={auto ? `Auto · degrau ${indiceDeDegrau + 1}/${DEGRAUS_ADAPTATIVOS.length}` : 'Manual'}
           presetLabel={PRESETS[presetAtual]?.label ?? presetAtual}
           resolucao={canvasRef.current ? `${canvasRef.current.width}×${canvasRef.current.height}` : '—'}
           telemetria={telemetria}
+          diagnostico={diagnostico}
         />
         <BarraDeControles
           videoRef={videoRef}
-          presetAtual={presetAtual}
-          aoTrocarPreset={setPresetAtual}
+          presetAtual={qualidade}
+          aoTrocarPreset={setQualidade}
           aoAlternarReproducao={alternarReproducao}
           aoAlternarMudo={alternarMudo}
           aoAlternarTelaCheia={alternarTelaCheia}

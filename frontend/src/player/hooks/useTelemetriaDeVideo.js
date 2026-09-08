@@ -13,8 +13,8 @@ const INTERVALO_MIN_SETSTATE_MS = 250;
 // motorAnime4k.js intercepta esse método por geração (D2), e o HUD precisa
 // sobreviver a trocas de preset.
 //
-// TODO (pós-MVP, ESPECIFICACAO §3E): se dropped/total cruzar limiar, descer
-// um degrau em ESCADA_DE_DEGRADACAO e avisar.
+// A degradação automática de preset por telemetria vive em
+// useControleAdaptativo.js (janela própria, não este loop por frame).
 export function useTelemetriaDeVideo({ videoRef, adaptador }) {
   const [estado, setEstado] = useState({ cadenciaMs: null, dropped: null, total: null, gpu: 'indisponível' });
   const ultimoSetStateEmRef = useRef(0);
