@@ -44,20 +44,26 @@ const {
 // Presets UL (a-ul, aa-ul, ...) e GAN (gan-*) do protótipo (teste/bench.js)
 // ficam de fora: travam na RX 580 atual (ESPECIFICACAO §11.2/11.3).
 // Reintroduzir fica condicionado ao gatilho de troca de GPU (§12).
+//
+// `passes` = nº de compute/render passes que o bloco enfileira por frame
+// (contagem de convs + overlay/d2s no bundle). Só instrumentação: o HUD
+// mostra o total pra dar como diagnosticar se o modelo de custo (linear em
+// megafetches) precisa de um termo fixo por passe (overhead de driver).
 const BLOCOS = {
-  original: { escala: 1, custo: 1, criar: (_device, tex) => new Original({ inputTexture: tex }) },
-  clamp: { escala: 1, custo: 20, criar: (device, tex) => new ClampHighlights({ device, inputTexture: tex }) },
-  restoreVL: { escala: 1, custo: 286, criar: (device, tex) => new CNNVL({ device, inputTexture: tex }) },
-  restoreSoftVL: { escala: 1, custo: 286, criar: (device, tex) => new CNNSoftVL({ device, inputTexture: tex }) },
-  restoreM: { escala: 1, custo: 72, criar: (device, tex) => new CNNM({ device, inputTexture: tex }) },
-  x2VL: { escala: 2, custo: 296, criar: (device, tex) => new CNNx2VL({ device, inputTexture: tex }) },
-  x2M: { escala: 2, custo: 90, criar: (device, tex) => new CNNx2M({ device, inputTexture: tex }) },
-  denoiseX2VL: { escala: 2, custo: 296, criar: (device, tex) => new DenoiseCNNx2VL({ device, inputTexture: tex }) },
+  original: { escala: 1, custo: 1, passes: 0, criar: (_device, tex) => new Original({ inputTexture: tex }) },
+  clamp: { escala: 1, custo: 20, passes: 3, criar: (device, tex) => new ClampHighlights({ device, inputTexture: tex }) },
+  restoreVL: { escala: 1, custo: 286, passes: 18, criar: (device, tex) => new CNNVL({ device, inputTexture: tex }) },
+  restoreSoftVL: { escala: 1, custo: 286, passes: 18, criar: (device, tex) => new CNNSoftVL({ device, inputTexture: tex }) },
+  restoreM: { escala: 1, custo: 72, passes: 9, criar: (device, tex) => new CNNM({ device, inputTexture: tex }) },
+  x2VL: { escala: 2, custo: 296, passes: 19, criar: (device, tex) => new CNNx2VL({ device, inputTexture: tex }) },
+  x2M: { escala: 2, custo: 90, passes: 10, criar: (device, tex) => new CNNx2M({ device, inputTexture: tex }) },
+  denoiseX2VL: { escala: 2, custo: 296, passes: 19, criar: (device, tex) => new DenoiseCNNx2VL({ device, inputTexture: tex }) },
   // `strength` é o expoente da curva de sharpening (WGSL do DoG). 7 = valor
   // do README oficial da lib.
   deblur: {
     escala: 1,
     custo: 20,
+    passes: 4,
     criar: (device, tex) => {
       const p = new DoG({ device, inputTexture: tex });
       p.updateParam('strength', 7);
@@ -71,6 +77,7 @@ const BLOCOS = {
   denoise: {
     escala: 1,
     custo: 20,
+    passes: 1,
     criar: (device, tex) => {
       const p = new BilateralMean({ device, inputTexture: tex });
       p.updateParam('strength', 0.2);
@@ -130,6 +137,11 @@ function montarPipeline(blocos, device, inputTexture) {
 // dos blocos). 1 nos presets sem x2, 2 nos com CNNx2.
 function escalaDeSaida(blocos) {
   return blocos.reduce((acc, nome) => acc * (BLOCOS[nome]?.escala ?? 1), 1);
+}
+
+// Total de passes por frame (blocos + 1 do blit final). Só pro HUD.
+export function contarPasses(blocos) {
+  return blocos.reduce((acc, nome) => acc + (BLOCOS[nome]?.passes ?? 0), 1);
 }
 
 // Custo relativo de GPU do pipeline em "megafetches por frame", dada a

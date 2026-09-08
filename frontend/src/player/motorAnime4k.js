@@ -2,6 +2,7 @@
 // import de namespace em vez de default) — aqui só precisamos de `render`,
 // não dos blocos de shader.
 import * as Anime4K from 'anime4k-webgpu';
+import { instalarMedidorDeGpu } from './medidorDeGpu.js';
 
 const { render } = Anime4K;
 
@@ -135,7 +136,7 @@ export async function iniciarSessaoDeRender({ video, canvas, preset, dimensoes, 
     captura.restaurar();
     captura.obterDevice()?.destroy();
     aoFalhar(new Error(`Falha ao inicializar WebGPU: ${err.message}`));
-    return { encerrar: () => {}, adaptador: null };
+    return { encerrar: () => {}, adaptador: null, medidor: null };
   }
   captura.restaurar();
 
@@ -145,6 +146,8 @@ export async function iniciarSessaoDeRender({ video, canvas, preset, dimensoes, 
   if (!device) {
     console.error('[Anime4K] Falha ao capturar GPUDevice — vazamento de GPU NÃO resolvido nesta sessão.');
   }
+
+  const medidor = device ? instalarMedidorDeGpu(device) : null;
 
   dispositivoAtivo = device;
 
@@ -158,9 +161,10 @@ export async function iniciarSessaoDeRender({ video, canvas, preset, dimensoes, 
 
   function encerrar() {
     registroRvfc.geracao += 1;
+    medidor?.encerrar(); // antes do destroy: solta o patch de submit e para de coletar
     device?.destroy();
     if (dispositivoAtivo === device) dispositivoAtivo = null;
   }
 
-  return { encerrar, adaptador };
+  return { encerrar, adaptador, medidor };
 }

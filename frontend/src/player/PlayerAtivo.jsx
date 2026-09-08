@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import BarraDeControles from './BarraDeControles.jsx';
 import HudTelemetria from './HudTelemetria.jsx';
 import GlowAmbiente from './GlowAmbiente.jsx';
-import { DEGRAUS_ADAPTATIVOS, PRESET_PADRAO, PRESETS } from './presets.js';
+import { DEGRAUS_ADAPTATIVOS, PRESET_PADRAO, PRESETS, contarPasses } from './presets.js';
 import { useFonteDeVideo } from './hooks/useFonteDeVideo.js';
 import { useMotorAnime4k } from './hooks/useMotorAnime4k.js';
 import { useControleAdaptativo } from './hooks/useControleAdaptativo.js';
@@ -85,13 +85,26 @@ export default function PlayerAtivo({
     [aoFalhar, degradarPorFalhaDeGpu]
   );
 
-  const { adaptador } = useMotorAnime4k({
+  const { adaptador, medidor } = useMotorAnime4k({
     videoRef,
     canvasRef,
     presetId: presetAtual,
     dimensoesDaFonte,
     aoFalhar: aoFalharDoMotor,
   });
+
+  // Amostra o medidor de GPU pro HUD (só instrumentação nesta fase — a
+  // política preditiva ainda não consome). Poll de 500ms: `ler()` só faz
+  // mediana de ~24 números, custo desprezível.
+  const [metricaGpu, setMetricaGpu] = useState(null);
+  useEffect(() => {
+    if (!medidor) {
+      setMetricaGpu(null);
+      return;
+    }
+    const id = setInterval(() => setMetricaGpu(medidor.ler()), 500);
+    return () => clearInterval(id);
+  }, [medidor]);
 
   const audioCinema = useAudioCinema(videoRef);
 
@@ -175,6 +188,8 @@ export default function PlayerAtivo({
           resolucao={canvasRef.current ? `${canvasRef.current.width}×${canvasRef.current.height}` : '—'}
           telemetria={telemetria}
           diagnostico={diagnostico}
+          metricaGpu={metricaGpu}
+          passes={contarPasses(PRESETS[presetAtual]?.blocos ?? [])}
         />
         <BarraDeControles
           videoRef={videoRef}

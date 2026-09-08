@@ -10,6 +10,7 @@ import { PRESETS, calcularDimensoesDeSaida } from '../presets.js';
 // StrictMode vaza um GPUDevice por mount.
 export function useMotorAnime4k({ videoRef, canvasRef, presetId, dimensoesDaFonte, aoFalhar }) {
   const [adaptador, setAdaptador] = useState(null);
+  const [medidor, setMedidor] = useState(null);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -28,16 +29,18 @@ export function useMotorAnime4k({ videoRef, canvasRef, presetId, dimensoesDaFont
       }
       sessao = resultado;
       setAdaptador(resultado.adaptador);
+      setMedidor(resultado.medidor);
     });
 
     return () => {
       cancelado = true;
       sessao?.encerrar();
       setAdaptador(null);
+      setMedidor(null);
     };
     // videoRef/canvasRef são refs estáveis (useRef) — não entram nas deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetId, dimensoesDaFonte, aoFalhar]);
 
-  return { adaptador };
+  return { adaptador, medidor };
 }
