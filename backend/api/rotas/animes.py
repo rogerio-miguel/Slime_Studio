@@ -23,6 +23,7 @@ from api.esquemas import (
     FileiraTematicaSaida,
     FonteConsultadaSaida,
     ResultadoBuscaFonteSaida,
+    TemporadaIrmaSaida,
 )
 from api.servicos import busca as servico_busca
 from api.servicos import catalogo as servico_catalogo
@@ -359,6 +360,7 @@ async def obter_anime(
         else {}
     )
     servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
+    temporadas = await _temporadas_irmas(sessao, anime)
     return AnimeDetalheSaida(
         id=anime.id,
         titulo=anime.titulo,
@@ -373,7 +375,30 @@ async def obter_anime(
         versoes_disponiveis=_versoes_disponiveis(versoes_de_fonte),
         versao_confirmada_mais_recente=versao_confirmada_mais_recente,
         status_lancamento=anime.status_lancamento,
+        serie_ancora=anime.serie_ancora,
+        numero_temporada=anime.numero_temporada,
+        temporadas=temporadas,
     )
+
+
+async def _temporadas_irmas(sessao: AsyncSession, anime: Anime) -> list[TemporadaIrmaSaida]:
+    """Temporadas da mesma franquia que `anime` (mesmo `serie_ancora`, inclui a
+    própria), ordenadas por `numero_temporada` (NULL por último). Lista vazia
+    quando `serie_ancora` é NULL — franquia não resolvida, sem agrupamento a
+    oferecer (o fallback por slug do título é só client-side, na Galeria)."""
+    if anime.serie_ancora is None:
+        return []
+    resultado = await sessao.execute(
+        select(Anime.id, Anime.numero_temporada, Anime.titulo)
+        .where(Anime.serie_ancora == anime.serie_ancora)
+        .order_by(Anime.numero_temporada.asc().nulls_last(), Anime.id)
+    )
+    return [
+        TemporadaIrmaSaida(
+            id=linha.id, numero_temporada=linha.numero_temporada, titulo=linha.titulo
+        )
+        for linha in resultado.all()
+    ]
 
 
 def _diferencia_versao(dominio: str) -> bool:
