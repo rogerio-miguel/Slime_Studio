@@ -133,7 +133,7 @@ async def baixar_episodio(
             permite_retentativa=True,  # retentável — o orçamento é nosso, não uma falha do site
         ) from excecao
 
-    return await download.baixar(link, destino, str(config.ffmpeg))
+    return await download.baixar(link, destino, str(config.ffmpeg), str(config.ffprobe))
 
 
 async def _conferir_link_de_midia(link: LinkDeMidia) -> None:

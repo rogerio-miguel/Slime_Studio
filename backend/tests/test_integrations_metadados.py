@@ -1372,6 +1372,38 @@ def test_tmdb_desempate_por_ano_entre_dois_candidatos(monkeypatch: pytest.Monkey
     assert resultado.banner_url.endswith("/temporada3-backdrop.jpg")
 
 
+def test_tmdb_popularity_vence_distancia_de_ano(monkeypatch: pytest.MonkeyPatch):
+    """A série principal da franquia (mais popular, `first_air_date` antigo)
+    vence o spin-off recente cujo ano fica mais perto do `ano` pedido — a
+    distância de ano só desempata quando a popularidade empata. Sem isto, a 4ª
+    temporada (ano recente) elegia o spin-off no lugar da série principal."""
+    corpo = {
+        "results": [
+            _resultado_tv(
+                name="Slime Diaries",
+                original_name="Slime Diaries",
+                backdrop_path="/spinoff.jpg",
+                first_air_date="2021-01-01",
+                popularity=12.9,
+            ),
+            _resultado_tv(
+                name="Slime",
+                original_name="Slime",
+                backdrop_path="/serie-principal.jpg",
+                first_air_date="2018-01-01",
+                popularity=50.5,
+            ),
+        ]
+    }
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime 4th Season", 2026)
+
+    assert resultado.banner_url.endswith("/serie-principal.jpg")
+
+
 def test_tmdb_item_so_com_poster_path_sem_backdrop_devolve_none(
     monkeypatch: pytest.MonkeyPatch,
 ):
