@@ -8,6 +8,7 @@ import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
+import { agruparEmFranquias } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
@@ -124,43 +125,62 @@ export default function Galeria() {
     );
   }, [animes]);
 
-  // Busca -> gênero -> status -> ordenação, sempre client-side sobre o
-  // catálogo já carregado (sem chamada de API nova).
+  // Agrupamento por franquia (Fase 5): 1 card por `serie_ancora` (fallback slug),
+  // representado pela última temporada, com badge/gêneros/status agregados de
+  // todas as temporadas — ver `inicio/franquia.js`. Client-side: `GET /api/animes`
+  // só ganhou `serie_ancora`/`numero_temporada`, a lista é pequena (uso pessoal).
+  const franquias = useMemo(() => agruparEmFranquias(animes ?? []), [animes]);
+
+  // Busca -> gênero -> status -> ordenação, sempre client-side sobre as franquias
+  // já agrupadas (sem chamada de API nova). Cada filtro bate se QUALQUER
+  // temporada da franquia bate.
   const animesExibidos = useMemo(() => {
-    let lista = animes ?? [];
+    let lista = franquias;
     if (termoBuscaNormalizado) {
-      lista = lista.filter((anime) => anime.titulo.toLowerCase().includes(termoBuscaNormalizado));
+      lista = lista.filter((franquia) =>
+        franquia.titulosDaFranquia.some((titulo) =>
+          titulo.toLowerCase().includes(termoBuscaNormalizado)
+        )
+      );
     }
     if (generoSelecionado) {
-      lista = lista.filter((anime) => (anime.generos ?? []).includes(generoSelecionado));
+      lista = lista.filter((franquia) => franquia.generos.includes(generoSelecionado));
     }
     if (statusSelecionado) {
-      lista = lista.filter((anime) => anime.status_lancamento === statusSelecionado);
+      lista = lista.filter((franquia) => franquia.statusDaFranquia.includes(statusSelecionado));
     }
     return ordenarAnimes(lista, ordenacao);
-  }, [animes, termoBuscaNormalizado, generoSelecionado, statusSelecionado, ordenacao]);
+  }, [franquias, termoBuscaNormalizado, generoSelecionado, statusSelecionado, ordenacao]);
 
   const [animeParaRemover, setAnimeParaRemover] = useState(null);
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState(null);
 
+  // Remove a franquia INTEIRA: um DELETE por temporada (`idsDaFranquia`). Falha
+  // no meio (ex. temporada com captura em andamento) para o laço e deixa as já
+  // removidas removidas — o `recarregar` no `finally` mostra o estado real.
   const confirmarRemocao = useCallback(async () => {
     if (!animeParaRemover) return;
     setRemovendo(true);
     setErroRemocao(null);
+    const ids = animeParaRemover.idsDaFranquia ?? [animeParaRemover.id];
     try {
-      await removerAnime(animeParaRemover.id);
+      for (const id of ids) {
+        await removerAnime(id);
+      }
       setAnimeParaRemover(null);
-      recarregar();
     } catch (erroCapturado) {
       if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
-        setErroRemocao('Este anime tem uma captura em andamento — aguarde terminar antes de remover.');
+        setErroRemocao(
+          'Há uma captura em andamento — aguarde terminar antes de remover.'
+        );
       } else {
         console.error('falha ao remover anime do catálogo', erroCapturado);
-        setErroRemocao('Não foi possível remover este anime — tente novamente.');
+        setErroRemocao('Não foi possível remover — tente novamente.');
       }
     } finally {
       setRemovendo(false);
+      recarregar();
     }
   }, [animeParaRemover, recarregar]);
 
@@ -171,6 +191,12 @@ export default function Galeria() {
     setAnimeParaRemover(null);
     setErroRemocao(null);
   }, []);
+
+  const contagemTemporadas = animeParaRemover?.contagemDeTemporadas ?? 1;
+  const mensagemRemocao =
+    contagemTemporadas > 1
+      ? `Remover "${animeParaRemover?.titulo}" e suas ${contagemTemporadas} temporadas do catálogo? Todos os episódios e capturas da franquia serão apagados.`
+      : `Remover "${animeParaRemover?.titulo}" do catálogo? Episódios e capturas associados serão apagados.`;
 
   return (
     <>
@@ -350,7 +376,7 @@ export default function Galeria() {
         <DialogoDeConfirmacao
           aberto={animeParaRemover != null}
           titulo="Remover do catálogo"
-          mensagem={`Remover "${animeParaRemover?.titulo}" do catálogo? Episódios e capturas associados serão apagados.`}
+          mensagem={mensagemRemocao}
           erro={erroRemocao}
           aoConfirmar={confirmarRemocao}
           aoFechar={fecharDialogoRemocao}
