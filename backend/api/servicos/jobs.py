@@ -7,39 +7,29 @@ Não importa `fastapi`: devolve o `job_id` ou levanta erro de `core/erros.py`;
 `api/rotas/jobs.py` traduz para `HTTPException`/schemas.
 """
 
-import asyncio
 import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos.catalogo import job_ativo_do_episodio, remover_arquivos_do_episodio
+from api.servicos.fontes import resolver_e_listar
 from core.config import Config
 from core.enums import SITE_LOCAL, StatusEpisodio, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import (
     ErroSlimeStudio,
-    FalhaDeExtracao,
-    FonteAmbigua,
     FonteNaoEncontrada,
     JobEmExecucao,
-    VersaoIndisponivelError,
 )
 from db import catalogo
 from db.fila import criar_job as criar_job_na_fila
-from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
-from extractors.servico import filtrar_por_numero_e_versao, listar_episodios_em
+from extractors.servico import filtrar_por_numero_e_versao
 from models.anime import Anime
 from models.episodio import Episodio
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 logger = logging.getLogger(__name__)
-
-# Teto para a etapa de rede da criação de job em modo "site" (resolver fonte +
-# listar episódios) — mesma filosofia de
-# `extractors/servico.py::_TETO_ESPERA_CONFERENCIA_S`: rede de segurança acima
-# dos timeouts internos dos extratores, não a primeira linha de defesa.
-_TETO_CRIACAO_SITE_S = 60
 
 
 async def criar_job_local(
@@ -82,16 +72,15 @@ async def criar_job_site(
     `anime_id` inexistente antes de chegar aqui — mesmo padrão das outras rotas
     que operam por id).
 
-    `ConfirmacaoNecessaria` (mais de um candidato, sem match exato de título)
-    vira `FonteAmbigua`; nenhum job é criado nesse caso — o cliente resolve via
-    `POST /api/admin/animes/{id}/fontes/confirmar` e reenvia esta chamada.
-
-    `VersaoIndisponivel` (nenhum site serve `versao`) vira `VersaoIndisponivelError`
-    — sem tratamento HTTP dedicado ainda (fase seguinte), propaga em vez de
-    falhar silenciosamente tratando o resultado como `FonteResolvida`.
+    Resolução de fonte + listagem via `api/servicos/fontes.py::resolver_e_listar`
+    (`resolver_canonico=False`: a captura conta que a página do anime já rodou
+    antes e gravou a `FonteAnime` — ver a nota de módulo de lá). Ele traduz
+    `ConfirmacaoNecessaria` -> `FonteAmbigua` (nenhum job é criado; o cliente
+    resolve via `POST /api/admin/animes/{id}/fontes/confirmar` e reenvia) e
+    `VersaoIndisponivel` -> `VersaoIndisponivelError`.
 
     Invariante: `Episodio.versao` (abaixo) NUNCA vem de `versao` (o pedido do
-    cliente) direto — deriva de `resultado.versao_da_fonte`, a única fonte de
+    cliente) direto — deriva de `fonte.versao_da_fonte`, a única fonte de
     verdade sobre o que a fonte resolvida realmente é.
 
     Ponto único de recaptura (D2): se já existe um `Episodio` para a
@@ -105,69 +94,21 @@ async def criar_job_site(
     abaixo bate no unique index e `db/catalogo.py::_inserir_episodio` propaga
     `EpisodioJaExiste`.
     """
-    try:
-        # `titulos_alternativos` fica no default (`None`): a captura NÃO resolve
-        # o título canônico. `resolver_fonte_do_anime` consulta as `FonteAnime`
-        # já mapeadas primeiro e os helpers `_resolver_no_site_*` persistem a
-        # fonte resolvida — no fluxo normal a página do anime
-        # (`api/servicos/fontes.py::listar_episodios_remotos`, que resolve o
-        # canônico) roda antes e grava o site, então a captura cai em
-        # `_resolver_em_mapeadas` e reusa o mapeamento.
-        resultado = await asyncio.wait_for(
-            resolver_fonte_do_anime(sessionmaker, anime, versao), timeout=_TETO_CRIACAO_SITE_S
-        )
-    except TimeoutError as excecao:
-        raise FalhaDeExtracao(
-            f"resolução de fonte excedeu o teto de {_TETO_CRIACAO_SITE_S}s",
-            permite_retentativa=True,
-        ) from excecao
-    if isinstance(resultado, ConfirmacaoNecessaria):
-        raise FonteAmbigua(
-            resultado.dominio,
-            [
-                {
-                    "titulo_exibicao": candidato.titulo_exibicao,
-                    "identificador": candidato.identificador,
-                    "url": candidato.url,
-                    "versao": candidato.versao.value if candidato.versao else None,
-                }
-                for candidato in resultado.candidatos
-            ],
-        )
-    if isinstance(resultado, VersaoIndisponivel):
-        raise VersaoIndisponivelError(resultado.versao)
-
-    try:
-        episodios_remotos = await asyncio.wait_for(
-            listar_episodios_em(
-                sessionmaker,
-                resultado.dominio,
-                resultado.identificador,
-                anime.numero_temporada,
-            ),
-            timeout=_TETO_CRIACAO_SITE_S,
-        )
-    except TimeoutError as excecao:
-        raise FalhaDeExtracao(
-            f"listagem de episódios excedeu o teto de {_TETO_CRIACAO_SITE_S}s",
-            dominio=resultado.dominio,
-            permite_retentativa=True,
-        ) from excecao
+    fonte = await resolver_e_listar(sessionmaker, anime, versao, resolver_canonico=False)
 
     # O adapter já devolveu a temporada de `anime.numero_temporada` numerada de
     # 1 (contrato de `ExtratorDeSite.listar_episodios`), então `ep.numero` casa
-    # com `numero` (o pedido do cliente) e com `Episodio.numero` — mesmo caminho
-    # de `api/servicos/fontes.py::listar_episodios_remotos`.
+    # com `numero` (o pedido do cliente) e com `Episodio.numero`.
 
     # `Episodio.versao` deriva do que a fonte resolvida realmente é
-    # (`resultado.versao_da_fonte`), nunca do `versao` pedido pelo cliente —
-    # a invariante desta fase. Também usado para filtrar a listagem abaixo:
-    # sem isso, um site que lista episódios das duas versões (mesmo risco de
+    # (`fonte.versao_da_fonte`), nunca do `versao` pedido pelo cliente — a
+    # invariante desta fase. Também usado para filtrar a listagem abaixo: sem
+    # isso, um site que lista episódios das duas versões (mesmo risco de
     # `extractors/servico.py::_proximo_com_episodio`) poderia gravar a URL da
     # versão errada sob o rótulo certo.
-    versao_do_episodio = versao_episodio_da_fonte(resultado.versao_da_fonte)
+    versao_do_episodio = versao_episodio_da_fonte(fonte.versao_da_fonte)
 
-    correspondentes = filtrar_por_numero_e_versao(episodios_remotos, numero, versao_do_episodio)
+    correspondentes = filtrar_por_numero_e_versao(fonte.episodios, numero, versao_do_episodio)
     if len(correspondentes) > 1:
         # Mais de um rótulo remoto mapeia pro mesmo `numero` (ex. "7"/"07" —
         # extractors/base.py::EpisodioRemoto) — o request só carrega `numero`
@@ -178,14 +119,14 @@ async def criar_job_site(
             "%d episódios remotos com numero=%d em %r (rótulos: %s) — usando o 1º",
             len(correspondentes),
             numero,
-            resultado.dominio,
+            fonte.dominio,
             [ep.rotulo for ep in correspondentes],
         )
     correspondente = correspondentes[0] if correspondentes else None
     if correspondente is None:
         raise FonteNaoEncontrada(
-            f"episódio {numero} não encontrado em {resultado.dominio} para {anime.titulo!r}",
-            dominio=resultado.dominio,
+            f"episódio {numero} não encontrado em {fonte.dominio} para {anime.titulo!r}",
+            dominio=fonte.dominio,
         )
 
     # `numero_fonte` guarda "o número original como o site mostrou"
@@ -202,7 +143,7 @@ async def criar_job_site(
     )
     if episodio_existente is not None and (
         episodio_existente.status == StatusEpisodio.LIBERADO
-        or episodio_existente.site_origem != resultado.dominio
+        or episodio_existente.site_origem != fonte.dominio
     ):
         return await _reaproveitar_episodio_para_recaptura(
             sessionmaker,
@@ -210,7 +151,7 @@ async def criar_job_site(
             anime.slug,
             episodio_existente.id,
             url_fonte=correspondente.url,
-            site_origem=resultado.dominio,
+            site_origem=fonte.dominio,
             numero_fonte=numero_na_fonte,
             capa_path=correspondente.thumb_url,
             duracao_esperada_s=duracao_esperada_s,
@@ -223,7 +164,7 @@ async def criar_job_site(
         tipo=tipo,
         versao=versao_do_episodio,
         url_fonte=correspondente.url,
-        site_origem=resultado.dominio,
+        site_origem=fonte.dominio,
         capa_path=correspondente.thumb_url,
         duracao_esperada_s=duracao_esperada_s,
     )

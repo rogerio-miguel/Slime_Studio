@@ -1,7 +1,8 @@
 """Sondagem da fonte real (site) de um anime para contar episódios disponíveis.
 
-Orquestra `extractors/` — via `api/servicos/fontes.py::listar_episodios_remotos`
-— e grava a contagem em `Anime.episodios_na_fonte`/`fonte_verificada_*`
+Orquestra `extractors/` — via `api/servicos/fontes.py::resolver_e_listar`
+(sem o overlay de still da exibição, que a sondagem descartaria) — e grava a
+contagem em `Anime.episodios_na_fonte`/`fonte_verificada_*`
 (`db.catalogo.atualizar_contagem_na_fonte`). Família de adapter distinta da de
 `api/servicos/descoberta.py`, que orquestra `integrations/` (metadados de
 provedor externo por API JSON pública): aqui é scraping de site com bypass
@@ -26,10 +27,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import descoberta
-from api.servicos.fontes import listar_episodios_remotos
+from api.servicos.fontes import resolver_e_listar
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from db.catalogo import atualizar_contagem_na_fonte
+from extractors.servico import filtrar_por_versao
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
 
@@ -207,10 +209,13 @@ async def _sondar_e_persistir(
         if anime is None:
             return
         async with _semaforo_de_sondagem:
-            resultado = await listar_episodios_remotos(sessionmaker, anime, versao)
-        total = len({ep.numero for ep in resultado.episodios if ep.numero is not None})
+            fonte = await resolver_e_listar(
+                sessionmaker, anime, versao, resolver_canonico=True
+            )
+        episodios = filtrar_por_versao(fonte.episodios, versao)
+        total = len({ep.numero for ep in episodios if ep.numero is not None})
         await atualizar_contagem_na_fonte(
-            sessionmaker, anime_id, total=total, dominio=resultado.dominio
+            sessionmaker, anime_id, total=total, dominio=fonte.dominio
         )
     except (
         FalhaDeExtracao,
