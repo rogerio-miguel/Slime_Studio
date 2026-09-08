@@ -16,10 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
+from core.temporada import conciliar_posicao, separar_temporada
 from core.texto import slugificar
 from db.catalogo import (
     aplicar_lancamento_descoberto_por_titulo,
     aplicar_metadados,
+    aplicar_posicao_na_serie,
     atualizar_lancamento,
     atualizar_lancamentos_em_lote,
     localizar_animes_por_anilist_id,
@@ -84,6 +86,13 @@ _CARIMBO_MINIMO = datetime.min.replace(tzinfo=UTC)
 # acima disso (overhead de `asyncio.to_thread`/agendamento) para nunca ser o
 # primeiro a estourar em condições normais — 18s.
 _TETO_ENRIQUECIMENTO_S = 18
+
+# Teto do walk de `relations` (`servico.resolver_serie`) no enriquecimento da
+# materialização. Cada hop é uma chamada AniList sob o timeout por provedor de
+# `integrations/`; o `_memo_serie` de processo faz a franquia inteira custar ~1
+# caminhada depois da primeira. Best-effort como `_resolver_titulos_canonicos`
+# — nunca bloqueia a criação do anime, que já aconteceu antes desta chamada.
+_TETO_SERIE_S = 12
 
 
 async def listar_em_alta_com_catalogo(
@@ -564,6 +573,7 @@ async def enriquecer_anime_criado(
             generos=generos,
         )
         await aplicar_metadados(sessionmaker, anime_id, metadados)
+        await _resolver_e_aplicar_serie(sessionmaker, anime_id, titulo, anilist_id)
         return
 
     try:
@@ -581,3 +591,69 @@ async def enriquecer_anime_criado(
 
     if metadados is not None:
         await aplicar_metadados(sessionmaker, anime_id, metadados)
+        await _resolver_e_aplicar_serie(
+            sessionmaker, anime_id, titulo, metadados.anilist_id
+        )
+
+
+async def _resolver_e_aplicar_serie(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    titulo: str,
+    anilist_id: int | None,
+) -> None:
+    """Preenche `numero_temporada` (ordinal narrativo) e `serie_ancora` do anime
+    recém-criado: anda o grafo de `relations` da AniList
+    (`servico.resolver_serie`, D1) e concilia o ordinal do grafo com o marcador
+    do título (`separar_temporada`/`conciliar_posicao`, D2). Grava via
+    `aplicar_posicao_na_serie` (só-quando-NULL — o marcador do título gravado na
+    criação nunca é sobrescrito).
+
+    Best-effort de ponta a ponta, mesma filosofia de `_resolver_titulos_
+    canonicos`: sem `anilist_id` não há grafo para andar; qualquer falha
+    (provedor, timeout de `_TETO_SERIE_S`, banco) vira `warning` e retorna — a
+    criação do anime já aconteceu. A divergência marcador×grafo (D2) é logada em
+    `info` para diagnóstico da Fase 6.
+
+    NÃO é chamada no refresh de lançamento em lote
+    (`_refrescar_lancamentos_do_cruzamento`): a estrutura de franquia não muda e
+    o refresh varre o catálogo inteiro. O backfill do catálogo já existente é
+    `scripts/backfill_serie.py`.
+    """
+    if anilist_id is None:
+        return
+    try:
+        serie = await asyncio.wait_for(
+            servico.resolver_serie(anilist_id), timeout=_TETO_SERIE_S
+        )
+        marcador = separar_temporada(titulo)[1]
+        ordinal_do_grafo = serie.ordinal if serie is not None else None
+        ancora_do_grafo = serie.ancora if serie is not None else None
+        if (
+            marcador is not None
+            and ordinal_do_grafo is not None
+            and marcador != ordinal_do_grafo
+        ):
+            logger.info(
+                "posição na série: divergência para anime_id=%s anilist_id=%s — "
+                "marcador=%s, ordinal_do_grafo=%s (fica o marcador)",
+                anime_id,
+                anilist_id,
+                marcador,
+                ordinal_do_grafo,
+            )
+        posicao = conciliar_posicao(
+            marcador=marcador,
+            ordinal_do_grafo=ordinal_do_grafo,
+            ancora_do_grafo=ancora_do_grafo,
+            anilist_id=anilist_id,
+        )
+        await aplicar_posicao_na_serie(sessionmaker, anime_id, posicao)
+    except Exception as excecao:
+        logger.warning(
+            "resolução de posição na série best-effort falhou para anime_id=%s "
+            "anilist_id=%s: %s",
+            anime_id,
+            anilist_id,
+            excecao,
+        )

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusEpisodio, TipoEpisodio, VersaoEpisodio
 from core.erros import EpisodioJaExiste, ErroSlimeStudio
-from core.temporada import separar_temporada
+from core.temporada import PosicaoNaSerie, separar_temporada
 from core.texto import slugificar
 from db.fila import criar_job
 from integrations.base import ArteDeAnime, LancamentoDeAnime, MetadadosDeAnime
@@ -103,6 +103,36 @@ async def aplicar_metadados(
                 anime_id,
                 excecao,
             )
+
+
+async def aplicar_posicao_na_serie(
+    sessionmaker: _SessionMaker, anime_id: int, posicao: PosicaoNaSerie
+) -> None:
+    """Grava `numero_temporada` (ordinal narrativo) e `serie_ancora` de `Anime`
+    — **só-quando-NULL por campo**, mesma disciplina de `aplicar_metadados`: o
+    marcador do título, derivado por `obter_ou_criar_anime_id` na criação,
+    sempre vence o ordinal do walk de `relations`
+    (`integrations/servico.py::resolver_serie` conciliado por
+    `core/temporada.py::conciliar_posicao`).
+
+    Chamada na materialização (`api/servicos/descoberta.py::
+    enriquecer_anime_criado`) e no backfill (`scripts/backfill_serie.py`);
+    re-executável — roda de novo depois de a AniList voltar e preenche o que
+    ficou `NULL` numa passada anterior.
+
+    Anime inexistente é no-op silencioso (mesma regra de `atualizar_lancamento`).
+    """
+    if posicao.numero_temporada is None and posicao.serie_ancora is None:
+        return
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        if anime.numero_temporada is None and posicao.numero_temporada is not None:
+            anime.numero_temporada = posicao.numero_temporada
+        if anime.serie_ancora is None and posicao.serie_ancora is not None:
+            anime.serie_ancora = posicao.serie_ancora
+        await sessao.commit()
 
 
 async def sobrescrever_arte(sessionmaker: _SessionMaker, anime_id: int, arte: ArteDeAnime) -> None:
