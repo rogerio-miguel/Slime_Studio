@@ -88,16 +88,43 @@ class TmdbProvider(ProvedorDeArte):
         return "tmdb"
 
     def buscar_arte_por_titulo(self, titulo: str, ano: int | None) -> ArteDeAnime | None:
-        """Só banner (`backdrop_path` da série) — capa (pôster) não é mais
-        responsabilidade deste método, ver docstring de módulo."""
+        """Só banner — capa (pôster) não é mais responsabilidade deste método,
+        ver docstring de módulo. Prefere o melhor backdrop de `/tv/{id}/images`
+        (`_melhor_backdrop`: sem texto sobreposto, mais votado) ao
+        `backdrop_path` "primário" da série, que o TMDB às vezes fixa numa arte
+        com logo/texto ou de temporada aleatória."""
         serie = self._resolver_serie(titulo, ano)
         if serie is None:
             return None
 
-        banner_url = _url_imagem(serie.get("backdrop_path"), _TAMANHO_BACKDROP)
+        id_da_serie = serie.get("id")
+        melhor = self._melhor_backdrop(id_da_serie) if isinstance(id_da_serie, int) else None
+        banner_url = _url_imagem(melhor or serie.get("backdrop_path"), _TAMANHO_BACKDROP)
         if banner_url is None:
             return None
         return ArteDeAnime(banner_url=banner_url)
+
+    def _melhor_backdrop(self, id_da_serie: int) -> str | None:
+        """`file_path` do melhor backdrop de `GET /tv/{id}/images`: prefere os
+        SEM texto sobreposto (`iso_639_1` nulo — o hero já põe título e gradiente
+        por cima) e, entre esses, o de maior `vote_average`. `None` quando o
+        endpoint não traz backdrop utilizável — o chamador cai no `backdrop_path`
+        default da série."""
+        dados = self._executar(
+            f"/tv/{id_da_serie}/images", {"include_image_language": "null,en"}
+        )
+        backdrops = dados.get("backdrops")
+        if not isinstance(backdrops, list) or not backdrops:
+            return None
+
+        so_dicts = [b for b in backdrops if isinstance(b, dict) and b.get("file_path")]
+        sem_texto = [b for b in so_dicts if b.get("iso_639_1") is None]
+        candidatos = sem_texto or so_dicts
+        if not candidatos:
+            return None
+
+        melhor = max(candidatos, key=lambda b: b.get("vote_average") or 0.0)
+        return melhor["file_path"]
 
     def buscar_still_de_episodio(
         self, titulo: str, ano: int | None, numero: int, temporada: int | None
@@ -259,17 +286,22 @@ class TmdbProvider(ProvedorDeArte):
 
 
 def _melhor_resultado(resultados: list, titulo: str, ano: int | None) -> dict | None:
-    """Escolhe o melhor item de `Page.results` (D3 do plano):
+    """Escolhe o melhor item de `Page.results`:
 
     1. descarta itens sem `poster_path` E sem `backdrop_path` (arte nenhuma
        pra oferecer);
     2. entre os que sobram, prefere os cujo `name`/`original_name` (slug)
        bate com o slug de `titulo` — cai pro pool inteiro se ninguém bater;
-    3. dentro do pool escolhido, com `ano` conhecido, vence o de menor
-       distância entre `first_air_date` e `ano` (empate mantém a ordem de
-       relevância do TMDB, já que `min` preserva o primeiro em empates e o
-       pool não é reordenado); sem `ano`, vence o primeiro.
-    """
+    3. dentro do pool, vence o de maior `popularity`; empate desempata pela
+       menor distância entre `first_air_date` e `ano` (quando `ano` é conhecido).
+
+    Mudança em relação ao plano original (D3, que usava distância de ano como
+    critério primário): o TMDB modela a franquia inteira numa entrada só, então
+    a 4ª temporada de um anime (ano recente) fica ANOS distante do
+    `first_air_date` da série (2018) e a distância de ano elegia um spin-off
+    recente ("The Slime Diaries", 2021) no lugar da série principal (2018).
+    `popularity` separa a série principal dos spin-offs de forma robusta; o ano
+    só entra pra desempatar dois candidatos igualmente populares (raro)."""
     candidatos = [
         item
         for item in resultados
@@ -286,9 +318,12 @@ def _melhor_resultado(resultados: list, titulo: str, ano: int | None) -> dict | 
         or slugificar(item.get("original_name") or "") == slug_titulo
     ] or candidatos
 
-    if ano is None:
-        return pool[0]
-    return min(pool, key=lambda item: _distancia_do_ano(item, ano))
+    def _pontuacao(item: dict) -> tuple[float, int]:
+        popularidade = item.get("popularity") or 0.0
+        proximidade = -_distancia_do_ano(item, ano) if ano is not None else 0
+        return popularidade, proximidade
+
+    return max(pool, key=_pontuacao)
 
 
 def _distancia_do_ano(item: dict, ano: int) -> int:
