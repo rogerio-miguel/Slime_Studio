@@ -67,7 +67,7 @@ async def test_listar_episodios_remotos_caminho_feliz(
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada=None):
         return [
             EpisodioRemoto(
                 rotulo="1",
@@ -143,7 +143,7 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ori
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada=None):
         return [
             EpisodioRemoto(
                 rotulo="1", numero=1, url="https://x/ep1", thumb_url="https://original/1.webp"
@@ -154,9 +154,9 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ori
             EpisodioRemoto(rotulo="especial", numero=None, url="https://x/ep-especial"),
         ]
 
-    async def _still_fake(titulo, ano, numero_absoluto):
+    async def _still_fake(titulo, ano, numero, temporada):
         # TMDB só resolve o episódio 1 — o 2 cai pro thumb_url do extractor.
-        return "https://tmdb/1.jpg" if numero_absoluto == 1 else None
+        return "https://tmdb/1.jpg" if numero == 1 else None
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
@@ -171,6 +171,66 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ori
     assert episodios[0]["thumb_url"] == "https://tmdb/1.jpg"
     assert episodios[1]["thumb_url"] == "https://original/2.webp"
     assert episodios[2]["thumb_url"] is None
+
+
+async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_absoluto(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Overlay de still da T2+ de uma franquia: o TMDB às vezes modela a
+    franquia numa season só, então o overlay pede pelo número ABSOLUTO
+    (`offset das irmãs + numero`, `temporada=None`) em vez do par por-temporada.
+    Offset = soma de `total_episodios_anilist` das irmãs com temporada menor."""
+    async with sessionmaker_api() as sessao:
+        sessao.add(
+            Anime(
+                titulo="Franquia T1",
+                slug="franquia-t1",
+                serie_ancora=999,
+                numero_temporada=1,
+                total_episodios_anilist=24,
+            )
+        )
+        t2 = Anime(
+            titulo="Franquia T2", slug="franquia-t2", serie_ancora=999, numero_temporada=2
+        )
+        sessao.add(t2)
+        await sessao.commit()
+        t2_id = t2.id
+
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="7",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada=None):
+        return [
+            EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1", thumb_url="https://o/1.webp"),
+            EpisodioRemoto(rotulo="2", numero=2, url="https://x/ep2", thumb_url="https://o/2.webp"),
+        ]
+
+    chamadas: list[tuple] = []
+
+    async def _still_fake(titulo, ano, numero, temporada):
+        chamadas.append((numero, temporada))
+        return f"https://tmdb/{numero}.jpg"
+
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr(
+        "api.servicos.fontes.servico_metadados.buscar_still_de_episodio", _still_fake
+    )
+
+    resposta = await cliente.get(f"/api/admin/animes/{t2_id}/episodios-remotos")
+
+    assert resposta.status_code == 200
+    assert sorted(chamadas) == [(25, None), (26, None)]
+    episodios = resposta.json()["episodios"]
+    assert episodios[0]["thumb_url"] == "https://tmdb/25.jpg"
+    assert episodios[1]["thumb_url"] == "https://tmdb/26.jpg"
 
 
 # --- detector de episódios novos: api/servicos/lancamentos.py ---

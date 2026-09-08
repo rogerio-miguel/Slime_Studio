@@ -27,6 +27,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, replace
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # `_referencias_de_anime` reusado de `busca.py` (mesmo par de módulos de
@@ -188,8 +189,34 @@ async def listar_episodios_remotos(
     """
     fonte = await resolver_e_listar(sessionmaker, anime, versao, resolver_canonico=True)
     episodios = filtrar_por_versao(fonte.episodios, versao)
-    episodios = await _sobrepor_stills_de_episodios(anime, episodios)
+    offset = await _offset_de_temporada(sessionmaker, anime)
+    episodios = await _sobrepor_stills_de_episodios(anime, episodios, offset)
     return EpisodiosRemotosResultado(dominio=fonte.dominio, episodios=episodios)
+
+
+async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int:
+    """Nº absoluto do 1º episódio desta temporada na franquia, menos 1 — a soma
+    de `total_episodios_anilist` das temporadas irmãs (mesmo `serie_ancora`) com
+    `numero_temporada` menor. `0` para a 1ª temporada, anime sem `serie_ancora`,
+    ou irmãs sem contagem.
+
+    Serve só ao overlay de still: o TMDB às vezes modela a franquia inteira numa
+    season só (ex. Kusuriya no Hitorigoto — 2 temporadas na AniList, 1 season de
+    48 no TMDB), então pedir a still por `(numero_temporada, numero_por_temporada)`
+    devolve vazio. Com o offset, o overlay pede pelo número ABSOLUTO e deixa a
+    `TabelaDeTemporadas` do TMDB achar a season certa (funciona tanto pro TMDB
+    achatado quanto pro dividido)."""
+    if not anime.serie_ancora or not anime.numero_temporada or anime.numero_temporada <= 1:
+        return 0
+    async with sessionmaker() as sessao:
+        total = await sessao.scalar(
+            select(func.coalesce(func.sum(Anime.total_episodios_anilist), 0)).where(
+                Anime.serie_ancora == anime.serie_ancora,
+                Anime.numero_temporada.is_not(None),
+                Anime.numero_temporada < anime.numero_temporada,
+            )
+        )
+    return int(total or 0)
 
 
 async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
@@ -217,13 +244,21 @@ async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
 
 
 async def _sobrepor_stills_de_episodios(
-    anime: Anime, episodios: list[EpisodioRemoto]
+    anime: Anime, episodios: list[EpisodioRemoto], offset_de_temporada: int = 0
 ) -> list[EpisodioRemoto]:
     """Overlay best-effort de thumb TMDB (Fatia 5, `PLANO_ARTE_TMDB.md`) sobre
-    `EpisodioRemoto.thumb_url`: pede a still pelo par `(anime.numero_temporada,
-    episodio.numero)` — o adapter já devolveu `numero` por temporada quando
-    `numero_temporada` está preenchido, e a numeração contínua da fonte quando
-    não (aí `temporada=None` e o TMDB resolve a season pelo número absoluto).
+    `EpisodioRemoto.thumb_url`.
+
+    Duas formas de pedir a still, conforme `offset_de_temporada` (ver
+    `_offset_de_temporada`):
+
+    - `> 0` (temporada 2+ de uma franquia): `numero` da fonte é por temporada;
+      pede pelo ABSOLUTO (`offset + numero`, `temporada=None`) e deixa a
+      `TabelaDeTemporadas` do TMDB achar a season — resiste ao TMDB que junta a
+      franquia numa season só.
+    - `0` (1ª temporada, ou franquia não resolvida): par
+      `(episodio.numero, anime.numero_temporada)` — comportamento anterior.
+
     Preserva o `thumb_url` que o extractor já trouxe quando o TMDB não acha (id
     não resolvido, temporada fora do range, still nulo) ou quando o lote não
     termina a tempo. Episódio sem `numero` (rótulo não numérico, ex. "Especial")
@@ -243,13 +278,17 @@ async def _sobrepor_stills_de_episodios(
 
     async def _buscar_um(indice: int) -> tuple[int, str | None]:
         episodio = episodios[indice]
-        # `anime.numero_temporada` dado → `episodio.numero` é por temporada (o
-        # adapter recortou), TMDB vai direto à season. `None` → `episodio.numero`
-        # é a numeração absoluta e o TMDB resolve a season sozinho.
+        # offset > 0 (T2+ de franquia): pede pelo ABSOLUTO, `temporada=None`, e o
+        # TMDB acha a season — resiste ao TMDB que junta a franquia numa season só.
+        # offset 0: par `(numero_por_temporada, numero_temporada)`, direto à season.
+        if offset_de_temporada:
+            numero_tmdb, temporada_tmdb = offset_de_temporada + episodio.numero, None
+        else:
+            numero_tmdb, temporada_tmdb = episodio.numero, anime.numero_temporada
         async with semaforo:
             try:
                 still = await servico_metadados.buscar_still_de_episodio(
-                    anime.titulo, anime.ano, episodio.numero, anime.numero_temporada
+                    anime.titulo, anime.ano, numero_tmdb, temporada_tmdb
                 )
             except Exception as excecao:
                 # Captura ampla e intencional (mesmo espírito de
