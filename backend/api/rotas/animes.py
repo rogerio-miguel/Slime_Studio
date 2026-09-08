@@ -4,9 +4,10 @@ alta" de metadados externos via `integrations/`).
 """
 
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
@@ -33,7 +34,7 @@ from api.servicos import jobs as servico_jobs
 from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
 from core.config import Config
-from core.enums import VersaoDeFonte, VersaoEpisodio
+from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.franquia import slug_de_franquia
 from db.catalogo import obter_ou_criar_anime_id
 from extractors.base import ResultadoBusca
@@ -176,6 +177,7 @@ async def listar_animes(
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
+    assistidos = await servico_lancamentos.ids_totalmente_assistidos(sessao, animes)
     # Aquecimento opt-in via `?aquecer=true`: carona fire-and-forget que sonda a
     # fonte real (scraping) dos animes em lançamento com contagem velha/ausente e
     # aquece o `status_lancamento` (filtro do badge) via AniList/Kitsu. Só a
@@ -190,8 +192,8 @@ async def listar_animes(
         servico_sondagem.agendar_sondagens(sessionmaker, animes, versoes)
         servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
-    # mapeados 1:1 com colunas de `Anime`); `episodios_novos` e `tem_episodios`
-    # são derivados e precisam ser injetados à parte.
+    # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios` e
+    # `assistido` são derivados e precisam ser injetados à parte.
     return [
         AnimeSaida.model_validate(anime).model_copy(
             update={
@@ -199,6 +201,7 @@ async def listar_animes(
                     anime, maior_capturado.get(anime.id, 0)
                 ),
                 "tem_episodios": anime.id in com_episodios,
+                "assistido": anime.id in assistidos,
             }
         )
         for anime in animes
@@ -361,7 +364,7 @@ async def obter_anime(
         else {}
     )
     servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
-    temporadas = await _temporadas_irmas(sessao, anime)
+    temporadas, proxima_temporada = await _franquia_do_anime(sessao, anime)
     return AnimeDetalheSaida(
         id=anime.id,
         titulo=anime.titulo,
@@ -379,23 +382,47 @@ async def obter_anime(
         serie_ancora=anime.serie_ancora,
         numero_temporada=anime.numero_temporada,
         temporadas=temporadas,
+        proxima_temporada=proxima_temporada,
     )
 
 
-async def _temporadas_irmas(sessao: AsyncSession, anime: Anime) -> list[TemporadaIrmaSaida]:
-    """Temporadas da mesma franquia que `anime` (inclui a própria), ordenadas por
-    `numero_temporada` (NULL por último). Franquia = componente conexo onde dois
-    animes se ligam por compartilhar `serie_ancora` OU o slug do título base
-    (`core/franquia.py`) — o segundo sinal cobre o walk de `relations` que erra
-    com OVA/ONA/split-cour no meio (Fase 6). Grupo unitário (só a própria
-    temporada) volta como `[]` — nada a oferecer no seletor.
+async def _franquia_do_anime(
+    sessao: AsyncSession, anime: Anime
+) -> tuple[list[TemporadaIrmaSaida], TemporadaIrmaSaida | None]:
+    """`(temporadas_do_seletor, proxima_temporada_prevista)` da franquia de `anime`.
 
-    Varre o catálogo inteiro (dezenas de linhas, uso pessoal) a cada leitura de
-    detalhe — barato o bastante pra não justificar índice/materialização.
-    Espelha o agrupamento de `frontend/src/inicio/franquia.js`."""
+    Franquia = componente conexo onde dois animes se ligam por compartilhar
+    `serie_ancora` OU o slug do título base (`core/franquia.py`) — o segundo
+    sinal cobre o walk de `relations` que erra com OVA/ONA/split-cour no meio
+    (Fase 6). Varre o catálogo inteiro (dezenas de linhas, uso pessoal) a cada
+    leitura de detalhe — barato o bastante pra não justificar índice. Espelha o
+    agrupamento de `frontend/src/inicio/franquia.js`.
+
+    - `temporadas_do_seletor`: irmãs (inclui a própria) ordenadas por
+      `numero_temporada` (NULL por último), EXCETO as que ainda não existem como
+      conteúdo — `nao_lancado` e sem episódio capturado, i.e. bookmark de
+      "Próximas estreias" — porque navegar pra elas só levaria a página vazia. A
+      própria temporada de `anime` fica sempre. `[]` quando sobra só ela (nada a
+      oferecer no seletor). Espelha `temporadaAcessivel` de `inicio/franquia.js`.
+    - `proxima_temporada_prevista`: a irmã `nao_lancado` de menor
+      `numero_temporada` acima da atual que já tem `estreia_em` no futuro, ou —
+      quando a AniList ainda não fechou a data completa — pelo menos `ano` no
+      ano corrente ou adiante. Alimenta o aviso "Nª temporada estreia em ..." no
+      hero (data completa quando há, senão só o ano). `None` quando não há
+      nenhuma nesse estado."""
+    tem_episodio = exists().where(Episodio.anime_id == Anime.id)
     linhas = (
         await sessao.execute(
-            select(Anime.id, Anime.numero_temporada, Anime.titulo, Anime.serie_ancora)
+            select(
+                Anime.id,
+                Anime.numero_temporada,
+                Anime.titulo,
+                Anime.serie_ancora,
+                Anime.status_lancamento,
+                Anime.estreia_em,
+                Anime.ano,
+                tem_episodio.label("tem_episodios"),
+            )
         )
     ).all()
 
@@ -421,18 +448,59 @@ async def _temporadas_irmas(sessao: AsyncSession, anime: Anime) -> list[Temporad
             une(no, ("anc", linha.serie_ancora))
 
     raiz = acha(("id", anime.id))
-    grupo = [linha for linha in linhas if acha(("id", linha.id)) == raiz]
-    if len(grupo) < 2:
-        return []
-    grupo.sort(
-        key=lambda linha: (linha.numero_temporada is None, linha.numero_temporada or 0, linha.id)
+    grupo = sorted(
+        (linha for linha in linhas if acha(("id", linha.id)) == raiz),
+        key=lambda linha: (linha.numero_temporada is None, linha.numero_temporada or 0, linha.id),
     )
-    return [
-        TemporadaIrmaSaida(
-            id=linha.id, numero_temporada=linha.numero_temporada, titulo=linha.titulo
+
+    def _acessivel(linha: object) -> bool:
+        return (
+            linha.id == anime.id
+            or bool(linha.tem_episodios)
+            or linha.status_lancamento != StatusLancamento.NAO_LANCADO
         )
-        for linha in grupo
-    ]
+
+    acessiveis = [linha for linha in grupo if _acessivel(linha)]
+    temporadas = (
+        [
+            TemporadaIrmaSaida(
+                id=linha.id, numero_temporada=linha.numero_temporada, titulo=linha.titulo
+            )
+            for linha in acessiveis
+        ]
+        if len(acessiveis) >= 2
+        else []
+    )
+
+    hoje = datetime.now(UTC).date()
+    numero_atual = anime.numero_temporada or 0
+
+    def _prevista(linha: object) -> bool:
+        """Irmã que ainda vem: `nao_lancado`, numerada acima da atual, e com
+        alguma âncora temporal no futuro — data completa (`estreia_em`) de
+        preferência, senão o `ano` (>= ano corrente) como fallback pro aviso
+        degradar pra "estreia em 2026" em vez de sumir."""
+        if linha.id == anime.id or linha.status_lancamento != StatusLancamento.NAO_LANCADO:
+            return False
+        if (linha.numero_temporada or 0) <= numero_atual:
+            return False
+        if linha.estreia_em is not None:
+            return linha.estreia_em > hoje
+        return linha.ano is not None and linha.ano >= hoje.year
+
+    previstas = [linha for linha in grupo if _prevista(linha)]
+    proxima = (
+        TemporadaIrmaSaida(
+            id=previstas[0].id,
+            numero_temporada=previstas[0].numero_temporada,
+            titulo=previstas[0].titulo,
+            estreia_em=previstas[0].estreia_em,
+            ano=previstas[0].ano,
+        )
+        if previstas
+        else None
+    )
+    return temporadas, proxima
 
 
 def _diferencia_versao(dominio: str) -> bool:

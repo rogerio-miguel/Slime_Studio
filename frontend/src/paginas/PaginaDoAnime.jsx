@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
 import {
@@ -15,6 +15,7 @@ import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
+import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import {
   GRADIENTE_HERO,
@@ -22,6 +23,7 @@ import {
   imagemEmAltaResolucao,
   CLASSE_PILL_HERO,
 } from '../inicio/CarrosselDestaques.jsx';
+import { tituloBaseDeTemporada } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
@@ -39,6 +41,35 @@ const ROTULO_VERSAO = {
 // backend/core/enums.py::SITE_LOCAL — mesmo valor de string, espelhado aqui
 // (padrão já usado em ROTULOS_STATUS de LinhaDeEpisodio.jsx).
 const SITE_LOCAL = 'local';
+
+// Instância única de módulo (recriar `Intl.*` por render é caro) — mesmo padrão
+// de `inicio/CartaoDeEstreia.jsx`.
+const fmtDataEstreia = new Intl.DateTimeFormat('pt-BR', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+// "2ª temporada estreia em 4 de outubro de 2026" a partir de
+// `anime.proxima_temporada` (`AnimeDetalheSaida`) — a temporada seguinte da
+// franquia que ainda não saiu. Com `estreia_em` (ISO `YYYY-MM-DD`, parse com
+// `T00:00:00` pra cair na meia-noite LOCAL, mesmo motivo de `CartaoDeEstreia.jsx`)
+// mostra a data completa; sem ela, degrada pro ano (`proxima.ano`) — "estreia em
+// 2026" —, igual ao passo 4 de `CartaoDeEstreia.textoDeEstreia`. `null` = nada a
+// anunciar (o hero não renderiza a linha).
+function textoDeProximaTemporada(proxima) {
+  if (!proxima) return null;
+  const ordinal =
+    proxima.numero_temporada != null ? `${proxima.numero_temporada}ª temporada` : proxima.titulo;
+  if (proxima.estreia_em) {
+    const data = new Date(`${proxima.estreia_em}T00:00:00`);
+    if (!Number.isNaN(data.getTime())) {
+      return `${ordinal} estreia em ${fmtDataEstreia.format(data)}`;
+    }
+  }
+  if (proxima.ano) return `${ordinal} estreia em ${proxima.ano}`;
+  return null;
+}
 
 // Um episódio local só conta como "já capturado" pra grade quando pertence à
 // fonte/versão ativas — senão, depois de uma troca de fonte (`Trocar fonte`),
@@ -123,6 +154,15 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
 
   const episodios = useRecurso(() => listarEpisodios(animeId), [animeId]);
 
+  // Guard anti-loop do efeito abaixo: cada par `episodio.id:job.id` cujo job
+  // já chegou a `pronto` sem o REST ainda refletir dispara UM `recarregar()`,
+  // nunca mais. Sem isto, um episódio que o REST nunca converge pra
+  // `pronto`/`liberado` (fonte quebrada, status terminal fora dos dois
+  // esperados) mantém a condição `true` e o efeito re-dispara a cada
+  // atualização de `episodios.dados` que ele mesmo causou — enxurrada de
+  // `GET /episodios`. Zerado ao trocar de anime (efeito de reset mais abaixo).
+  const jaRecarregadoRef = useRef(new Set());
+
   // Sem isto, LinhaDeEpisodio.jsx (ramo `episodio.status === 'pronto'`) fica
   // preso ao status local desatualizado até um refresh manual da página,
   // mesmo o WebSocket já sabendo que o job terminou — os outros status
@@ -142,11 +182,19 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   // dispararia `episodios.recarregar()` a cada tick de QUALQUER job ativo no
   // sistema.
   useEffect(() => {
-    const algumProntoNaoRefletido = (episodios.dados ?? []).some((episodio) => {
+    const naoVistos = (episodios.dados ?? []).filter((episodio) => {
       const job = jobsPorEpisodio.get(episodio.id);
-      return job?.status === 'pronto' && episodio.status !== 'pronto' && episodio.status !== 'liberado';
+      if (!job || job.status !== 'pronto') return false;
+      if (episodio.status === 'pronto' || episodio.status === 'liberado') return false;
+      return !jaRecarregadoRef.current.has(`${episodio.id}:${job.id}`);
     });
-    if (algumProntoNaoRefletido) episodios.recarregar();
+    if (naoVistos.length > 0) {
+      naoVistos.forEach((episodio) => {
+        const job = jobsPorEpisodio.get(episodio.id);
+        jaRecarregadoRef.current.add(`${episodio.id}:${job.id}`);
+      });
+      episodios.recarregar();
+    }
     // mesmo caso de `capturar`/`aoConfirmarFonte` mais abaixo: `episodios`
     // inteiro (useRecurso.js) é um literal novo a cada render — declará-lo
     // aqui rodaria o efeito em todo render, não só quando os dados mudam.
@@ -206,6 +254,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   useEffect(() => {
     setVersaoHidratada(false);
     setVersaoAtiva('legendado');
+    jaRecarregadoRef.current = new Set();
   }, [animeId]);
 
   // `versaoAtiva` pode ser 'desconhecida' (episódio mais recente veio de uma
@@ -396,7 +445,17 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   // alternativo/romaji nem nota — por isso o hero não tem linha de subtítulo
   // nem rating, ao contrário do AnimeFire. Rótulo da versão via `ROTULO_VERSAO`
   // (mesmo mapa usado por LinhaDeEpisodio.jsx pra exibir a versão).
+  // Título do H1 — quando a franquia tem 2+ temporadas catalogadas, o marcador
+  // de temporada sai do título (o seletor de temporada logo abaixo já diz "qual
+  // temporada"); `tituloBaseDeTemporada` cobre inclusive o número solto no fim
+  // ("... desu 2") que a AniList usa. Franquia de 1 temporada mantém o título
+  // cru.
+  const tituloExibicao =
+    anime?.temporadas && anime.temporadas.length > 1
+      ? tituloBaseDeTemporada(anime.titulo, anime.numero_temporada)
+      : anime?.titulo;
   const generosTraduzidos = (anime?.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
+  const avisoProximaTemporada = textoDeProximaTemporada(anime?.proxima_temporada);
   const meta = [
     anime?.ano,
     linhas.length > 0
@@ -652,43 +711,28 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               tabIndex={-1}
               className="max-w-4xl text-4xl font-semibold text-white outline-none sm:text-5xl lg:text-6xl"
             >
-              {anime?.titulo ?? `Anime #${animeId}`}
+              {tituloExibicao ?? `Anime #${animeId}`}
             </h1>
+            {avisoProximaTemporada && (
+              // Aviso de estreia da próxima temporada da franquia (quando já
+              // tem data) — logo abaixo do título, antes do seletor. A irmã
+              // `nao_lancado` fica FORA do seletor, então este é o único lugar
+              // que a menciona. Pill neon translúcida, no idioma de
+              // `CLASSE_PILL_HERO`.
+              <p className="inline-flex items-center text-sm font-semibold text-neon backdrop-blur-sm">
+                {avisoProximaTemporada}
+              </p>
+            )}
             {/* Seletor de temporada (Fase 5) — `anime.temporadas` é a lista das
-                temporadas irmãs da franquia (mesmo `serie_ancora`, já ordenada
-                por número, inclui a atual). Trocar de temporada é NAVEGAÇÃO de
-                rota (`/anime/:outroId`): a página inteira já re-chaveia em
-                `animeId` via `useRecurso`, e a URL fica compartilhável por
-                temporada. Só renderiza com 2+ temporadas catalogadas. Pills na
-                mesma linguagem de `CLASSE_PILL_HERO`; a atual é `<span
-                aria-current>` inerte, as outras são `<button>` que navega. */}
-            {anime?.temporadas?.length > 1 && (
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Temporada">
-                {anime.temporadas.map((temporada) => {
-                  const rotulo =
-                    temporada.numero_temporada != null
-                      ? `Temporada ${temporada.numero_temporada}`
-                      : temporada.titulo;
-                  return temporada.id === animeId ? (
-                    <span
-                      key={temporada.id}
-                      aria-current="true"
-                      className="rounded-md border-2 border-neon bg-white/10 px-3 py-1 text-xs font-semibold text-white backdrop-blur-sm"
-                    >
-                      {rotulo}
-                    </span>
-                  ) : (
-                    <button
-                      key={temporada.id}
-                      type="button"
-                      onClick={() => navigate(`/anime/${temporada.id}`)}
-                      className="rounded-md border-2 border-border-chrome bg-white/5 px-3 py-1 text-xs font-semibold text-ink-muted backdrop-blur-sm outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
-                    >
-                      {rotulo}
-                    </button>
-                  );
-                })}
-              </div>
+                temporadas irmãs da franquia (mesmo `serie_ancora` OU slug do
+                título base, já ordenada por número, inclui a atual). Trocar de
+                temporada é NAVEGAÇÃO de rota (`/anime/:outroId`): a página
+                inteira já re-chaveia em `animeId` via `useRecurso`, e a URL
+                fica compartilhável por temporada. Dropdown no idioma do
+                AnimeFire; só renderiza com 2+ temporadas catalogadas (guard
+                interno do componente também). */}
+            {anime?.temporadas && (
+              <SeletorDeTemporada temporadas={anime.temporadas} animeIdAtual={animeId} />
             )}
             {meta && <p className="text-sm text-ink-muted sm:text-base">{meta}</p>}
             {generosTraduzidos.length > 0 && (

@@ -85,6 +85,12 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // ícone mudo. Usado pelos resultados de "correspondência incerta" da busca de
 // fontes (paginas/Inicio.jsx): o site indexou o anime só sob um título que não
 // bate nenhuma referência canônica. Ausente → nada renderizado a mais.
+// `anime.assistido` (do catálogo agregado por franquia, `inicio/franquia.js`):
+// quando `true`, o card ganha uma pill "Assistido" no canto — mesmo `bg-neon`/
+// caixa alta do BadgeAssistido de `components/LinhaDeEpisodio.jsx`. Só a tag,
+// sem escurecer a capa (decisão de produto). Suprimido em `semLegenda` (card
+// só-ilustração do header da página do anime).
+//
 // `estatico` (opcional): renderiza o MESMO card, mas sem navegação (não é
 // `<Link>` nem `<button>`), sem a animação de hover/foco (escala + borda que
 // acende) e sem o overlay de borda neon. `semLegenda` (opcional): esconde o
@@ -106,6 +112,7 @@ export default function AnimeCard({
   const idCatalogado = anime.id ?? anime.anime_id ?? null;
   const capa = anime.capa_path ?? anime.capa_url ?? null;
   const titulo = anime.titulo ?? anime.titulo_romaji;
+  const assistido = !semLegenda && Boolean(anime.assistido);
 
   // w-full é necessário mesmo com `flex`: `<button>` é elemento de formulário
   // e usa sizing "shrink-to-fit" (largura pelo conteúdo) mesmo sob
@@ -141,6 +148,19 @@ export default function AnimeCard({
             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
           )}
         </>
+      )}
+      {/* Marca "assistido": só a pill no canto (sem scrim — decisão de produto,
+          o card do catálogo não escurece; o scrim mora só no card de episódio,
+          components/LinhaDeEpisodio.jsx). Canto esquerdo pra não colidir com o
+          botão de remover (canto direito). Mesmo `bg-neon`/caixa alta do
+          BadgeAssistido de components/LinhaDeEpisodio.jsx. */}
+      {assistido && (
+        <span
+          className="absolute left-2 top-2 z-10 bg-black/60 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white"
+          aria-label="já assistido"
+        >
+          Assistido
+        </span>
       )}
       {/* Bloco de baixo: kicker "episódio novo" (quando houver) logo acima do
           título, no padrão da linha de estreia de inicio/CartaoDeEstreia.jsx.

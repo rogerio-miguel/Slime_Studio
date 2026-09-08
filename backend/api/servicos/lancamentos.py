@@ -22,9 +22,9 @@ se a AniList finaliza ou reabre um anime, o badge acompanha na próxima leitura;
 não há flag persistida. Ver `episodios_novos`.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio
@@ -62,6 +62,62 @@ def episodios_novos(anime: Anime, maior_capturado: int) -> int:
     if anime.status_lancamento is not StatusLancamento.EM_LANCAMENTO:
         return 0
     return max(0, anime.episodios_na_fonte - maior_capturado)
+
+
+async def ids_totalmente_assistidos(sessao: AsyncSession, animes: Sequence[Anime]) -> set[int]:
+    """`{anime_id}` dos animes que o usuário TERMINOU de ver — alimenta a tag
+    "Assistido" do catálogo (`paginas/Galeria.jsx`). Uma única query agregada
+    (mesmo motivo N+1 de `maior_numero_capturado_por_anime`).
+
+    Regra: a contagem de episódios REGULAR assistidos (`assistido_em`, entre os
+    `PRONTO`/`LIBERADO`) tem de alcançar o total de episódios do anime — o MAIOR
+    entre `episodios_na_fonte` (sondagem do site) e `total_episodios_anilist`,
+    porque qualquer um dos dois pode estar subestimado (sondagem que só achou
+    metade, AniList sem grade fechada) e subestimar acende a tag cedo demais.
+    Isso barra tanto "vi só os 3 que baixei" de um anime de 12 quanto "vi só o
+    último" — pra tag acender é preciso ter visto TODOS. Quando nenhuma das duas
+    contagens é conhecida, cai no critério frouxo "todo capturado foi assistido".
+
+    Anime sem nenhum episódio capturado nunca entra (o `GROUP BY` não rende linha
+    pra ele). Guard de lista vazia porque `IN ()` é inválido no SQLite."""
+    ids = [anime.id for anime in animes]
+    if not ids:
+        return set()
+    total_capturados = func.count(Episodio.id)
+    total_assistidos = func.count(Episodio.assistido_em)
+    regulares_assistidos = func.count(
+        case(
+            (
+                and_(
+                    Episodio.tipo == TipoEpisodio.REGULAR,
+                    Episodio.assistido_em.is_not(None),
+                ),
+                Episodio.id,
+            )
+        )
+    )
+    linhas = await sessao.execute(
+        select(Episodio.anime_id, total_capturados, total_assistidos, regulares_assistidos)
+        .where(Episodio.anime_id.in_(ids), Episodio.status.in_(_STATUS_CAPTURADO))
+        .group_by(Episodio.anime_id)
+    )
+    por_id = {anime.id: anime for anime in animes}
+    concluidos: set[int] = set()
+    for anime_id, capturados, assistidos, regulares_vistos in linhas.all():
+        if capturados == 0:
+            continue
+        anime = por_id.get(anime_id)
+        contagens = (
+            [c for c in (anime.episodios_na_fonte, anime.total_episodios_anilist) if c]
+            if anime
+            else []
+        )
+        if contagens:
+            if regulares_vistos >= max(contagens):
+                concluidos.add(anime_id)
+        elif assistidos == capturados:
+            concluidos.add(anime_id)
+    return concluidos
 
 
 async def maior_numero_capturado_por_anime(
