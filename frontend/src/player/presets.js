@@ -11,7 +11,6 @@ import * as Anime4K from 'anime4k-webgpu';
 
 const {
   ClampHighlights,
-  Downscale,
   Original,
   CNNM,
   CNNVL,
@@ -23,139 +22,146 @@ const {
   BilateralMean,
 } = Anime4K;
 
-// Estrutura comum a boa parte dos presets: clamp → restore → upscale(x2) → downscale.
-// Passe duplo (`aa-vl`) e sem-restore (`c-vl`) ficam de fora por terem
-// topologia diferente.
-function buildStandardPipeline({ device, inputTexture, dims, Restore, Upscale }) {
-  const clamp = new ClampHighlights({ device, inputTexture });
-  const restore = new Restore({ device, inputTexture: clamp.getOutputTexture() });
-  const upscale = new Upscale({ device, inputTexture: restore.getOutputTexture() });
-  const down = new Downscale({ device, inputTexture: upscale.getOutputTexture(), targetDimensions: dims });
-  return [clamp, restore, upscale, down];
-}
-
-// Cada preset carrega label (pt-br) + fábrica do pipelineBuilder.
-// `build(dims)` recebe as dimensões nativas do vídeo (só conhecidas após
-// loadedmetadata) e devolve a função (device, inputTexture) => Anime4KPipeline[]
-// esperada por render().
+// --- Blocos ---------------------------------------------------------------
 //
-// Presets UL (a-ul, aa-ul, aa-ul-vl, aa-vl-vl) e GAN (gan-*) do protótipo
-// (teste/bench.js) foram excluídos: travam na RX 580 atual (ESPECIFICACAO
-// §11.2/11.3). Reintroduzir fica condicionado ao gatilho de troca de GPU
-// (ESPECIFICACAO §12).
-export const PRESETS = {
-  original: {
-    label: 'Original',
-    build() {
-      return (_device, inputTexture) => [new Original({ inputTexture })];
-    },
-  },
-  'a-m': {
-    label: 'Anime4K A · M',
-    build(dims) {
-      return (device, inputTexture) =>
-        buildStandardPipeline({ device, inputTexture, dims, Restore: CNNM, Upscale: CNNx2M });
-    },
-  },
-  'a-vl': {
-    label: 'Anime4K A · VL',
-    build(dims) {
-      return (device, inputTexture) =>
-        buildStandardPipeline({ device, inputTexture, dims, Restore: CNNVL, Upscale: CNNx2VL });
-    },
-  },
-  // Igual ao 'a-vl' sem o passe CNNx2VL: com a fonte já em ~1080p e o alvo
-  // mirando a tela, o x2 gera 2160p que o Downscale final joga fora de volta
-  // — supersampling caro, não resolução. Tirar o x2 mantém a fonte inteira
-  // entrando na CNN de restauração (o que limpa o anime) e corta ~metade do
-  // custo. Degrau "mais fluidez sem trocar de algoritmo" da escada automática.
-  'a-vl-1x': {
-    label: 'Anime4K A · VL (sem upscale)',
-    escalaMax: 1, // sem CNNx2: a CNN devolve na resolução da fonte, nunca mais
-    build(dims) {
-      return (device, inputTexture) => {
-        const clamp = new ClampHighlights({ device, inputTexture });
-        const restore = new CNNVL({ device, inputTexture: clamp.getOutputTexture() });
-        const down = new Downscale({ device, inputTexture: restore.getOutputTexture(), targetDimensions: dims });
-        return [clamp, restore, down];
-      };
-    },
-  },
-  'aa-vl': {
-    label: 'Anime4K A+A · VL',
-    build(dims) {
-      return (device, inputTexture) => {
-        const clamp = new ClampHighlights({ device, inputTexture });
-        const restore1 = new CNNVL({ device, inputTexture: clamp.getOutputTexture() });
-        const upscale1 = new CNNx2VL({ device, inputTexture: restore1.getOutputTexture() });
-        const restore2 = new CNNM({ device, inputTexture: upscale1.getOutputTexture() });
-        const down = new Downscale({ device, inputTexture: restore2.getOutputTexture(), targetDimensions: dims });
-        return [clamp, restore1, upscale1, restore2, down];
-      };
-    },
-  },
-  'b-vl': {
-    label: 'Anime4K B · VL',
-    build(dims) {
-      return (device, inputTexture) =>
-        buildStandardPipeline({ device, inputTexture, dims, Restore: CNNSoftVL, Upscale: CNNx2VL });
-    },
-  },
-  'c-vl': {
-    label: 'Anime4K C · VL + Denoise',
-    build(dims) {
-      return (device, inputTexture) => {
-        const clamp = new ClampHighlights({ device, inputTexture });
-        const upscale = new DenoiseCNNx2VL({ device, inputTexture: clamp.getOutputTexture() });
-        const down = new Downscale({ device, inputTexture: upscale.getOutputTexture(), targetDimensions: dims });
-        return [clamp, upscale, down];
-      };
+// Cada preset é uma lista ordenada de blocos (RECEITAS). Um bloco carrega:
+//  - `criar(device, inputTexture)`: instancia o Anime4KPipeline da lib.
+//  - `escala`: fator linear que o bloco aplica à resolução (1 = mantém, 2 = CNNx2).
+//  - `custo`: proxy linear do custo de GPU, em "fetches de textura por pixel
+//    de ENTRADA do bloco". Sai da contagem `nº de convs × texturas lidas por
+//    conv` no bundle da lib (cada Conv2d roda um dispatch de ⌈W/8⌉×⌈H/8⌉
+//    workgroups sobre um output do tamanho da entrada → custo linear no nº de
+//    texels). A constante absoluta não importa — só a razão entre degraus, e
+//    essa é recalibrada ao vivo (fatia de afinação). Reproduz o que já foi
+//    medido na mão: `aa-vl` ~6% abaixo do topo, `b-vl` == `a-vl`
+//    (CNNSoftVL tem topologia idêntica a CNNVL), `a-vl` sem o x2 ~metade.
+//
+// Não há mais bloco de Downscale final: o blit da lib pro canvas usa
+// exatamente o mesmo shader (textureSampleBaseClampToEdge + sampler linear)
+// e já reduz a saída do último bloco pro tamanho do canvas. Um Downscale
+// explícito antes dele era um render pass e uma textura redundantes por frame.
+//
+// Presets UL (a-ul, aa-ul, ...) e GAN (gan-*) do protótipo (teste/bench.js)
+// ficam de fora: travam na RX 580 atual (ESPECIFICACAO §11.2/11.3).
+// Reintroduzir fica condicionado ao gatilho de troca de GPU (§12).
+const BLOCOS = {
+  original: { escala: 1, custo: 1, criar: (_device, tex) => new Original({ inputTexture: tex }) },
+  clamp: { escala: 1, custo: 20, criar: (device, tex) => new ClampHighlights({ device, inputTexture: tex }) },
+  restoreVL: { escala: 1, custo: 286, criar: (device, tex) => new CNNVL({ device, inputTexture: tex }) },
+  restoreSoftVL: { escala: 1, custo: 286, criar: (device, tex) => new CNNSoftVL({ device, inputTexture: tex }) },
+  restoreM: { escala: 1, custo: 72, criar: (device, tex) => new CNNM({ device, inputTexture: tex }) },
+  x2VL: { escala: 2, custo: 296, criar: (device, tex) => new CNNx2VL({ device, inputTexture: tex }) },
+  x2M: { escala: 2, custo: 90, criar: (device, tex) => new CNNx2M({ device, inputTexture: tex }) },
+  denoiseX2VL: { escala: 2, custo: 296, criar: (device, tex) => new DenoiseCNNx2VL({ device, inputTexture: tex }) },
+  // `strength` é o expoente da curva de sharpening (WGSL do DoG). 7 = valor
+  // do README oficial da lib.
+  deblur: {
+    escala: 1,
+    custo: 20,
+    criar: (device, tex) => {
+      const p = new DoG({ device, inputTexture: tex });
+      p.updateParam('strength', 7);
+      return p;
     },
   },
   // `strength`/`strength2` nascem zerados na lib — sem updateParam() explícito
-  // o shader do BilateralMean divide por zero (intensitySigma=0 no
-  // denominador do gaussianVec). Valores abaixo não são chute: vêm do README
-  // oficial da lib (Anime4KWebBoost/Anime4K-WebGPU) — denoise calibrado em
-  // intensitySigma=0.2/spatialSigma=2, deblur em strength=7. Conferido também
-  // na WGSL (`strength`=intensitySigma, `strength2`=spatialSigma, no shader
-  // do BilateralMean).
-  'aa-vl-denoise': {
-    label: 'Anime4K A+A · VL + Denoise',
-    build(dims) {
-      return (device, inputTexture) => {
-        const clamp = new ClampHighlights({ device, inputTexture });
-        // Denoise logo após o clamp, antes do restore — limpa a fonte antes
-        // da CNN "restaurar" detalhe em cima de ruído (mesmo lugar que o
-        // `c-vl` já usa pro denoise combinado).
-        const denoise = new BilateralMean({ device, inputTexture: clamp.getOutputTexture() });
-        denoise.updateParam('strength', 0.2);
-        denoise.updateParam('strength2', 2);
-        const restore1 = new CNNVL({ device, inputTexture: denoise.getOutputTexture() });
-        const upscale1 = new CNNx2VL({ device, inputTexture: restore1.getOutputTexture() });
-        const restore2 = new CNNM({ device, inputTexture: upscale1.getOutputTexture() });
-        const down = new Downscale({ device, inputTexture: restore2.getOutputTexture(), targetDimensions: dims });
-        return [clamp, denoise, restore1, upscale1, restore2, down];
-      };
-    },
-  },
-  'aa-vl-deblur': {
-    label: 'Anime4K A+A · VL + Deblur',
-    build(dims) {
-      return (device, inputTexture) => {
-        const clamp = new ClampHighlights({ device, inputTexture });
-        const restore1 = new CNNVL({ device, inputTexture: clamp.getOutputTexture() });
-        const upscale1 = new CNNx2VL({ device, inputTexture: restore1.getOutputTexture() });
-        const restore2 = new CNNM({ device, inputTexture: upscale1.getOutputTexture() });
-        // Deblur como último passe de conteúdo, antes do Downscale — afia o
-        // resultado já restaurado/upscalado, não a fonte crua.
-        const deblur = new DoG({ device, inputTexture: restore2.getOutputTexture() });
-        deblur.updateParam('strength', 7);
-        const down = new Downscale({ device, inputTexture: deblur.getOutputTexture(), targetDimensions: dims });
-        return [clamp, restore1, upscale1, restore2, deblur, down];
-      };
+  // o shader do BilateralMean divide por zero (intensitySigma=0 no denominador
+  // do gaussianVec). 0.2/2 = valores do README oficial (`strength`=intensitySigma,
+  // `strength2`=spatialSigma, conferido na WGSL).
+  denoise: {
+    escala: 1,
+    custo: 20,
+    criar: (device, tex) => {
+      const p = new BilateralMean({ device, inputTexture: tex });
+      p.updateParam('strength', 0.2);
+      p.updateParam('strength2', 2);
+      return p;
     },
   },
 };
+
+// Receita de cada preset: blocos em ordem de execução. A saída do último
+// bloco vai direto pro blit do canvas.
+const RECEITAS = {
+  original: ['original'],
+  'a-m': ['clamp', 'restoreM', 'x2M'],
+  'a-vl': ['clamp', 'restoreVL', 'x2VL'],
+  // Sem o CNNx2VL: com fonte ~1080p e alvo mirando a tela, o x2 gera 2160p que
+  // o blit joga fora de volta. Tirar o x2 mantém a fonte inteira na CNN de
+  // restauração (o que limpa o anime) e corta ~metade do custo.
+  'a-vl-1x': ['clamp', 'restoreVL'],
+  'aa-vl': ['clamp', 'restoreVL', 'x2VL', 'restoreM'],
+  'b-vl': ['clamp', 'restoreSoftVL', 'x2VL'],
+  'c-vl': ['clamp', 'denoiseX2VL'],
+  // Denoise logo após o clamp, antes do restore — limpa a fonte antes da CNN
+  // "restaurar" detalhe em cima de ruído.
+  'aa-vl-denoise': ['clamp', 'denoise', 'restoreVL', 'x2VL', 'restoreM'],
+  // Deblur como último passe de conteúdo — afia o resultado já restaurado/
+  // upscalado, não a fonte crua.
+  'aa-vl-deblur': ['clamp', 'restoreVL', 'x2VL', 'restoreM', 'deblur'],
+};
+
+const LABELS = {
+  original: 'Original',
+  'a-m': 'Anime4K A · M',
+  'a-vl': 'Anime4K A · VL',
+  'a-vl-1x': 'Anime4K A · VL (sem upscale)',
+  'aa-vl': 'Anime4K A+A · VL',
+  'b-vl': 'Anime4K B · VL',
+  'c-vl': 'Anime4K C · VL + Denoise',
+  'aa-vl-denoise': 'Anime4K A+A · VL + Denoise',
+  'aa-vl-deblur': 'Anime4K A+A · VL + Deblur',
+};
+
+// Encadeia os blocos: a saída de textura de um é a entrada do próximo.
+// Devolve o array de Anime4KPipeline que render() espera.
+function montarPipeline(blocos, device, inputTexture) {
+  const pipelines = [];
+  let tex = inputTexture;
+  for (const nome of blocos) {
+    const pipeline = BLOCOS[nome].criar(device, tex);
+    pipelines.push(pipeline);
+    tex = pipeline.getOutputTexture();
+  }
+  return pipelines;
+}
+
+// Fator linear total que o pipeline aplica à resolução (produto das escalas
+// dos blocos). 1 nos presets sem x2, 2 nos com CNNx2.
+function escalaDeSaida(blocos) {
+  return blocos.reduce((acc, nome) => acc * (BLOCOS[nome]?.escala ?? 1), 1);
+}
+
+// Custo relativo de GPU do pipeline em "megafetches por frame", dada a
+// resolução de entrada. Percorre os blocos acumulando `custo × megapixels na
+// entrada do bloco` e escalando os megapixels pelo `escala²` de cada bloco.
+// Consumido pela política preditiva (fatias seguintes); hoje só alimenta o HUD.
+export function custoEmMegafetches(blocos, larguraEntrada, alturaEntrada) {
+  let megapixels = (larguraEntrada * alturaEntrada) / 1e6;
+  let total = 0;
+  for (const nome of blocos) {
+    const bloco = BLOCOS[nome];
+    if (!bloco) continue;
+    total += bloco.custo * megapixels;
+    megapixels *= bloco.escala ** 2;
+  }
+  return total;
+}
+
+// Cada preset: label (pt-br), a lista de blocos, e `build()` — devolve a
+// função (device, inputTexture) => Anime4KPipeline[] esperada por render().
+// `build` não recebe mais `dims`: sem Downscale final, a resolução de saída é
+// só `canvas.width/height` (setado pelo motor) e o blit se ajusta sozinho.
+export const PRESETS = Object.fromEntries(
+  Object.entries(RECEITAS).map(([id, blocos]) => [
+    id,
+    {
+      label: LABELS[id],
+      blocos,
+      build: () => (device, inputTexture) => montarPipeline(blocos, device, inputTexture),
+    },
+  ])
+);
 
 // Ordem por custo de GPU decrescente — o degrau mais pesado (melhor
 // qualidade) primeiro. Consumido por SeletorDePreset.jsx só para ordenar o
@@ -172,17 +178,16 @@ export const DEGRAUS_ADAPTATIVOS = ['aa-vl-deblur', 'a-vl', 'a-vl-1x', 'a-m', 'o
 
 export const PRESET_PADRAO = 'aa-vl-deblur';
 
-// Resolução-alvo do Downscale final de cada preset.
+// Resolução do canvas de saída.
 //
 // Mira sempre o tamanho equivalente a TELA CHEIA (o maior que o .frame algum
 // dia vai ocupar nesta sessão), não o tamanho atual — de propósito, mesmo em
-// modo janela. Motivo: o bundle real da lib (checado via curl, não
-// documentação) mostra que render() cria um GPUDevice novo e reconfigura o
-// canvas a cada chamada, sem devolver handle pra parar o
-// requestVideoFrameCallback recursivo da chamada anterior — reconstruir o
-// pipeline ao entrar/sair de tela cheia vazaria o device antigo e deixaria
-// dois loops rodando. Miramos o maior caso de uma vez; baixar de uma
-// resolução maior pro tamanho da janela é seguro (downscale não borra).
+// modo janela. Motivo: o bundle real da lib mostra que render() cria um
+// GPUDevice novo e reconfigura o canvas a cada chamada, sem devolver handle
+// pra parar o requestVideoFrameCallback recursivo da chamada anterior —
+// reconstruir o pipeline ao entrar/sair de tela cheia vazaria o device antigo
+// e deixaria dois loops rodando. Miramos o maior caso de uma vez; o blit
+// baixar de uma resolução maior pro tamanho do canvas é seguro (não borra).
 //
 // Dois tetos sobre esse alvo:
 //  - Resolução CSS da tela, SEM multiplicar por devicePixelRatio. Num painel
@@ -190,9 +195,8 @@ export const PRESET_PADRAO = 'aa-vl-deblur';
 //    pixels físicos a mais — supersamplear por cima disso numa GPU fraca
 //    custa caro sem ganho visível. (Um painel HiDPI real vai querer o fator
 //    de volta; revisitar quando aparecer.)
-//  - `escalaMax` do preset: quanto a CNN de upscale multiplica a fonte (2 nos
-//    presets com CNNx2, 1 no 'a-vl-1x'). Passar disso é o Downscale final
-//    *magnificando* com bilinear — borra e gasta à toa.
+//  - `escalaDeSaida` do preset: quanto a CNN de upscale multiplica a fonte.
+//    Passar disso faria o blit *magnificar* com bilinear — borra e gasta.
 //
 // "original" fica de fora: é a referência "fonte pura sem shader".
 export function calcularDimensoesDeSaida(presetId, video) {
@@ -202,10 +206,8 @@ export function calcularDimensoesDeSaida(presetId, video) {
   const videoAspect = video.videoWidth / video.videoHeight;
   const screenCssWidth = window.screen?.width || window.innerWidth;
   const screenCssHeight = window.screen?.height || window.innerHeight;
-  // Em tela cheia o canvas é "contained": o limite é o menor entre a largura
-  // da tela e a largura que a altura da tela comporta nessa proporção.
   const alvoCss = Math.min(screenCssWidth, screenCssHeight * videoAspect);
-  const escalaMax = PRESETS[presetId]?.escalaMax ?? 2;
+  const escalaMax = escalaDeSaida(PRESETS[presetId]?.blocos ?? []);
   const width = Math.round(Math.min(alvoCss, video.videoWidth * escalaMax));
   const height = Math.round(width / videoAspect);
   return { width, height };

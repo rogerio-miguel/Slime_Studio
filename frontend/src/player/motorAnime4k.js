@@ -121,7 +121,9 @@ export async function iniciarSessaoDeRender({ video, canvas, preset, dimensoes, 
 
   canvas.width = dimensoes.width;
   canvas.height = dimensoes.height;
-  const pipelineBuilder = preset.build(dimensoes);
+  // `dimensoes` só dimensiona o canvas — o blit da lib reduz a saída do
+  // último bloco pra esse tamanho. O preset não precisa mais dele.
+  const pipelineBuilder = preset.build();
 
   // Captura síncrona, antes do await, pra garantir que o patch já esteja
   // instalado quando render() pedir o adapter internamente.
