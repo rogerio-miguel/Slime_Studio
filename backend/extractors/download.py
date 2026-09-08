@@ -15,6 +15,8 @@ agnóstico de site), a checagem faz sua própria requisição HTTP curta com
 import asyncio
 import os
 import re
+import sys
+import tempfile
 import time
 import urllib.parse
 from pathlib import Path
@@ -48,6 +50,30 @@ _TAMANHO_BLOCO_BYTES = 10 * 1024 * 1024
 _TIMEOUT_BLOCO_S = 60
 _MAX_TENTATIVAS_BLOCO = 4
 _CONTENT_RANGE_RE = re.compile(r"\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*", re.IGNORECASE)
+
+# Download DASH via `yt-dlp` em vez de `ffmpeg -f dash -i` (confirmado ao vivo
+# em 2026-09-08): o CDN do AnimeFire (`akumast.net`) serve ~1 a cada N segmentos
+# DASH como fragmento MP4 vazio (200 OK, `mdat` de 8 bytes) — armadilha
+# anti-download. O demuxer `dash` do ffmpeg PARA no 1º segmento vazio
+# ("No longer receiving stream_index") e SAI 0, gerando um arquivo truncado
+# (~44s) que o pipeline aceita como pronto. O `yt-dlp` retenta o fragmento e
+# segue (`--fragment-retries` + `--skip-unavailable-fragments`), montando o
+# episódio inteiro. É por isso que `_montar_comando`/`FormatoDeMidia.DASH` só
+# tem valor pra `conferir_link_de_midia` agora — `baixar` desvia DASH pra cá.
+_MAX_TENTATIVAS_FRAGMENTO = 10
+# Piso de duração do arquivo baixado vs. o `mediaPresentationDuration` do
+# manifesto. Abaixo disso o download veio truncado (CDN dropou uma faixa
+# inteira de segmentos, não só os fragmentos-isca esparsos que o yt-dlp já
+# cobre) — `FalhaDeExtracao` retentável em vez de aceitar um episódio pela
+# metade. Folga de 15% cobre o desconto real dos fragmentos-isca vazios e
+# imprecisão de `mediaPresentationDuration`.
+_FRACAO_MINIMA_DASH = 0.85
+_RE_MPD_DURACAO = re.compile(r'mediaPresentationDuration="([^"]+)"')
+# ISO 8601 de duração, só a parte de tempo (`PT…`) — dias/meses não aparecem
+# em manifesto de episódio. Grupos: horas, minutos, segundos (com decimais).
+_RE_DURACAO_ISO8601 = re.compile(
+    r"PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?", re.IGNORECASE
+)
 
 
 def caminho_raw(
@@ -119,24 +145,32 @@ def _eh_googlevideo(url: str) -> bool:
     return hostname == "googlevideo.com" or hostname.endswith(".googlevideo.com")
 
 
-async def baixar(link: LinkDeMidia, destino: Path, ffmpeg_bin: str) -> Path:
+async def baixar(
+    link: LinkDeMidia, destino: Path, ffmpeg_bin: str, ffprobe_bin: str | None = None
+) -> Path:
     """Baixa `link` para `destino` (`.mkv`), escrevendo em `<destino>.part` e
     promovendo com `os.replace()` (rename atômico) só ao concluir com sucesso.
     Remove qualquer parcial (`.part`, `.bruto`) em `BaseException` — nunca deixa
     lixo em `MEDIA_ROOT/raw/`.
 
-    Para URLs `*.googlevideo.com` baixa o mp4 cru em blocos (Range requests, para
-    escapar do throttle de conexão única do Google) para `<destino>.bruto` e só
-    então remuxa localmente com `ffmpeg -c copy`. Para todo o resto, `ffmpeg`
-    baixa e remuxa direto da URL remota.
+    `FormatoDeMidia.DASH` desvia para `yt-dlp` (`_baixar_dash`) — o demuxer `dash`
+    do `ffmpeg` trunca silenciosamente diante dos fragmentos-isca vazios que
+    alguns CDNs de anime servem (ver `_MAX_TENTATIVAS_FRAGMENTO`). Para URLs
+    `*.googlevideo.com` baixa o mp4 cru em blocos (Range requests, para escapar
+    do throttle de conexão única do Google) para `<destino>.bruto` e só então
+    remuxa localmente com `ffmpeg -c copy`. Para todo o resto, `ffmpeg` baixa e
+    remuxa direto da URL remota.
 
-    Falha do `ffmpeg` no download (conexão truncada pelo CDN, timeout de rede) e
-    falha de rede no download em blocos são traduzidas para `FalhaDeExtracao`
-    retentável — o executor reagenda o job com backoff em vez de marcá-lo como
-    falho definitivo. Só o `.part` ausente após sucesso do `ffmpeg` continua sendo
-    `FalhaDeFerramenta` (bug interno, não rede)."""
+    Falha do `ffmpeg`/`yt-dlp` no download (conexão truncada pelo CDN, timeout de
+    rede) e falha de rede no download em blocos são traduzidas para
+    `FalhaDeExtracao` retentável — o executor reagenda o job com backoff em vez
+    de marcá-lo como falho definitivo. Só o `.part` ausente após sucesso do
+    `ffmpeg` continua sendo `FalhaDeFerramenta` (bug interno, não rede)."""
     destino.parent.mkdir(parents=True, exist_ok=True)
     parcial = destino.with_name(destino.name + ".part")
+
+    if link.formato is FormatoDeMidia.DASH:
+        return await _baixar_dash(link, destino, ffmpeg_bin, ffprobe_bin)
 
     if _eh_googlevideo(link.url):
         bruto = destino.with_name(destino.name + ".bruto")
@@ -160,6 +194,157 @@ async def baixar(link: LinkDeMidia, destino: Path, ffmpeg_bin: str) -> Path:
         raise
 
     return destino
+
+
+async def _baixar_dash(
+    link: LinkDeMidia, destino: Path, ffmpeg_bin: str, ffprobe_bin: str | None
+) -> Path:
+    """Baixa um manifesto DASH via `yt-dlp` (fragmento a fragmento, com retry por
+    fragmento) para um diretório temporário no mesmo filesystem de `destino`, e
+    promove com `os.replace()` atômico. `yt-dlp` cuida da fusão vídeo+áudio
+    (`--merge-output-format mkv`, usando o `ffmpeg` que passamos).
+
+    Falha do `yt-dlp` (rede, CDN) vira `FalhaDeExtracao` retentável. Arquivo
+    ausente após saída 0 é `FalhaDeFerramenta` (bug interno). Download que passou
+    mas veio curto demais vs. o `mediaPresentationDuration` do manifesto
+    (`_conferir_duracao_dash`) também é `FalhaDeExtracao` retentável — uma faixa
+    inteira de segmentos caiu, não só os fragmentos-isca esparsos."""
+    with tempfile.TemporaryDirectory(dir=destino.parent, prefix=".ytdl-") as tmp:
+        saida_modelo = str(Path(tmp) / "video.%(ext)s")
+        argumentos = _montar_comando_ytdl(link, saida_modelo, ffmpeg_bin)
+        try:
+            await executar(argumentos, timeout_s=_TIMEOUT_DOWNLOAD_S)
+        except FalhaDeFerramenta as excecao:
+            sufixo_stderr = f" — stderr: {excecao.cauda_stderr}" if excecao.cauda_stderr else ""
+            raise FalhaDeExtracao(
+                f"yt-dlp falhou no download DASH ({excecao}){sufixo_stderr}",
+                permite_retentativa=True,
+            ) from excecao
+
+        produzidos = [
+            caminho
+            for caminho in Path(tmp).glob("video.*")
+            if caminho.suffix.lower() in (".mkv", ".webm", ".mp4")
+        ]
+        if not produzidos:
+            raise FalhaDeFerramenta(
+                f"yt-dlp concluiu sem erro mas não gerou arquivo de vídeo em {tmp}"
+            )
+        arquivo = produzidos[0]
+        await _conferir_duracao_dash(link, arquivo, ffprobe_bin)
+        os.replace(arquivo, destino)
+
+    return destino
+
+
+def _montar_comando_ytdl(link: LinkDeMidia, saida_modelo: str, ffmpeg_bin: str) -> list[str]:
+    """`yt-dlp` como módulo do próprio interpretador (`sys.executable -m yt_dlp`)
+    — mesmo venv, sem depender de um console-script no PATH. `--skip-unavailable-
+    fragments` + `--fragment-retries` cobrem os fragmentos-isca vazios; `--no-part`
+    escreve direto (o diretório temporário já isola parciais); `--no-progress`
+    mantém o stdout enxuto pro `communicate()` de `executar`."""
+    argumentos = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--no-warnings",
+        "--no-progress",
+        "--no-playlist",
+        "--no-part",
+        "--fragment-retries",
+        str(_MAX_TENTATIVAS_FRAGMENTO),
+        "--retries",
+        str(_MAX_TENTATIVAS_FRAGMENTO),
+        "--skip-unavailable-fragments",
+        "--ffmpeg-location",
+        ffmpeg_bin,
+        "-f",
+        "bv*+ba/b",
+        "--merge-output-format",
+        "mkv",
+        "--remux-video",
+        "mkv",
+        "-o",
+        saida_modelo,
+    ]
+    for chave, valor in link.cabecalhos.items():
+        argumentos += ["--add-header", f"{chave}:{valor}"]
+    argumentos += ["--", link.url]
+    return argumentos
+
+
+async def _conferir_duracao_dash(
+    link: LinkDeMidia, arquivo: Path, ffprobe_bin: str | None
+) -> None:
+    """Rede de segurança contra download truncado: compara a duração real do
+    arquivo com o `mediaPresentationDuration` do manifesto. Manifesto sem
+    duração declarada, ou inacessível agora, não bloqueia (não dá pra conferir —
+    o arquivo já está baixado). Sem `ffprobe_bin` (chamador de teste), pula a
+    checagem."""
+    if ffprobe_bin is None:
+        return
+    duracao_manifesto = await asyncio.to_thread(_duracao_do_manifesto_dash, link)
+    if duracao_manifesto is None:
+        return
+    duracao_real = await _sondar_duracao_s(arquivo, ffprobe_bin)
+    if duracao_real < duracao_manifesto * _FRACAO_MINIMA_DASH:
+        arquivo.unlink(missing_ok=True)
+        raise FalhaDeExtracao(
+            f"download DASH truncado: {duracao_real:.0f}s de ~{duracao_manifesto:.0f}s "
+            f"do manifesto",
+            permite_retentativa=True,
+        )
+
+
+def _duracao_do_manifesto_dash(link: LinkDeMidia) -> float | None:
+    """`mediaPresentationDuration` do MPD em segundos, ou `None` se o manifesto
+    não declara duração ou não pôde ser rebaixado. Isolado (como `_baixar_amostra`)
+    para `monkeypatch` em teste."""
+    try:
+        with requests.get(link.url, headers=link.cabecalhos, timeout=_TIMEOUT_S) as resposta:
+            resposta.raise_for_status()
+            corpo = resposta.text
+    except requests.RequestException:
+        return None
+    correspondencia = _RE_MPD_DURACAO.search(corpo)
+    if correspondencia is None:
+        return None
+    return _iso8601_duracao_para_segundos(correspondencia.group(1))
+
+
+def _iso8601_duracao_para_segundos(texto: str) -> float | None:
+    """`"PT1H23M40.044S"` -> `5020.044`. `None` quando não casa nenhum campo de
+    tempo (formato inesperado)."""
+    correspondencia = _RE_DURACAO_ISO8601.fullmatch(texto.strip())
+    if correspondencia is None or not any(correspondencia.groups()):
+        return None
+    horas, minutos, segundos = (
+        float(valor) if valor else 0.0 for valor in correspondencia.groups()
+    )
+    return horas * 3600 + minutos * 60 + segundos
+
+
+async def _sondar_duracao_s(arquivo: Path, ffprobe_bin: str) -> float:
+    """Duração do arquivo em segundos via `ffprobe`. `0.0` quando o `ffprobe` não
+    devolve um número (arquivo sem container de duração conhecida) — o chamador
+    trata como "curto demais"."""
+    resultado = await executar(
+        [
+            ffprobe_bin,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(arquivo),
+        ],
+        timeout_s=_TIMEOUT_S,
+    )
+    try:
+        return float(resultado.stdout.strip())
+    except ValueError:
+        return 0.0
 
 
 async def _remuxar_e_promover(
