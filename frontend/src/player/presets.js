@@ -59,7 +59,8 @@ const BLOCOS = {
   x2M: { escala: 2, custo: 90, passes: 10, criar: (device, tex) => new CNNx2M({ device, inputTexture: tex }) },
   denoiseX2VL: { escala: 2, custo: 296, passes: 19, criar: (device, tex) => new DenoiseCNNx2VL({ device, inputTexture: tex }) },
   // `strength` é o expoente da curva de sharpening (WGSL do DoG). 7 = valor
-  // do README oficial da lib.
+  // do README oficial da lib — mantido só onde o restore por trás já é
+  // pesado o bastante pra não sobrar halo (só aa-vl-deblur agora).
   deblur: {
     escala: 1,
     custo: 20,
@@ -70,10 +71,27 @@ const BLOCOS = {
       return p;
     },
   },
+  // strength=4: confirmado ao vivo em cima de restore mais fraco (a-vl/
+  // a-vl-1x com CNNVL sem o restoreM extra que aa-vl-deblur tem; a-m com
+  // CNNM, ainda mais fraca) — strength=7 nesses sobrava em halo/ringing e
+  // lia como MENOS nítido que essa versão mais fraca, não mais.
+  deblurLeve: {
+    escala: 1,
+    custo: 20,
+    passes: 4,
+    criar: (device, tex) => {
+      const p = new DoG({ device, inputTexture: tex });
+      p.updateParam('strength', 4);
+      return p;
+    },
+  },
   // `strength`/`strength2` nascem zerados na lib — sem updateParam() explícito
   // o shader do BilateralMean divide por zero (intensitySigma=0 no denominador
   // do gaussianVec). 0.2/2 = valores do README oficial (`strength`=intensitySigma,
-  // `strength2`=spatialSigma, conferido na WGSL).
+  // `strength2`=spatialSigma, conferido na WGSL). Testado ao vivo como passe
+  // extra antes do restore em a-m/a-vl/a-vl-1x (comparação temporária,
+  // removida) — rejeitado, não valeu a qualidade. Continua valendo só em
+  // aa-vl-denoise, o knob dedicado pra fonte com grão de verdade.
   denoise: {
     escala: 1,
     custo: 20,
@@ -89,22 +107,28 @@ const BLOCOS = {
 
 // Receita de cada preset: blocos em ordem de execução. A saída do último
 // bloco vai direto pro blit do canvas.
+// Deblur (DoG) como último passe de conteúdo em todo degrau que não seja
+// `original`: custo baixo (20, ante 72-296 dos blocos de restore/upscale) e
+// sem ele a imagem sai opaca/sem nitidez assim que sai do topo (só
+// `aa-vl-deblur` tinha o passe antes desta linha).
 const RECEITAS = {
   original: ['original'],
-  'a-m': ['clamp', 'restoreM', 'x2M'],
-  'a-vl': ['clamp', 'restoreVL', 'x2VL'],
+  // deblurLeve ANTES do x2M (diferente de a-vl/a-vl-1x, onde vem depois):
+  // confirmado ao vivo que o x2M não suaviza o sharpen de volta, então
+  // sharpenar no low-res evita rodar o passe a 4x os megapixels da fonte
+  // (~80 de custo) por ~20 — de graça, sem perda visível.
+  'a-m': ['clamp', 'restoreM', 'deblurLeve', 'x2M'],
+  'a-vl': ['clamp', 'restoreVL', 'x2VL', 'deblurLeve'],
   // Sem o CNNx2VL: com fonte ~1080p e alvo mirando a tela, o x2 gera 2160p que
   // o blit joga fora de volta. Tirar o x2 mantém a fonte inteira na CNN de
   // restauração (o que limpa o anime) e corta ~metade do custo.
-  'a-vl-1x': ['clamp', 'restoreVL'],
+  'a-vl-1x': ['clamp', 'restoreVL', 'deblurLeve'],
   'aa-vl': ['clamp', 'restoreVL', 'x2VL', 'restoreM'],
   'b-vl': ['clamp', 'restoreSoftVL', 'x2VL'],
   'c-vl': ['clamp', 'denoiseX2VL'],
   // Denoise logo após o clamp, antes do restore — limpa a fonte antes da CNN
   // "restaurar" detalhe em cima de ruído.
   'aa-vl-denoise': ['clamp', 'denoise', 'restoreVL', 'x2VL', 'restoreM'],
-  // Deblur como último passe de conteúdo — afia o resultado já restaurado/
-  // upscalado, não a fonte crua.
   'aa-vl-deblur': ['clamp', 'restoreVL', 'x2VL', 'restoreM', 'deblur'],
 };
 
@@ -210,17 +234,48 @@ export const PRESET_PADRAO = 'aa-vl-deblur';
 //  - `escalaDeSaida` do preset: quanto a CNN de upscale multiplica a fonte.
 //    Passar disso faria o blit *magnificar* com bilinear — borra e gasta.
 //
+// Largura CSS alvo (mesmos dois tetos do comentário acima) pra um aspect
+// ratio dado — extraído pra ser compartilhado com resolverDegrauPorResolucao
+// abaixo, que precisa do mesmo alvo pra decidir se um preset sem upscale é
+// seguro pra uma fonte.
+function alvoCssDoAspecto(aspect) {
+  const screenCssWidth = window.screen?.width || window.innerWidth;
+  const screenCssHeight = window.screen?.height || window.innerHeight;
+  return Math.min(screenCssWidth, screenCssHeight * aspect);
+}
+
 // "original" fica de fora: é a referência "fonte pura sem shader".
 export function calcularDimensoesDeSaida(presetId, video) {
   if (presetId === 'original') {
     return { width: video.videoWidth, height: video.videoHeight };
   }
   const videoAspect = video.videoWidth / video.videoHeight;
-  const screenCssWidth = window.screen?.width || window.innerWidth;
-  const screenCssHeight = window.screen?.height || window.innerHeight;
-  const alvoCss = Math.min(screenCssWidth, screenCssHeight * videoAspect);
+  const alvoCss = alvoCssDoAspecto(videoAspect);
   const escalaMax = escalaDeSaida(PRESETS[presetId]?.blocos ?? []);
   const width = Math.round(Math.min(alvoCss, video.videoWidth * escalaMax));
   const height = Math.round(width / videoAspect);
   return { width, height };
+}
+
+// Presets sem bloco de escala (x2VL/x2M) só são seguros quando a fonte já
+// cobre o alvo da tela — abaixo disso, pular o upscale por CNN deixa a
+// lacuna pro CSS (#output-canvas usa object-fit:fill) esticar sem rede
+// nenhuma, revertendo a economia de custo em perda de nitidez real (medido
+// ao vivo: 'a-vl-1x' ruim em fonte 720p/tela 1080p, bom quando fonte já é
+// 1080p). Mapeia cada preset "sem upscale" pro equivalente COM upscale, pra
+// usar no lugar quando a fonte não cobre.
+const SUBSTITUTOS_SEM_UPSCALE = { 'a-vl-1x': 'a-vl' };
+
+// Troca `presetId` pelo substituto com upscale se ele estiver em
+// SUBSTITUTOS_SEM_UPSCALE e `dimensoesDaFonte` ({width,height}, de
+// useFonteDeVideo.js) não cobrir o alvo da tela. Só usado no modo
+// automático (PlayerAtivo.jsx) — presets escolhidos na mão continuam
+// literais, é escolha explícita do usuário. `dimensoesDaFonte` null (antes
+// do loadedmetadata) devolve presetId como veio: sem dado pra decidir.
+export function resolverDegrauPorResolucao(presetId, dimensoesDaFonte) {
+  const substituto = SUBSTITUTOS_SEM_UPSCALE[presetId];
+  if (!substituto || !dimensoesDaFonte) return presetId;
+  const aspect = dimensoesDaFonte.width / dimensoesDaFonte.height;
+  const alvoCss = alvoCssDoAspecto(aspect);
+  return dimensoesDaFonte.width < alvoCss ? substituto : presetId;
 }
