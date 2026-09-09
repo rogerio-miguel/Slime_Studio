@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos.catalogo import job_ativo_do_episodio, remover_arquivos_do_episodio
-from api.servicos.fontes import resolver_e_listar
+from api.servicos.fontes import resolver_e_listar, still_de_episodio
 from core.config import Config
 from core.enums import SITE_LOCAL, StatusEpisodio, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import (
@@ -138,6 +138,15 @@ async def criar_job_site(
     except ValueError:
         numero_na_fonte = None
 
+    # `capa_path` gravado no `Episodio` NUNCA mais vem do `thumb_url` cru do
+    # extractor (imagem "da fonte" de scraping) — pedido explícito do usuário.
+    # `still_de_episodio` busca a mesma still do TMDB que a listagem de
+    # exibição já sobrepõe (`api/servicos/fontes.py::_sobrepor_stills_de_
+    # episodios`); best-effort, `None` quando o TMDB não acha — o frontend cai
+    # pra arte do anime nesse caso (`PaginaDoAnime.jsx`), nunca pro thumb da
+    # fonte.
+    still = await still_de_episodio(sessionmaker, anime, numero)
+
     episodio_existente = await _localizar_episodio_por_identidade(
         sessionmaker, anime.id, numero, tipo, versao_do_episodio
     )
@@ -153,7 +162,7 @@ async def criar_job_site(
             url_fonte=correspondente.url,
             site_origem=fonte.dominio,
             numero_fonte=numero_na_fonte,
-            capa_path=correspondente.thumb_url,
+            capa_path=still,
             duracao_esperada_s=duracao_esperada_s,
         )
 
@@ -165,7 +174,7 @@ async def criar_job_site(
         versao=versao_do_episodio,
         url_fonte=correspondente.url,
         site_origem=fonte.dominio,
-        capa_path=correspondente.thumb_url,
+        capa_path=still,
         duracao_esperada_s=duracao_esperada_s,
     )
 
@@ -212,9 +221,10 @@ async def _reaproveitar_episodio_para_recaptura(
     relação nenhuma com ele (senão o episódio reapareceria em "continuar
     assistindo" numa posição sem sentido).
 
-    `capa_path` (thumb da fonte) só é gravada quando não-nula — mesma semântica
-    de `db/catalogo.py::_aplicar_lancamento_no_anime` para `total_episodios`:
-    uma recaptura numa fonte que não expõe thumb não apaga a que já havia.
+    `capa_path` (still TMDB, ver `still_de_episodio`) só é gravada quando
+    não-nula — mesma semântica de `db/catalogo.py::_aplicar_lancamento_no_
+    anime` para `total_episodios`: uma recaptura sem still (TMDB não achou)
+    não apaga a que já havia.
 
     Levanta `JobEmExecucao` se já existir um `Job` ativo para este episódio —
     mesma checagem/motivo de `api/servicos/catalogo.py::remover_episodio`/

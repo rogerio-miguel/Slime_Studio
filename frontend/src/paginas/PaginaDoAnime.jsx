@@ -6,6 +6,7 @@ import {
   criarJobSite,
   listarEpisodios,
   listarEpisodiosRemotos,
+  marcarTodosAssistidos,
   obterAnime,
   removerAnime,
 } from '../api/recursos.js';
@@ -343,6 +344,12 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   // limitação residual conhecida, não resolvida por exigir estender o
   // contrato de captura por rótulo (fora do escopo desta frente). Rótulo não
   // numérico (`numero: null`) sempre vira uma linha à parte, no fim.
+  // Fallback de thumb quando não há still do episódio: a arte do PRÓPRIO
+  // anime (TMDB/AniList via `integrations/`). `banner_path` (horizontal,
+  // mesmo formato 16/9 do card) antes de `capa_path` (pôster) — mesma
+  // prioridade do hero acima.
+  const thumbDoAnime = anime?.banner_path ?? anime?.capa_path ?? null;
+
   const linhas = useMemo(() => {
     const dominioAtivo = remotos.dados?.dominio ?? null;
     // Todos os episódios locais por número, SEM filtro — usado abaixo pra
@@ -400,15 +407,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             colisao: false,
             episodio,
             episodioDescartado,
-            // Thumb do episódio: preferir a do episódio já capturado
-            // (`capa_path`, gravada na captura), depois a do descartado por
-            // fonte/versão, e só então a da listagem remota atual. `null`
-            // quando nenhuma fonte tem imagem — `LinhaDeEpisodio` omite a img.
-            thumb:
-              episodio?.capa_path ??
-              episodioDescartado?.capa_path ??
-              remotosDoNumero[0]?.thumb_url ??
-              null,
+            // Thumb do episódio: a listagem remota (`remotos.dados`) já vem
+            // do servidor com o overlay de still do TMDB aplicado, com a
+            // arte do anime como fallback quando o TMDB não tem aquele
+            // episódio (`api/servicos/fontes.py::_sobrepor_stills_de_
+            // episodios`) — nunca mais o thumb cru da fonte de scraping.
+            // `thumbDoAnime` aqui é só a rede de segurança do CLIENTE: um
+            // episódio que só existe local (`episodioDescartado`, fonte
+            // trocada) e não aparece na listagem remota atual, ou a própria
+            // listagem ainda carregando/com erro.
+            thumb: remotosDoNumero[0]?.thumb_url ?? thumbDoAnime,
           },
         ];
       }
@@ -419,7 +427,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         colisao: true,
         episodio: null,
         episodioDescartado,
-        thumb: remoto.thumb_url ?? null,
+        thumb: remoto.thumb_url ?? thumbDoAnime,
       }));
     });
 
@@ -429,11 +437,11 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
       rotulo: remoto.rotulo,
       colisao: false,
       episodio: null,
-      thumb: remoto.thumb_url ?? null,
+      thumb: remoto.thumb_url ?? thumbDoAnime,
     }));
 
     return [...linhasNumericas, ...linhasSemNumero];
-  }, [episodios.dados, remotos.dados, versaoAtiva]);
+  }, [episodios.dados, remotos.dados, versaoAtiva, thumbDoAnime]);
 
   // Dados derivados do bloco de conteúdo do hero (estilo AnimeFire, coluna
   // única). `meta` é a linha stacked "ano • N episódios • versão" logo abaixo
@@ -537,6 +545,31 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [fonteAmbigua, animeId, capturar, remotos.recarregar]
   );
+
+  // Botão "Marcar como assistido" da barra de controles — marca em lote todo
+  // episódio LOCAL do anime (qualquer fonte/versão, não só a ativa) que ainda
+  // não tem `assistido_em`. Sempre disponível (nunca desabilitado por não
+  // haver nada pra marcar — só enquanto a chamada está em voo, ver o botão
+  // abaixo). Sem diálogo de confirmação: ao contrário de "Remover do
+  // catálogo", marcar como assistido não apaga nada e não tem efeito
+  // colateral em disco.
+  const [marcandoTodosAssistidos, setMarcandoTodosAssistidos] = useState(false);
+  const [erroMarcarAssistidos, setErroMarcarAssistidos] = useState(null);
+
+  const aoMarcarTodosAssistidos = useCallback(async () => {
+    setMarcandoTodosAssistidos(true);
+    setErroMarcarAssistidos(null);
+    try {
+      await marcarTodosAssistidos(animeId);
+      episodios.recarregar();
+    } catch (erroCapturado) {
+      console.error('falha ao marcar episódios como assistidos', erroCapturado);
+      setErroMarcarAssistidos('Não foi possível marcar os episódios como assistidos — tente novamente.');
+    } finally {
+      setMarcandoTodosAssistidos(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animeId, episodios.recarregar]);
 
   const confirmarRemocao = useCallback(async () => {
     setRemovendo(true);
@@ -804,6 +837,11 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             {erroCaptura}
           </p>
         )}
+        {erroMarcarAssistidos && (
+          <p role="alert" className="mb-4 text-sm text-red-400">
+            {erroMarcarAssistidos}
+          </p>
+        )}
         {episodios.carregando && <p className="text-sm text-ink-muted">Carregando episódios…</p>}
         {remotos.carregando && (
           <p className="text-sm text-ink-muted">
@@ -830,6 +868,20 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
             >
               Trocar fonte
+            </button>
+            {/* "Marcar como assistido" — marca em lote (sem diálogo, não é
+                destrutivo). Sempre disponível, igual ao Crunchyroll: clicar
+                marca; sem episódio pendente é só um no-op no servidor (a
+                `UPDATE ... WHERE assistido_em IS NULL` não acha nada pra
+                mudar). Desabilitado só enquanto a chamada está em voo, pra
+                não disparar duas vezes. */}
+            <button
+              type="button"
+              onClick={aoMarcarTodosAssistidos}
+              disabled={marcandoTodosAssistidos}
+              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-chrome disabled:hover:text-ink-muted"
+            >
+              {marcandoTodosAssistidos ? 'Marcando…' : 'Marcar como assistido'}
             </button>
             {/* "Remover do catálogo" — ação destrutiva, mora aqui ao lado de
                 "Trocar fonte" (não mais num canto do hero). Mesma geometria de

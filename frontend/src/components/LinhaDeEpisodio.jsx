@@ -9,22 +9,29 @@ import { IconePlay } from '../player/Icones.jsx';
 // agora"/"Continuar assistindo" passando por aqui, não duplicando o SVG.
 export { IconePlay };
 
-// Miniatura decorativa do episódio (thumb da fonte). `src` SEMPRE via o proxy
-// `GET /api/thumb` — nunca `src={thumb}` direto: o proxy existe pra não vazar
-// o IP do usuário pro site pirata e pra contornar hotlink (embute o `Referer`).
-// `alt=""` porque o número/título do episódio já está em texto ao lado (img
-// puramente decorativa). Some sozinha quando `thumb` é vazio (nada renderiza,
-// sem buraco no layout) ou quando o proxy responde 404 (`onError`) — a fonte
-// pode não ter a imagem daquele episódio. `falhouEm` guarda a URL que falhou
-// e é comparada com `thumb`: se a linha trocar de origem (ex. thumb remota →
-// `capa_path` após a captura), a nova URL volta a ser tentada.
+// Miniatura decorativa do episódio — still TMDB do episódio quando existe,
+// senão a arte do próprio anime (TMDB/AniList, `PaginaDoAnime.jsx::
+// thumbDoAnime`); NUNCA MAIS uma imagem raspada do site de captura (pedido
+// explícito do usuário: baixar um episódio não deve trocar a imagem exibida
+// — `api/servicos/fontes.py::_sobrepor_stills_de_episodios`/`jobs.py::
+// still_de_episodio` já garantem isso no servidor, ver `PaginaDoAnime.jsx`).
+// `src={thumb}` direto: ao contrário da antiga thumb da fonte, esta URL
+// sempre vem de um provedor de metadados servido por CDN pública (sem risco
+// de hotlink/vazar IP do usuário) — não precisa mais do proxy `GET
+// /api/thumb` (`api/rotas/thumb.py`, que segue existindo só pro caso o
+// backend volte a precisar dele). `alt=""` porque o número/título do
+// episódio já está em texto ao lado (img puramente decorativa). Some sozinha
+// quando `thumb` é vazio (nem still nem arte do anime disponível, nada
+// renderiza, sem buraco no layout) ou se a URL falhar ao carregar
+// (`onError`) — `falhouEm` compara com `thumb` pra voltar a tentar quando a
+// linha troca de origem (still → arte do anime, por ex.).
 export function MiniaturaDoEpisodio({ thumb, modo }) {
   const [falhouEm, setFalhouEm] = useState(null);
   if (!thumb || falhouEm === thumb) return null;
   return (
     <img
       key={thumb}
-      src={`/api/thumb?url=${encodeURIComponent(thumb)}`}
+      src={thumb}
       alt=""
       loading="lazy"
       onError={() => setFalhouEm(thumb)}
@@ -233,7 +240,11 @@ function OverlayDeStatus({ rotulo, tom }) {
 
 // Pista de "pronto pra assistir" no ramo `pronto` — o mesmo `IconePlay` do
 // player (player/Icones.jsx), reaproveitado em vez de redesenhar o triângulo,
-// num disco translúcido centralizado sobre a thumb. Mesmo slot central do
+// num disco translúcido centralizado sobre a thumb. `fill="currentColor"`:
+// por padrão o ícone é só contorno (`propsBase` de Icones.jsx); preenchido é
+// o MESMO ajuste que o botão "Assistir agora"/"Continuar assistindo" do
+// carrossel já usa (`inicio/CarrosselDestaques.jsx`) — os dois ficam
+// visualmente idênticos, não só o mesmo componente. Mesmo slot central do
 // OverlayDeStatus: spinner = processando, ⚠ = alerta, ▶ = pronto formam um
 // sistema visual único, um estado por card. `pointer-events-none` deixa o
 // clique atravessar pro <Link> do CartaoDeEpisodio (o card inteiro é o alvo);
@@ -252,13 +263,14 @@ export function IndicadorDePlay({ emGrade, temThumb }) {
   return (
     <span className={`pointer-events-none flex items-center justify-center ${posicao}`}>
       <span
-        className={`flex items-center justify-center rounded-full bg-black/45 text-white ring-1 ring-white/50 backdrop-blur-sm transition duration-200 ease-out group-hover/cartao:bg-black/70 group-hover/cartao:ring-white motion-reduce:transition-none ${
-          emGrade ? 'h-14 w-14' : 'h-9 w-9'
+        className={`flex items-center justify-center rounded-full bg-white text-black transition duration-200 ease-out group-hover/cartao:brightness-90 motion-reduce:transition-none ${
+          emGrade ? 'h-12 w-12' : 'h-9 w-9'
         }`}
       >
         <IconePlay
           width={undefined}
           height={undefined}
+          fill="currentColor"
           className={emGrade ? 'h-6 w-6 translate-x-0.5' : 'h-4 w-4 translate-x-px'}
         />
       </span>
@@ -384,10 +396,11 @@ export default function LinhaDeEpisodio({
   colisao,
   episodio,
   episodioDescartado,
-  // URL absoluta da thumbnail do episódio na fonte (ou `null`) — montada em
-  // `PaginaDoAnime.jsx` a partir de `EpisodioSaida.capa_path` /
-  // `EpisodioRemotoSaida.thumb_url`. Renderizada por `MiniaturaDoEpisodio`
-  // (sempre via o proxy `/api/thumb`); os 4 ramos de render abaixo a exibem.
+  // URL da thumb do episódio (ou `null`) — `PaginaDoAnime.jsx::linhas`:
+  // still TMDB do episódio (`remotos.dados`, já overlaid pelo servidor) com
+  // `thumbDoAnime` (`anime.banner_path ?? anime.capa_path`) como fallback.
+  // Renderizada por `MiniaturaDoEpisodio`; os 4 ramos de render abaixo a
+  // exibem.
   thumb,
   // `PaginaDoAnime.jsx::remotos.dados?.dominio ?? null` — domínio da fonte
   // remota ativa (`null` enquanto ainda carrega/erra/está ambígua). Usado só

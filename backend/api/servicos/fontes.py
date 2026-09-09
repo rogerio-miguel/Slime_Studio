@@ -65,6 +65,11 @@ _TETO_METADADOS_S = 9
 _CONCORRENCIA_STILLS = 5
 _TETO_LOTE_STILLS_S = 18
 
+# Teto do lookup de UM still (`still_de_episodio`, usado na captura — ver
+# `api/servicos/jobs.py`) — mesma ordem de grandeza de `_TETO_METADADOS_S`,
+# fora do lote, então sem a proteção do `asyncio.wait(timeout=...)` acima.
+_TETO_STILL_UNICO_S = 9
+
 
 @dataclass(frozen=True, slots=True)
 class EpisodiosRemotosResultado:
@@ -219,6 +224,78 @@ async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int
     return int(total or 0)
 
 
+async def _still_direto_ou_absoluto(
+    anime: Anime, numero: int, offset_de_temporada: int
+) -> str | None:
+    """Still TMDB de um episódio: tenta primeiro o par DIRETO (`numero` dentro
+    da temporada, `anime.numero_temporada`) — o caso comum, onde o TMDB tem
+    uma season própria pra cada temporada da AniList. Só cai pro número
+    ABSOLUTO (`offset_de_temporada + numero`, `temporada=None`) quando o
+    direto não acha nada E há offset pra tentar — a franquia "achatada" numa
+    season só no TMDB (ex. Kusuriya no Hitorigoto — 2 temporadas na AniList, 1
+    season de 48 no TMDB).
+
+    Direto primeiro, não o inverso: `offset_de_temporada` (`_offset_de_
+    temporada`) só soma `total_episodios_anilist` das temporadas irmãs JÁ
+    CATALOGADAS localmente com o mesmo `serie_ancora` — uma irmã anterior
+    ainda não catalogada (comum: só as temporadas mais recentes de uma
+    franquia longa costumam estar no catálogo) faz a soma sair sub-contada, e
+    o número absoluto calculado cai sobre a still de OUTRO episódio (real,
+    mas do lugar errado da série) em vez de vir vazio. Tentar o direto antes
+    evita esse erro de atribuição sempre que o TMDB de fato tem a temporada
+    separada — só recorre ao absoluto (com o mesmo risco de offset incompleto
+    de sempre) quando o direto genuinamente não encontra a temporada."""
+    still = await servico_metadados.buscar_still_de_episodio(
+        anime.titulo, anime.ano, numero, anime.numero_temporada
+    )
+    if still is not None or not offset_de_temporada:
+        return still
+    return await servico_metadados.buscar_still_de_episodio(
+        anime.titulo, anime.ano, offset_de_temporada + numero, None
+    )
+
+
+async def still_de_episodio(sessionmaker: _SessionMaker, anime: Anime, numero: int) -> str | None:
+    """Still TMDB de UM episódio — usado na CAPTURA (`api/servicos/jobs.py`)
+    pra gravar `Episodio.capa_path`, ao contrário de `_sobrepor_stills_de_
+    episodios` (lote, exibição). Mesma estratégia direto-depois-absoluto de
+    `_still_direto_ou_absoluto`; sem a concorrência/semáforo do lote, só um
+    episódio. `_offset_de_temporada` (consulta ao banco) só roda quando o
+    direto falha — poupa a consulta no caso comum.
+
+    Best-effort com teto próprio (`_TETO_STILL_UNICO_S`, fora do `_chamar`
+    interno de `integrations/servico.py`), um por tentativa: qualquer
+    falha/timeout vira `None` e é logada — a captura não pode travar nem
+    falhar por causa de thumb."""
+    try:
+        still = await asyncio.wait_for(
+            servico_metadados.buscar_still_de_episodio(
+                anime.titulo, anime.ano, numero, anime.numero_temporada
+            ),
+            timeout=_TETO_STILL_UNICO_S,
+        )
+        if still is not None:
+            return still
+
+        offset = await _offset_de_temporada(sessionmaker, anime)
+        if not offset:
+            return None
+        return await asyncio.wait_for(
+            servico_metadados.buscar_still_de_episodio(
+                anime.titulo, anime.ano, offset + numero, None
+            ),
+            timeout=_TETO_STILL_UNICO_S,
+        )
+    except Exception as excecao:
+        logger.warning(
+            "still TMDB best-effort falhou pro episódio %s de %r na captura: %s",
+            numero,
+            anime.titulo,
+            excecao,
+        )
+        return None
+
+
 async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
     """Resolve os nomes canônicos de `titulo` na AniList
     (`integrations.servico.buscar_titulos` — percorre só `PROVEDORES_DE_TITULO`,
@@ -249,20 +326,21 @@ async def _sobrepor_stills_de_episodios(
     """Overlay best-effort de thumb TMDB (Fatia 5, `PLANO_ARTE_TMDB.md`) sobre
     `EpisodioRemoto.thumb_url`.
 
-    Duas formas de pedir a still, conforme `offset_de_temporada` (ver
-    `_offset_de_temporada`):
+    Cada episódio tenta primeiro o par DIRETO (`episodio.numero`,
+    `anime.numero_temporada`) e só cai pro ABSOLUTO (`offset_de_temporada +
+    numero`, `temporada=None`, deixando a `TabelaDeTemporadas` do TMDB achar a
+    season) quando o direto não acha nada — ver `_still_direto_ou_absoluto`
+    pro porquê dessa ordem (offset incompleto de uma temporada irmã ainda não
+    catalogada localmente já causou still de episódio ERRADO, não só ausente).
 
-    - `> 0` (temporada 2+ de uma franquia): `numero` da fonte é por temporada;
-      pede pelo ABSOLUTO (`offset + numero`, `temporada=None`) e deixa a
-      `TabelaDeTemporadas` do TMDB achar a season — resiste ao TMDB que junta a
-      franquia numa season só.
-    - `0` (1ª temporada, ou franquia não resolvida): par
-      `(episodio.numero, anime.numero_temporada)` — comportamento anterior.
-
-    Preserva o `thumb_url` que o extractor já trouxe quando o TMDB não acha (id
-    não resolvido, temporada fora do range, still nulo) ou quando o lote não
-    termina a tempo. Episódio sem `numero` (rótulo não numérico, ex. "Especial")
-    não tem como mapear pro TMDB — mantém o `thumb_url` original sem tentar.
+    O fallback quando o TMDB não acha (id não resolvido, temporada fora do
+    range, still nulo) ou quando o lote não termina a tempo é a arte do
+    PRÓPRIO anime (`anime.banner_path` ou `anime.capa_path`) — NUNCA MAIS o
+    `thumb_url` que o extractor trouxe (pedido explícito do usuário: thumb de
+    episódio não vem mais da fonte de scraping, só do TMDB ou da arte do
+    anime já catalogada). Episódio sem `numero` (rótulo não numérico, ex.
+    "Especial") não tem como mapear pro TMDB — cai direto no fallback, sem
+    tentar.
 
     Mesma mecânica de concorrência/deadline de
     `api/servicos/capas.py::_consultar_capas`: `asyncio.wait` (não
@@ -270,25 +348,21 @@ async def _sobrepor_stills_de_episodios(
     ainda estiver pendente é cancelado e a cancelação é aguardada antes de
     devolver — a *task* nunca some rodando solta.
     """
+    fallback = anime.banner_path or anime.capa_path
+    resultado = [replace(ep, thumb_url=fallback) for ep in episodios]
+
     indices_elegiveis = [indice for indice, ep in enumerate(episodios) if ep.numero is not None]
     if not indices_elegiveis:
-        return episodios
+        return resultado
 
     semaforo = asyncio.Semaphore(_CONCORRENCIA_STILLS)
 
     async def _buscar_um(indice: int) -> tuple[int, str | None]:
         episodio = episodios[indice]
-        # offset > 0 (T2+ de franquia): pede pelo ABSOLUTO, `temporada=None`, e o
-        # TMDB acha a season — resiste ao TMDB que junta a franquia numa season só.
-        # offset 0: par `(numero_por_temporada, numero_temporada)`, direto à season.
-        if offset_de_temporada:
-            numero_tmdb, temporada_tmdb = offset_de_temporada + episodio.numero, None
-        else:
-            numero_tmdb, temporada_tmdb = episodio.numero, anime.numero_temporada
         async with semaforo:
             try:
-                still = await servico_metadados.buscar_still_de_episodio(
-                    anime.titulo, anime.ano, numero_tmdb, temporada_tmdb
+                still = await _still_direto_ou_absoluto(
+                    anime, episodio.numero, offset_de_temporada
                 )
             except Exception as excecao:
                 # Captura ampla e intencional (mesmo espírito de
@@ -311,7 +385,6 @@ async def _sobrepor_stills_de_episodios(
             tarefa.cancel()
         await asyncio.gather(*pendentes, return_exceptions=True)
 
-    resultado = list(episodios)
     for tarefa in concluidas:
         indice, still = tarefa.result()
         if still is not None:
