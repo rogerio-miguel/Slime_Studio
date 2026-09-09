@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import exists, select, update
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
@@ -158,21 +158,23 @@ async def listar_episodios_remotos_do_anime(
 @router.post("/{anime_id}/marcar-todos-assistidos", status_code=status.HTTP_204_NO_CONTENT)
 async def marcar_todos_assistidos(
     anime_id: int,
+    versao: VersaoEpisodio = Query(VersaoEpisodio.LEGENDADO),
     sessao: AsyncSession = Depends(obter_sessao),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> None:
     """Botão "Marcar como assistido" da página do anime — marca `assistido_em`
-    (agora) em todo `Episodio` do anime que ainda não tem a marca, num único
-    `UPDATE` (mesma semântica de `POST /episodios/{id}/assistido`, aplicada em
-    lote; não toca `status`/mídia)."""
+    (agora) em todo `Episodio` já capturado localmente que ainda não tem a
+    marca, e ainda cria (`LIBERADO`, sem `Job`) um `Episodio` pra cada número
+    que a fonte remota ativa lista e que o usuário nunca capturou (pedido
+    explícito do usuário: o botão marca TODO episódio disponível, não só os já
+    baixados). `versao` decide qual fonte resolver pro segundo passo — mesmo
+    parâmetro que `PaginaDoAnime.jsx` já manda pra `episodios-remotos`/
+    `criar_job_site` (`versaoPedida`). Detalhe em
+    `api/servicos/jobs.py::marcar_todos_assistidos`."""
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
-    await sessao.execute(
-        update(Episodio)
-        .where(Episodio.anime_id == anime_id, Episodio.assistido_em.is_(None))
-        .values(assistido_em=datetime.now(UTC))
-    )
-    await sessao.commit()
+    await servico_jobs.marcar_todos_assistidos(sessionmaker, anime=anime, versao=versao)
 
 
 @router.delete("/{anime_id}", status_code=status.HTTP_204_NO_CONTENT)

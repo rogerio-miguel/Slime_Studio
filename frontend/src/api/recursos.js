@@ -66,10 +66,16 @@ export function marcarAssistido(episodioId) {
 }
 
 // Botão "Marcar como assistido" da página do anime — marca em lote todo
-// episódio do anime que ainda não tem `assistido_em` (um único UPDATE no
-// servidor, ver `api/rotas/animes.py::marcar_todos_assistidos`).
-export function marcarTodosAssistidos(animeId) {
-  return requisitar(`/api/admin/animes/${animeId}/marcar-todos-assistidos`, { metodo: 'POST' });
+// episódio já capturado que ainda não tem `assistido_em`, E cria (sem Job)
+// um episódio pra cada número que a fonte ativa lista e o usuário nunca
+// capturou (ver `api/servicos/jobs.py::marcar_todos_assistidos`). `versao`
+// mesmo papel de `listarEpisodiosRemotos`/`criarJobSite` — decide qual fonte
+// resolver pro segundo passo (`PaginaDoAnime.jsx::versaoPedida`).
+export function marcarTodosAssistidos(animeId, versao) {
+  const query = versao ? `?versao=${encodeURIComponent(versao)}` : '';
+  return requisitar(`/api/admin/animes/${animeId}/marcar-todos-assistidos${query}`, {
+    metodo: 'POST',
+  });
 }
 
 // Fallback de refresh do player (PaginaDoPlayer.jsx) quando `location.state`

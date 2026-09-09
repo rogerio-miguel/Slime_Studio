@@ -462,6 +462,44 @@ async def criar_episodio_e_job(
     return await criar_job(sessionmaker, episodio_id, duracao_esperada_s)
 
 
+async def criar_episodio_assistido(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    *,
+    numero: int,
+    tipo: TipoEpisodio,
+    versao: VersaoEpisodio,
+    url_fonte: str,
+    site_origem: str,
+) -> int:
+    """Cria o `Episodio` já `LIBERADO` + `assistido_em` (agora), sem `Job` —
+    "Marcar como assistido" (`api/servicos/jobs.py::marcar_todos_assistidos`)
+    aplicado a um episódio que a fonte remota lista mas que o usuário nunca
+    capturou. Mesma semântica de "assistido sem mídia em disco" que a Feature
+    "liberar arquivo" já grava (`api/servicos/jobs.py::
+    _reaproveitar_episodio_para_recaptura`): `hls_path`/`capa_path` ficam
+    `None` (nunca houve captura pra preencher), mas a linha já é reaproveitável
+    por uma "Recapturar" futura (`criar_job_site` trata `LIBERADO` como
+    recaptura, não como `EpisodioJaExiste`).
+
+    Levanta `EpisodioJaExiste` pelo mesmo motivo de `criar_episodio_e_job` —
+    o chamador (`marcar_todos_assistidos`) já filtra pelos números ainda sem
+    `Episodio` local antes de chamar isto, então só bate aqui numa corrida
+    genuína (dois cliques quase simultâneos do mesmo botão)."""
+    return await _inserir_episodio(
+        sessionmaker,
+        anime_id,
+        numero=numero,
+        tipo=tipo,
+        versao=versao,
+        url_fonte=url_fonte,
+        site_origem=site_origem,
+        titulo_episodio=None,
+        status=StatusEpisodio.LIBERADO,
+        assistido_em=datetime.now(UTC),
+    )
+
+
 async def _inserir_episodio(
     sessionmaker: _SessionMaker,
     anime_id: int,
@@ -473,6 +511,8 @@ async def _inserir_episodio(
     site_origem: str,
     titulo_episodio: str | None,
     capa_path: str | None = None,
+    status: StatusEpisodio = StatusEpisodio.PENDENTE,
+    assistido_em: datetime | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         episodio = Episodio(
@@ -484,7 +524,8 @@ async def _inserir_episodio(
             url_fonte=url_fonte,
             site_origem=site_origem,
             capa_path=capa_path,
-            status=StatusEpisodio.PENDENTE,
+            status=status,
+            assistido_em=assistido_em,
         )
         sessao.add(episodio)
         try:
