@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import BarraDeControles from './BarraDeControles.jsx';
 import HudTelemetria from './HudTelemetria.jsx';
 import GlowAmbiente from './GlowAmbiente.jsx';
-import { DEGRAUS_ADAPTATIVOS, PRESET_PADRAO, PRESETS, contarPasses } from './presets.js';
+import { DEGRAUS_ADAPTATIVOS, PRESET_PADRAO, PRESETS, contarPasses, resolverDegrauPorResolucao } from './presets.js';
 import { useFonteDeVideo } from './hooks/useFonteDeVideo.js';
 import { useMotorAnime4k } from './hooks/useMotorAnime4k.js';
 import { useControleAdaptativo } from './hooks/useControleAdaptativo.js';
@@ -74,7 +74,12 @@ export default function PlayerAtivo({
   });
 
   const presetManual = PRESETS[qualidade] ? qualidade : PRESET_PADRAO;
-  const presetAtual = auto ? DEGRAUS_ADAPTATIVOS[indiceDeDegrau] : presetManual;
+  // Substitui um degrau "sem upscale" (ex. a-vl-1x) pelo equivalente com
+  // upscale quando a fonte não cobre a resolução alvo — só no automático;
+  // preset escolhido na mão fica literal (ver resolverDegrauPorResolucao).
+  const presetAtual = auto
+    ? resolverDegrauPorResolucao(DEGRAUS_ADAPTATIVOS[indiceDeDegrau], dimensoesDaFonte)
+    : presetManual;
 
   // Falha de render()/`device.lost` (via useMotorAnime4k): em modo automático
   // desce um degrau em vez de matar o player; só propaga como fatal no piso

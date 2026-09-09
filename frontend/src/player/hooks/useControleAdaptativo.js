@@ -34,9 +34,10 @@ const LIMIAR_SALTO_DUPLO = 0.4; // ~40% abaixo numa janela → desce 2 degraus j
 const JANELAS_RUINS_PARA_DESCER = 2; // ~6s confirmando antes de descer 1
 const LIMIAR_SUBIDA = 0.05; // dentro de 5% do fps do conteúdo = folga
 const JANELAS_BOAS_PARA_ESTAVEL = 5; // ~15s limpos → degrau vira "lembrado"
-const JANELAS_BOAS_PARA_SUBIR = 12; // ~36s limpos antes de tentar subir 1 (×paciência)
+const JANELAS_BOAS_PARA_SUBIR = 6; // ~18s limpos antes de tentar subir 1 (×paciência) — 3x mais devagar que descer (JANELAS_RUINS_PARA_DESCER=2), ajustado ao vivo (era 12/6x)
 const COOLDOWN_MS = 5000; // > JANELA_MS: a 1ª janela pós-troca já não conta
 const MAX_FALHAS_POR_DEGRAU = 2; // 2 quedas a partir do mesmo degrau travam-no como teto
+const PROBE_COOLDOWN_MS = 120_000; // teto trava, mas não pra sempre: libera 1 sondagem por ciclo após ~2min sem nova falha nele
 const DEDUPE_FALHA_GPU_MS = 1500; // sessão encerrada pode reportar `lost` tardio
 const DROPADOS_PARA_PRESSAO_MAX = 0.08; // fallback: 8% de frames dropados = pressão 1
 
@@ -52,6 +53,15 @@ const PISO = DEGRAUS_ADAPTATIVOS.length - 1;
 function clampDegrau(n) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(Math.round(n), PISO));
+}
+
+// Um degrau com >= MAX_FALHAS_POR_DEGRAU fica travado como teto, mas não pro
+// resto da sessão: depois de PROBE_COOLDOWN_MS sem NENHUMA falha nova nele,
+// libera uma sondagem (ainda sujeita à janela de estabilidade normal pra
+// subir). Se falhar de novo, a paciência já cresce (falhasNoAlvo maior),
+// então sondagens repetidas ficam cada vez mais espaçadas na prática.
+function bloqueadoParaSubida(falhas, ultimaFalhaEm) {
+  return falhas >= MAX_FALHAS_POR_DEGRAU && Date.now() - ultimaFalhaEm < PROBE_COOLDOWN_MS;
 }
 
 function lerDegrauDaUrl() {
@@ -97,6 +107,7 @@ export function useControleAdaptativo({
   const janelasRuinsRef = useRef(0);
   const janelasBoasRef = useRef(0);
   const falhasPorDegrauRef = useRef({}); // { [indice]: contagem }
+  const ultimaFalhaPorDegrauRef = useRef({}); // { [indice]: timestamp da última falha } — janela do PROBE_COOLDOWN_MS
   const snapshotRef = useRef(null); // { dropados, total } da amostra anterior
   const ultimaFalhaGpuRef = useRef(0);
   const historicoFpsConteudoRef = useRef([]); // taxas de decode por janela
@@ -129,6 +140,7 @@ export function useControleAdaptativo({
       const alvo = Math.min(origem + passos, PISO);
       if (alvo === origem) return false;
       falhasPorDegrauRef.current[origem] = (falhasPorDegrauRef.current[origem] || 0) + 1;
+      ultimaFalhaPorDegrauRef.current[origem] = Date.now();
       aplicarDegrau(alvo, 'baixo', motivo);
       return true;
     },
@@ -145,6 +157,7 @@ export function useControleAdaptativo({
     const origem = indiceRef.current;
     if (origem >= PISO) return false;
     falhasPorDegrauRef.current[origem] = MAX_FALHAS_POR_DEGRAU; // trava o degrau de origem
+    ultimaFalhaPorDegrauRef.current[origem] = agora;
     aplicarDegrau(Math.min(origem + 1, PISO), 'baixo', 'gpu');
     return true;
   }, [aplicarDegrau]);
@@ -157,6 +170,7 @@ export function useControleAdaptativo({
     janelasRuinsRef.current = 0;
     janelasBoasRef.current = 0;
     falhasPorDegrauRef.current = {};
+    ultimaFalhaPorDegrauRef.current = {};
     snapshotRef.current = null;
     historicoFpsConteudoRef.current = [];
     fpsConteudoRef.current = null;
@@ -172,10 +186,21 @@ export function useControleAdaptativo({
     const video = videoRef.current;
     if (!video || typeof video.getVideoPlaybackQuality !== 'function') return;
 
-    const aoBuscar = () => {
+    // Reinicia o cooldown em qualquer transição que deixe a próxima janela
+    // de medição contaminada: 'seeking' (início da busca — não deixa nem a
+    // janela de saída contar), 'seeked' (fim — se o buffer demorou pra
+    // reabastecer, esse cooldown pode já ter expirado, então rearma de
+    // novo bem na hora em que a reprodução volta a fluir) e 'playing'
+    // (retomada de pausa — sem isso, o medidor de GPU em janela de relógio
+    // de parede ainda cobre parte do tempo pausado com zero submits,
+    // subestima fpsApresentacao, e o controle lê pressão alta que não
+    // existe e desce em cascata só pelo transiente).
+    const reiniciarCooldown = () => {
       cooldownAteRef.current = Date.now() + COOLDOWN_MS;
     };
-    video.addEventListener('seeking', aoBuscar);
+    video.addEventListener('seeking', reiniciarCooldown);
+    video.addEventListener('seeked', reiniciarCooldown);
+    video.addEventListener('playing', reiniciarCooldown);
 
     const id = setInterval(() => {
       const q = video.getVideoPlaybackQuality();
@@ -229,8 +254,10 @@ export function useControleAdaptativo({
         return;
       }
 
-      const noTeto =
-        (falhasPorDegrauRef.current[indiceRef.current - 1] || 0) >= MAX_FALHAS_POR_DEGRAU;
+      const noTeto = bloqueadoParaSubida(
+        falhasPorDegrauRef.current[indiceRef.current - 1] || 0,
+        ultimaFalhaPorDegrauRef.current[indiceRef.current - 1] || 0
+      );
 
       let estado;
       if (emCooldown) {
@@ -278,7 +305,7 @@ export function useControleAdaptativo({
       const alvo = indiceRef.current - 1;
       if (alvo < 0) return;
       const falhasNoAlvo = falhasPorDegrauRef.current[alvo] || 0;
-      if (falhasNoAlvo >= MAX_FALHAS_POR_DEGRAU) return;
+      if (bloqueadoParaSubida(falhasNoAlvo, ultimaFalhaPorDegrauRef.current[alvo] || 0)) return;
       if (janelasBoasRef.current >= JANELAS_BOAS_PARA_SUBIR * (1 + falhasNoAlvo)) {
         aplicarDegrau(alvo, 'cima', 'subida');
       }
@@ -286,7 +313,9 @@ export function useControleAdaptativo({
 
     return () => {
       clearInterval(id);
-      video.removeEventListener('seeking', aoBuscar);
+      video.removeEventListener('seeking', reiniciarCooldown);
+      video.removeEventListener('seeked', reiniciarCooldown);
+      video.removeEventListener('playing', reiniciarCooldown);
     };
   }, [videoRef, medidorRef, aplicarDegrau, descer]);
 
