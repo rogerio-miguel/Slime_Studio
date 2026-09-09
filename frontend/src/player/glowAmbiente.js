@@ -29,31 +29,38 @@ const AMBIENT_EDGE_FRACTION = 0.01;
 // nenhum draw pisa na área que outro acabou de atualizar.
 const AMBIENT_SMOOTHING = 0.3;
 
-// Divisor que mapeia a diferença média bruta de pixel (0-255 por canal,
-// ver uso abaixo) pra uma intensidade de ação normalizada 0..1 — quanto
-// menor o divisor, mais sensível o "gatilho" (glow acende com pouco
-// movimento). Valor de partida a calibrar visualmente, mesmo espírito do
-// comentário em AMBIENT_EDGE_FRACTION acima. O clamp (Math.min(1, ...), no
-// ponto de uso) cobre o caso de corte de cena — diferença bruta bem maior
-// que a escala não pode virar intensidade > 1.
-const AMBIENT_ACAO_ESCALA = 5;
+// Intervalo entre amostras de MOVIMENTO (getImageData + diff). Separado da
+// cadência de desenho da COR (que roda todo frame, barato) porque
+// getImageData num canvas 2D acelerado por GPU é um readback GPU→CPU
+// síncrono: trava o compositor até terminar. A cada frame de vídeo isso
+// derrubava a apresentação (e o pipeline WebGPU junto, que roda no rVFC)
+// pra ~metade — medido. A ~8x/s o custo some no ruído e o fade continua
+// suave (a EMA abaixo é bem mais lenta que isso, e o `transition` de
+// opacity em player.css é uma 2ª camada).
+const INTERVALO_AMOSTRA_ACAO_MS = 125;
 
-// EMA separado de AMBIENT_SMOOTHING — aquele suaviza COR, este suaviza a
-// INTENSIDADE DE AÇÃO que dirige a opacidade do halo (player.css). Precisa
-// de constante de tempo própria, bem mais lenta (0.1-0.15, contra 0.3 da
-// cor): a opacidade não pode "piscar" a cada frame de ação isolado, só
-// crescer/decair como um fade perceptivelmente suave.
-const AMBIENT_ACAO_SUAVIZACAO = 0.12;
+// Escala que mapeia "movimento por milissegundo" (diferença média de pixel
+// entre amostras ÷ dt) pra intensidade 0..1 — normalizada por tempo pra ser
+// independente do intervalo de amostragem (frame a frame ou a cada 125ms dá
+// o mesmo). Menor = mais sensível. Calibrar visualmente. O clamp
+// (Math.min(1, ...) no ponto de uso) cobre corte de cena.
+const AMBIENT_ACAO_ESCALA_POR_MS = 0.15;
+
+// Constante de tempo (ms) da EMA que suaviza a INTENSIDADE DE AÇÃO — o alpha
+// real é derivado dela e do dt de cada amostra (1 - e^(-dt/τ)), então o fade
+// tem a mesma cara em qualquer taxa de amostragem. Bem mais lenta que a
+// suavização de COR (AMBIENT_SMOOTHING): a opacidade não pode "piscar" a
+// cada pico de ação isolado.
+const AMBIENT_ACAO_TAU_MS = 320;
 
 // Inicia o loop de amostragem sobre `canvas` (2D) a partir de `video`.
 // `elementoDeMedida` é o nó do `.frame` (lido via getComputedStyle pra pegar
 // --ambient-bleed, ver comentário abaixo). `rvfc` é o rVFC ORIGINAL do
 // vídeo (ver topo do arquivo). `aoAtualizarIntensidadeAcao`, opcional, é
-// chamado uma vez por frame amostrado com a intensidade de movimento
-// suavizada (0..1) — quem não passa esse callback não paga o custo de
-// detectar movimento (ver early-return dentro de onFrame). Devolve
-// `parar()`, que cancela o frame pendente explicitamente via
-// cancelVideoFrameCallback.
+// chamado com a intensidade de movimento suavizada (0..1) a cada amostra
+// (~a cada INTERVALO_AMOSTRA_ACAO_MS, não todo frame) — quem não passa esse
+// callback não paga o getImageData. Devolve `parar()`, que cancela o frame
+// pendente explicitamente via cancelVideoFrameCallback.
 export function iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc, aoAtualizarIntensidadeAcao }) {
   const ctx = canvas?.getContext('2d', { alpha: false });
   if (!ctx) return () => {};
@@ -74,12 +81,25 @@ export function iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc, aoA
   canvas.width = centerW + 2 * marginW;
   canvas.height = centerH + 2 * marginH;
 
+  // Canvas SEPARADO, fora do DOM, só pra amostrar movimento. Não dá pra ler
+  // do `canvas` visível: ele carrega `filter: blur(60px)` (player.css), o que
+  // faz o compositor tocar a textura dele todo frame — getImageData ali
+  // sincroniza com o compositor e trava ~60ms nesta stack (Brave/Wayland/
+  // ANGLE-GL). Um canvas off-DOM não é composto, e `willReadFrequently`
+  // mantém o backing store na CPU, então o readback não espera GPU nenhuma.
+  const canvasAmostra = document.createElement('canvas');
+  canvasAmostra.width = AMBIENT_CANVAS_WIDTH;
+  canvasAmostra.height = centerH; // mesma proporção do vídeo já calculada acima
+  const ctxAmostra = canvasAmostra.getContext('2d', { alpha: false, willReadFrequently: true });
+
   let handle = null;
-  // Frame amostrado anterior (Uint8ClampedArray de getImageData) e último
-  // valor suavizado de intensidade — closures novas a cada chamada de
-  // iniciarGlowAmbiente, então resetam sozinhas sem lógica extra.
+  // Amostra anterior (Uint8ClampedArray de getImageData), último valor
+  // suavizado de intensidade e instante da última amostra de movimento —
+  // closures novas a cada chamada de iniciarGlowAmbiente, então resetam
+  // sozinhas sem lógica extra.
   let bufferAnterior = null;
   let intensidadeSuavizada = 0;
+  let ultimaAmostraAcaoEm = 0;
 
   function onFrame() {
     // Aba em segundo plano: sem efeito visível pra justificar o custo de
@@ -110,19 +130,26 @@ export function iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc, aoA
       ctx.drawImage(video, 0, vh - edgeH, edgeW, edgeH, 0, marginH + centerH, marginW, marginH); // baixo-esquerda
       ctx.drawImage(video, vw - edgeW, vh - edgeH, edgeW, edgeH, marginW + centerW, marginH + centerH, marginW, marginH); // baixo-direita
 
-      // Detecção de movimento pra dirigir o fade do halo — só roda pra quem
-      // passou o callback (early-return de fato: sem isso, todo consumidor
-      // de iniciarGlowAmbiente pagaria um getImageData por frame à toa).
-      // Canvas já é minúsculo (AMBIENT_CANVAS_WIDTH + margens), então o
-      // readback é barato mesmo rodando a cada frame de vídeo.
-      if (aoAtualizarIntensidadeAcao) {
-        const frameAtual = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      // Detecção de movimento pra dirigir o fade do halo — no canvas de
+      // amostra off-DOM (ver comentário na criação dele), e ainda throttled
+      // pra ~a cada INTERVALO_AMOSTRA_ACAO_MS: mesmo barato, cada drawImage
+      // do vídeo puxa o frame, não precisa ser todo frame de vídeo.
+      const agora = performance.now();
+      if (
+        ctxAmostra &&
+        aoAtualizarIntensidadeAcao &&
+        agora - ultimaAmostraAcaoEm >= INTERVALO_AMOSTRA_ACAO_MS
+      ) {
+        const dt = agora - ultimaAmostraAcaoEm;
+        ultimaAmostraAcaoEm = agora;
+        ctxAmostra.drawImage(video, 0, 0, canvasAmostra.width, canvasAmostra.height);
+        const frameAtual = ctxAmostra.getImageData(0, 0, canvasAmostra.width, canvasAmostra.height).data;
 
         if (bufferAnterior) {
-          // Diferença média absoluta por canal RGB entre este frame e o
+          // Diferença média absoluta por canal RGB entre esta amostra e a
           // anterior (alpha pulado — ctx é opaco, `alpha:false`, não carrega
           // informação nenhuma). Soma bruta / nº de amostras = diferença
-          // média 0-255, que AMBIENT_ACAO_ESCALA normaliza pra 0..1.
+          // média 0-255.
           let somaDiferenca = 0;
           let amostras = 0;
           for (let i = 0; i < frameAtual.length; i += 4) {
@@ -135,13 +162,15 @@ export function iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc, aoA
           // que não deveria ocorrer, ver dimensionamento acima) — guarda
           // aqui evita NaN se algum dia ocorrer.
           const diferencaMedia = amostras > 0 ? somaDiferenca / amostras : 0;
-          const intensidadeBruta = Math.min(1, diferencaMedia / AMBIENT_ACAO_ESCALA);
+          // Movimento por ms ÷ escala: normalizado por tempo, então o
+          // intervalo de amostragem não muda a sensibilidade.
+          const intensidadeBruta = Math.min(1, diferencaMedia / dt / AMBIENT_ACAO_ESCALA_POR_MS);
 
-          // EMA lenta (AMBIENT_ACAO_SUAVIZACAO) puxando pro valor bruto do
-          // frame — com a cena parada, intensidadeBruta cai pra perto de 0
-          // e a suavizada decai atrás dela, mesma matemática que faz o halo
-          // subir, só que ao contrário.
-          intensidadeSuavizada += (intensidadeBruta - intensidadeSuavizada) * AMBIENT_ACAO_SUAVIZACAO;
+          // EMA com alpha derivado de dt e da constante de tempo — fade com a
+          // mesma cara em qualquer taxa de amostragem. Cena parada:
+          // intensidadeBruta ~0 e a suavizada decai atrás dela.
+          const alpha = 1 - Math.exp(-dt / AMBIENT_ACAO_TAU_MS);
+          intensidadeSuavizada += (intensidadeBruta - intensidadeSuavizada) * alpha;
         }
 
         bufferAnterior = frameAtual;
