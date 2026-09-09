@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import BarraDeControles from './BarraDeControles.jsx';
 import HudTelemetria from './HudTelemetria.jsx';
 import GlowAmbiente from './GlowAmbiente.jsx';
-import { DEGRAUS_ADAPTATIVOS, PRESET_PADRAO, PRESETS } from './presets.js';
+import { DEGRAUS_ADAPTATIVOS, PRESET_PADRAO, PRESETS, contarPasses } from './presets.js';
 import { useFonteDeVideo } from './hooks/useFonteDeVideo.js';
 import { useMotorAnime4k } from './hooks/useMotorAnime4k.js';
 import { useControleAdaptativo } from './hooks/useControleAdaptativo.js';
@@ -58,10 +58,17 @@ export default function PlayerAtivo({
 
   const dimensoesDaFonte = useFonteDeVideo(videoRef, fonte, aoFalhar);
 
+  // Ref (não valor) pra quebrar o ciclo: useControleAdaptativo roda antes de
+  // useMotorAnime4k (precisa do preset que sai daqui) mas consome o medidor
+  // que sai de lá. Lido só dentro do interval do controle, então "um render
+  // atrás" não muda nada.
+  const medidorRef = useRef(null);
+
   const { indiceDeDegrau, diagnostico, degradarPorFalhaDeGpu } = useControleAdaptativo({
     videoRef,
     ativo: auto,
     chaveDeSessao: fonte,
+    medidorRef,
     degrauSalvo: degrauAutoSalvo,
     aoDegrauEstavel: setDegrauAutoSalvo,
   });
@@ -85,13 +92,17 @@ export default function PlayerAtivo({
     [aoFalhar, degradarPorFalhaDeGpu]
   );
 
-  const { adaptador } = useMotorAnime4k({
+  const { adaptador, medidor } = useMotorAnime4k({
     videoRef,
     canvasRef,
     presetId: presetAtual,
     dimensoesDaFonte,
     aoFalhar: aoFalharDoMotor,
   });
+
+  useEffect(() => {
+    medidorRef.current = medidor;
+  }, [medidor]);
 
   const audioCinema = useAudioCinema(videoRef);
 
@@ -175,6 +186,7 @@ export default function PlayerAtivo({
           resolucao={canvasRef.current ? `${canvasRef.current.width}×${canvasRef.current.height}` : '—'}
           telemetria={telemetria}
           diagnostico={diagnostico}
+          passes={contarPasses(PRESETS[presetAtual]?.blocos ?? [])}
         />
         <BarraDeControles
           videoRef={videoRef}

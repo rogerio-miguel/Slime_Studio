@@ -10,10 +10,12 @@ function Linha({ rotulo, valor }) {
   );
 }
 
-export default function HudTelemetria({ visivel, modo, presetLabel, resolucao, telemetria, diagnostico }) {
+export default function HudTelemetria({ visivel, modo, presetLabel, resolucao, telemetria, diagnostico, passes }) {
   if (!visivel) return null;
 
   const { cadenciaMs, dropped, total, gpu } = telemetria;
+  const fpsApr = diagnostico?.fpsApresentacao;
+  const fpsCont = diagnostico?.fpsConteudo;
 
   return (
     <div
@@ -31,10 +33,18 @@ export default function HudTelemetria({ visivel, modo, presetLabel, resolucao, t
       {diagnostico && (
         <>
           <Linha
-            rotulo="queda (3s)"
+            rotulo="fps apr/conteúdo"
             valor={
-              diagnostico.quedaNaJanela !== null
-                ? `${(diagnostico.quedaNaJanela * 100).toFixed(1)} % (${diagnostico.dropadosNaJanela}/${diagnostico.totalNaJanela})`
+              fpsApr != null
+                ? `${fpsApr.toFixed(0)} / ${fpsCont != null ? fpsCont.toFixed(0) : '…'} · ${passes} passes`
+                : `— · ${passes} passes`
+            }
+          />
+          <Linha
+            rotulo="pressão (3s)"
+            valor={
+              diagnostico.pressaoNaJanela !== null
+                ? `${(diagnostico.pressaoNaJanela * 100).toFixed(0)} %`
                 : '—'
             }
           />

@@ -2,35 +2,50 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DEGRAUS_ADAPTATIVOS } from '../presets.js';
 
 // "ABR para custo de GPU": percorre DEGRAUS_ADAPTATIVOS (presets.js, do melhor
-// ao mais leve) reagindo a duas evidências de que a GPU não está dando conta.
+// ao mais leve) reagindo a evidências de que a GPU não está dando conta.
 //
-//  - Sinal duro: falha de render()/`device.lost`, entregue por quem chama via
-//    degradarPorFalhaDeGpu(). Em modo automático isso degrada em vez de matar
-//    o player.
-//  - Sinal mole: fração de frames dropados por janela de ~3s
-//    (video.getVideoPlaybackQuality()). Pode subestimar saturação de GPU (mede
-//    o que o <video> dropou, não o shader atrasando) — por isso a política
-//    abaixo é conservadora e o HUD expõe o número cru pra calibração ao vivo.
+//  - Sinal duro: falha de render()/`device.lost`, via degradarPorFalhaDeGpu().
+//    Em modo automático degrada em vez de matar o player.
+//  - Sinal mole: `pressão` por janela de 3s = quanto a taxa de apresentação
+//    do canvas (medidorDeGpu, submits/s) fica abaixo do fps do conteúdo. Se o
+//    pipeline não sustenta o fps do vídeo, a apresentação cai — sinal direto,
+//    diferente de frames dropados (que medimos ao vivo ser quase cego a
+//    shader lento). Sem medidor de apresentação, cai no fallback de frames
+//    dropados; sem fps do conteúdo ainda estimado, não decide nada ('aquecendo').
+//
+//    fps do conteúdo = p20 de um histórico de taxas de decode por janela
+//    (`totalVideoFrames`). Em regime o decoder roda a 1x (playback é 1x) →
+//    taxa de decode == taxa do conteúdo, independente da carga da GPU. Só
+//    passa disso enchendo o buffer no início / pós-seek (lê alto, transiente)
+//    — o p20 descarta esse transiente e também glitches que leem baixo. NÃO
+//    se usa metadata.mediaTime aqui: nesta stack, quando o pipeline satura o
+//    compositor o `<video>` oculto perde frames internamente e o mediaTime
+//    por callback infla, fabricando um "fps do conteúdo" que cai com a carga
+//    — exatamente quando a métrica precisa ser estável.
 //
 // Sempre mede (alimenta o HUD mesmo em modo manual); só troca de degrau quando
-// `ativo`. O índice de degrau é estado deste hook — PlayerAtivo só deriva o
-// preset a partir dele.
-//
-// `degrauSalvo` semeia o índice inicial (piso que a GPU aguentou na última
-// sessão, persistido pelo chamador) pra não sondar do topo toda vez;
-// `aoDegrauEstavel(indice)` reporta de volta quando um degrau se firma.
+// `ativo`. `degrauSalvo` semeia o índice inicial; `aoDegrauEstavel(indice)`
+// reporta de volta quando um degrau se firma (o chamador persiste).
 
 const JANELA_MS = 3000;
-const MIN_FRAMES_NA_JANELA = 20; // abaixo disso a janela é lixo (pausa, buffering)
-const LIMIAR_DESCIDA = 0.06; // 6% de frames dropados na janela
-const LIMIAR_SALTO_DUPLO = 0.25; // 25% numa única janela → desce 2 degraus já
+const MIN_FRAMES_NA_JANELA = 20; // Δframes de decode abaixo disso = janela lixo (pausa/buffering)
+const LIMIAR_DESCIDA = 0.15; // apresenta ~15% abaixo do conteúdo → degrau apertado
+const LIMIAR_SALTO_DUPLO = 0.4; // ~40% abaixo numa janela → desce 2 degraus já
 const JANELAS_RUINS_PARA_DESCER = 2; // ~6s confirmando antes de descer 1
-const LIMIAR_SUBIDA = 0.005; // janela "boa" = < 0.5% dropado
+const LIMIAR_SUBIDA = 0.05; // dentro de 5% do fps do conteúdo = folga
 const JANELAS_BOAS_PARA_ESTAVEL = 5; // ~15s limpos → degrau vira "lembrado"
 const JANELAS_BOAS_PARA_SUBIR = 12; // ~36s limpos antes de tentar subir 1 (×paciência)
 const COOLDOWN_MS = 5000; // > JANELA_MS: a 1ª janela pós-troca já não conta
 const MAX_FALHAS_POR_DEGRAU = 2; // 2 quedas a partir do mesmo degrau travam-no como teto
 const DEDUPE_FALHA_GPU_MS = 1500; // sessão encerrada pode reportar `lost` tardio
+const DROPADOS_PARA_PRESSAO_MAX = 0.08; // fallback: 8% de frames dropados = pressão 1
+
+// Estimativa do fps do conteúdo pela taxa de decode por janela.
+const FPS_CONTEUDO_MIN = 10; // janela abaixo disso = lixo (não é taxa de conteúdo real)
+const FPS_CONTEUDO_MAX = 130; // idem acima disso
+const HISTORICO_FPS_CONTEUDO = 12; // ~36s de janelas retidas
+const JANELAS_PARA_FPS_CONTEUDO = 3; // mínimo pra estimar (evita latch numa janela ruim)
+const PERCENTIL_FPS_CONTEUDO = 0.2; // p20: descarta enchimento de buffer (alto) e glitch (baixo)
 
 const PISO = DEGRAUS_ADAPTATIVOS.length - 1;
 
@@ -52,6 +67,7 @@ export function useControleAdaptativo({
   videoRef,
   ativo,
   chaveDeSessao,
+  medidorRef,
   degrauSalvo = 0,
   aoDegrauEstavel,
 }) {
@@ -69,9 +85,9 @@ export function useControleAdaptativo({
   const [indiceDeDegrau, setIndiceDeDegrau] = useState(calcularInicial);
   const [ultimaTroca, setUltimaTroca] = useState(null);
   const [diagnostico, setDiagnostico] = useState({
-    quedaNaJanela: null,
-    dropadosNaJanela: 0,
-    totalNaJanela: 0,
+    pressaoNaJanela: null,
+    fpsApresentacao: null,
+    fpsConteudo: null,
     estado: 'aquecendo',
   });
 
@@ -83,6 +99,8 @@ export function useControleAdaptativo({
   const falhasPorDegrauRef = useRef({}); // { [indice]: contagem }
   const snapshotRef = useRef(null); // { dropados, total } da amostra anterior
   const ultimaFalhaGpuRef = useRef(0);
+  const historicoFpsConteudoRef = useRef([]); // taxas de decode por janela
+  const fpsConteudoRef = useRef(null); // p20 do histórico acima, ou null enquanto aquece
 
   useEffect(() => {
     ativoRef.current = ativo;
@@ -95,7 +113,7 @@ export function useControleAdaptativo({
   }, [aoDegrauEstavel]);
 
   // Aplica um degrau novo e reinicia contadores/cooldown. `ultimaTroca` ganha
-  // identidade nova a cada chamada — serve de chave pro aviso ao usuário.
+  // identidade nova a cada chamada.
   const aplicarDegrau = useCallback((alvo, direcao, motivo) => {
     indiceRef.current = alvo;
     janelasRuinsRef.current = 0;
@@ -117,18 +135,16 @@ export function useControleAdaptativo({
     [aplicarDegrau]
   );
 
-  // Chamado por quem monta a sessão WebGPU quando render() falha ou o device é
-  // perdido. Devolve true se conseguiu degradar (chamador engole o erro), false
-  // se já está no piso (chamador trata como fatal). Dedupe curto: uma sessão
-  // recém-encerrada pode emitir `lost` depois da troca.
+  // Chamado por quem monta a sessão WebGPU quando render() falha / o device é
+  // perdido. true = degradou (chamador engole o erro); false = já está no piso
+  // (chamador trata como fatal). Dedupe: sessão encerrada pode emitir `lost` tarde.
   const degradarPorFalhaDeGpu = useCallback(() => {
     const agora = Date.now();
     if (agora - ultimaFalhaGpuRef.current < DEDUPE_FALHA_GPU_MS) return true;
     ultimaFalhaGpuRef.current = agora;
     const origem = indiceRef.current;
     if (origem >= PISO) return false;
-    // Falha dura de GPU: trava o degrau de origem como teto (não só +1 no contador).
-    falhasPorDegrauRef.current[origem] = MAX_FALHAS_POR_DEGRAU;
+    falhasPorDegrauRef.current[origem] = MAX_FALHAS_POR_DEGRAU; // trava o degrau de origem
     aplicarDegrau(Math.min(origem + 1, PISO), 'baixo', 'gpu');
     return true;
   }, [aplicarDegrau]);
@@ -142,6 +158,8 @@ export function useControleAdaptativo({
     janelasBoasRef.current = 0;
     falhasPorDegrauRef.current = {};
     snapshotRef.current = null;
+    historicoFpsConteudoRef.current = [];
+    fpsConteudoRef.current = null;
     cooldownAteRef.current = Date.now() + COOLDOWN_MS;
     ultimaFalhaGpuRef.current = 0;
     setIndiceDeDegrau(inicial);
@@ -149,7 +167,7 @@ export function useControleAdaptativo({
   }, [chaveDeSessao, ativo, calcularInicial]);
 
   // Loop de medição por janela. Roda sempre (HUD lê `diagnostico` em modo
-  // manual também); só chama descer()/subir quando ativoRef.current.
+  // manual também); só troca de degrau quando ativoRef.current.
   useEffect(() => {
     const video = videoRef.current;
     if (!video || typeof video.getVideoPlaybackQuality !== 'function') return;
@@ -171,61 +189,83 @@ export function useControleAdaptativo({
       const janelaValida =
         !video.paused && !document.hidden && deltaTotal >= MIN_FRAMES_NA_JANELA;
 
-      if (!janelaValida) {
+      // Estima o fps do conteúdo pela taxa de decode. Só janelas de regime
+      // (válida, fora de cooldown/pós-seek); o p20 do histórico descarta o
+      // enchimento de buffer (lê alto) e glitches (lê baixo).
+      const fpsJanela = deltaTotal / (JANELA_MS / 1000);
+      if (janelaValida && !emCooldown && fpsJanela >= FPS_CONTEUDO_MIN && fpsJanela <= FPS_CONTEUDO_MAX) {
+        const historico = historicoFpsConteudoRef.current;
+        historico.push(fpsJanela);
+        if (historico.length > HISTORICO_FPS_CONTEUDO) historico.shift();
+        if (historico.length >= JANELAS_PARA_FPS_CONTEUDO) {
+          const ordenado = [...historico].sort((a, b) => a - b);
+          fpsConteudoRef.current = ordenado[Math.floor(ordenado.length * PERCENTIL_FPS_CONTEUDO)];
+        }
+      }
+      const fpsConteudo = fpsConteudoRef.current;
+
+      // Pressão: quanto a apresentação fica abaixo do fps do conteúdo. Com
+      // medidor de apresentação + fps do conteúdo já medido, usa a taxa de
+      // submits; sem medidor, cai no fallback reativo de frames dropados; sem
+      // fps do conteúdo ainda medido, não decide nada (pressao = null).
+      const leituraGpu = medidorRef?.current?.ler(JANELA_MS);
+      const fpsApresentacao = leituraGpu?.fpsApresentacao ?? null;
+      let pressao = null;
+      if (janelaValida) {
+        if (fpsApresentacao !== null && fpsConteudo) {
+          pressao = Math.max(0, Math.min(1, 1 - fpsApresentacao / fpsConteudo));
+        } else if (fpsApresentacao === null) {
+          pressao = Math.min(1, deltaDropados / deltaTotal / DROPADOS_PARA_PRESSAO_MAX);
+        }
+      }
+
+      if (!janelaValida || pressao === null) {
         setDiagnostico({
-          quedaNaJanela: null,
-          dropadosNaJanela: 0,
-          totalNaJanela: Math.max(deltaTotal, 0),
-          estado: emCooldown ? 'aquecendo' : 'pausado',
+          pressaoNaJanela: null,
+          fpsApresentacao,
+          fpsConteudo,
+          estado: !janelaValida && !emCooldown ? 'pausado' : 'aquecendo',
         });
         return;
       }
 
-      const queda = deltaDropados / deltaTotal;
       const noTeto =
         (falhasPorDegrauRef.current[indiceRef.current - 1] || 0) >= MAX_FALHAS_POR_DEGRAU;
 
       let estado;
       if (emCooldown) {
         estado = 'aquecendo';
-      } else if (ativoRef.current && janelasRuinsRef.current > 0 && queda >= LIMIAR_DESCIDA) {
-        estado = `${janelasRuinsRef.current} janela ruim`;
+      } else if (ativoRef.current && janelasRuinsRef.current > 0 && pressao >= LIMIAR_DESCIDA) {
+        estado = `${janelasRuinsRef.current} janela apertada`;
       } else if (ativoRef.current && noTeto) {
         estado = 'teto atingido';
       } else {
         estado = 'estável';
       }
 
-      setDiagnostico({
-        quedaNaJanela: queda,
-        dropadosNaJanela: deltaDropados,
-        totalNaJanela: deltaTotal,
-        estado,
-      });
+      setDiagnostico({ pressaoNaJanela: pressao, fpsApresentacao, fpsConteudo, estado });
 
       if (!ativoRef.current || emCooldown) return;
 
-      if (queda >= LIMIAR_SALTO_DUPLO) {
-        descer(2, 'dropados');
+      if (pressao >= LIMIAR_SALTO_DUPLO) {
+        descer(2, 'apresentacao');
         return;
       }
-      if (queda >= LIMIAR_DESCIDA) {
+      if (pressao >= LIMIAR_DESCIDA) {
         janelasBoasRef.current = 0;
         janelasRuinsRef.current += 1;
-        if (janelasRuinsRef.current >= JANELAS_RUINS_PARA_DESCER) descer(1, 'dropados');
+        if (janelasRuinsRef.current >= JANELAS_RUINS_PARA_DESCER) descer(1, 'apresentacao');
         return;
       }
       janelasRuinsRef.current = 0;
-      if (queda > LIMIAR_SUBIDA) {
+      if (pressao > LIMIAR_SUBIDA) {
         janelasBoasRef.current = 0; // zona neutra entre subir e descer
         return;
       }
 
       janelasBoasRef.current += 1;
 
-      // Firma o degrau atual como "lembrado" bem antes de tentar subir — o
-      // chamador persiste isso e a próxima sessão começa perto do que a GPU
-      // aguenta, não do topo.
+      // Firma o degrau atual como "lembrado" antes de tentar subir.
       if (
         janelasBoasRef.current >= JANELAS_BOAS_PARA_ESTAVEL &&
         indiceRef.current !== ultimoEstavelRef.current
@@ -234,8 +274,7 @@ export function useControleAdaptativo({
         aoDegrauEstavelRef.current?.(indiceRef.current);
       }
 
-      // Subida com paciência crescente: cada falha anterior no degrau-alvo
-      // dobra a espera; MAX_FALHAS trava.
+      // Subida com paciência crescente: cada falha anterior no alvo dobra a espera.
       const alvo = indiceRef.current - 1;
       if (alvo < 0) return;
       const falhasNoAlvo = falhasPorDegrauRef.current[alvo] || 0;
@@ -249,7 +288,7 @@ export function useControleAdaptativo({
       clearInterval(id);
       video.removeEventListener('seeking', aoBuscar);
     };
-  }, [videoRef, aplicarDegrau, descer]);
+  }, [videoRef, medidorRef, aplicarDegrau, descer]);
 
   return { indiceDeDegrau, ultimaTroca, diagnostico, degradarPorFalhaDeGpu };
 }
