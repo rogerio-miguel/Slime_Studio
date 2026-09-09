@@ -8,8 +8,10 @@ Não importa `fastapi`: devolve o `job_id` ou levanta erro de `core/erros.py`;
 """
 
 import logging
+from collections import defaultdict
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos.catalogo import job_ativo_do_episodio, remover_arquivos_do_episodio
@@ -17,13 +19,14 @@ from api.servicos.fontes import resolver_e_listar, still_de_episodio
 from core.config import Config
 from core.enums import SITE_LOCAL, StatusEpisodio, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import (
+    EpisodioJaExiste,
     ErroSlimeStudio,
     FonteNaoEncontrada,
     JobEmExecucao,
 )
 from db import catalogo
 from db.fila import criar_job as criar_job_na_fila
-from extractors.servico import filtrar_por_numero_e_versao
+from extractors.servico import filtrar_por_numero_e_versao, filtrar_por_versao
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -177,6 +180,93 @@ async def criar_job_site(
         capa_path=still,
         duracao_esperada_s=duracao_esperada_s,
     )
+
+
+async def marcar_todos_assistidos(
+    sessionmaker: _SessionMaker,
+    *,
+    anime: Anime,
+    versao: VersaoEpisodio,
+) -> None:
+    """Botão "Marcar como assistido" da página do anime
+    (`api/rotas/animes.py`). Dois passos:
+
+    1. `UPDATE` em lote — marca `assistido_em` (agora) em todo `Episodio` já
+       capturado localmente (qualquer fonte/versão) que ainda não tem a
+       marca; mesma semântica de `POST /episodios/{id}/assistido`, aplicada
+       em lote.
+    2. Cria uma linha `LIBERADO` + `assistido_em` (`db/catalogo.py::
+       criar_episodio_assistido`, sem `Job`) pra cada episódio `REGULAR` que
+       a fonte remota ativa lista e que ainda não tem `Episodio` nenhum aqui
+       — pedido explícito do usuário: o botão marca TODO episódio disponível
+       na fonte como assistido, não só os já baixados. "Capturar"/
+       "Recapturar" seguem disponíveis depois (`criar_job_site` acima já
+       reaproveita `LIBERADO`).
+
+    Mesma resolução de fonte de `criar_job_site` (`resolver_canonico=False`:
+    a página do anime já resolveu/confirmou a `FonteAnime` antes de o botão
+    ficar clicável) — pode levantar `FonteAmbigua`/`VersaoIndisponivelError`/
+    `FalhaDeExtracao` pelos mesmos motivos de lá; nesse caso o passo 1 já
+    comitou (nenhum episódio já capturado deixa de ser marcado), só o passo 2
+    (criar os que faltam) não roda.
+
+    Sem `still_de_episodio` aqui (ao contrário de `criar_job_site`): seria uma
+    chamada ao TMDB por episódio faltante, e a thumb exibida na página do
+    anime já vem de `remotos.dados` (`PaginaDoAnime.jsx`), não de
+    `Episodio.capa_path` — não há ganho visual que justifique o custo num
+    "marcar todos" em lote.
+    """
+    async with sessionmaker() as sessao:
+        locais = (
+            await sessao.execute(select(Episodio).where(Episodio.anime_id == anime.id))
+        ).scalars().all()
+        await sessao.execute(
+            update(Episodio)
+            .where(Episodio.anime_id == anime.id, Episodio.assistido_em.is_(None))
+            .values(assistido_em=datetime.now(UTC))
+        )
+        await sessao.commit()
+
+    fonte = await resolver_e_listar(sessionmaker, anime, versao, resolver_canonico=False)
+    versao_do_episodio = versao_episodio_da_fonte(fonte.versao_da_fonte)
+    remotos_por_numero: dict[int, list] = defaultdict(list)
+    for remoto in filtrar_por_versao(fonte.episodios, versao_do_episodio):
+        if remoto.numero is not None:
+            remotos_por_numero[remoto.numero].append(remoto)
+
+    numeros_locais = {
+        ep.numero
+        for ep in locais
+        if ep.tipo == TipoEpisodio.REGULAR and ep.versao == versao_do_episodio
+    }
+    for numero, candidatos in remotos_por_numero.items():
+        if numero in numeros_locais:
+            continue
+        if len(candidatos) > 1:
+            # Mesma escolha determinística de `criar_job_site` acima.
+            logger.warning(
+                "%d episódios remotos com numero=%d em %r (rótulos: %s) — usando o 1º",
+                len(candidatos),
+                numero,
+                fonte.dominio,
+                [ep.rotulo for ep in candidatos],
+            )
+        try:
+            await catalogo.criar_episodio_assistido(
+                sessionmaker,
+                anime.id,
+                numero=numero,
+                tipo=TipoEpisodio.REGULAR,
+                versao=versao_do_episodio,
+                url_fonte=candidatos[0].url,
+                site_origem=fonte.dominio,
+            )
+        except EpisodioJaExiste:
+            # Corrida genuína (dois cliques quase simultâneos do botão) — a
+            # checagem contra `numeros_locais` já é feita com os dados de
+            # antes do passo 1, então uma criação concorrente aqui é o único
+            # jeito de bater no índice único.
+            continue
 
 
 async def _localizar_episodio_por_identidade(

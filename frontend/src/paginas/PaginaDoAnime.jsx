@@ -443,6 +443,22 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     return [...linhasNumericas, ...linhasSemNumero];
   }, [episodios.dados, remotos.dados, versaoAtiva, thumbDoAnime]);
 
+  // Estado do botão "Marcar como assistido" (abaixo): `true` só quando toda
+  // linha NUMÉRICA da grade (`numero != null` — rótulos não numéricos, ex.
+  // "Especial", ficam fora de escopo de captura/assistido e não contam) já
+  // tem `assistido_em`, vindo de `episodio` (capturado) ou `episodioDescartado`
+  // (liberado/outra fonte — `LinhaDeEpisodio.jsx` já trata os dois como
+  // "✓ assistido"). Sem linha nenhuma ainda (anime sem episódios, ou tudo
+  // carregando) fica `false` — nesse caso o botão seguir clicável não é
+  // confuso, é só irrelevante.
+  const tudoAssistido = useMemo(() => {
+    const comNumero = linhas.filter((linha) => linha.numero != null);
+    return (
+      comNumero.length > 0 &&
+      comNumero.every((linha) => (linha.episodio ?? linha.episodioDescartado)?.assistido_em != null)
+    );
+  }, [linhas]);
+
   // Dados derivados do bloco de conteúdo do hero (estilo AnimeFire, coluna
   // única). `meta` é a linha stacked "ano • N episódios • versão" logo abaixo
   // do título; os gêneros saem dela e viram pills próprias (`generosTraduzidos`,
@@ -548,11 +564,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
 
   // Botão "Marcar como assistido" da barra de controles — marca em lote todo
   // episódio LOCAL do anime (qualquer fonte/versão, não só a ativa) que ainda
-  // não tem `assistido_em`. Sempre disponível (nunca desabilitado por não
-  // haver nada pra marcar — só enquanto a chamada está em voo, ver o botão
-  // abaixo). Sem diálogo de confirmação: ao contrário de "Remover do
-  // catálogo", marcar como assistido não apaga nada e não tem efeito
-  // colateral em disco.
+  // não tem `assistido_em`, E cria (sem baixar nada) um episódio pra cada
+  // número que a fonte ativa lista e o usuário nunca capturou — pedido
+  // explícito do usuário: o botão marca TODO episódio disponível, não só os
+  // já baixados (`api/servicos/jobs.py::marcar_todos_assistidos`). Sempre
+  // disponível (nunca desabilitado por não haver nada pra marcar — só
+  // enquanto a chamada está em voo, ver o botão abaixo). Sem diálogo de
+  // confirmação: ao contrário de "Remover do catálogo", marcar como assistido
+  // não apaga nada e não tem efeito colateral em disco.
   const [marcandoTodosAssistidos, setMarcandoTodosAssistidos] = useState(false);
   const [erroMarcarAssistidos, setErroMarcarAssistidos] = useState(null);
 
@@ -560,16 +579,32 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     setMarcandoTodosAssistidos(true);
     setErroMarcarAssistidos(null);
     try {
-      await marcarTodosAssistidos(animeId);
+      await marcarTodosAssistidos(animeId, versaoPedida);
       episodios.recarregar();
     } catch (erroCapturado) {
-      console.error('falha ao marcar episódios como assistidos', erroCapturado);
-      setErroMarcarAssistidos('Não foi possível marcar os episódios como assistidos — tente novamente.');
+      // Mesmo segundo passo de `capturar` acima: resolve a fonte remota pra
+      // criar os episódios faltantes, então pode bater nos mesmos erros de
+      // fonte (o `UPDATE` dos já capturados já rodou nesses casos — só o
+      // passo de criar os que faltam falhou).
+      if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'fonte_ambigua') {
+        setFonteAmbigua({ ...erroCapturado.detail, numero: null });
+      } else if (
+        erroCapturado instanceof ErroDeApi &&
+        erroCapturado.detail?.motivo === 'versao_indisponivel'
+      ) {
+        setErroMarcarAssistidos(
+          `A versão ${erroCapturado.detail.versao} não está disponível nesta fonte — tente trocar de fonte ou de versão.`
+        );
+      } else {
+        console.error('falha ao marcar episódios como assistidos', erroCapturado);
+        setErroMarcarAssistidos('Não foi possível marcar os episódios como assistidos — tente novamente.');
+      }
+      episodios.recarregar();
     } finally {
       setMarcandoTodosAssistidos(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animeId, episodios.recarregar]);
+  }, [animeId, versaoPedida, episodios.recarregar]);
 
   const confirmarRemocao = useCallback(async () => {
     setRemovendo(true);
@@ -870,18 +905,23 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               Trocar fonte
             </button>
             {/* "Marcar como assistido" — marca em lote (sem diálogo, não é
-                destrutivo). Sempre disponível, igual ao Crunchyroll: clicar
-                marca; sem episódio pendente é só um no-op no servidor (a
-                `UPDATE ... WHERE assistido_em IS NULL` não acha nada pra
-                mudar). Desabilitado só enquanto a chamada está em voo, pra
-                não disparar duas vezes. */}
+                destrutivo). Desabilitado enquanto a chamada está em voo (pra
+                não disparar duas vezes) OU quando `tudoAssistido` (todo
+                episódio numérico da grade — local ou só remoto — já tem
+                `assistido_em`): nesse estado um clique seria mesmo um no-op,
+                e o rótulo avisa em vez de deixar o botão sempre clicável sem
+                dar nenhum sinal de que não há nada pra marcar. */}
             <button
               type="button"
               onClick={aoMarcarTodosAssistidos}
-              disabled={marcandoTodosAssistidos}
+              disabled={marcandoTodosAssistidos || tudoAssistido}
               className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-chrome disabled:hover:text-ink-muted"
             >
-              {marcandoTodosAssistidos ? 'Marcando…' : 'Marcar como assistido'}
+              {marcandoTodosAssistidos
+                ? 'Marcando…'
+                : tudoAssistido
+                  ? 'Tudo assistido'
+                  : 'Marcar como assistido'}
             </button>
             {/* "Remover do catálogo" — ação destrutiva, mora aqui ao lado de
                 "Trocar fonte" (não mais num canto do hero). Mesma geometria de
