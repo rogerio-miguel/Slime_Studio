@@ -350,6 +350,86 @@ def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> 
     tarefa.add_done_callback(lambda _tarefa: _refreshs_de_lancamento_em_voo.pop(anime_id, None))
 
 
+# Referência forte ao enriquecimento lazy de metadados "estáticos" (sinopse/
+# banner/cor da capa/gêneros) em andamento — mesmo papel de dedupe/anti-GC de
+# `_refreshs_de_lancamento_em_voo`, dict PRÓPRIO porque cobre um recorte
+# diferente (`anilist_id` não-nulo, mas algum campo ainda faltando) e não deve
+# competir pela mesma entrada com um refresh de lançamento em voo do mesmo
+# anime_id.
+_enriquecimentos_de_metadados_em_voo: dict[int, asyncio.Task] = {}
+
+
+def agendar_enriquecimento_de_metadados(sessionmaker: _SessionMaker, anime: Anime) -> None:
+    """Dispara, sem bloquear, uma busca lazy de metadados "estáticos" (sinopse,
+    banner, cor da capa, gêneros) por `anilist_id` quando a página do anime é
+    aberta e algum desses campos ainda está `NULL`. Cobre o anime materializado
+    pelo feed "em alta" (`paginas/Inicio.jsx::materializarEIrPara`), cujo
+    payload de criação já vem com `anilist_id`/capa mas nunca com sinopse — a
+    AniList não a traz na listagem do feed, só no detalhe por id
+    (`GET /api/animes/{id}` é justamente esse "primeiro carregamento da
+    página" que o comentário de `Inicio.jsx` promete).
+
+    Só por `anilist_id` já confirmado — nunca por título aqui: `aplicar_
+    metadados` (só-quando-nulo) é seguro porque o id já é uma correspondência
+    confirmada, ao contrário do casamento heurístico por título que
+    `aplicar_lancamento_descoberto_por_titulo` evita deliberadamente para
+    estes mesmos campos (ver docstring de `db/catalogo.py::
+    aplicar_lancamento_descoberto_por_titulo` — não "simplifique" reusando
+    aquele caminho aqui).
+
+    Sem TTL: ao contrário do refresh de lançamento, estes campos não mudam
+    depois de preenchidos — o próprio gate (`is None`) já garante no-op depois
+    da primeira vez bem-sucedida, sem precisar recarimbar nada.
+
+    No-op silencioso quando: sem `anilist_id`; nenhum campo faltando; já há
+    uma busca em voo para este anime; ou não há event loop rodando."""
+    if anime.anilist_id is None:
+        return
+    if (
+        anime.sinopse is not None
+        and anime.banner_path is not None
+        and anime.capa_cor is not None
+        and anime.generos is not None
+    ):
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    anime_id = anime.id
+    if anime_id in _enriquecimentos_de_metadados_em_voo:
+        return
+
+    anilist_id = anime.anilist_id
+    tarefa = loop.create_task(_buscar_metadados_e_persistir(sessionmaker, anime_id, anilist_id))
+    _enriquecimentos_de_metadados_em_voo[anime_id] = tarefa
+    tarefa.add_done_callback(
+        lambda _tarefa, aid=anime_id: _enriquecimentos_de_metadados_em_voo.pop(aid, None)
+    )
+
+
+async def _buscar_metadados_e_persistir(
+    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int
+) -> None:
+    """Corpo da `Task` fire-and-forget de `agendar_enriquecimento_de_metadados`.
+    Mesma filosofia de `_buscar_e_persistir_lancamento`: toda exceção esperada
+    vira `warning` e morre aqui; `CancelledError` e erros inesperados
+    propagam de propósito."""
+    try:
+        metadados = await servico.buscar_metadados_por_anilist_id(anilist_id)
+        if metadados is not None:
+            await aplicar_metadados(sessionmaker, anime_id, metadados)
+    except (FalhaDeMetadados, TimeoutError, SQLAlchemyError) as excecao:
+        logger.warning(
+            "enriquecimento lazy de metadados falhou para anime_id=%s anilist_id=%s: %s",
+            anime_id,
+            anilist_id,
+            excecao,
+        )
+
+
 def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime]) -> None:
     """F14 — ao listar o catálogo, aquece o `status_lancamento` (filtro do badge
     de "episódios novos") dos animes que nunca foram abertos individualmente nem

@@ -65,6 +65,13 @@ export function marcarAssistido(episodioId) {
   return requisitar(`/api/episodios/${episodioId}/assistido`, { metodo: 'POST' });
 }
 
+// Botão "Marcar como assistido" da página do anime — marca em lote todo
+// episódio do anime que ainda não tem `assistido_em` (um único UPDATE no
+// servidor, ver `api/rotas/animes.py::marcar_todos_assistidos`).
+export function marcarTodosAssistidos(animeId) {
+  return requisitar(`/api/admin/animes/${animeId}/marcar-todos-assistidos`, { metodo: 'POST' });
+}
+
 // Fallback de refresh do player (PaginaDoPlayer.jsx) quando `location.state`
 // não veio (acesso direto/refresh da URL) — também traz `progresso_s` pra
 // retomar a reprodução de onde parou.

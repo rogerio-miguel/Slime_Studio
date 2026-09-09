@@ -84,11 +84,16 @@ async def test_listar_episodios_remotos_caminho_feliz(
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
 
+    # `thumb_url` nunca reflete o que `_listar_fake` devolveu: o overlay
+    # (`_sobrepor_stills_de_episodios`) substitui pela arte do anime (aqui
+    # `None`, o anime de teste não tem banner/capa) sempre que o TMDB não
+    # resolve — nunca mais o thumb cru do extractor (ver
+    # `test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_anime`).
     assert resposta.status_code == 200
     assert resposta.json() == {
         "dominio": "animefire.io",
         "episodios": [
-            {"rotulo": "1", "numero": 1, "thumb_url": "https://animefire.io/img/video/42/1.webp"},
+            {"rotulo": "1", "numero": 1, "thumb_url": None},
             {"rotulo": "2", "numero": 2, "thumb_url": None},
             {"rotulo": "especial", "numero": None, "thumb_url": None},
         ],
@@ -125,16 +130,26 @@ async def test_listar_episodios_remotos_anime_inexistente_404(cliente: AsyncClie
     assert resposta.status_code == 404
 
 
-async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_original(
+async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_anime(
     cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Fatia 5 (`PLANO_ARTE_TMDB.md`): episódio que o TMDB resolve troca de
-    thumb; episódio que o TMDB não acha preserva o `thumb_url` que o
-    extractor já trouxe; episódio sem `numero` (rótulo não numérico) nem
-    tenta — mantém o original sem chamar o overlay."""
-    anime_id = await _criar_anime(sessionmaker_api, "Anime Com Still")
+    """Fatia 5 (`PLANO_ARTE_TMDB.md`) + pedido do usuário (thumb de episódio
+    nunca mais "da fonte"): episódio que o TMDB resolve troca de thumb;
+    episódio que o TMDB não acha cai pra arte do PRÓPRIO anime
+    (`banner_path`), NUNCA MAIS o `thumb_url` que o extractor trouxe; episódio
+    sem `numero` (rótulo não numérico) nem tenta o TMDB — vai direto pro
+    fallback."""
+    async with sessionmaker_api() as sessao:
+        anime = Anime(
+            titulo="Anime Com Still",
+            slug="anime-com-still",
+            banner_path="https://tmdb.org/banner-do-anime.jpg",
+        )
+        sessao.add(anime)
+        await sessao.commit()
+        anime_id = anime.id
 
     async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
@@ -155,7 +170,7 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ori
         ]
 
     async def _still_fake(titulo, ano, numero, temporada):
-        # TMDB só resolve o episódio 1 — o 2 cai pro thumb_url do extractor.
+        # TMDB só resolve o episódio 1 — o 2 cai pra arte do anime.
         return "https://tmdb/1.jpg" if numero == 1 else None
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
@@ -169,8 +184,8 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ori
     assert resposta.status_code == 200
     episodios = resposta.json()["episodios"]
     assert episodios[0]["thumb_url"] == "https://tmdb/1.jpg"
-    assert episodios[1]["thumb_url"] == "https://original/2.webp"
-    assert episodios[2]["thumb_url"] is None
+    assert episodios[1]["thumb_url"] == "https://tmdb.org/banner-do-anime.jpg"
+    assert episodios[2]["thumb_url"] == "https://tmdb.org/banner-do-anime.jpg"
 
 
 async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_absoluto(
@@ -178,10 +193,11 @@ async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Overlay de still da T2+ de uma franquia: o TMDB às vezes modela a
-    franquia numa season só, então o overlay pede pelo número ABSOLUTO
-    (`offset das irmãs + numero`, `temporada=None`) em vez do par por-temporada.
-    Offset = soma de `total_episodios_anilist` das irmãs com temporada menor."""
+    """Overlay de still da T2+ de uma franquia: tenta primeiro o par DIRETO
+    (`numero`, `numero_temporada`); só quando o TMDB não tem essa temporada
+    separada (franquia "achatada" numa season só) é que cai pro número
+    ABSOLUTO (`offset das irmãs + numero`, `temporada=None`). Offset = soma de
+    `total_episodios_anilist` das irmãs com temporada menor."""
     async with sessionmaker_api() as sessao:
         sessao.add(
             Anime(
@@ -216,6 +232,10 @@ async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_
 
     async def _still_fake(titulo, ano, numero, temporada):
         chamadas.append((numero, temporada))
+        # Simula o TMDB SEM a temporada 2 separada (franquia achatada): o
+        # direto (`temporada=2`) vem vazio, só o absoluto resolve.
+        if temporada is not None:
+            return None
         return f"https://tmdb/{numero}.jpg"
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
@@ -227,10 +247,77 @@ async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_
     resposta = await cliente.get(f"/api/admin/animes/{t2_id}/episodios-remotos")
 
     assert resposta.status_code == 200
-    assert sorted(chamadas) == [(25, None), (26, None)]
+    assert sorted(chamadas) == [(1, 2), (2, 2), (25, None), (26, None)]
     episodios = resposta.json()["episodios"]
     assert episodios[0]["thumb_url"] == "https://tmdb/25.jpg"
     assert episodios[1]["thumb_url"] == "https://tmdb/26.jpg"
+
+
+async def test_listar_episodios_remotos_still_direto_nunca_cai_pro_absoluto_com_offset_incompleto(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regressão do bug real (anime 22, Tensei Slime T4): quando o TMDB TEM a
+    temporada em separado, o overlay usa o par DIRETO e NUNCA tenta o
+    absoluto — mesmo quando haveria `offset_de_temporada` > 0 a calcular (irmã
+    catalogada com `numero_temporada` menor). Antes desta fatia, toda
+    temporada > 1 com offset ia direto pro absoluto; se uma irmã ANTERIOR
+    ainda não estivesse catalogada (comum: só as temporadas recentes de uma
+    franquia longa costumam estar no catálogo), o offset saía sub-contado e a
+    still vinha de outro episódio — real, mas do lugar errado da série."""
+    async with sessionmaker_api() as sessao:
+        # Só a temporada 3 catalogada como irmã — a 1ª/2ª (que também
+        # existiriam numa franquia real) estão AUSENTES, deixando o offset
+        # sub-contado de propósito (mesma situação do anime 22 em produção).
+        sessao.add(
+            Anime(
+                titulo="Franquia T3",
+                slug="franquia-t3",
+                serie_ancora=777,
+                numero_temporada=3,
+                total_episodios_anilist=24,
+            )
+        )
+        t4 = Anime(
+            titulo="Franquia T4", slug="franquia-t4", serie_ancora=777, numero_temporada=4
+        )
+        sessao.add(t4)
+        await sessao.commit()
+        t4_id = t4.id
+
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="7",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada=None):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1")]
+
+    chamadas: list[tuple] = []
+
+    async def _still_fake(titulo, ano, numero, temporada):
+        chamadas.append((numero, temporada))
+        # TMDB TEM a temporada 4 em separado — resolve de cara no direto.
+        if temporada is None:
+            return None
+        return f"https://tmdb/temporada{temporada}-ep{numero}.jpg"
+
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr(
+        "api.servicos.fontes.servico_metadados.buscar_still_de_episodio", _still_fake
+    )
+
+    resposta = await cliente.get(f"/api/admin/animes/{t4_id}/episodios-remotos")
+
+    assert resposta.status_code == 200
+    # Só o par direto foi tentado — nunca o absoluto (que, com offset=24 em
+    # vez do correto, teria pedido o episódio 25 e trazido a still errada).
+    assert chamadas == [(1, 4)]
+    assert resposta.json()["episodios"][0]["thumb_url"] == "https://tmdb/temporada4-ep1.jpg"
 
 
 # --- detector de episódios novos: api/servicos/lancamentos.py ---

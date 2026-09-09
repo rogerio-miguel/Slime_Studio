@@ -6,7 +6,7 @@ CLAUDE.md §1); `api/rotas/episodios.py` traduz o resultado para
 
 from collections.abc import Sequence
 
-from sqlalchemy import Row, or_, select
+from sqlalchemy import Row, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusEpisodio
@@ -37,7 +37,14 @@ async def listar_continuar_assistindo(
                 Episodio.id.label("episodio_id"),
                 Episodio.anime_id.label("anime_id"),
                 Anime.titulo.label("anime_titulo"),
-                Episodio.capa_path.label("thumb"),
+                # `capa_path` é a still TMDB do episódio (`api/servicos/jobs.py
+                # ::still_de_episodio`) — pode ser `NULL` (TMDB não achou);
+                # `COALESCE` cai pra arte do anime nesse caso, mesmo fallback
+                # de `PaginaDoAnime.jsx::thumbDoAnime`, nunca o thumb cru da
+                # fonte de scraping.
+                func.coalesce(Episodio.capa_path, Anime.banner_path, Anime.capa_path).label(
+                    "thumb"
+                ),
                 Episodio.numero.label("numero"),
                 Episodio.titulo.label("titulo"),
                 Episodio.progresso_s.label("progresso_s"),

@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
@@ -153,6 +153,26 @@ async def listar_episodios_remotos_do_anime(
             for episodio in resultado.episodios
         ],
     )
+
+
+@router.post("/{anime_id}/marcar-todos-assistidos", status_code=status.HTTP_204_NO_CONTENT)
+async def marcar_todos_assistidos(
+    anime_id: int,
+    sessao: AsyncSession = Depends(obter_sessao),
+) -> None:
+    """Botão "Marcar como assistido" da página do anime — marca `assistido_em`
+    (agora) em todo `Episodio` do anime que ainda não tem a marca, num único
+    `UPDATE` (mesma semântica de `POST /episodios/{id}/assistido`, aplicada em
+    lote; não toca `status`/mídia)."""
+    anime = await sessao.get(Anime, anime_id)
+    if anime is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    await sessao.execute(
+        update(Episodio)
+        .where(Episodio.anime_id == anime_id, Episodio.assistido_em.is_(None))
+        .values(assistido_em=datetime.now(UTC))
+    )
+    await sessao.commit()
 
 
 @router.delete("/{anime_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -342,6 +362,10 @@ async def obter_anime(
     # F4b: refresh lazy fire-and-forget do estado de lançamento — não aguarda,
     # só agenda para a próxima leitura (ver `descoberta.agendar_refresh_de_lancamento`).
     servico_descoberta.agendar_refresh_de_lancamento(sessionmaker, anime)
+    # Mesma carona, para sinopse/banner/cor/gêneros ainda faltando (anime
+    # materializado do feed "em alta", que nunca traz sinopse) — ver
+    # `descoberta.agendar_enriquecimento_de_metadados`.
+    servico_descoberta.agendar_enriquecimento_de_metadados(sessionmaker, anime)
     resultado = await sessao.execute(
         select(FonteAnime.versao, FonteAnime.resolvido_em).where(FonteAnime.anime_id == anime_id)
     )
