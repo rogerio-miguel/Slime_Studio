@@ -10,19 +10,12 @@ function Linha({ rotulo, valor }) {
   );
 }
 
-export default function HudTelemetria({
-  visivel,
-  modo,
-  presetLabel,
-  resolucao,
-  telemetria,
-  diagnostico,
-  metricaGpu,
-  passes,
-}) {
+export default function HudTelemetria({ visivel, modo, presetLabel, resolucao, telemetria, diagnostico, passes }) {
   if (!visivel) return null;
 
   const { cadenciaMs, dropped, total, gpu } = telemetria;
+  const fpsApr = diagnostico?.fpsApresentacao;
+  const fpsCont = diagnostico?.fpsConteudo;
 
   return (
     <div
@@ -37,34 +30,21 @@ export default function HudTelemetria({
         valor={cadenciaMs !== null ? `${cadenciaMs.toFixed(1)} ms (cadência, não custo de GPU)` : '—'}
       />
       <Linha rotulo="dropped/total" valor={dropped !== null ? `${dropped} / ${total}` : '—'} />
-      {metricaGpu && (
-        <>
-          <Linha
-            rotulo="gpu p50"
-            valor={
-              metricaGpu.p50Ms !== null
-                ? `${metricaGpu.p50Ms.toFixed(1)} ms (${metricaGpu.amostras} amostras)`
-                : '—'
-            }
-          />
-          <Linha
-            rotulo="ocupação"
-            valor={
-              metricaGpu.ocupacao !== null
-                ? `${(metricaGpu.ocupacao * 100).toFixed(0)} % de ${metricaGpu.orcamentoMs.toFixed(1)} ms`
-                : '—'
-            }
-          />
-          <Linha rotulo="submits/s" valor={`${metricaGpu.submitsPorSegundo} · ${passes} passes`} />
-        </>
-      )}
       {diagnostico && (
         <>
           <Linha
-            rotulo="queda (3s)"
+            rotulo="fps apr/conteúdo"
             valor={
-              diagnostico.quedaNaJanela !== null
-                ? `${(diagnostico.quedaNaJanela * 100).toFixed(1)} % (${diagnostico.dropadosNaJanela}/${diagnostico.totalNaJanela})`
+              fpsApr != null
+                ? `${fpsApr.toFixed(0)} / ${fpsCont != null ? fpsCont.toFixed(0) : '…'} · ${passes} passes`
+                : `— · ${passes} passes`
+            }
+          />
+          <Linha
+            rotulo="pressão (3s)"
+            valor={
+              diagnostico.pressaoNaJanela !== null
+                ? `${(diagnostico.pressaoNaJanela * 100).toFixed(0)} %`
                 : '—'
             }
           />

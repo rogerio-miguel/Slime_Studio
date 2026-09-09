@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import BarraDeControles from './BarraDeControles.jsx';
 import HudTelemetria from './HudTelemetria.jsx';
 import GlowAmbiente from './GlowAmbiente.jsx';
@@ -58,10 +58,17 @@ export default function PlayerAtivo({
 
   const dimensoesDaFonte = useFonteDeVideo(videoRef, fonte, aoFalhar);
 
+  // Ref (não valor) pra quebrar o ciclo: useControleAdaptativo roda antes de
+  // useMotorAnime4k (precisa do preset que sai daqui) mas consome o medidor
+  // que sai de lá. Lido só dentro do interval do controle, então "um render
+  // atrás" não muda nada.
+  const medidorRef = useRef(null);
+
   const { indiceDeDegrau, diagnostico, degradarPorFalhaDeGpu } = useControleAdaptativo({
     videoRef,
     ativo: auto,
     chaveDeSessao: fonte,
+    medidorRef,
     degrauSalvo: degrauAutoSalvo,
     aoDegrauEstavel: setDegrauAutoSalvo,
   });
@@ -93,17 +100,8 @@ export default function PlayerAtivo({
     aoFalhar: aoFalharDoMotor,
   });
 
-  // Amostra o medidor de GPU pro HUD (só instrumentação nesta fase — a
-  // política preditiva ainda não consome). Poll de 500ms: `ler()` só faz
-  // mediana de ~24 números, custo desprezível.
-  const [metricaGpu, setMetricaGpu] = useState(null);
   useEffect(() => {
-    if (!medidor) {
-      setMetricaGpu(null);
-      return;
-    }
-    const id = setInterval(() => setMetricaGpu(medidor.ler()), 500);
-    return () => clearInterval(id);
+    medidorRef.current = medidor;
   }, [medidor]);
 
   const audioCinema = useAudioCinema(videoRef);
@@ -188,7 +186,6 @@ export default function PlayerAtivo({
           resolucao={canvasRef.current ? `${canvasRef.current.width}×${canvasRef.current.height}` : '—'}
           telemetria={telemetria}
           diagnostico={diagnostico}
-          metricaGpu={metricaGpu}
           passes={contarPasses(PRESETS[presetAtual]?.blocos ?? [])}
         />
         <BarraDeControles
