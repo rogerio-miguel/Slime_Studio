@@ -1531,6 +1531,38 @@ def test_tmdb_still_de_episodio_id_nao_resolvido_devolve_none(monkeypatch: pytes
     assert TmdbProvider("token").buscar_still_de_episodio("Slime", None, 1) is None
 
 
+def test_tmdb_resolver_serie_busca_pelo_titulo_base_nao_pelo_romaji_por_temporada(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regressão (anime 43, "Tensei Shitara Slime Datta Ken 2nd Season"): a
+    `/search/tv` do TMDB não casa o romaji por-temporada da AniList com a
+    entrada única da série — `_resolver_serie` reduz ao título BASE
+    (`separar_temporada`) antes da busca, senão o overlay de still não resolve
+    nenhuma temporada >= 2."""
+    queries: list[str] = []
+
+    def _fake_get(url, **kwargs):
+        if url.endswith("/search/tv"):
+            queries.append(kwargs["params"]["query"])
+            return _RespostaFalsa(
+                corpo={"results": [_resultado_tv(id=999, name="Slime", original_name="Slime")]}
+            )
+        if url.endswith("/tv/999/season/2"):
+            return _RespostaFalsa(
+                corpo={"episodes": [{"episode_number": 1, "still_path": "/s2e1.jpg"}]}
+            )
+        raise AssertionError(f"URL não mapeada no fake: {url}")
+
+    monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
+
+    resultado = TmdbProvider("token").buscar_still_de_episodio(
+        "Tensei Shitara Slime Datta Ken 2nd Season", 2021, 1, 2
+    )
+
+    assert queries == ["Tensei Shitara Slime Datta Ken"]
+    assert resultado == "https://image.tmdb.org/t/p/original/s2e1.jpg"
+
+
 # --- cadeia de fallback (integrations/servico.py) ---
 
 

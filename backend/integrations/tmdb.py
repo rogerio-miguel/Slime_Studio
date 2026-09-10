@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import requests
 
+from core.temporada import separar_temporada
 from core.texto import slugificar
 from integrations.base import ArteDeAnime, ProvedorDeArte
 
@@ -256,15 +257,25 @@ class TmdbProvider(ProvedorDeArte):
         uma `Media` própria, o TMDB modela a série inteira numa entrada só —
         filtrar por ano de estreia devolveria zero resultados pra sequel/split
         -cour. O ano entra só como desempate, dentro de `_melhor_resultado`.
+
+        O título é reduzido ao BASE (`separar_temporada`) antes da busca: a
+        `/search/tv` do TMDB não casa o romaji por-temporada da AniList
+        ("... 2nd Season", "... Season 3") com a entrada única da série e
+        devolve zero resultados. `buscar_arte_por_titulo` (nível de serviço)
+        já entrega o base; para os callers de still (`stills_da_temporada_por_
+        titulo`, `tabela_de_temporadas`) esta é a única redução — sem ela o
+        overlay de still não resolvia nenhuma temporada >= 2. Descascar de
+        novo um título já base é no-op (identidade).
         """
+        titulo_base, _derivado = separar_temporada(titulo)
         dados = self._executar(
             "/search/tv",
-            {"query": titulo, "include_adult": "false", "page": 1, "language": _IDIOMA},
+            {"query": titulo_base, "include_adult": "false", "page": 1, "language": _IDIOMA},
         )
         resultados = dados.get("results")
         if not isinstance(resultados, list) or not resultados:
             return None
-        return _melhor_resultado(resultados, titulo, ano)
+        return _melhor_resultado(resultados, titulo_base, ano)
 
     def _executar(self, caminho: str, params: dict) -> dict:
         resposta = requests.get(
