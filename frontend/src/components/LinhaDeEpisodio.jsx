@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { SOMBRA_SLIDE_ATIVO } from '../inicio/CarrosselDestaques.jsx';
 import { IconePlay } from '../player/Icones.jsx';
 
 // Re-exportado: `src/inicio/` não pode importar de `src/player/` direto
@@ -35,11 +34,12 @@ export function MiniaturaDoEpisodio({ thumb, modo }) {
       alt=""
       loading="lazy"
       onError={() => setFalhouEm(thumb)}
-      // modo grade: a thumb É o card — preenche o retângulo 16/9 em
-      // `absolute inset-0`, com o número do episódio e a ação sobre um degradê
-      // no rodapé; modo lista: mesma linguagem, a thumb 16/9 encosta na borda
-      // esquerda do card (o `overflow-hidden` + `rounded-lg` da raiz recorta os
-      // cantos) — sem borda/arredondamento próprios.
+      // modo grade: a thumb preenche o retângulo 16/9 recortado em
+      // `absolute inset-0` — número do episódio e ação ficam FORA dela, na
+      // legenda abaixo (ver CartaoDeEpisodio); modo lista: mesma linguagem, a
+      // thumb 16/9 encosta na borda esquerda do card (o `overflow-hidden` +
+      // `rounded-lg` da raiz recorta os cantos) — sem borda/arredondamento
+      // próprios.
       className={
         modo === 'grade'
           ? 'absolute inset-0 h-full w-full object-cover'
@@ -70,20 +70,42 @@ const ROTULO_VERSAO = {
 //    escopo) ou episódio em processamento (não clicável hoje). Mesmas
 //    classes-base do card, mas sem `cursor-pointer`, sem hover/escala e sem a
 //    borda neon — nada aqui recebe clique nem foco de teclado.
-// A ação/estado do episódio vive só como texto no rodapé (FaixaDeConteudo) ou
-// como overlay sobre a thumb (OverlayDeStatus) — nunca num <button>/<Link>
-// aninhado DENTRO do card.
-// Hover/foco no idioma do card do catálogo (components/AnimeCard.jsx →
-// paginas/Galeria.jsx): modo grade cresce no lugar (`scale`, `z-10` pra passar
-// por cima dos vizinhos da grade) com a borda neon acendendo; modo lista,
-// linha full-width, sem escala — só realce de fundo + a borda neon. A borda
-// acesa em `group-focus-visible` é o indicador de foco de teclado (o alvo fica
-// `outline-none`, igual ao AnimeCard). `desabilitado` = captura em voo:
-// bloqueia o clique.
-// `boxShadow` (via `estilo`, derivado do `modo`): grade usa a drop shadow dos
-// cards do catálogo (fonte única em inicio/CarrosselDestaques.jsx); lista, com
-// os cards a 8px um do outro, usa uma sombra bem mais curta — a do catálogo
-// empilhada linha após linha "suja" o fundo entre elas.
+// A ação/estado do episódio vive só como texto na legenda (FaixaDeConteudo,
+// prop `legenda`) ou como overlay sobre a thumb (OverlayDeStatus, `children`)
+// — nunca num <button>/<Link> aninhado DENTRO do card.
+//
+// `children` vs `legenda`: `children` é tudo que fica DENTRO da caixa
+// recortada (miniatura + overlays sobre ela); `legenda` é sempre a
+// `FaixaDeConteudo` do chamador. Modo LISTA: sem diferença visual, os dois
+// entram juntos na mesma caixa (não há recorte por aspect-ratio ali, o
+// problema abaixo não existe). Modo GRADE: a caixa recortada
+// (`aspect-[16/9]`, `overflow-hidden`, `rounded-lg`) envolve só `children`;
+// `legenda` fica ABAIXO dela, em fluxo normal, FORA do recorte — mesma
+// correção de components/AnimeCard.jsx (lá, pôster/legenda do card de
+// catálogo): o degradê que dava contraste ao rodapé por cima da miniatura
+// deixava uma lasca sem escurecer no canto arredondado em alguns motores
+// gráficos (dois elementos `absolute` — imagem e degradê — recortados pelo
+// mesmo `overflow-hidden`, arredondando subpixel de forma independente).
+// Tirar a legenda de cima da miniatura elimina o degradê inteiro.
+//
+// Hover/foco — modo GRADE (pedido do usuário — sem escala): o alvo
+// interativo (`classe`, Link/button) É a moldura de hover — `p-2 -m-2` soma
+// padding e margem negativa pra não deslocar miniatura+legenda, só revelar
+// `hover:bg-surface-hover` maior que os dois juntos quando o mouse passa por
+// cima de QUALQUER um dos dois. `bordaNeon` mora dentro da miniatura e é só
+// indicador de FOCO por teclado (`group-focus-visible/cartao:border-neon`) —
+// fundo sozinho não tem contraste suficiente pra servir de indicador de foco
+// (~1.1:1 entre `surface`/`surface-hover`, abaixo do 3:1 mínimo — CLAUDE.md
+// §4 não permite cortar acessibilidade). Modo LISTA, linha full-width — sem
+// mudança: a caixa inteira (miniatura+legenda) já era o alvo interativo,
+// `hover:bg-surface-hover` já cobria tudo; só a borda perdeu o gatilho de
+// hover, mesmo motivo de acessibilidade. O alvo fica `outline-none` (foco vem
+// só da borda). `desabilitado` = captura em voo: bloqueia o clique.
+// `boxShadow` (via `estilo`): só no modo lista agora (drop shadow curta, os
+// cards ficam a 8px um do outro) — o modo grade PERDEU a sombra (antes
+// espelhava a do catálogo, `SOMBRA_SLIDE_ATIVO`; pedido do usuário, mora numa
+// caixa própria que já ganhou o realce de hover/foco, não precisa mais da
+// sombra pra se destacar).
 export function CartaoDeEpisodio({
   modo,
   cor,
@@ -92,43 +114,108 @@ export function CartaoDeEpisodio({
   aoClicar,
   desabilitado,
   rotuloAcessivel,
+  legenda,
   children,
 }) {
   const emGrade = modo === 'grade';
   const estilo = {
     boxShadow: emGrade
-      ? SOMBRA_SLIDE_ATIVO
+      ? undefined
       : 'rgba(0,0,0,0.38) 0 8px 10px -4px, rgba(0,0,0,0.28) 0 2px 4px -3px',
   };
-  const classeBase = `relative flex w-full overflow-hidden rounded-lg bg-surface text-left text-sm ${cor}${
-    emGrade ? ' aspect-[16/9]' : ''
+  const classeCaixa = `relative flex w-full overflow-hidden bg-surface text-left text-sm ${cor} ${
+    emGrade ? 'aspect-[16/9] rounded-2xl' : 'rounded-lg'
   }`;
+  // `cor` repetido aqui: no modo grade a legenda mora FORA da caixa acima,
+  // então precisa da própria herança de cor/peso de fonte (ex. o
+  // `font-semibold` do ramo "nunca capturado" chegando até o aviso de
+  // "rótulo não numérico", que não define peso próprio).
+  const classeRaizGrade = `flex w-full flex-col gap-1.5 text-left text-sm ${cor}`;
 
   if (!para && !aoClicar) {
+    if (emGrade) {
+      return (
+        <div className={classeRaizGrade}>
+          <div className={classeCaixa} style={estilo}>
+            {children}
+          </div>
+          {legenda}
+        </div>
+      );
+    }
     return (
-      <div className={classeBase} style={estilo}>
+      <div className={classeCaixa} style={estilo}>
         {children}
+        {legenda}
       </div>
     );
   }
 
-  const classe = `group/cartao ${classeBase} cursor-pointer outline-none ${
-    emGrade
-      ? 'transition-transform duration-300 ease-out hover:z-10 hover:scale-105 focus-visible:z-10 focus-visible:scale-105 motion-reduce:transition-none'
-      : 'transition-colors duration-200 hover:bg-surface-hover'
-  }`;
+  // Só indicador de FOCO agora (ver bloco de comentário no topo) — sem
+  // gatilho de hover.
   const bordaNeon = (
     <span
       aria-hidden="true"
-      className={`pointer-events-none absolute inset-0 rounded-lg border-transparent transition-colors duration-300 ease-out group-hover/cartao:border-neon group-focus-visible/cartao:border-neon motion-reduce:transition-none ${
-        emGrade ? 'border-4' : 'border-2'
+      className={`pointer-events-none absolute inset-0 border-transparent transition-colors duration-300 ease-out group-focus-visible/cartao:border-neon motion-reduce:transition-none ${
+        emGrade ? 'rounded-2xl border-4' : 'rounded-lg border-2'
       }`}
     />
   );
+
+  if (emGrade) {
+    // Moldura de hover única cobrindo miniatura+legenda — `p-2 -m-2` soma
+    // padding e margem negativa pra não deslocar o conteúdo, só revelar
+    // `bg-surface-hover` maior que os dois juntos quando o hover dispara. Sem
+    // escala (removida a pedido do usuário): só o fundo reage.
+    // `w-[calc(100%+1rem)]` no lugar do `w-full` de `classeRaizGrade`: com
+    // largura EXPLÍCITA (100%), a margem negativa só EMPURRA a caixa pra
+    // esquerda em vez de esticar ela pros dois lados (isso só aconteceria com
+    // `width:auto`, que o grid estica sozinho) — na última coluna da grade a
+    // caixa ficava 8px curta do fim de verdade, destoando da barra de ações
+    // acima. Somando o `1rem` (as duas margens de 0.5rem) na largura, a caixa
+    // volta a transbordar 8px pros dois lados igualmente (mesmo efeito do
+    // `AnimeCard.jsx`), sem deslocar o conjunto pra esquerda.
+    const classe =
+      `group/cartao relative flex w-[calc(100%+1rem)] flex-col gap-1.5 text-left text-sm ${cor} ` +
+      'cursor-pointer rounded-2xl p-2 -m-2 outline-none transition-colors duration-300 ease-out ' +
+      'hover:bg-surface-hover motion-reduce:transition-none';
+    const miolo = (
+      <>
+        <div className={classeCaixa} style={estilo}>
+          {children}
+        </div>
+        {legenda}
+        {bordaNeon}
+      </>
+    );
+    if (para) {
+      return (
+        <Link to={para} state={estadoDeRota} className={classe}>
+          {miolo}
+        </Link>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={aoClicar}
+        disabled={desabilitado}
+        aria-label={rotuloAcessivel}
+        className={`${classe} disabled:cursor-progress`}
+      >
+        {miolo}
+      </button>
+    );
+  }
+
+  // Lista: sem mudança — a caixa inteira (`classeCaixa`) é o alvo interativo,
+  // `children` e `legenda` entram juntos nela.
+  const classe = `group/cartao ${classeCaixa} cursor-pointer outline-none transition-colors duration-200 hover:bg-surface-hover`;
   if (para) {
     return (
       <Link to={para} state={estadoDeRota} className={classe} style={estilo}>
         {children}
+        {legenda}
         {bordaNeon}
       </Link>
     );
@@ -143,6 +230,7 @@ export function CartaoDeEpisodio({
       className={`${classe} disabled:cursor-progress`}
     >
       {children}
+      {legenda}
       {bordaNeon}
     </button>
   );
@@ -199,9 +287,10 @@ function tomDoStatus(status) {
 // Overlay de status centralizado sobre a miniatura 16/9 — SÓ modo grade
 // (no modo lista o status segue como texto inline ao lado do rótulo,
 // inalterado). Scrim (`bg-black/50`) + `backdrop-blur-sm` dão legibilidade
-// ao rótulo sobre qualquer thumb; o componente fica ANTES do rodapé em
-// degradê na árvore de cada ramo, então o número/título do episódio no
-// rodapé pinta por cima e não é borrado nem esmaecido. `tom`:
+// ao rótulo sobre qualquer thumb; como a legenda (FaixaDeConteudo) mora fora
+// da caixa recortada da miniatura (ver CartaoDeEpisodio), este overlay nunca
+// disputa espaço com o número/título do episódio — os dois nem se sobrepõem
+// mais. `tom`:
 //  - 'progresso': spinner (anel de borda parcial girando). É decorativo
 //    (`aria-hidden`) e some em `motion-reduce` — a preferência de menos
 //    movimento não pode deixar um anel girando pra sempre, e o rótulo já
@@ -263,7 +352,7 @@ export function IndicadorDePlay({ emGrade, temThumb }) {
   return (
     <span className={`pointer-events-none flex items-center justify-center ${posicao}`}>
       <span
-        className={`flex items-center justify-center rounded-full bg-white text-black transition duration-200 ease-out group-hover/cartao:brightness-90 motion-reduce:transition-none ${
+        className={`flex items-center justify-center rounded-full bg-white text-black transition duration-200 ease-out group-hover/cartao:brightness-90 group-hover/cartao:scale-110 motion-reduce:transition-none ${
           emGrade ? 'h-12 w-12' : 'h-9 w-9'
         }`}
       >
@@ -279,17 +368,28 @@ export function IndicadorDePlay({ emGrade, temThumb }) {
 }
 
 // Rótulo do episódio — idêntico nos dois modos (grade e lista) e nos quatro
-// ramos: "Episódio {numero}", com "— {titulo}" anexado quando o registro traz
-// título. `line-clamp-2` sempre: um título longo ocupa no máx. 2 linhas e é
-// cortado com reticências, tanto no rodapé em degradê da grade quanto na linha
-// da lista. `naoNumerico` (numero == null, ex. "Especial"): o rótulo cru da
-// fonte entra no lugar de "Episódio N".
+// ramos: "EP.{numero}", com " - {titulo}" anexado quando o registro traz
+// título (TMDB, `PaginaDoAnime.jsx::linhas`). `line-clamp-2` sempre: um
+// título longo ocupa no máx. 2 linhas e é cortado com reticências, tanto na
+// legenda abaixo da miniatura (grade) quanto na linha da lista. `naoNumerico`
+// (numero == null, ex. "Especial"): o rótulo cru da fonte entra no lugar de
+// "EP.N".
 function RotuloEpisodio({ numero, rotulo, titulo }) {
   return (
     <span className="line-clamp-2 text-sm font-semibold text-white">
-      {numero == null ? rotulo : `Episódio ${numero}${titulo ? ` — ${titulo}` : ''}`}
+      {numero == null ? rotulo : `EP.${numero}${titulo ? ` - ${titulo}` : ''}`}
     </span>
   );
+}
+
+// Sinopse do episódio (TMDB, mesmo overlay de `titulo`/`thumb`) — logo abaixo
+// do rótulo, nos dois modos (grade e lista). `line-clamp-2`: sinopse pode ser
+// um parágrafo inteiro, cortada com reticências pra não estourar a altura do
+// card/linha; sem sinopse (TMDB não achou ou sem tradução pt-BR), não
+// renderiza nada — nunca um espaço vazio no lugar.
+function SinopseEpisodio({ sinopse }) {
+  if (!sinopse) return null;
+  return <p className="line-clamp-2 text-xs text-ink-muted">{sinopse}</p>;
 }
 
 // "Assistido": o episódio foi visto até o fim (`assistido_em`) — distinto da
@@ -299,7 +399,7 @@ function RotuloEpisodio({ numero, rotulo, titulo }) {
 function BadgeAssistido() {
   return (
     <span
-      className="shrink-0 bg-black/60 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-white"
+      className="px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-white"
       aria-label="já assistido"
     >
       Assistido
@@ -314,7 +414,7 @@ function BadgeAssistido() {
 // IndicadorDePlay, do rodapé em degradê e da borda neon na árvore — nada disso
 // é esmaecido, só a imagem. `aria-hidden`: o BadgeAssistido carrega o rótulo.
 function ScrimAssistido() {
-  return <span aria-hidden="true" className="absolute inset-0 bg-[#0b0b0d]/60" />;
+  return <span aria-hidden="true" className="absolute inset-0 bg-[#0b0b0d]/40" />;
 }
 
 // Verbo de captura como texto — renderizado SÓ no modo lista. No modo grade
@@ -329,19 +429,22 @@ function RotuloDeAcao({ verbo, capturando }) {
 }
 
 // Faixa de conteúdo textual do card — uma moldura só pros dois modos. Grade:
-// rodapé absoluto sobre a thumb, com degradê pra legibilidade do texto por
-// cima da imagem. Lista: coluna ao lado da miniatura (o padding mora aqui, não
-// na raiz, pra a thumb encostar na borda esquerda). Primeira linha: `rotulo`
-// à esquerda (pode quebrar em 2 linhas) e `trailing` à direita (badge "✓
-// assistido", verbo de captura, status inline, nota de origem ou o aviso de
-// rótulo não numérico), alinhados pelo topo com `justify-between`. `extra` (a
-// barra de progresso do ramo `pronto`) vem abaixo.
-export function FaixaDeConteudo({ modo, rotulo, trailing, extra }) {
+// legenda ABAIXO da miniatura, em fluxo normal (`CartaoDeEpisodio` já a
+// recebe fora da caixa recortada via prop `legenda` — ver rationale lá; sem
+// degradê nenhum, a miniatura fica limpa). Lista: coluna ao lado da
+// miniatura (o padding mora aqui, não na raiz, pra a thumb encostar na
+// borda esquerda). Primeira linha: `rotulo` à esquerda (pode quebrar em 2
+// linhas) e `trailing` à direita (badge "✓ assistido", verbo de captura,
+// status inline, nota de origem ou o aviso de rótulo não numérico),
+// alinhados pelo topo com `justify-between`. `sinopse` (SinopseEpisodio, TMDB)
+// vem logo abaixo do rótulo; `extra` (a barra de progresso do ramo `pronto`)
+// vem depois dela.
+export function FaixaDeConteudo({ modo, rotulo, trailing, sinopse, extra }) {
   return (
     <span
       className={
         modo === 'grade'
-          ? 'absolute inset-x-0 bottom-0 flex flex-col gap-1.5 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-3'
+          ? 'flex flex-col gap-1.5 pt-2'
           : 'flex min-w-0 flex-1 flex-col justify-center gap-1.5 px-3 py-2.5'
       }
     >
@@ -349,6 +452,7 @@ export function FaixaDeConteudo({ modo, rotulo, trailing, extra }) {
         {rotulo}
         {trailing}
       </span>
+      {sinopse}
       {extra}
     </span>
   );
@@ -368,11 +472,11 @@ export function FaixaDeConteudo({ modo, rotulo, trailing, extra }) {
 //     com badge "✓ assistido" (quando `assistido_em` de qualquer uma das duas
 //     fontes) e verbo "Recapturar" em vez de "Capturar" — o backend (D2,
 //     `api/servicos/jobs.py::criar_job_site`) reaproveita a linha existente
-//     nesses dois casos. No caso `episodioDescartado`, uma nota "(via {site})"
-//     ou "(versão real)" indica a origem quando difere da fonte ativa (nunca
-//     as duas juntas — site diferente já basta pra explicar e tem prioridade,
-//     ver `notaOrigem` abaixo) — sem isso, "✓ assistido" pareceria vir da
-//     fonte que o usuário navega agora;
+//     nesses dois casos. No caso `episodioDescartado` de MESMO site mas versão
+//     diferente da ativa, uma nota "(versão real)" indica a origem (ver
+//     `notaOrigem` abaixo). A nota "(via {site})" pra `episodioDescartado` de
+//     outro site foi removida a pedido do usuário — ruído visual ao trocar de
+//     fonte;
 // (3) capturado mas ainda em processamento (ou falhou): status ao vivo,
 //     cruzado com `job` do WS quando disponível. Alvo estático <div> (não
 //     clicável hoje);
@@ -388,8 +492,9 @@ export function FaixaDeConteudo({ modo, rotulo, trailing, extra }) {
 // ramo 3, "Capturando…" transitório dos ramos 2 e 4) aparece como overlay
 // central sobre a thumb (`OverlayDeStatus`): spinner nos estados de progresso,
 // "⚠" em falha/intervenção, só rótulo nos neutros. Rótulo (RotuloEpisodio,
-// idêntico nos dois modos), "✓ assistido", nota de origem, barra de progresso
-// do ramo `pronto` e o aviso de `naoNumerico` seguem nos dois modos.
+// idêntico nos dois modos), sinopse (SinopseEpisodio, TMDB), "✓ assistido",
+// nota de origem, barra de progresso do ramo `pronto` e o aviso de
+// `naoNumerico` seguem nos dois modos.
 export default function LinhaDeEpisodio({
   numero,
   rotulo,
@@ -402,6 +507,12 @@ export default function LinhaDeEpisodio({
   // Renderizada por `MiniaturaDoEpisodio`; os 4 ramos de render abaixo a
   // exibem.
   thumb,
+  // Título/sinopse do episódio (ou `null`) — `PaginaDoAnime.jsx::linhas`:
+  // mesma prioridade remoto-depois-local de `thumb` acima, mas sem fallback
+  // pra arte do anime (não existe "sinopse genérica"). Usados por
+  // `RotuloEpisodio`/`SinopseEpisodio` nos 4 ramos de render abaixo.
+  titulo,
+  sinopse,
   // `PaginaDoAnime.jsx::remotos.dados?.dominio ?? null` — domínio da fonte
   // remota ativa (`null` enquanto ainda carrega/erra/está ambígua). Usado só
   // pra decidir a nota de origem do `episodioDescartado` no ramo
@@ -415,16 +526,21 @@ export default function LinhaDeEpisodio({
   versaoAtiva,
   // `PaginaDoAnime.jsx::modoVisualizacao` — 'lista' (default): linha
   // horizontal, thumb 16/9 à esquerda e o conteúdo ao lado; 'grade': a thumb
-  // 16/9 É o card, com número/ação sobre um degradê no rodapé. Muda o
-  // enquadramento (className da raiz, posição da miniatura) e, nos ramos de
-  // captura, o quanto o card cresce no hover (ver CartaoDeEpisodio) — nunca
-  // qual conteúdo cada ramo renderiza.
+  // 16/9 é o card, com número/ação na legenda ABAIXO dela (ver
+  // CartaoDeEpisodio). Muda o enquadramento (className da raiz, posição da
+  // miniatura) e, nos ramos de captura, o quanto o card cresce no hover —
+  // nunca qual conteúdo cada ramo renderiza.
   modo = 'lista',
   job,
   aoCapturar,
   capturando,
   animeId,
   animeTitulo,
+  // `anime.numero_temporada` (PaginaDoAnime.jsx) — vai pro título do player
+  // (PaginaDoPlayer.jsx). Ao contrário do H1/seletor da página do anime, o
+  // player mostra mesmo com uma temporada só (sem seletor lá pra já dizer
+  // "qual temporada").
+  numeroTemporada,
 }) {
   const naoNumerico = numero == null;
   const emGrade = modo === 'grade';
@@ -463,80 +579,68 @@ export default function LinhaDeEpisodio({
         modo={modo}
         cor="text-white"
         para={`/assistir/${episodio.id}`}
-        estadoDeRota={{ episodio: { numero, animeId, animeTitulo, titulo: episodio.titulo } }}
+        estadoDeRota={{
+          episodio: { numero, animeId, animeTitulo, titulo: episodio.titulo, numeroTemporada },
+        }}
+        legenda={
+          <FaixaDeConteudo
+            modo={modo}
+            rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} titulo={titulo} />}
+            trailing={episodio.assistido_em ? <BadgeAssistido /> : null}
+            sinopse={<SinopseEpisodio sinopse={sinopse} />}
+            extra={
+              percentualAssistido != null ? (
+                <span className="flex items-center gap-2">
+                  <span
+                    role="progressbar"
+                    aria-label="progresso de reprodução"
+                    aria-valuenow={percentualAssistido}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
+                  >
+                    <span
+                      style={{ width: `${percentualAssistido}%` }}
+                      className="block h-full rounded-full bg-neon"
+                    />
+                  </span>
+                  <span className="shrink-0 text-xs text-ink-muted font-semibold">
+                    faltam {minutosRestantes} min
+                  </span>
+                </span>
+              ) : null
+            }
+          />
+        }
       >
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
         {emGrade && episodio.assistido_em && <ScrimAssistido />}
         <IndicadorDePlay emGrade={emGrade} temThumb={!!thumb} />
-        <FaixaDeConteudo
-          modo={modo}
-          rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} titulo={episodio.titulo} />}
-          trailing={episodio.assistido_em ? <BadgeAssistido /> : null}
-          extra={
-            percentualAssistido != null ? (
-              <span className="flex items-center gap-2">
-                <span
-                  role="progressbar"
-                  aria-label="progresso de reprodução"
-                  aria-valuenow={percentualAssistido}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
-                >
-                  <span
-                    style={{ width: `${percentualAssistido}%` }}
-                    className="block h-full rounded-full bg-neon"
-                  />
-                </span>
-                <span className="shrink-0 text-xs text-ink-muted font-semibold">
-                  faltam {minutosRestantes} min
-                </span>
-              </span>
-            ) : null
-          }
-        />
       </CartaoDeEpisodio>
     );
   }
 
   const liberadoOuDescartado = episodio?.status === 'liberado' ? episodio : episodioDescartado;
   if (liberadoOuDescartado) {
-    // Nota de origem: só faz sentido quando o "✓ assistido"/"Recapturar"
-    // vem de `episodioDescartado` (registro de OUTRA fonte/versão que não a
-    // ativa, `PaginaDoAnime.jsx::pertenceAFonteAtiva`) — nunca quando é o
-    // próprio `episodio` da fonte ativa em estado terminal `liberado`, caso
-    // em que `episodioDescartado` é sempre `null` (PaginaDoAnime.jsx só
-    // popula `episodioDescartado` quando `episodio` é nulo). Sem isto,
-    // "Episódio 18 ✓ assistido" numa fonte cujo catálogo remoto só vai até
-    // 16 fica sem pista de que aquele registro é de outra fonte.
+    // Nota de origem: só o caso "mesmo domínio da fonte ativa, versão
+    // diferente" (ex. dublado gravado enquanto a fonte ativa agora pede
+    // legendado) — a versão real é o que explica a divergência. O antigo
+    // "(via {site})" pra um `episodioDescartado` de OUTRO domínio foi
+    // removido a pedido do usuário (ruído visual ao lado do "✓ assistido"
+    // quando se troca de fonte). `episodioDescartado.versao === 'desconhecida'`
+    // nunca cai aqui na prática — mesmo domínio + 'desconhecida' já faz
+    // `pertenceAFonteAtiva` (PaginaDoAnime.jsx) aceitar o episódio como da
+    // fonte ativa; mantido por completude (`ROTULO_VERSAO` cobre 'desconhecida').
     // `dominioAtivo == null` (loading/erro/fonte ambígua) suprime a nota
     // pelo mesmo critério conservador de `pertenceAFonteAtiva`.
     let notaOrigem = null;
-    if (episodioDescartado && dominioAtivo != null) {
-      // 'local' (backend/core/enums.py::SITE_LOCAL, mesmo literal usado sem
-      // import em PaginaDoAnime.jsx::SITE_LOCAL) não conta como "outra
-      // fonte" com sentido pro usuário — captura manual não tem "site" pra
-      // nomear.
-      if (
-        episodioDescartado.site_origem !== dominioAtivo &&
-        episodioDescartado.site_origem !== 'local'
-      ) {
-        notaOrigem = `via ${episodioDescartado.site_origem}`;
-      } else if (
-        episodioDescartado.site_origem === dominioAtivo &&
-        episodioDescartado.versao !== versaoAtiva
-      ) {
-        // Mesmo domínio da fonte ativa, versão diferente (ex. dublado
-        // gravado enquanto a fonte ativa agora pede legendado) — mostrar o
-        // domínio de novo não ajudaria (seria idêntico ao ativo), a versão
-        // real é o que explica a divergência. `episodioDescartado.versao ===
-        // 'desconhecida'` nunca cai aqui na prática — mesmo domínio +
-        // 'desconhecida' já faz `pertenceAFonteAtiva` (PaginaDoAnime.jsx)
-        // aceitar o episódio como pertencente à fonte ativa, então ele nunca
-        // vira `episodioDescartado` nesse caso; mantido mesmo assim por
-        // completude (`ROTULO_VERSAO` cobre 'desconhecida').
-        notaOrigem = ROTULO_VERSAO[episodioDescartado.versao] ?? episodioDescartado.versao;
-      }
+    if (
+      episodioDescartado &&
+      dominioAtivo != null &&
+      episodioDescartado.site_origem === dominioAtivo &&
+      episodioDescartado.versao !== versaoAtiva
+    ) {
+      notaOrigem = ROTULO_VERSAO[episodioDescartado.versao] ?? episodioDescartado.versao;
     }
     // Trailing: "✓ assistido" (de qualquer uma das duas fontes), a nota de
     // origem entre parênteses e — só no modo lista, só com número — o verbo
@@ -557,16 +661,19 @@ export default function LinhaDeEpisodio({
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
         {emGrade && liberadoOuDescartado.assistido_em && <ScrimAssistido />}
         {overlayCapturando}
-        <FaixaDeConteudo
-          modo={modo}
-          rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} />}
-          trailing={trailing}
-        />
       </>
+    );
+    const legenda = (
+      <FaixaDeConteudo
+        modo={modo}
+        rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} titulo={titulo} />}
+        trailing={trailing}
+        sinopse={<SinopseEpisodio sinopse={sinopse} />}
+      />
     );
     if (naoNumerico) {
       return (
-        <CartaoDeEpisodio modo={modo} cor="text-ink-muted">
+        <CartaoDeEpisodio modo={modo} cor="text-ink-muted" legenda={legenda}>
           {conteudo}
         </CartaoDeEpisodio>
       );
@@ -578,6 +685,7 @@ export default function LinhaDeEpisodio({
         aoClicar={() => aoCapturar(numero)}
         desabilitado={capturando}
         rotuloAcessivel={`Recapturar episódio ${numero}`}
+        legenda={legenda}
       >
         {conteudo}
       </CartaoDeEpisodio>
@@ -595,20 +703,26 @@ export default function LinhaDeEpisodio({
     // spinner nos estados de progresso, "⚠" em falha/intervenção, só o rótulo
     // nos terminais neutros — e a faixa fica só com o rótulo do episódio.
     return (
-      <CartaoDeEpisodio modo={modo} cor="text-ink-muted">
+      <CartaoDeEpisodio
+        modo={modo}
+        cor="text-ink-muted"
+        legenda={
+          <FaixaDeConteudo
+            modo={modo}
+            rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} titulo={titulo} />}
+            trailing={
+              emGrade ? null : (
+                <span aria-live="polite" className="shrink-0">
+                  {rotuloStatus}
+                </span>
+              )
+            }
+            sinopse={<SinopseEpisodio sinopse={sinopse} />}
+          />
+        }
+      >
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
         {emGrade && <OverlayDeStatus rotulo={rotuloStatus} tom={tomDoStatus(statusAtual)} />}
-        <FaixaDeConteudo
-          modo={modo}
-          rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} titulo={episodio.titulo} />}
-          trailing={
-            emGrade ? null : (
-              <span aria-live="polite" className="shrink-0">
-                {rotuloStatus}
-              </span>
-            )
-          }
-        />
       </CartaoDeEpisodio>
     );
   }
@@ -623,33 +737,36 @@ export default function LinhaDeEpisodio({
     <>
       <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
       {overlayCapturando}
-      <FaixaDeConteudo
-        modo={modo}
-        rotulo={
-          rotuloDivergente ? (
-            <span>
-              <RotuloEpisodio numero={numero} rotulo={rotulo} />
-              <span className="mt-0.5 block text-xs text-ink-muted">
-                (rótulo "{rotulo}" na fonte)
-              </span>
-            </span>
-          ) : (
-            <RotuloEpisodio numero={numero} rotulo={rotulo} />
-          )
-        }
-        trailing={
-          naoNumerico ? (
-            <span className="text-xs text-ink-muted">Captura indisponível — rótulo não numérico</span>
-          ) : emGrade ? null : (
-            <RotuloDeAcao verbo="Capturar" capturando={capturando} />
-          )
-        }
-      />
     </>
+  );
+  const legendaCaptura = (
+    <FaixaDeConteudo
+      modo={modo}
+      rotulo={
+        rotuloDivergente ? (
+          <span>
+            <RotuloEpisodio numero={numero} rotulo={rotulo} titulo={titulo} />
+            <span className="mt-0.5 block text-xs text-ink-muted">
+              (rótulo "{rotulo}" na fonte)
+            </span>
+          </span>
+        ) : (
+          <RotuloEpisodio numero={numero} rotulo={rotulo} titulo={titulo} />
+        )
+      }
+      trailing={
+        naoNumerico ? (
+          <span className="text-xs text-ink-muted">Captura indisponível — rótulo não numérico</span>
+        ) : emGrade ? null : (
+          <RotuloDeAcao verbo="Capturar" capturando={capturando} />
+        )
+      }
+      sinopse={<SinopseEpisodio sinopse={sinopse} />}
+    />
   );
   if (naoNumerico) {
     return (
-      <CartaoDeEpisodio modo={modo} cor="text-white font-semibold">
+      <CartaoDeEpisodio modo={modo} cor="text-white font-semibold" legenda={legendaCaptura}>
         {conteudoCaptura}
       </CartaoDeEpisodio>
     );
@@ -661,6 +778,7 @@ export default function LinhaDeEpisodio({
       aoClicar={() => aoCapturar(numero)}
       desabilitado={capturando}
       rotuloAcessivel={`Capturar episódio ${numero}`}
+      legenda={legendaCaptura}
     >
       {conteudoCaptura}
     </CartaoDeEpisodio>

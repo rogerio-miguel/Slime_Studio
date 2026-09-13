@@ -12,7 +12,7 @@ import {
 } from './janelaDeDestaques.js';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 import { traduzirGenero } from './generos.js';
-import { PADDING_TITULO } from './tamanhoDeCard.js';
+import BlocoConteudoHero from './BlocoConteudoHero.jsx';
 
 // Hero da home (estilo AnimeFire): banner full-width com imagem de fundo e
 // gradiente escuro, um destaque por vez, alimentado pelo feed
@@ -134,19 +134,27 @@ export function imagemEmAltaResolucao(url) {
   );
 }
 
-// Gradiente do hero — pseudo-::before empilhado no AnimeFire: 3 camadas com a
-// cor EXATA do fundo da página (`#17171b`, ver `bg-[#17171b]` em
-// paginas/Inicio.jsx), pra base do hero se dissolver no fundo sem emenda.
-// Inline no `style`: o parser de multi-gradiente de valor arbitrário do
-// Tailwind v4 não é confiável (mesmo motivo de `SOMBRA_SLIDE_ATIVO`).
-// Exportado — fonte única: o hero de paginas/PaginaDoAnime.jsx usa o mesmo
-// gradiente pra dissolver no mesmo `#17171b`.
-export const GRADIENTE_HERO =
-  'linear-gradient(to top, #17171b, transparent 45%), linear-gradient(to top, #17171b, transparent 40%), linear-gradient(77deg, #17171b, transparent 60%)';
+// Gradiente do hero — pseudo-::before empilhado no AnimeFire: 3 camadas na
+// cor EXATA do fundo da página, pra base do hero se dissolver nela sem
+// emenda. Função, não mais constante: `paginas/Inicio.jsx` e
+// `paginas/PaginaDoAnime.jsx` compartilhavam UM `#17171b` fixo até este
+// dissolver ficar hardcoded — hoje a Home é `bg-black` sólido
+// (paginas/Inicio.jsx) e a página do anime ainda é `#17171b`
+// (paginas/PaginaDoAnime.jsx), então cada hero passa a PRÓPRIA cor de fundo
+// em vez de uma compartilhada. Inline no `style` (não a função em si, o
+// gradiente que ela devolve): o parser de multi-gradiente de valor arbitrário
+// do Tailwind v4 não é confiável (mesmo motivo de `SOMBRA_SLIDE_ATIVO`).
+// Exportada — fonte única, o hero de paginas/PaginaDoAnime.jsx chama a mesma
+// função com a própria cor.
+export function gradienteHero(cor) {
+  return `linear-gradient(to top, ${cor}, transparent 45%), linear-gradient(to top, ${cor}, transparent 40%), linear-gradient(77deg, ${cor}, transparent 60%)`;
+}
 // Sem arte horizontal (`semBanner`): só o pôster retrato borrado atrás do
 // texto — uma camada extra à esquerda mantém o texto legível sobre ele.
-// Também exportado (mesmo fallback no hero de paginas/PaginaDoAnime.jsx).
-export const GRADIENTE_HERO_SEM_BANNER = `linear-gradient(to right, #17171b, transparent 60%), ${GRADIENTE_HERO}`;
+// Também exportada (mesmo fallback no hero de paginas/PaginaDoAnime.jsx).
+export function gradienteHeroSemBanner(cor) {
+  return `linear-gradient(to right, ${cor}, transparent 60%), ${gradienteHero(cor)}`;
+}
 
 // Botão primário do hero (pílula clara, texto escuro, ícone play) — geometria
 // medida ao vivo no AnimeFire. Compartilhado entre o `<Link>` (anime já
@@ -494,40 +502,38 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
                 <div
                   className="pointer-events-none absolute inset-0"
                   style={{
-                    background: semBanner ? GRADIENTE_HERO_SEM_BANNER : GRADIENTE_HERO,
+                    // `#000`: cor do `<main>` da Home (paginas/Inicio.jsx,
+                    // `bg-black`) — o hero dissolve nela, não mais no antigo
+                    // `#17171b` (ver rationale em gradienteHero acima).
+                    background: semBanner ? gradienteHeroSemBanner('#000') : gradienteHero('#000'),
                   }}
                 />
 
-                {/* Bloco de conteúdo ancorado embaixo-esquerda — largura
-                    limitada a `45vw` no desktop, texto empurrado pro rodapé do
-                    hero (geometria medida ao vivo no AnimeFire). `paddingInline`
-                    = `PADDING_TITULO` (./tamanhoDeCard.js, `calc(3.7% + 10px)`):
-                    a MESMA margem lateral das fileiras/Galeria, pra o título e o
-                    botão do hero ficarem no mesmo eixo vertical que os títulos e
-                    a borda dos cards das prateleiras abaixo — em qualquer
-                    viewport (antes era `px-6/10/16` fixo, que descolava do
-                    gutter percentual das fileiras acima de `lg`). Vai no `style`
-                    inline: a `/` do `calc` colide com o modificador de opacidade
-                    do Tailwind v4. Sem `pointer-events-none`: agora tem
-                    botão/link dentro; os textos puros não roubam clique de
-                    nada (não há mais overlay de slide). */}
-                <div
-                  className="absolute inset-x-0 bottom-0 flex max-w-[90%] flex-col items-start gap-4 pb-10 sm:max-w-[70%] sm:pb-14 lg:max-w-[45vw] lg:pb-[18vh] xl:pb-[20vh]"
-                  style={{ paddingInline: PADDING_TITULO }}
-                >
-                  {(rank > 0 || catalogado) && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {rank > 0 && (
-                        <span className={CLASSE_PILL_HERO}>
-                          <IconeEmAlta />
-                          {`#${rank} em alta`}
-                        </span>
-                      )}
-                      {catalogado && <span className={CLASSE_PILL_HERO}>Anime no Catálogo</span>}
-                    </div>
-                  )}
-
-                  <div>
+                {/* Bloco de conteúdo — esqueleto compartilhado com o header de
+                    paginas/PaginaDoAnime.jsx (./BlocoConteudoHero.jsx: pills →
+                    título/subtítulo → sinopse → meta → CTA). Aqui só o
+                    posicionamento é próprio do slide: ancorado embaixo-
+                    esquerda, largura limitada a `45vw` no desktop, texto
+                    empurrado pro rodapé do hero (geometria medida ao vivo no
+                    AnimeFire). Sem `pointer-events-none`: tem botão/link
+                    dentro; os textos puros não roubam clique de nada (não há
+                    mais overlay de slide). */}
+                <BlocoConteudoHero
+                  className="absolute inset-x-0 bottom-0 max-w-[90%] pb-10 sm:max-w-[70%] sm:pb-14 lg:max-w-[45vw] lg:pb-[18vh] xl:pb-[20vh]"
+                  pills={[
+                    rank > 0 && (
+                      <span key="rank" className={CLASSE_PILL_HERO}>
+                        <IconeEmAlta />
+                        {`#${rank} em alta`}
+                      </span>
+                    ),
+                    catalogado && (
+                      <span key="catalogado" className={CLASSE_PILL_HERO}>
+                        Anime no Catálogo
+                      </span>
+                    ),
+                  ].filter(Boolean)}
+                  titulo={
                     <h3 className="mb-1 line-clamp-2 text-2xl font-extrabold text-white sm:text-4xl lg:text-5xl lg:leading-[1.2]">
                       {catalogado ? (
                         <Link
@@ -540,47 +546,53 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
                         titulo
                       )}
                     </h3>
-                    {mostrarAlternativo && (
+                  }
+                  tituloSecundario={
+                    mostrarAlternativo && (
                       <p className="line-clamp-1 text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
                         {tituloAlternativo}
                       </p>
-                    )}
-                  </div>
-
-                  {/* Meta (ano • gêneros) + data do próximo episódio ACIMA do
-                      botão — o AnimeFire não mostra essas linhas no hero, mas o
-                      usuário quis mantê-las e vê-las nesta posição. */}
-                  {(meta || proximoEpisodio) && (
-                    <div className="flex flex-col items-start gap-1">
-                      {meta && <p className="text-xs text-ink-muted sm:text-sm">{meta}</p>}
-                      {proximoEpisodio && (
-                        <p className="text-xs text-white/70 sm:text-sm">{proximoEpisodio}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {catalogado ? (
-                    <Link
-                      to={`/anime/${item.anime_id}`}
-                      aria-label={`${titulo} — assistir agora`}
-                      className={CLASSE_BOTAO_HERO}
-                    >
-                      <IconePlay width={20} height={20} fill="currentColor" />
-                      Assistir agora
-                    </Link>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => aoMaterializar(item)}
-                      disabled={materializando}
-                      aria-label={materializando ? undefined : `Adicionar ${titulo} ao catálogo`}
-                      className={CLASSE_BOTAO_HERO}
-                    >
-                      <IconePlay width={20} height={20} fill="currentColor" />
-                      {materializando ? 'Adicionando…' : 'Adicionar ao Catálogo'}
-                    </button>
-                  )}
-                </div>
+                    )
+                  }
+                  // Só o feed "em alta" traz sinopse (`AnimeEmAltaSaida.sinopse`).
+                  // Escondida abaixo de `sm` porque no mobile o slide é curto
+                  // demais e a sinopse empurraria o CTA pra fora (a página do
+                  // anime não tem esse limite — o hero dela cresce).
+                  sinopse={item.sinopse}
+                  ocultarSinopseNoMobile
+                  // Meta (ano • gêneros) + data do próximo episódio ACIMA do
+                  // botão — o AnimeFire não mostra essas linhas no hero, mas o
+                  // usuário quis mantê-las e vê-las nesta posição.
+                  meta={meta}
+                  metaExtra={
+                    proximoEpisodio && (
+                      <p className="text-xs text-white/70 sm:text-sm">{proximoEpisodio}</p>
+                    )
+                  }
+                  cta={
+                    catalogado ? (
+                      <Link
+                        to={`/anime/${item.anime_id}`}
+                        aria-label={`${titulo} — assistir agora`}
+                        className={CLASSE_BOTAO_HERO}
+                      >
+                        <IconePlay width={20} height={20} fill="currentColor" />
+                        Assistir agora
+                      </Link>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => aoMaterializar(item)}
+                        disabled={materializando}
+                        aria-label={materializando ? undefined : `Adicionar ${titulo} ao catálogo`}
+                        className={CLASSE_BOTAO_HERO}
+                      >
+                        <IconePlay width={20} height={20} fill="currentColor" />
+                        {materializando ? 'Adicionando…' : 'Adicionar ao Catálogo'}
+                      </button>
+                    )
+                  }
+                />
               </li>
             );
           })}

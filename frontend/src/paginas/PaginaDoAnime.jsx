@@ -17,10 +17,11 @@ import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
+import { nomeDaFonte } from '../fontes.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+import BlocoConteudoHero from '../inicio/BlocoConteudoHero.jsx';
 import {
-  GRADIENTE_HERO,
-  GRADIENTE_HERO_SEM_BANNER,
+  gradienteHero,
   imagemEmAltaResolucao,
   CLASSE_PILL_HERO,
 } from '../inicio/CarrosselDestaques.jsx';
@@ -417,6 +418,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             // trocada) e não aparece na listagem remota atual, ou a própria
             // listagem ainda carregando/com erro.
             thumb: remotosDoNumero[0]?.thumb_url ?? thumbDoAnime,
+            // Título/sinopse: mesma prioridade do thumb acima (remoto — já
+            // com o overlay TMDB do servidor — antes do local), mas SEM
+            // fallback pra arte do anime: `episodio?.titulo`/`.sinopse` só
+            // socorrem quando a listagem remota atual não trouxe este
+            // episódio (`episodioDescartado`) ou ainda está carregando/com
+            // erro; sem nenhum dos dois, ficam vazios (nunca inventa texto).
+            titulo: remotosDoNumero[0]?.titulo ?? episodio?.titulo ?? null,
+            sinopse: remotosDoNumero[0]?.sinopse ?? episodio?.sinopse ?? null,
           },
         ];
       }
@@ -428,6 +437,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         episodio: null,
         episodioDescartado,
         thumb: remoto.thumb_url ?? thumbDoAnime,
+        titulo: remoto.titulo ?? null,
+        sinopse: remoto.sinopse ?? null,
       }));
     });
 
@@ -438,6 +449,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
       colisao: false,
       episodio: null,
       thumb: remoto.thumb_url ?? thumbDoAnime,
+      titulo: remoto.titulo ?? null,
+      sinopse: remoto.sinopse ?? null,
     }));
 
     return [...linhasNumericas, ...linhasSemNumero];
@@ -460,14 +473,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   }, [linhas]);
 
   // Dados derivados do bloco de conteúdo do hero (estilo AnimeFire, coluna
-  // única). `meta` é a linha stacked "ano • N episódios • versão" logo abaixo
-  // do título; os gêneros saem dela e viram pills próprias (`generosTraduzidos`,
+  // única). `meta` é a linha stacked "ano • N episódios • fonte • versão" logo
+  // abaixo do título (a fonte — `nomeDaFonte(remotos.dados.dominio)` — só
+  // aparece depois que a listagem remota resolve; até lá o `.filter(Boolean)`
+  // a omite);
+  // os gêneros saem dela e viram pills próprias (`generosTraduzidos`,
   // até 3, traduzidos por `traduzirGenero` — mesmo recorte do card do
   // carrossel da Home). Declarado aqui (não junto de `anime`) porque a
   // contagem depende de `linhas`, que já une episódios locais + remotos.
-  // `AnimeDetalheSaida` (backend/api/esquemas.py) não expõe título
-  // alternativo/romaji nem nota — por isso o hero não tem linha de subtítulo
-  // nem rating, ao contrário do AnimeFire. Rótulo da versão via `ROTULO_VERSAO`
+  // `AnimeDetalheSaida` não expõe nota/rating — por isso o hero não tem linha
+  // de rating, ao contrário do AnimeFire. Rótulo da versão via `ROTULO_VERSAO`
   // (mesmo mapa usado por LinhaDeEpisodio.jsx pra exibir a versão).
   // Título do H1 — quando a franquia tem 2+ temporadas catalogadas, o marcador
   // de temporada sai do título (o seletor de temporada logo abaixo já diz "qual
@@ -478,6 +493,18 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     anime?.temporadas && anime.temporadas.length > 1
       ? tituloBaseDeTemporada(anime.titulo, anime.numero_temporada)
       : anime?.titulo;
+  // 2ª linha do hero: título em inglês da AniList (`Anime.titulo_ingles`),
+  // mesmo par título/subtítulo do carrossel da Home. Recebe o mesmo corte de
+  // marcador de temporada que o primário quando a franquia tem seletor; só
+  // aparece se existir E divergir do que já está no H1.
+  const tituloInglesAjustado =
+    anime?.titulo_ingles && anime?.temporadas && anime.temporadas.length > 1
+      ? tituloBaseDeTemporada(anime.titulo_ingles, anime.numero_temporada)
+      : (anime?.titulo_ingles ?? null);
+  const tituloSecundario =
+    tituloInglesAjustado && tituloInglesAjustado !== tituloExibicao
+      ? tituloInglesAjustado
+      : null;
   const generosTraduzidos = (anime?.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
   const avisoProximaTemporada = textoDeProximaTemporada(anime?.proxima_temporada);
   const meta = [
@@ -485,6 +512,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     linhas.length > 0
       ? `${linhas.length} episódio${linhas.length === 1 ? '' : 's'}`
       : null,
+    nomeDaFonte(remotos.dados?.dominio),
     ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva,
   ]
     .filter(Boolean)
@@ -692,40 +720,55 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
           `components/BarraDeNavegacao.jsx`). `transparente`: sem fundo no topo
           (deixa a arte do hero aparecer sob a navbar), escurece ao rolar. */}
       <BarraDeNavegacao fase="revelado" transparente />
-      {/* `bg-[#17171b]` + `min-h-screen`: mesmo fundo do `<main>` de
-          paginas/Galeria.jsx (fonte da verdade — cor do `body` do Disney+) e a
-          MESMA cor em que o gradiente do hero (`GRADIENTE_HERO`) se dissolve
-          sem emenda. É ele que faz a drop shadow dos cards da grade de
-          episódios aparecer; sobre um preto mais fechado a sombra 69% preta
-          some. Sem `px` no `<main>` (mesma decisão de paginas/Galeria.jsx): o
-          hero é full-bleed e o resto do conteúdo repõe o gutter lateral com
-          `paddingInline: PADDING_TITULO` (`calc(3.7% + 10px)`, ./inicio/
-          tamanhoDeCard.js) — o MESMO gutter percentual da Home e do Meu
-          Catálogo, pra o texto do hero e os cards de episódio alinharem com as
-          fileiras/grades do resto do app em qualquer viewport. */}
-      <main className="min-h-screen bg-[#17171b] pb-16 pt-24">
+      {/* `bg-black`: mesmo preto sólido de Galeria/Início (pedido explícito do
+          usuário — antes esta página ficava em `#17171b`, cor histórica do
+          Disney+, porque a grade de episódios em modo grade tem sombra
+          própria no pôster que "precisava" do cinza pra aparecer; a sombra
+          continua lá, só deixou de ditar o fundo da página). É a MESMA cor em
+          que o gradiente do hero (`gradienteHero('#000')` abaixo) se dissolve
+          sem emenda — mudar um sem o outro reabre a costura visível que
+          motivou trocar `GRADIENTE_HERO`/`GRADIENTE_HERO_SEM_BANNER` de
+          constante fixa pra função parametrizada por cor (ver
+          inicio/CarrosselDestaques.jsx), hoje chamada com o MESMO `'#000'` nos
+          dois lugares. Sem `px` no `<main>` (mesma decisão de
+          paginas/Galeria.jsx): o hero é full-bleed e o resto do conteúdo
+          repõe o gutter lateral com `paddingInline: PADDING_TITULO`
+          (`calc(3.7% + 10px)`, ./inicio/tamanhoDeCard.js) — o MESMO gutter
+          percentual da Home e do Meu Catálogo, pra o texto do hero e os cards
+          de episódio alinharem com as fileiras/grades do resto do app em
+          qualquer viewport. */}
+      <main className="min-h-screen bg-black pb-16 pt-24">
         {/* Hero full-bleed estilo AnimeFire (https://animefire.io/anime/…) —
             é o cartão de visita da página: a arte horizontal do anime cobre
             100% da largura, e o bloco de conteúdo fica empilhado numa ÚNICA
-            coluna (título → linha meta → pills de gênero → sinopse) ancorada
-            embaixo-à-esquerda sobre a arte. Sem pôster e sem layout de duas
-            colunas: o "capa de um lado / texto do outro" do Disney+ saiu.
-            Altura ~76svh (NÃO a viewport inteira): a barra de controles e o
-            topo da primeira fileira de cards de episódio já espiam acima da
-            dobra. Full-bleed de graça (o `<main>` não tem mais `px`); `-mt-24`
-            cancela o `pt-24` do <main> pra a arte subir por baixo da navbar
-            fixa/transparente. `min-h` em `svh` espelha o hero do carrossel
-            (inicio/CarrosselDestaques.jsx). `mb-6` curto: a seção de episódios
-            encosta logo abaixo. `flex flex-col justify-end`: o bloco de
-            conteúdo vive no rodapé e o <header> cresce (não corta) se a
-            sinopse empurrar. O fallback "sem banner" espelha o `semBanner` do
-            carrossel: a cor dominante da capa (`capa_cor`, `bg-surface` quando
-            null — Kitsu ou `color: null` da AniList) vira o fundo, com a
-            própria capa borrada/escurecida por cima como textura e o gradiente
-            ganhando uma camada extra à esquerda (`GRADIENTE_HERO_SEM_BANNER`)
-            pra manter o texto legível. */}
-        <header className="relative -mt-24 mb-6 flex min-h-[76svh] flex-col justify-end overflow-hidden">
-          {anime?.banner_path ? (
+            coluna (pills de gênero → título → sinopse → linha meta —
+            tipografia espelhando o bloco do hero do carrossel,
+            inicio/CarrosselDestaques.jsx) ancorada embaixo-à-esquerda sobre a
+            arte. O seletor de temporada mora na barra de ações abaixo do hero
+            (ao lado de "Trocar fonte"), não aqui. Sem pôster e sem layout de
+            duas colunas: o "capa de um lado / texto do outro" do Disney+ saiu.
+            Altura `h-svh min-h-[480px]` — MESMA geometria do slide do
+            carrossel (inicio/CarrosselDestaques.jsx), pedido explícito do
+            usuário (antes era `min-h-[76svh]`, próprio desta página). Sem
+            fallback "sem banner" (pedido explícito): anime catalogado sem
+            `banner_path` (raro — Kitsu, ou AniList sem `bannerImage`) fica só
+            com o gradiente sobre `bg-surface`, sem textura de capa borrada —
+            o carrossel da Home ainda trata esse caso (`semBanner`) porque lá
+            é comum (feed inteiro, não um anime catalogado específico). Full-
+            bleed de graça (o `<main>` não tem mais `px`); `-mt-24` cancela o
+            `pt-24` do <main> pra a arte subir por baixo da navbar
+            fixa/transparente. `-mb-32`: MESMO peek do carrossel da Home
+            (paginas/Inicio.jsx) — com o hero ocupando a viewport inteira
+            (`h-svh`), a margem negativa puxa a barra de ações + topo da grade
+            de episódios pra dentro do fade da base do hero, deixando-os
+            "espiar" sob o gradiente em vez de começar só depois da dobra.
+            Pré-requisito pro conteúdo puxado não sumir atrás da arte/gradiente
+            (`absolute`, pintam depois): o wrapper logo abaixo tem
+            `relative z-10` — mesmo mecanismo do bloco de fileiras da Home.
+            `flex flex-col justify-end`: o bloco de conteúdo vive no rodapé e
+            o <header> cresce (não corta) se a sinopse empurrar. */}
+        <header className="relative -mt-24 -mb-32 flex h-svh min-h-[480px] flex-col justify-end overflow-hidden bg-surface">
+          {anime?.banner_path && (
             <img
               // `imagemEmAltaResolucao` sobe o backdrop do TMDB de w1280 pra
               // `original` — mesma função e mesmo motivo do hero do carrossel
@@ -737,102 +780,90 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               alt=""
               className="absolute inset-0 h-full w-full object-cover object-top"
             />
-          ) : (
-            <div
-              className="absolute inset-0 bg-surface"
-              style={anime?.capa_cor ? { backgroundColor: anime.capa_cor } : undefined}
-            >
-              {anime?.capa_path && (
-                <img
-                  src={anime.capa_path}
-                  alt=""
-                  className="absolute inset-0 h-full w-full scale-125 object-cover object-top opacity-70 blur-lg brightness-[0.5]"
-                />
-              )}
-            </div>
           )}
           {/* Gradiente empilhado — o mesmo `::before` do carrossel
-              (`GRADIENTE_HERO` / `GRADIENTE_HERO_SEM_BANNER`, fonte única em
-              inicio/CarrosselDestaques.jsx): 3 (ou 4, sem banner) camadas com a
-              cor EXATA do fundo da página, dissolvendo o pé e a esquerda do
-              hero no `#17171b` do <main> sem emenda. Inline no `style` porque o
+              (`gradienteHero`, fonte única em inicio/CarrosselDestaques.jsx):
+              3 camadas na cor EXATA do fundo da página, dissolvendo o pé do
+              hero no `bg-black` do <main> sem emenda — `'#000'`, o MESMO valor
+              que a Home passa à mesma função. Inline no `style` porque o
               parser de multi-gradiente arbitrário do Tailwind v4 não é
               confiável. */}
           <div
             className="pointer-events-none absolute inset-0"
-            style={{ background: anime?.banner_path ? GRADIENTE_HERO : GRADIENTE_HERO_SEM_BANNER }}
+            style={{ background: gradienteHero('#000') }}
           />
 
-          {/* Bloco de conteúdo — coluna única ancorada no rodapé do hero
-              (`justify-end` no <header>). `relative` pra pintar acima da arte e
-              do gradiente (ambos `absolute` e antes no DOM). `pt-24` reserva
-              respiro no topo pro gradiente. `paddingInline: PADDING_TITULO` é o
-              MESMO gutter do wrapper do conteúdo abaixo do hero (e da Home/Meu
-              Catálogo) — o título alinha exatamente com a borda dos cards de
-              episódio. */}
-          <div
-            style={{ paddingInline: PADDING_TITULO }}
-            className="relative flex flex-col items-start gap-4 pb-10 pt-24"
-          >
-            <h1
-              ref={focoTitulo}
-              tabIndex={-1}
-              className="max-w-4xl text-4xl font-semibold text-white outline-none sm:text-5xl lg:text-6xl"
-            >
-              {tituloExibicao ?? `Anime #${animeId}`}
-            </h1>
-            {avisoProximaTemporada && (
-              // Aviso de estreia da próxima temporada da franquia (quando já
-              // tem data) — logo abaixo do título, antes do seletor. A irmã
-              // `nao_lancado` fica FORA do seletor, então este é o único lugar
-              // que a menciona. Pill neon translúcida, no idioma de
-              // `CLASSE_PILL_HERO`.
-              <p className="inline-flex items-center text-sm font-semibold text-neon backdrop-blur-sm">
-                {avisoProximaTemporada}
-              </p>
-            )}
-            {/* Seletor de temporada (Fase 5) — `anime.temporadas` é a lista das
-                temporadas irmãs da franquia (mesmo `serie_ancora` OU slug do
-                título base, já ordenada por número, inclui a atual). Trocar de
-                temporada é NAVEGAÇÃO de rota (`/anime/:outroId`): a página
-                inteira já re-chaveia em `animeId` via `useRecurso`, e a URL
-                fica compartilhável por temporada. Dropdown no idioma do
-                AnimeFire; só renderiza com 2+ temporadas catalogadas (guard
-                interno do componente também). */}
-            {anime?.temporadas && (
-              <SeletorDeTemporada temporadas={anime.temporadas} animeIdAtual={animeId} />
-            )}
-            {meta && <p className="text-sm text-ink-muted sm:text-base">{meta}</p>}
-            {generosTraduzidos.length > 0 && (
-              // Pills de gênero — reusam `CLASSE_PILL_HERO` (fonte única do
-              // carrossel: `bg-white/10 backdrop-blur-sm text-white`), a mesma
-              // linguagem de pill do hero da Home.
-              <div className="flex flex-wrap gap-2">
-                {generosTraduzidos.map((genero) => (
-                  <span key={genero} className={CLASSE_PILL_HERO}>
-                    {genero}
-                  </span>
-                ))}
-              </div>
-            )}
-            {anime?.sinopse && (
-              // `line-clamp-3`: segura o <header> perto de 76svh mesmo com
-              // sinopse longa (ele é `min-h` e cresceria com o texto),
-              // preservando o "episódios espiando" acima da dobra.
-              <p className="line-clamp-3 max-w-2xl text-sm text-ink-muted sm:text-base">
-                {anime.sinopse}
-              </p>
-            )}
-          </div>
+          {/* Bloco de conteúdo — esqueleto compartilhado com o carrossel da
+              Home (inicio/BlocoConteudoHero.jsx: pills → título/subtítulo →
+              sinopse → meta). `relative` pra pintar acima da arte e do
+              gradiente (ambos `absolute` e antes no DOM). `pt-24` reserva
+              respiro no topo pro gradiente. `pb-10 sm:pb-14 lg:pb-[18vh]
+              xl:pb-[20vh]`: MESMO padding-bottom do carrossel — não é só
+              estética, é o que mantém o texto acima da faixa que o `-mb-32`
+              do <header> (peek da barra de ações/grade, ver acima) sobrepõe;
+              com o `pb-8` antigo o texto ficava coberto pelo conteúdo puxado
+              pra cima. O seletor de temporada fica FORA daqui, na barra de
+              ações abaixo do hero. */}
+          <BlocoConteudoHero
+            className="relative pb-10 pt-24 sm:pb-14 lg:pb-[18vh] xl:pb-[20vh]"
+            // Pills de gênero — ACIMA do título, mesma posição das pills
+            // "#N em alta"/"Anime no Catálogo" do carrossel. `CLASSE_PILL_HERO`
+            // é a fonte única do estilo (`bg-white/10 backdrop-blur-sm
+            // text-white`), a mesma linguagem de pill do hero da Home.
+            pills={generosTraduzidos.map((genero) => (
+              <span key={genero} className={CLASSE_PILL_HERO}>
+                {genero}
+              </span>
+            ))}
+            // `<h1>` espelha o `<h3>` do carrossel: `text-2xl→sm:4xl→lg:5xl`,
+            // `font-extrabold`, `line-clamp-2`, `lg:leading-[1.2]` — só que
+            // focável (`ref`/`tabIndex=-1`, foco ao montar/trocar de anime).
+            titulo={
+              <h1
+                ref={focoTitulo}
+                tabIndex={-1}
+                className="mb-1 line-clamp-2 max-w-4xl text-2xl font-extrabold text-white outline-none sm:text-4xl lg:text-5xl lg:leading-[1.2]"
+              >
+                {tituloExibicao ?? `Anime #${animeId}`}
+              </h1>
+            }
+            // Espelha a linha alternativa do carrossel (`line-clamp-1 text-lg
+            // font-bold`).
+            tituloSecundario={
+              tituloSecundario && (
+                <p className="line-clamp-1 max-w-4xl text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
+                  {tituloSecundario}
+                </p>
+              )
+            }
+            // Aviso de estreia da próxima temporada da franquia (quando já tem
+            // data). A irmã `nao_lancado` fica FORA do seletor, então este é o
+            // único lugar que a menciona.
+            extraTitulo={
+              avisoProximaTemporada && (
+                <p className="inline-flex items-center text-sm font-semibold text-neon backdrop-blur-sm">
+                  {avisoProximaTemporada}
+                </p>
+              )
+            }
+            sinopse={anime?.sinopse}
+            // Linha meta (`ano • N episódios • fonte • versão`) — DEPOIS da
+            // sinopse (pedido do usuário); tamanho `text-xs→sm:sm` do carrossel.
+            meta={meta}
+          />
         </header>
 
         {/* Conteúdo abaixo do hero (erros, avisos de carregamento, barra de
             controles, grade/lista de episódios). O gutter lateral vem daqui —
             `paddingInline: PADDING_TITULO` (o mesmo do bloco de conteúdo do
             hero e das grades da Home/Meu Catálogo), não de um `px` no <main>,
-            que sangraria o hero full-bleed. Os diálogos ficam FORA deste
-            wrapper (são overlays fixos, não conteúdo de coluna). */}
-        <div style={{ paddingInline: PADDING_TITULO }}>
+            que sangraria o hero full-bleed. `relative z-10`: promove este
+            bloco pra cima da arte/gradiente do hero (`absolute`, `-mb-32`
+            acima) — sem isso o topo dele (barra de ações, puxada pro peek)
+            ficaria atrás do hero em vez de sobre o fade, mesmo mecanismo do
+            bloco de fileiras da Home (paginas/Inicio.jsx). Os diálogos ficam
+            FORA deste wrapper (são overlays fixos, não conteúdo de coluna). */}
+        <div className="relative z-10" style={{ paddingInline: PADDING_TITULO }}>
         {erroAnime && (
           <div
             role="alert"
@@ -885,9 +916,19 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         )}
         {!animeNaoEncontrado && (
           <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
-            {remotos.dados?.dominio && <span>Episódios resolvidos via <span className="font-bold">{remotos.dados.dominio}</span></span>}
-            {/* A versão ativa ("Legendado"/"Dublado") já aparece na linha meta
-                do hero (`ano • N episódios • versão`) — não repetir aqui. */}
+            {/* Seletor de temporada (Fase 5) — PRIMEIRO controle da barra, à
+                esquerda de "Trocar fonte". `anime.temporadas` já vem ordenada
+                por número e inclui a atual; trocar de temporada é NAVEGAÇÃO de
+                rota (`/anime/:outroId`), a página re-chaveia em `animeId` via
+                `useRecurso` e a URL fica compartilhável por temporada. Só
+                renderiza com 2+ temporadas catalogadas (guard interno do
+                componente também). */}
+            {anime?.temporadas && (
+              <SeletorDeTemporada temporadas={anime.temporadas} animeIdAtual={animeId} />
+            )}
+            {/* A fonte ativa (`remotos.dados.dominio`) e a versão
+                ("Legendado"/"Dublado") já aparecem na linha meta do hero
+                (`ano • N episódios • fonte • versão`) — não repetir aqui. */}
             {anime?.versoes_disponiveis &&
               versaoAtiva !== 'desconhecida' &&
               !anime.versoes_disponiveis.includes(versaoAtiva) && (
@@ -965,11 +1006,27 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         <div
           className={
             modoVisualizacao === 'grade'
-              ? 'grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4'
+              ? // `gap-x-4 gap-y-6` (era `gap-x-4 gap-y-8`, depois `gap-x-3
+                // gap-y-5` — usuário pediu um meio-termo): mesma contagem de
+                // colunas (4 no desktop). Mais notável depois que o card de
+                // episódio perdeu a sombra que preenchia parte desse espaço
+                // (ver comentário de `estilo` em components/LinhaDeEpisodio.jsx).
+                'grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4'
               : 'flex flex-col gap-2'
           }
         >
-          {linhas.map(({ chave, numero, rotulo, colisao, episodio, episodioDescartado, thumb }) => {
+          {linhas.map((linha) => {
+            const {
+              chave,
+              numero,
+              rotulo,
+              colisao,
+              episodio,
+              episodioDescartado,
+              thumb,
+              titulo,
+              sinopse,
+            } = linha;
             const job = episodio ? jobsPorEpisodio.get(episodio.id) : null;
             return (
               <LinhaDeEpisodio
@@ -980,9 +1037,11 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                 episodio={episodio}
                 episodioDescartado={episodioDescartado}
                 thumb={thumb}
-                // `remotos.dados?.dominio` já é o mesmo valor usado na linha
-                // "Episódios resolvidos via {…}" acima — reusado direto aqui
-                // em vez de expor pelo `useMemo` de `linhas`, que não precisa
+                titulo={titulo}
+                sinopse={sinopse}
+                // `remotos.dados?.dominio` já é o mesmo valor mostrado na linha
+                // meta do hero (`ano • N episódios • fonte • versão`) — reusado
+                // direto aqui em vez de expor pelo `useMemo` de `linhas`, que não precisa
                 // dele pra montar as linhas em si (só `LinhaDeEpisodio` usa,
                 // pra anotar a origem de um `episodioDescartado`).
                 dominioAtivo={remotos.dados?.dominio ?? null}
@@ -993,6 +1052,13 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                 aoCapturar={capturar}
                 animeId={animeId}
                 animeTitulo={anime?.titulo}
+                // Ao contrário de `tituloExibicao` acima (só corta o marcador
+                // do H1 com 2+ temporadas catalogadas — o seletor já diz "qual
+                // temporada" nesse caso): o player não tem seletor, então
+                // mostra sempre que o número é conhecido, mesmo em franquia de
+                // temporada única (a pedido do usuário — consistência do
+                // cabeçalho independe de quantas temporadas o catálogo já tem).
+                numeroTemporada={anime?.numero_temporada ?? null}
               />
             );
           })}

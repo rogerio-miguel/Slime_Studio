@@ -113,12 +113,13 @@ export function liberarEpisodio(episodioId, { manterVivo } = {}) {
   return requisitar(`/api/episodios/${episodioId}/liberar`, { metodo: 'POST', manterVivo });
 }
 
-// `anilistId`/`kitsuId`/`capaUrl`/`sinopse`/`bannerUrl`/`capaCor`/`generos` são
-// opcionais (materialização de item do feed "em alta" — Fase 4 da Inicio) —
-// ausentes, `JSON.stringify` os omite do corpo (mesmo comportamento já usado
-// por `ano` acima) e o backend enriquece por título em best-effort
-// (`api/rotas/animes.py`); qualquer campo de metadado presente no payload faz
-// o backend pular esse enriquecimento (curto-circuito em `CriarAnimeRequest`).
+// `anilistId`/`kitsuId`/`capaUrl`/`sinopse`/`bannerUrl`/`capaCor`/`generos`/
+// `tituloIngles` são opcionais (materialização de item do feed "em alta" —
+// Fase 4 da Inicio) — ausentes, `JSON.stringify` os omite do corpo (mesmo
+// comportamento já usado por `ano` acima) e o backend enriquece por título em
+// best-effort (`api/rotas/animes.py`); qualquer campo de metadado presente no
+// payload faz o backend pular esse enriquecimento (curto-circuito em
+// `CriarAnimeRequest`).
 export function criarAnime({
   titulo,
   ano,
@@ -129,6 +130,7 @@ export function criarAnime({
   bannerUrl,
   capaCor,
   generos,
+  tituloIngles,
 } = {}) {
   return requisitar('/api/admin/animes', {
     metodo: 'POST',
@@ -142,6 +144,7 @@ export function criarAnime({
       banner_url: bannerUrl,
       capa_cor: capaCor,
       generos: generos,
+      titulo_ingles: tituloIngles,
     },
   });
 }
