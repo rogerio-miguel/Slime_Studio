@@ -1,6 +1,6 @@
-"""Adapter TMDB (REST) — provedor PADRÃO de arte (banner de anime, still de
-episódio) (`PLANO_ARTE_TMDB.md`). NÃO é um `ProvedorDeMetadados` (D1 do
-plano): só resolve imagem, nunca sinopse/ids/feed — implementa
+"""Adapter TMDB (REST) — provedor PADRÃO de arte (banner de anime, still/
+nome/sinopse de episódio) (`PLANO_ARTE_TMDB.md`). NÃO é um `ProvedorDeMetadados`
+(D1 do plano): não resolve sinopse/ids/feed DO ANIME — implementa
 `ProvedorDeArte`, com tupla de registro própria (`registro.PROVEDORES_DE_ARTE`).
 
 Capa (pôster) NÃO é mais responsabilidade deste provedor: volta a ser
@@ -20,7 +20,7 @@ import requests
 
 from core.temporada import separar_temporada
 from core.texto import slugificar
-from integrations.base import ArteDeAnime, ProvedorDeArte
+from integrations.base import ArteDeAnime, InfoDeEpisodio, ProvedorDeArte
 
 _URL_BASE = "https://api.themoviedb.org/3"
 _URL_IMAGEM = "https://image.tmdb.org/t/p"
@@ -48,7 +48,7 @@ class TabelaDeTemporadas:
     — especiais do TMDB, `season_number == 0`, ficam fora da numeração
     absoluta), em ordem crescente de temporada. Produzida por
     `TmdbProvider.tabela_de_temporadas` (Fatia 5), consumida por
-    `buscar_still_de_episodio` e por `integrations/servico.py` (memo
+    `buscar_info_de_episodio` e por `integrations/servico.py` (memo
     `_memo_temporadas`) — pública (não `_`-prefixada) porque atravessa esse
     limite de módulo, mesmo padrão de `TmdbNaoAutorizado` abaixo."""
 
@@ -127,23 +127,23 @@ class TmdbProvider(ProvedorDeArte):
         melhor = max(candidatos, key=lambda b: b.get("vote_average") or 0.0)
         return melhor["file_path"]
 
-    def buscar_still_de_episodio(
+    def buscar_info_de_episodio(
         self, titulo: str, ano: int | None, numero: int, temporada: int | None
-    ) -> str | None:
-        """Thumb do episódio `numero`. Com `temporada` dada, vai direto a
-        `GET /tv/{id}/season/{temporada}` (via `stills_da_temporada_por_titulo`),
-        sem a volta por `TabelaDeTemporadas`/numeração absoluta. Com
-        `temporada is None`, `numero` é a numeração absoluta local e a
+    ) -> InfoDeEpisodio | None:
+        """Still/nome/sinopse do episódio `numero`. Com `temporada` dada, vai
+        direto a `GET /tv/{id}/season/{temporada}` (via `info_da_temporada_
+        por_titulo`), sem a volta por `TabelaDeTemporadas`/numeração absoluta.
+        Com `temporada is None`, `numero` é a numeração absoluta local e a
         temporada é resolvida por `tabela_de_temporadas`/`localizar_temporada`
         (fallback quando `Anime.numero_temporada` é desconhecido).
 
         `None` em qualquer passo LÓGICO que não resolva (série não encontrada,
-        temporada fora do range, `still_path` nulo); exceções de rede/
-        autenticação de `_executar` propagam pro chamador
+        temporada fora do range, episódio ausente da temporada); exceções de
+        rede/autenticação de `_executar` propagam pro chamador
         (`integrations/servico.py`), não são engolidas aqui."""
         if temporada is not None:
-            stills = self.stills_da_temporada_por_titulo(titulo, ano, temporada)
-            return stills.get(numero) if stills is not None else None
+            info = self.info_da_temporada_por_titulo(titulo, ano, temporada)
+            return info.get(numero) if info is not None else None
 
         tabela = self.tabela_de_temporadas(titulo, ano)
         if tabela is None:
@@ -154,28 +154,28 @@ class TmdbProvider(ProvedorDeArte):
             return None
         numero_da_temporada, numero_na_temporada = localizacao
 
-        stills = self.stills_da_temporada(tabela.id_da_serie, numero_da_temporada)
-        if stills is None:
+        info = self.info_da_temporada(tabela.id_da_serie, numero_da_temporada)
+        if info is None:
             return None
-        return stills.get(numero_na_temporada)
+        return info.get(numero_na_temporada)
 
-    def stills_da_temporada_por_titulo(
+    def info_da_temporada_por_titulo(
         self, titulo: str, ano: int | None, temporada: int
-    ) -> dict[int, str | None] | None:
-        """Stills de TODOS os episódios da `temporada` (número real da
-        temporada) da série que casa `titulo`/`ano` — resolve a série
+    ) -> dict[int, InfoDeEpisodio] | None:
+        """Still/nome/sinopse de TODOS os episódios da `temporada` (número real
+        da temporada) da série que casa `titulo`/`ano` — resolve a série
         (`_resolver_serie`, mesma busca de `buscar_arte_por_titulo`) e chama
         `GET /tv/{id}/season/{temporada}` direto. Usado quando o chamador já
         sabe o número da temporada (`Anime.numero_temporada`), dispensando a
-        `TabelaDeTemporadas`. `integrations/servico.py` popula o memo de stills
-        da temporada inteira com o dict devolvido."""
+        `TabelaDeTemporadas`. `integrations/servico.py` popula o memo da
+        temporada inteira com o dict devolvido."""
         serie = self._resolver_serie(titulo, ano)
         if serie is None:
             return None
         id_da_serie = serie.get("id")
         if not isinstance(id_da_serie, int):
             return None
-        return self.stills_da_temporada(id_da_serie, temporada)
+        return self.info_da_temporada(id_da_serie, temporada)
 
     def tabela_de_temporadas(self, titulo: str, ano: int | None) -> TabelaDeTemporadas | None:
         """`GET /tv/{id}` -> `seasons[]` -> tabela "primeiro episódio absoluto
@@ -184,7 +184,7 @@ class TmdbProvider(ProvedorDeArte):
         _mapa_primeiro_episodio_por_temporada` já resolve do lado do
         AnimeFire (útil só como referência), aqui resolvida puramente do lado
         do TMDB. Pública (não `_`-prefixada): reusada por
-        `buscar_still_de_episodio` E por `integrations/servico.py` (memo
+        `buscar_info_de_episodio` E por `integrations/servico.py` (memo
         `_memo_temporadas`, Fatia 5) — não duplicar esta consulta por
         episódio."""
         serie = self._resolver_serie(titulo, ano)
@@ -222,15 +222,17 @@ class TmdbProvider(ProvedorDeArte):
             return None
         return TabelaDeTemporadas(id_da_serie=id_da_serie, temporadas=temporadas)
 
-    def stills_da_temporada(
+    def info_da_temporada(
         self, id_da_serie: int, numero_da_temporada: int
-    ) -> dict[int, str | None] | None:
-        """`GET /tv/{id}/season/{n}` -> `episode_number -> still_path`
-        (prefixado) de TODOS os episódios daquela temporada, numa única
-        chamada — usada por `buscar_still_de_episodio` e por
+    ) -> dict[int, InfoDeEpisodio] | None:
+        """`GET /tv/{id}/season/{n}` -> `episode_number -> InfoDeEpisodio`
+        (still/nome/sinopse) de TODOS os episódios daquela temporada, numa
+        única chamada — usada por `buscar_info_de_episodio` e por
         `integrations/servico.py` pra popular o cache de uma temporada
-        inteira de uma vez (Fatia 5), em vez de repescar esta URL por
-        episódio."""
+        inteira de uma vez (Fatia 5/6), em vez de repescar esta URL por
+        episódio. `nome`/`sinopse` vêm de `name`/`overview` no idioma
+        `_IDIOMA` — string vazia do TMDB (comum sem tradução pt-BR) vira
+        `None`, nunca string vazia (`or None`)."""
         dados = self._executar(
             f"/tv/{id_da_serie}/season/{numero_da_temporada}", {"language": _IDIOMA}
         )
@@ -238,20 +240,24 @@ class TmdbProvider(ProvedorDeArte):
         if not isinstance(episodios, list):
             return None
 
-        stills: dict[int, str | None] = {}
+        info: dict[int, InfoDeEpisodio] = {}
         for episodio in episodios:
             if not isinstance(episodio, dict):
                 continue
             numero = episodio.get("episode_number")
             if not isinstance(numero, int):
                 continue
-            stills[numero] = _url_imagem(episodio.get("still_path"), _TAMANHO_STILL)
-        return stills or None
+            info[numero] = InfoDeEpisodio(
+                still_url=_url_imagem(episodio.get("still_path"), _TAMANHO_STILL),
+                nome=episodio.get("name") or None,
+                sinopse=episodio.get("overview") or None,
+            )
+        return info or None
 
     def _resolver_serie(self, titulo: str, ano: int | None) -> dict | None:
         """Busca `GET /search/tv` por `titulo` e escolhe o melhor candidato
         (`_melhor_resultado`). Privado e reusado por `buscar_arte_por_titulo`
-        e, na Fatia 5, por `buscar_still_de_episodio` — não duplicar a busca.
+        e, na Fatia 5, por `buscar_info_de_episodio` — não duplicar a busca.
 
         Sem `first_air_date_year` (D3): a AniList modela cada temporada como
         uma `Media` própria, o TMDB modela a série inteira numa entrada só —
@@ -262,7 +268,7 @@ class TmdbProvider(ProvedorDeArte):
         `/search/tv` do TMDB não casa o romaji por-temporada da AniList
         ("... 2nd Season", "... Season 3") com a entrada única da série e
         devolve zero resultados. `buscar_arte_por_titulo` (nível de serviço)
-        já entrega o base; para os callers de still (`stills_da_temporada_por_
+        já entrega o base; para os callers de still/nome/sinopse (`info_da_temporada_por_
         titulo`, `tabela_de_temporadas`) esta é a única redução — sem ela o
         overlay de still não resolvia nenhuma temporada >= 2. Descascar de
         novo um título já base é no-op (identidade).

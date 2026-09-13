@@ -139,6 +139,8 @@ async def test_em_alta_cruza_com_anime_existente_no_catalogo_local(
         "capa_cor": "#1a2b3c",
         "status_lancamento": "em_lancamento",
         "proximo_ep_numero": 55,
+        "total_episodios": 100,
+        "sinopse": None,
     }
 
 

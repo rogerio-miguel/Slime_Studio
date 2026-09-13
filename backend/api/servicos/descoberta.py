@@ -27,10 +27,11 @@ from db.catalogo import (
     localizar_animes_por_anilist_id,
     localizar_animes_por_slug,
     preencher_banner_visual_em_lote,
+    sobrescrever_arte,
 )
 from extractors.versao import remover_marcador_de_versao
 from integrations import servico
-from integrations.base import AnimeEmAlta, MetadadosDeAnime
+from integrations.base import AnimeEmAlta, ArteDeAnime, MetadadosDeAnime
 from models.anime import Anime
 
 logger = logging.getLogger(__name__)
@@ -361,8 +362,9 @@ _enriquecimentos_de_metadados_em_voo: dict[int, asyncio.Task] = {}
 
 def agendar_enriquecimento_de_metadados(sessionmaker: _SessionMaker, anime: Anime) -> None:
     """Dispara, sem bloquear, uma busca lazy de metadados "estáticos" (sinopse,
-    banner, cor da capa, gêneros) por `anilist_id` quando a página do anime é
-    aberta e algum desses campos ainda está `NULL`. Cobre o anime materializado
+    banner, cor da capa, gêneros, título em inglês) por `anilist_id` quando a
+    página do anime é aberta e algum desses campos ainda está `NULL`. Cobre o
+    anime materializado
     pelo feed "em alta" (`paginas/Inicio.jsx::materializarEIrPara`), cujo
     payload de criação já vem com `anilist_id`/capa mas nunca com sinopse — a
     AniList não a traz na listagem do feed, só no detalhe por id
@@ -385,11 +387,13 @@ def agendar_enriquecimento_de_metadados(sessionmaker: _SessionMaker, anime: Anim
     uma busca em voo para este anime; ou não há event loop rodando."""
     if anime.anilist_id is None:
         return
+    banner_pendente = _banner_e_fallback_anilist(anime.banner_path)
     if (
         anime.sinopse is not None
-        and anime.banner_path is not None
+        and not banner_pendente
         and anime.capa_cor is not None
         and anime.generos is not None
+        and anime.titulo_ingles is not None
     ):
         return
 
@@ -403,15 +407,34 @@ def agendar_enriquecimento_de_metadados(sessionmaker: _SessionMaker, anime: Anim
         return
 
     anilist_id = anime.anilist_id
-    tarefa = loop.create_task(_buscar_metadados_e_persistir(sessionmaker, anime_id, anilist_id))
+    tarefa = loop.create_task(
+        _buscar_metadados_e_persistir(sessionmaker, anime_id, anilist_id, banner_pendente)
+    )
     _enriquecimentos_de_metadados_em_voo[anime_id] = tarefa
     tarefa.add_done_callback(
         lambda _tarefa, aid=anime_id: _enriquecimentos_de_metadados_em_voo.pop(aid, None)
     )
 
 
+_HOST_BANNER_ANILIST = "anilistcdn"
+
+
+def _banner_e_fallback_anilist(banner_path: str | None) -> bool:
+    """`True` quando `banner_path` já está preenchido mas ainda é a imagem
+    crua da AniList — o overlay do TMDB (`integrations/servico.py::_com_arte`)
+    nunca pegou (falha de rede/circuit breaker no momento da materialização,
+    ver PLANO_ARTE_TMDB.md). `banner_path is None` NÃO conta aqui: esse caso
+    já é coberto pelo só-quando-nulo padrão de `aplicar_metadados`, sem
+    precisar de sobrescrita explícita.
+
+    Detecção por substring do CDN da AniList — só banners que o próprio
+    provedor serviu vêm de `anilistcdn`; qualquer outro valor (já veio do
+    TMDB, ou nulo) não conta como pendente."""
+    return banner_path is not None and _HOST_BANNER_ANILIST in banner_path
+
+
 async def _buscar_metadados_e_persistir(
-    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int
+    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int, banner_pendente: bool
 ) -> None:
     """Corpo da `Task` fire-and-forget de `agendar_enriquecimento_de_metadados`.
     Mesma filosofia de `_buscar_e_persistir_lancamento`: toda exceção esperada
@@ -419,8 +442,19 @@ async def _buscar_metadados_e_persistir(
     propagam de propósito."""
     try:
         metadados = await servico.buscar_metadados_por_anilist_id(anilist_id)
-        if metadados is not None:
-            await aplicar_metadados(sessionmaker, anime_id, metadados)
+        if metadados is None:
+            return
+        await aplicar_metadados(sessionmaker, anime_id, metadados)
+        # `aplicar_metadados` é só-quando-nulo: nunca troca um banner já
+        # gravado, mesmo sendo o fallback cru da AniList que nunca recebeu o
+        # overlay TMDB. Sobrescrita explícita só nesse caso — mesma escrita
+        # de `scripts/rerresolver_banners.py`, só que em resposta a uma
+        # abertura de página em vez de um lote manual; `sobrescrever_arte` já
+        # não apaga banner existente quando o TMDB não devolve nada.
+        if banner_pendente and metadados.banner_url is not None:
+            await sobrescrever_arte(
+                sessionmaker, anime_id, ArteDeAnime(banner_url=metadados.banner_url)
+            )
     except (FalhaDeMetadados, TimeoutError, SQLAlchemyError) as excecao:
         logger.warning(
             "enriquecimento lazy de metadados falhou para anime_id=%s anilist_id=%s: %s",
@@ -626,6 +660,7 @@ async def enriquecer_anime_criado(
     banner_url: str | None,
     capa_cor: str | None,
     generos: list[str] | None,
+    titulo_ingles: str | None = None,
 ) -> None:
     """Preenche metadados do anime recém-obtido/criado (`POST
     /api/admin/animes`). Se o request já trouxe algum campo, persiste direto
@@ -641,6 +676,7 @@ async def enriquecer_anime_criado(
         or banner_url is not None
         or capa_cor is not None
         or generos is not None
+        or titulo_ingles is not None
     )
     if algum_campo_veio_no_payload:
         metadados = MetadadosDeAnime(
@@ -651,6 +687,7 @@ async def enriquecer_anime_criado(
             banner_url=banner_url,
             capa_cor=capa_cor,
             generos=generos,
+            titulo_ingles=titulo_ingles,
         )
         await aplicar_metadados(sessionmaker, anime_id, metadados)
         await _resolver_e_aplicar_serie(sessionmaker, anime_id, titulo, anilist_id)

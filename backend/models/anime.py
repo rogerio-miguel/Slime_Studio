@@ -15,6 +15,13 @@ class Anime(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     titulo: Mapped[str] = mapped_column(String, nullable=False)
+    # Título em inglês da AniList (`title.english`) — SÓ exibição, linha
+    # secundária sob o `titulo` no hero da página do anime (mesmo par
+    # título/subtítulo do carrossel da Home). Ao contrário de `titulo` (título
+    # local, canônico), este é o do provedor e pode ficar `NULL`: animes sem
+    # `anilist_id`, ou cujo enriquecimento ainda não rodou. Preenchido
+    # só-quando-nulo por `db/catalogo.py::aplicar_metadados`.
+    titulo_ingles: Mapped[str | None] = mapped_column(String, nullable=True)
     slug: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     # Nullable: o cadastro pelo busca-e-confirma do AniList (§3F, Fase 3) preenche
     # ano/capa_path/sinopse/anilist_id depois da criação; o produtor de jobs da

@@ -105,6 +105,7 @@ query {
       coverImage { extraLarge color }
       bannerImage
       genres
+      description(asHtml: false)
       seasonYear
       startDate { year }
       status
@@ -389,9 +390,11 @@ def _proxima_temporada(agora: datetime) -> tuple[str, int]:
 
 def _pagina_para_animes_em_alta(dados: dict, contexto: str) -> list[AnimeEmAlta]:
     """Parser único de `Page.media` reusado por `listar_em_alta`,
-    `listar_proxima_temporada` e `listar_fileira_tematica` (mesmos campos nas
-    três queries). `contexto` só entra na mensagem de erro para diferenciar
-    qual feed veio malformado."""
+    `listar_proxima_temporada` e `listar_fileira_tematica`. Os campos são quase
+    idênticos nas queries; `description` (sinopse) só vem em `_QUERY_EM_ALTA` —
+    nas demais `item.get("description")` é `None` e o parser deixa
+    `AnimeEmAlta.sinopse` no default. `contexto` só entra na mensagem de erro
+    para diferenciar qual feed veio malformado."""
     pagina = dados.get("Page") if isinstance(dados, dict) else None
     itens = pagina.get("media") if isinstance(pagina, dict) else None
     if not isinstance(itens, list):
@@ -421,6 +424,7 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
             g for g in (item.get("genres") or []) if isinstance(g, str) and g.strip()
         ),
         lancamento=_extrair_lancamento(item),
+        sinopse=_sanitizar_sinopse(item.get("description")),
     )
 
 

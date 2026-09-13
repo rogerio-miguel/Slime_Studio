@@ -58,6 +58,12 @@ class EpisodioRemoto:
     # thumb pra esse episódio). String crua — nunca baixada pra disco; a fatia de
     # API serve via proxy `/api/thumb`.
     thumb_url: str | None = None
+    # Nome e sinopse do episódio — NUNCA vêm do extractor (nenhum site de
+    # scraping expõe isso hoje); sempre `None` aqui na origem, preenchidos
+    # depois só pelo overlay TMDB (`api/servicos/fontes.py::
+    # _sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`).
+    titulo: str | None = None
+    sinopse: str | None = None
 
 
 class FormatoDeMidia(StrEnum):

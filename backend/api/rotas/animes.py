@@ -76,6 +76,7 @@ async def criar_anime(
         banner_url=corpo.banner_url,
         capa_cor=corpo.capa_cor,
         generos=corpo.generos,
+        titulo_ingles=corpo.titulo_ingles,
     )
     return await sessao.get(Anime, anime_id)
 
@@ -92,9 +93,17 @@ async def confirmar_fonte_do_anime(
     segue sem pedir confirmação de novo.
 
     `corpo.versao` é o round-trip do que o frontend recebeu em
-    `ResultadoBuscaFonteSaida.versao` pro candidato escolhido — nunca a fonte de
-    verdade: o servidor rederiva via `inferir_versao` (mesma lógica de
-    `extractors/resolucao.py::confirmar_fonte`) e só loga se divergir."""
+    `ResultadoBuscaFonteSaida.versao` pro candidato escolhido. Preferência: o
+    servidor rederiva via `inferir_versao` (mesma lógica de
+    `extractors/resolucao.py::confirmar_fonte`) quando encontra marcador no
+    texto — sites como AnimesDrive/MeusAnimes o carregam no slug/título, e aí
+    o servidor não confia cegamente no cliente. Sites como AnimeFire
+    diferenciam por um campo à parte da API (`audio`, sem marcador textual —
+    `extractors/animefire.py::_resultados_do_item`) e `inferir_versao` NUNCA
+    encontra nada pra eles: sem esta ressalva, toda confirmação nesses sites
+    era silenciosamente regravada como `LEGENDADO`, não importa o que o
+    usuário escolheu (`corpo.versao`, já calculado com o sinal correto lá na
+    busca, é o round-trip confiável nesse caso)."""
     anime = await sessao.get(Anime, anime_id)
     if anime is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
@@ -102,17 +111,19 @@ async def confirmar_fonte_do_anime(
     extrator = next((e for e in EXTRATORES if e.dominio == corpo.dominio), None)
     versao_servidor: VersaoEpisodio | None = None
     if extrator is not None and extrator.diferencia_versao:
-        versao_servidor = (
-            inferir_versao(corpo.titulo_exibicao, corpo.identificador) or VersaoEpisodio.LEGENDADO
-        )
-        if corpo.versao is not None and corpo.versao != versao_servidor:
-            logger.warning(
-                "versão divergente ao confirmar fonte em %r: cliente=%r, servidor=%r —"
-                " usando servidor",
-                corpo.dominio,
-                corpo.versao,
-                versao_servidor,
-            )
+        versao_inferida = inferir_versao(corpo.titulo_exibicao, corpo.identificador)
+        if versao_inferida is not None:
+            versao_servidor = versao_inferida
+            if corpo.versao is not None and corpo.versao != versao_servidor:
+                logger.warning(
+                    "versão divergente ao confirmar fonte em %r: cliente=%r, servidor=%r —"
+                    " usando servidor",
+                    corpo.dominio,
+                    corpo.versao,
+                    versao_servidor,
+                )
+        else:
+            versao_servidor = corpo.versao or VersaoEpisodio.LEGENDADO
 
     candidato = ResultadoBusca(
         titulo_exibicao=corpo.titulo_exibicao,
@@ -149,6 +160,8 @@ async def listar_episodios_remotos_do_anime(
                 rotulo=episodio.rotulo,
                 numero=episodio.numero,
                 thumb_url=episodio.thumb_url,
+                titulo=episodio.titulo,
+                sinopse=episodio.sinopse,
             )
             for episodio in resultado.episodios
         ],
@@ -214,8 +227,9 @@ async def listar_animes(
         servico_sondagem.agendar_sondagens(sessionmaker, animes, versoes)
         servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
-    # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios` e
-    # `assistido` são derivados e precisam ser injetados à parte.
+    # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios`,
+    # `assistido` e `episodios_atuais` são derivados e precisam ser injetados à
+    # parte.
     return [
         AnimeSaida.model_validate(anime).model_copy(
             update={
@@ -224,6 +238,10 @@ async def listar_animes(
                 ),
                 "tem_episodios": anime.id in com_episodios,
                 "assistido": anime.id in assistidos,
+                "episodios_atuais": max(
+                    maior_capturado.get(anime.id, 0), anime.episodios_na_fonte or 0
+                )
+                or None,
             }
         )
         for anime in animes
@@ -286,6 +304,8 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
         status_lancamento=lanc.status if lanc else None,
         proximo_ep_numero=lanc.proximo_ep_numero if lanc else None,
         proximo_ep_em=lanc.proximo_ep_em if lanc else None,
+        total_episodios=lanc.total_episodios if lanc else None,
+        sinopse=item.sinopse,
     )
 
 
@@ -394,6 +414,7 @@ async def obter_anime(
     return AnimeDetalheSaida(
         id=anime.id,
         titulo=anime.titulo,
+        titulo_ingles=anime.titulo_ingles,
         slug=anime.slug,
         ano=anime.ano,
         capa_path=anime.capa_path,

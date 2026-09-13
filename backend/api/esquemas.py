@@ -95,6 +95,9 @@ class CriarAnimeRequest(BaseModel):
     # materialização repassa e persiste direto (mesmo curto-circuito de
     # `capa_url`/`banner_url`); tradução pt-BR é no frontend.
     generos: list[str] | None = None
+    # Título em inglês (`title.english` da AniList) do item do feed — persiste
+    # em `Anime.titulo_ingles` (só exibição, nunca substitui `Anime.titulo`).
+    titulo_ingles: str | None = None
 
 
 class AnimeSaida(BaseModel):
@@ -141,6 +144,23 @@ class AnimeSaida(BaseModel):
     # representante do grupo (a maior temporada).
     serie_ancora: int | None = None
     numero_temporada: int | None = None
+    # Total de episódios da temporada segundo a AniList (`Media.episodes`) — 1:1
+    # com a coluna homônima via `model_validate`, mesmo default nullable do
+    # resto (título antigo na AniList, ou refresh de lançamento nunca rodou).
+    # Fallback de `episodios_atuais` abaixo quando a sondagem da fonte real
+    # ainda não rodou pro anime.
+    total_episodios_anilist: int | None = None
+    # "Quantos episódios tem AGORA", pro card de catálogo (`components/
+    # AnimeCard.jsx`, tag "Tn EP.n") — não é coluna, é derivado e injetado na
+    # rota (`api/rotas/animes.py::listar_animes`): `max(maior número de
+    # episódio já capturado localmente, episodios_na_fonte)`. Mesma dupla fonte
+    # de `episodios_novos` (`api/servicos/lancamentos.py`), só que aqui não é
+    # uma DIFERENÇA, é o maior valor conhecido — aproxima o que a página do
+    # anime mostra (`linhas.length`, união local+remoto ao vivo,
+    # `PaginaDoAnime.jsx`) sem repetir scraping por card na grade do catálogo.
+    # `None` só quando as duas fontes estão vazias (nunca sondado e nada
+    # capturado) — o front cai pro total da AniList acima nesse caso.
+    episodios_atuais: int | None = None
     # Gêneros crus da AniList (tradução pt-BR é no frontend, `inicio/generos.js`)
     # — 1:1 com a coluna homônima via `model_validate`, igual a `status_lancamento`
     # acima. Nullable (não normalizado a `[]` aqui): animes sem esse metadado
@@ -183,6 +203,17 @@ class AnimeEmAltaSaida(BaseModel):
     status_lancamento: StatusLancamento | None = None
     proximo_ep_numero: int | None = None
     proximo_ep_em: datetime | None = None
+    # Total de episódios da temporada (`LancamentoDeAnime.total_episodios`,
+    # mesma origem AniList de `AnimeSaida.total_episodios_anilist`) — item do
+    # feed ainda não é catalogado, então não há sondagem de fonte real pra
+    # mostrar "quantos tem atualmente" (ver `AnimeSaida.episodios_atuais`); só
+    # o total declarado faz sentido aqui. Alimenta a tag "Tn EP.n" do card de
+    # catálogo (`components/AnimeCard.jsx`) quando o item vem do feed.
+    total_episodios: int | None = None
+    # Sinopse (`description` da AniList, sanitizada) — só o feed "em alta" a
+    # traz; nos demais feeds (`/buscar`, próxima temporada, fileiras) fica
+    # `None`. A Home a usa no bloco de conteúdo do carrossel de destaques.
+    sinopse: str | None = None
 
 
 class FileiraTematicaSaida(BaseModel):
@@ -219,6 +250,10 @@ class AnimeDetalheSaida(BaseModel):
 
     id: int
     titulo: str
+    # Título em inglês da AniList (`Anime.titulo_ingles`) — linha secundária do
+    # hero (sob `titulo`), como o par título/subtítulo do carrossel. `None`
+    # quando o anime não tem `anilist_id` ou o enriquecimento ainda não rodou.
+    titulo_ingles: str | None = None
     slug: str
     ano: int | None
     capa_path: str | None
@@ -272,8 +307,11 @@ class ConfirmarFonteRequest(BaseModel):
     titulo_exibicao: str
     url: str
     # Round-trip do `versao` que o frontend recebeu em `ResultadoBuscaFonteSaida`
-    # pro candidato escolhido — o servidor não confia cegamente nisso, sempre
-    # rederiva via `extractors.versao.inferir_versao` e loga divergência
+    # pro candidato escolhido — o servidor rederiva via
+    # `extractors.versao.inferir_versao` (e loga divergência) quando o site
+    # marca a versão no texto do slug/título; sites que diferenciam por um
+    # campo à parte da API sem marcador textual (ex. AnimeFire, `audio`) não
+    # têm como ser rederivados assim, e o servidor confia neste round-trip
     # (`api/rotas/animes.py::confirmar_fonte_do_anime`).
     versao: VersaoEpisodio | None = None
 
@@ -334,13 +372,20 @@ class EpisodioRemotoSaida(BaseModel):
 
     `thumb_url` é a URL crua da thumbnail do episódio na fonte (`None` quando o
     site não expõe) — nunca baixada aqui; o frontend a serve via o proxy
-    `GET /api/thumb` (`api/rotas/thumb.py`), que embute o `Referer` de hotlink."""
+    `GET /api/thumb` (`api/rotas/thumb.py`), que embute o `Referer` de hotlink.
+
+    `titulo`/`sinopse` NUNCA vêm da fonte de scraping (nenhum extractor os
+    expõe) — só do overlay TMDB best-effort (`api/servicos/fontes.py::
+    _sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`); `None`
+    quando o TMDB não acha ou não tem tradução pt-BR."""
 
     model_config = ConfigDict(from_attributes=True)
 
     rotulo: str
     numero: int | None
     thumb_url: str | None = None
+    titulo: str | None = None
+    sinopse: str | None = None
 
 
 class EpisodiosRemotosSaida(BaseModel):
@@ -369,6 +414,11 @@ class EpisodioSaida(BaseModel):
     anime_id: int
     numero: int
     titulo: str | None
+    # Sinopse do episódio (TMDB, `api/servicos/jobs.py::info_de_episodio`) —
+    # persistida na captura, mesma origem/momento de `titulo`. `None` quando o
+    # TMDB não achou ou não tem tradução pt-BR, ou o episódio foi capturado
+    # antes desta coluna existir (sem backfill).
+    sinopse: str | None = None
     tipo: TipoEpisodio
     versao: VersaoEpisodio
     status: StatusEpisodio

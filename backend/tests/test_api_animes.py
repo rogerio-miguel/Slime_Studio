@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import sondagem
@@ -21,7 +22,7 @@ from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeF
 from core.erros import FalhaDeExtracao
 from extractors.base import EpisodioRemoto, ResultadoBusca
 from extractors.resolucao import ConfirmacaoNecessaria, FonteResolvida
-from integrations.base import AnimeEmAlta
+from integrations.base import AnimeEmAlta, InfoDeEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
 from models.fonte_anime import FonteAnime
@@ -93,9 +94,15 @@ async def test_listar_episodios_remotos_caminho_feliz(
     assert resposta.json() == {
         "dominio": "animefire.io",
         "episodios": [
-            {"rotulo": "1", "numero": 1, "thumb_url": None},
-            {"rotulo": "2", "numero": 2, "thumb_url": None},
-            {"rotulo": "especial", "numero": None, "thumb_url": None},
+            {"rotulo": "1", "numero": 1, "thumb_url": None, "titulo": None, "sinopse": None},
+            {"rotulo": "2", "numero": 2, "thumb_url": None, "titulo": None, "sinopse": None},
+            {
+                "rotulo": "especial",
+                "numero": None,
+                "thumb_url": None,
+                "titulo": None,
+                "sinopse": None,
+            },
         ],
     }
 
@@ -169,14 +176,14 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ani
             EpisodioRemoto(rotulo="especial", numero=None, url="https://x/ep-especial"),
         ]
 
-    async def _still_fake(titulo, ano, numero, temporada):
+    async def _info_fake(titulo, ano, numero, temporada):
         # TMDB só resolve o episódio 1 — o 2 cai pra arte do anime.
-        return "https://tmdb/1.jpg" if numero == 1 else None
+        return InfoDeEpisodio(still_url="https://tmdb/1.jpg") if numero == 1 else None
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_still_de_episodio", _still_fake
+        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
@@ -230,18 +237,18 @@ async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_
 
     chamadas: list[tuple] = []
 
-    async def _still_fake(titulo, ano, numero, temporada):
+    async def _info_fake(titulo, ano, numero, temporada):
         chamadas.append((numero, temporada))
         # Simula o TMDB SEM a temporada 2 separada (franquia achatada): o
         # direto (`temporada=2`) vem vazio, só o absoluto resolve.
         if temporada is not None:
             return None
-        return f"https://tmdb/{numero}.jpg"
+        return InfoDeEpisodio(still_url=f"https://tmdb/{numero}.jpg")
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_still_de_episodio", _still_fake
+        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{t2_id}/episodios-remotos")
@@ -298,17 +305,17 @@ async def test_listar_episodios_remotos_still_direto_nunca_cai_pro_absoluto_com_
 
     chamadas: list[tuple] = []
 
-    async def _still_fake(titulo, ano, numero, temporada):
+    async def _info_fake(titulo, ano, numero, temporada):
         chamadas.append((numero, temporada))
         # TMDB TEM a temporada 4 em separado — resolve de cara no direto.
         if temporada is None:
             return None
-        return f"https://tmdb/temporada{temporada}-ep{numero}.jpg"
+        return InfoDeEpisodio(still_url=f"https://tmdb/temporada{temporada}-ep{numero}.jpg")
 
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_still_de_episodio", _still_fake
+        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{t4_id}/episodios-remotos")
@@ -859,6 +866,8 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
         "status_lancamento": None,
         "proximo_ep_numero": None,
         "proximo_ep_em": None,
+        "total_episodios": None,
+        "sinopse": None,
     }
 
 
@@ -1039,3 +1048,38 @@ async def test_obter_anime_sem_linha_em_fonte_anime_nao_agenda_sondagem(
     assert resposta.status_code == 200
     assert chamadas == []
     assert sondagem._sondagens_em_voo == {}
+
+
+async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    """AnimeFire diferencia versão por um campo à parte da API (`audio`), sem
+    marcador no slug/título (`extractors/animefire.py::_resultados_do_item`) —
+    `inferir_versao(titulo_exibicao, identificador)` nunca encontra nada pra
+    ele. Regressão do bug reportado: confirmar 'Dublado' voltava sempre
+    'Legendado' porque o servidor rederivava e caía no default silencioso.
+    `identificador`/`titulo_exibicao` aqui deliberadamente não carregam
+    nenhum marcador — é exatamente o caso do AnimeFire."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Sem Marcador")
+
+    resposta = await cliente.post(
+        f"/api/admin/animes/{anime_id}/fontes/confirmar",
+        json={
+            "dominio": "animefire.io",
+            "identificador": "42",
+            "titulo_exibicao": "One Piece",
+            "url": "https://animefire.io/anime/42",
+            "versao": "dublado",
+        },
+    )
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        fonte = (
+            await sessao.execute(
+                select(FonteAnime).where(
+                    FonteAnime.anime_id == anime_id, FonteAnime.site_dominio == "animefire.io"
+                )
+            )
+        ).scalar_one()
+    assert fonte.versao == VersaoDeFonte.DUBLADO
