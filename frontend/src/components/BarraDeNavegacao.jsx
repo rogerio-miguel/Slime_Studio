@@ -81,7 +81,7 @@ export default function BarraDeNavegacao({
               // direto pro estado final em vez de reiniciá-la do zero.
               state={{ revelado: true }}
               aria-current={emInicio ? 'page' : undefined}
-              className={`outline-none transition-colors font-bold hover:text-neon focus-visible:ring-2 focus-visible:ring-neon ${
+              className={`outline-none transition-colors font-bold hover:text-neon ${
                 emInicio ? 'text-neon' : 'focus-visible:text-white'
               }`}
             >
@@ -92,7 +92,7 @@ export default function BarraDeNavegacao({
             <Link
               to="/animes"
               aria-current={emAnimes ? 'page' : undefined}
-              className={`outline-none transition-colors font-bold hover:text-neon focus-visible:ring-2 focus-visible:ring-neon ${
+              className={`outline-none transition-colors font-bold hover:text-neon ${
                 emAnimes ? 'text-neon' : 'focus-visible:text-white'
               }`}
             >
@@ -130,7 +130,7 @@ export default function BarraDeNavegacao({
             value={termoBusca}
             onChange={(event) => aoMudarBusca(event.target.value)}
             placeholder="Buscar…"
-            className="w-60 rounded-md border border-border-chrome bg-surface/80 px-3 py-1.5 text-sm text-white outline-none transition-all focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+            className="w-60 rounded-md border border-border-chrome bg-surface/80 px-3 py-1.5 text-sm text-white outline-none transition-all focus-visible:border-neon"
           />
         </form>
       )}

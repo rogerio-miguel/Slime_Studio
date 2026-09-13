@@ -36,7 +36,7 @@ export default function DialogoDeFonteAmbigua({ aberto, dominio, candidatos, aoE
             <button
               type="button"
               onClick={() => aoEscolher(candidato)}
-              className="flex w-full items-center justify-between gap-3 rounded-lg border border-border-chrome px-4 py-2 text-left text-sm outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-border-chrome px-4 py-2 text-left text-sm outline-none transition-colors hover:border-neon"
             >
               <span className="truncate">{candidato.titulo_exibicao}</span>
               {candidato.versao != null && (
@@ -51,7 +51,7 @@ export default function DialogoDeFonteAmbigua({ aberto, dominio, candidatos, aoE
       <button
         type="button"
         onClick={aoFechar}
-        className="mt-4 text-xs text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
+        className="mt-4 text-xs text-ink-muted underline outline-none"
       >
         Cancelar
       </button>

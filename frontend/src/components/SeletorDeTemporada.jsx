@@ -106,7 +106,7 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
             setAberto(true);
           }
         }}
-        className="inline-flex items-center gap-2 rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+        className="inline-flex items-center gap-2 rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white"
       >
         {rotuloDe(temporadaAtual)}
         <svg
