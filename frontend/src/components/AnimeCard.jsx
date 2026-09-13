@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import textoEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
@@ -40,19 +41,29 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // em `components/BarraDeNavegacao.jsx` pros itens "Em breve".
 //
 // `aoRemover` (opcional, sem argumentos — quem chama já sabe qual anime via
-// closure): quando presente, renderiza `<BotaoRemoverDoCatalogo>` como IRMÃO
-// do Link/button, nunca aninhado (button dentro de <a>/<button> é inválido).
-// Mecânica de opacidade/hover/foco e o SVG do X vivem em
-// `components/BotaoRemoverDoCatalogo.jsx`. O `group/card` mora no WRAPPER, não
-// no conteúdo do Link/button: o botão de remover é irmão do Link/button, então
-// se `group/card` ficasse só lá dentro o `group-hover/card:` do botão nunca
-// casaria.
+// closure): quando presente, renderiza `<BotaoRemoverDoCatalogo>` DENTRO da
+// própria div da capa (ou, sem capa, dentro da caixa única do card) — mesmo
+// lugar de `inicio/CartaoDeEstreia.jsx`, que já ancorava certo (ver rationale
+// em components/BotaoRemoverDoCatalogo.jsx). Isso só é seguro porque o
+// Link/button deixou de ENVOLVER o conteúdo visual: agora é uma camada
+// invisível `absolute inset-0`, IRMÃ do conteúdo (não mais pai dele), cobrindo
+// o card inteiro pra navegação/ativação — mesmo padrão "stretched link" que
+// `CartaoDeEstreia` não precisa porque não tem Link/button nenhum. Sem essa
+// mudança, aninhar `<BotaoRemoverDoCatalogo>` (um `<button>`) dentro da capa
+// aninharia ele dentro do Link/button também — inválido (button dentro de
+// <a>/<button>). Como a camada de navegação não tem mais texto visível dentro,
+// o nome acessível vem de `aria-labelledby` apontando pro badge "Assistido"
+// (`idBadge`) e pro bloco de legenda (`idLegenda`) — replica o que antes era
+// lido automaticamente por estar tudo dentro do próprio Link.
 //
 // Hover do card (pedido explícito do usuário — sem escala: o card NÃO cresce
-// mais no hover, só reage a `hover:bg-surface-hover` direto no Link/button
-// (`classesConteudo`), um cinza sutil (token `surface-hover` do tema, já
-// usado no card "sem capa" abaixo e no card de episódio em lista,
-// components/LinhaDeEpisodio.jsx) sobre `p-2 -m-2` — o padding some o
+// mais no hover, só reage a `group-hover/card:bg-surface-hover` em
+// `classesConteudo` — quem recebe o `:hover` de mouse é a camada de
+// navegação (Link/button `absolute inset-0`, irmã dele), então a reação
+// precisa passar pelo `group/card` do wrapper, não um `hover:` direto), um
+// cinza sutil (token `surface-hover` do tema, já usado no card "sem capa"
+// abaixo e no card de episódio em lista, components/LinhaDeEpisodio.jsx)
+// sobre `p-2 -m-2` — o padding some o
 // conteúdo visualmente do lugar (a margem negativa cancela o padding), só
 // revela a caixa de fundo maior que o pôster+legenda quando o hover pinta
 // ela. Sem isso a caixa de fundo nasceria já visível fora do hover. Cobre o
@@ -114,6 +125,11 @@ export default function AnimeCard({
   const capa = anime.capa_path ?? anime.capa_url ?? null;
   const titulo = anime.titulo ?? anime.titulo_romaji;
   const assistido = !semLegenda && Boolean(anime.assistido);
+  // Ids do nome acessível da camada de navegação (ver nota de `aoRemover` no
+  // topo do arquivo) — só usados nos ramos com Link/button real (`estatico`
+  // não precisa, não navega).
+  const idBadge = useId();
+  const idLegenda = useId();
 
   // Marca "assistido": só a pill no canto do pôster (sem scrim — decisão de
   // produto, o card do catálogo não escurece a capa; o scrim mora só no card
@@ -124,12 +140,13 @@ export default function AnimeCard({
   // fluxo (a `<img>` acima é `absolute`, então hoje a pill seria o único
   // conteúdo em fluxo e "funcionaria" mesmo com `relative`, mas isso quebra
   // no primeiro filho novo que alguém adicionar ali). `h-8` explícito +
-  // `inline-flex items-center` (não `py-*`): mesma altura EXATA do botão de
-  // remover (`p-1` ao redor do ícone `h-6` = 32px = `h-8`,
-  // components/BotaoRemoverDoCatalogo.jsx) — alinha os dois pelo centro
+  // `inline-flex items-center` (não `py-*`): mesma altura EXATA do ícone
+  // (`h-8`, sem padding ao redor) do botão de remover
+  // (components/BotaoRemoverDoCatalogo.jsx) — alinha os dois pelo centro
   // vertical independente da métrica de linha do texto.
   const badgeAssistido = assistido && (
     <span
+      id={idBadge}
       className="absolute left-2 top-2 z-10 inline-flex h-8 items-center rounded-2xl bg-black/60 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white"
       aria-label="já assistido"
     >
@@ -205,14 +222,19 @@ export default function AnimeCard({
     // slot da grade (GradeDeCatalogo.jsx/FileiraDeCards.jsx) somado ao do
     // vizinho — até ~16px ainda não encosta no pôster ao lado.
     classesConteudo =
-      'relative flex w-full flex-col gap-2 rounded-2xl p-3 -m-3 text-left outline-none transition-colors duration-300 ease-out hover:bg-surface-hover motion-reduce:transition-none';
+      'relative flex w-full flex-col gap-2 rounded-2xl p-3 -m-3 text-left transition-colors duration-300 ease-out group-hover/card:bg-surface-hover motion-reduce:transition-none';
     conteudo = (
       <>
         <div className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl bg-surface">
           <img src={capa} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
           {badgeAssistido}
+          {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
         </div>
-        {!semLegenda && <div className="relative flex flex-col gap-1">{legenda}</div>}
+        {!semLegenda && (
+          <div id={idLegenda} className="relative flex flex-col gap-1">
+            {legenda}
+          </div>
+        )}
       </>
     );
   } else {
@@ -221,11 +243,16 @@ export default function AnimeCard({
     // vazar no canto — nada aqui precisa da separação pôster/legenda (já era
     // uma caixa só de hover antes desta mudança).
     classesConteudo =
-      'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left outline-none transition-all duration-200 hover:bg-surface-hover';
+      'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left transition-all duration-200 group-hover/card:bg-surface-hover';
     conteudo = (
       <>
         {badgeAssistido}
-        {!semLegenda && <div className="relative mt-auto flex flex-col gap-1">{legenda}</div>}
+        {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
+        {!semLegenda && (
+          <div id={idLegenda} className="relative mt-auto flex flex-col gap-1">
+            {legenda}
+          </div>
+        )}
       </>
     );
   }
@@ -236,7 +263,11 @@ export default function AnimeCard({
   // título casaria com QUALQUER ancestral `.group` e acenderia todos os cards
   // da fileira de uma vez ao passar o mouse em qualquer ponto dela. Sem
   // escala (removida a pedido do usuário): só serve de raiz pro grupo, sem
-  // classe própria de hover/foco — quem reage é `classesConteudo`.
+  // classe própria de hover/foco. `classesConteudo` reage via
+  // `group-hover/card:` (não `hover:` direto) porque quem recebe o hover do
+  // mouse agora é a camada de navegação (Link/button `absolute inset-0`
+  // abaixo), irmã dele, não o próprio `classesConteudo` — `:hover` não
+  // atravessa pra um irmão, só pro ancestral comum (`wrapper`).
   const wrapper = 'group/card relative';
 
   if (estatico) {
@@ -248,13 +279,20 @@ export default function AnimeCard({
     );
   }
 
+  // Nome acessível da camada de navegação: `aria-labelledby` junta o badge
+  // "Assistido" (quando presente) com o bloco de legenda (título + tags),
+  // igual ao texto que seria lido se estivesse tudo dentro do próprio
+  // Link/button. `semLegenda` nunca ocorre nestes dois ramos na prática (só
+  // combina com `estatico`, ver comentário no topo do arquivo), mas o
+  // fallback pro `titulo` cru cobre esse caso defensivamente.
+  const idsRotulo = [assistido && idBadge, !semLegenda && idLegenda].filter(Boolean).join(' ');
+  const propsRotulo = idsRotulo ? { 'aria-labelledby': idsRotulo } : { 'aria-label': titulo };
+
   if (idCatalogado != null) {
     return (
       <div className={wrapper}>
-        <Link to={`/anime/${idCatalogado}`} className={classesConteudo}>
-          {conteudo}
-        </Link>
-        {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
+        <div className={classesConteudo}>{conteudo}</div>
+        <Link to={`/anime/${idCatalogado}`} className="absolute inset-0 outline-none" {...propsRotulo} />
         {sobreposicao}
       </div>
     );
@@ -262,18 +300,19 @@ export default function AnimeCard({
 
   return (
     <div className={wrapper}>
+      <div className={desabilitado ? `${classesConteudo} opacity-50` : classesConteudo}>{conteudo}</div>
       <button
         type="button"
         onClick={aoAtivar}
         disabled={desabilitado}
         aria-disabled={desabilitado || undefined}
         className={
-          desabilitado ? `${classesConteudo} pointer-events-none cursor-not-allowed opacity-50` : classesConteudo
+          desabilitado
+            ? 'absolute inset-0 cursor-not-allowed outline-none'
+            : 'absolute inset-0 outline-none'
         }
-      >
-        {conteudo}
-      </button>
-      {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
+        {...propsRotulo}
+      />
       {sobreposicao}
     </div>
   );
