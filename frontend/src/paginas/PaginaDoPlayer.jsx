@@ -8,11 +8,12 @@ import Player from '../player/Player.jsx';
 // Rota "/assistir/:episodioId". título/número vêm preferencialmente do
 // `state` da navegação (LinhaDeEpisodio.jsx passa isso no `<Link>`) — mais
 // rápido, sem round-trip. Em acesso direto/refresh (sem `state`),
-// `GET /api/episodios/{id}` cobre `numero`; o título do ANIME em si fica
-// fora do contrato de `EpisodioSaida` (só `anime_id`), então nesse caso o
-// cabeçalho cai para o nome genérico "Slime Studio" — degradação parcial
-// aceitável, não afeta playback. O mesmo fetch também traz `progresso_s`
-// (Feature "continuar assistindo"), que o `state` de navegação nunca carrega.
+// `GET /api/episodios/{id}` cobre `numero` e o título do EPISÓDIO
+// (`EpisodioSaida.titulo`, TMDB); só o título do ANIME fica fora do
+// contrato (só `anime_id`), então nesse caso o cabeçalho cai para o nome
+// genérico "Slime Studio" — degradação parcial aceitável, não afeta
+// playback. O mesmo fetch também traz `progresso_s` (Feature "continuar
+// assistindo"), que o `state` de navegação nunca carrega.
 export default function PaginaDoPlayer() {
   const { episodioId } = useParams();
   const location = useLocation();
@@ -96,7 +97,28 @@ export default function PaginaDoPlayer() {
 
   const numero = metadados?.numero ?? episodio.dados?.numero ?? null;
   const animeTitulo = metadados?.animeTitulo ?? null;
-  const titulo = numero != null ? `${animeTitulo ?? 'Slime Studio'} — Episódio ${numero}` : 'Slime Studio';
+  // Mesmo título do episódio (TMDB) que RotuloEpisodio já formata na página
+  // do anime — via `state` (LinhaDeEpisodio.jsx) ou, em acesso direto/refresh,
+  // do próprio GET /api/episodios/{id} (`EpisodioSaida.titulo`, ao contrário
+  // do nome do anime, esse campo está no contrato).
+  const tituloEpisodio = metadados?.titulo ?? episodio.dados?.titulo ?? null;
+  // Só vem preenchido via `state` (PaginaDoAnime.jsx manda sempre que
+  // `anime.numero_temporada` é conhecido, mesmo com uma única temporada
+  // catalogada — diferente do H1/seletor de lá, que só mostra com 2+, ver
+  // franquia.js::tituloBaseDeTemporada). Sem `numero_temporada` no contrato
+  // de `EpisodioSaida`, acesso direto/refresh sempre omite — degradação
+  // parcial, mesma natureza da de animeTitulo acima.
+  const numeroTemporada = metadados?.numeroTemporada ?? null;
+  const titulo =
+    numero != null
+      ? [
+          animeTitulo ?? 'Slime Studio',
+          numeroTemporada != null ? `| T.${numeroTemporada}` : null,
+          `EP.${numero}${tituloEpisodio ? ` - ${tituloEpisodio}` : ''}`,
+        ]
+          .filter(Boolean)
+          .join(' ')
+      : 'Slime Studio';
 
   return (
     <main className="flex h-full flex-col">

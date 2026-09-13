@@ -169,21 +169,6 @@ export default function PlayerAtivo({
         {/* Canvas de saída remonta a cada troca de preset (key, D3): cada
             sessão do pipeline Anime4K precisa de contexto WebGPU virgem. */}
         <canvas key={presetAtual} ref={canvasRef} id="output-canvas" />
-        {/* Título como overlay dentro do .frame, não mais <header> externo
-            em PaginaDoPlayer.jsx: reaproveita a classe `.controls`
-            (player.css) — mesmo mecanismo de fade-in/out em hover/focus-
-            within que já rege BarraDeControles, só ancorado no topo
-            (top-0). `.controls-topo` só ajusta a direção do nudge de
-            entrada (ver player.css) — opacity/transition/pointer-events
-            continuam vindo de `.controls`, nada duplicado. Sem link "←
-            voltar" de propósito (removido a pedido do usuário) — sair do
-            player é só navegação de volta do navegador/atalho, sem
-            afordance própria aqui. */}
-        <div className="controls controls-topo absolute inset-x-0 top-0 flex items-center gap-4 px-4 py-3">
-          <h1 ref={focoTituloRef} tabIndex={-1} className="text-2xl font-medium text-white outline-none">
-            {titulo}
-          </h1>
-        </div>
         <HudTelemetria
           visivel={hudVisivel}
           modo={auto ? `Auto · degrau ${indiceDeDegrau + 1}/${DEGRAUS_ADAPTATIVOS.length}` : 'Manual'}
@@ -193,19 +178,39 @@ export default function PlayerAtivo({
           diagnostico={diagnostico}
           passes={contarPasses(PRESETS[presetAtual]?.blocos ?? [])}
         />
-        <BarraDeControles
-          videoRef={videoRef}
-          presetAtual={qualidade}
-          aoTrocarPreset={setQualidade}
-          aoAlternarReproducao={alternarReproducao}
-          aoAlternarMudo={alternarMudo}
-          aoAlternarTelaCheia={alternarTelaCheia}
-          aoAlternarHud={alternarHud}
-          aoAlternarCinema={alternarCinema}
-          cinemaHabilitado={audioCinema.habilitado}
-          cinemaFalhou={audioCinema.falhou}
-        />
       </div>
+      {/* Título como overlay, irmã de .frame (mesmo motivo do
+          BarraDeControles abaixo): ancorado em .fullscreen-stage pra ir de
+          ponta a ponta da PÁGINA, por cima da margem lateral de .frame
+          também — .frame fica intocado. Reaproveita a classe `.controls`
+          (player.css) — mesmo mecanismo de fade-in/out em hover/focus-within
+          que rege BarraDeControles, só ancorado no topo (top-0).
+          `.controls-topo` só ajusta a direção do nudge de entrada (ver
+          player.css) — opacity/transition/pointer-events continuam vindo de
+          `.controls`, nada duplicado. Sem link "← voltar" de propósito
+          (removido a pedido do usuário) — sair do player é só navegação de
+          volta do navegador/atalho, sem afordance própria aqui. */}
+      <div className="controls controls-topo absolute inset-x-0 top-0 flex items-center gap-4 px-4 py-3">
+        <h1 ref={focoTituloRef} tabIndex={-1} className="text-2xl font-medium text-white outline-none">
+          {titulo}
+        </h1>
+      </div>
+      {/* Irmã de .frame, não filha: ancorada em .fullscreen-stage (ver
+          player.css) pra ir de ponta a ponta da PÁGINA, por cima da margem
+          lateral de .frame também — .frame (tamanho/posição do vídeo em si)
+          fica intocado. */}
+      <BarraDeControles
+        videoRef={videoRef}
+        presetAtual={qualidade}
+        aoTrocarPreset={setQualidade}
+        aoAlternarReproducao={alternarReproducao}
+        aoAlternarMudo={alternarMudo}
+        aoAlternarTelaCheia={alternarTelaCheia}
+        aoAlternarHud={alternarHud}
+        aoAlternarCinema={alternarCinema}
+        cinemaHabilitado={audioCinema.habilitado}
+        cinemaFalhou={audioCinema.falhou}
+      />
     </div>
   );
 }

@@ -97,11 +97,18 @@ body.pagina-player {
    elemento a 100vw/100vh do jeito que quiser (não brigamos com isso). O
    .frame fica dentro, como item de flex, com largura e altura calculadas
    direto em unidades de viewport (ver regra .frame) — não depende do
-   tamanho que o navegador dá a este wrapper. */
+   tamanho que o navegador dá a este wrapper.
+
+   position:relative por causa do BarraDeControles: ela é `position:absolute`
+   ancorada NESTE elemento (não em `.frame`), de propósito — `.frame` tem
+   margem lateral (--frame-inset-lateral) e a barra precisa ir de ponta a
+   ponta da página, por cima da margem também, sem que `.frame` (tamanho e
+   posição do vídeo em si) mude em nada. */
 .fullscreen-stage {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   width: 100%;
   /* Fora de tela cheia este wrapper não tem altura própria — só width:100%
      — e colapsa pra altura do .frame, então align-items:center não tem
@@ -177,11 +184,17 @@ body.pagina-player {
   object-fit: fill;
 }
 
-/* Overlay dentro de .frame, escondido por padrão, revelado em
-   :hover/:focus-within do .frame — puro CSS, sem JS: :focus-within garante
-   que dar Tab até um botão também revela (senão ficaria focável mas
-   invisível, quebraria navegação por teclado). Regra de acessibilidade, não
-   estética — por isso fica aqui e não em Tailwind utilitário. */
+/* Overlay escondido por padrão, revelado em :hover/:focus-within do
+   .fullscreen-stage — puro CSS, sem JS: :focus-within garante que dar Tab
+   até um botão também revela (senão ficaria focável mas invisível, quebraria
+   navegação por teclado). Regra de acessibilidade, não estética — por isso
+   fica aqui e não em Tailwind utilitário.
+
+   Escuta .fullscreen-stage, não .frame: o título (.controls-topo) continua
+   dentro de .frame, mas BarraDeControles agora é irmã de .frame (ver
+   comentário em .fullscreen-stage) — .fullscreen-stage é o ancestral comum
+   aos dois, então um hover em qualquer ponto do palco (vídeo OU a faixa da
+   barra que passa por cima da margem lateral) revela ambos. */
 .controls {
   --deslocamento: 6px;
   opacity: 0;
@@ -200,8 +213,8 @@ body.pagina-player {
 .controls-topo {
   --deslocamento: -6px;
 }
-.frame:hover .controls,
-.frame:focus-within .controls {
+.fullscreen-stage:hover .controls,
+.fullscreen-stage:focus-within .controls {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
@@ -209,7 +222,7 @@ body.pagina-player {
 
 /* Auto-ocultar por inatividade — a classe entra/sai do .fullscreen-stage em
    hooks/useOcultarPorInatividade.js. A especificidade (0,4,1) VENCE de
-   propósito o `.frame:hover` acima (0,3,0): quando o tempo estoura, o normal
+   propósito o `.fullscreen-stage:hover` acima (0,3,0): quando o tempo estoura, o normal
    é o cursor estar parado EM CIMA do vídeo, então uma regra que não vencesse
    o hover não esconderia nada. O caminho de revelação continua sendo só o de
    cima — este bloco só força a ocultação.
@@ -240,4 +253,127 @@ body.pagina-player {
   opacity: 0;
   transform: translateY(var(--deslocamento));
   pointer-events: none;
+}
+
+/* Trilha de progresso/volume — visual "quase Disney+" (trilha fina que
+   engrossa e revela o thumb só em hover/foco/arraste), desenhado à mão via
+   `appearance:none` + pseudo-elementos em vez de confiar no `accent-color`
+   nativo do navegador: o Chromium para de preencher a trilha um pouco antes
+   da ponta (o raio do thumb não entra no cálculo do preenchimento), então
+   em volume 100% sobrava uma lasca branca sem cor — bug reportado pelo
+   usuário. `--fill` (setado inline em BarraDeControles.jsx a partir de
+   `progresso`/`volume`) é a única parte dinâmica; o resto é estático aqui.
+   Escopo pelas classes (não `input[type=range]` global): não afeta o
+   <select> de qualidade nem inputs de outras telas.
+
+   `--track-height` é a peça que faltava pro thumb (a "bolinha") ficar
+   centralizado: sem ela, o Chromium posiciona `::-webkit-slider-thumb`
+   relativo ao topo da CAIXA do input (18px), não ao centro da trilha fina —
+   descentralizada na barra de progresso, e cortada quase pela metade (virando
+   uma pílula, não um círculo) na barra de volume, cuja trilha é ainda mais
+   fina (5px). A variável mora no próprio input (não só como `height` do
+   pseudo-elemento da trilha) pra que o thumb, que herda custom properties do
+   host, calcule `margin-top: (trilha - bolinha) / 2` sozinho — Firefox
+   (`-moz-range-thumb`) já centraliza contra a trilha sem esse ajuste. */
+.barra-progresso,
+.barra-volume {
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  /* Altura da CAIXA (área de clique), não da trilha visual — fixa, não
+     acompanha o hover. Deixa a trilha fina (pseudo-elemento abaixo) sem
+     reduzir o alvo de clique/toque junto com ela; o navegador centraliza o
+     pseudo-elemento mais fino dentro desta caixa sozinho. */
+  height: 18px;
+}
+.barra-progresso::-webkit-slider-runnable-track,
+.barra-volume::-webkit-slider-runnable-track {
+  height: var(--track-height);
+  background: linear-gradient(to right, var(--cor-preenchida) var(--fill, 0%), rgba(255, 255, 255, 0.25) var(--fill, 0%));
+  border-radius: 999px;
+  transition: height 0.15s ease;
+}
+.barra-progresso::-moz-range-track,
+.barra-volume::-moz-range-track {
+  height: var(--track-height);
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  transition: height 0.15s ease;
+}
+.barra-progresso::-moz-range-progress,
+.barra-volume::-moz-range-progress {
+  height: var(--track-height);
+  background: var(--cor-preenchida);
+  border-radius: 999px;
+  transition: height 0.15s ease;
+}
+.barra-progresso {
+  --cor-preenchida: var(--color-neon);
+  --track-height: 6px;
+}
+.barra-progresso:hover,
+.barra-progresso:focus-visible {
+  --track-height: 8px;
+}
+.barra-volume {
+  --cor-preenchida: #fff;
+  --track-height: 5px;
+}
+/* Thumb só aparece hover/foco/arrastando — :active cobre o arraste mesmo se
+   o ponteiro sair da trilha, porque o range continua "ativo" enquanto o
+   botão do mouse segue pressionado. -webkit-/-moz- não podem compartilhar
+   seletor (um navegador descarta a regra inteira se um pseudo-elemento do
+   outro aparecer na mesma lista), por isso os blocos repetem. */
+.barra-progresso::-webkit-slider-thumb,
+.barra-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  margin-top: calc((var(--track-height) - 14px) / 2);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.barra-progresso:hover::-webkit-slider-thumb,
+.barra-progresso:focus-visible::-webkit-slider-thumb,
+.barra-progresso:active::-webkit-slider-thumb,
+.barra-volume:hover::-webkit-slider-thumb,
+.barra-volume:focus-visible::-webkit-slider-thumb,
+.barra-volume:active::-webkit-slider-thumb {
+  opacity: 1;
+}
+.barra-progresso::-moz-range-thumb,
+.barra-volume::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.barra-progresso:hover::-moz-range-thumb,
+.barra-progresso:focus-visible::-moz-range-thumb,
+.barra-progresso:active::-moz-range-thumb,
+.barra-volume:hover::-moz-range-thumb,
+.barra-volume:focus-visible::-moz-range-thumb,
+.barra-volume:active::-moz-range-thumb {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .barra-progresso,
+  .barra-volume,
+  .barra-progresso::-webkit-slider-runnable-track,
+  .barra-volume::-webkit-slider-runnable-track,
+  .barra-progresso::-moz-range-track,
+  .barra-volume::-moz-range-track,
+  .barra-progresso::-moz-range-progress,
+  .barra-volume::-moz-range-progress,
+  .barra-progresso::-webkit-slider-thumb,
+  .barra-volume::-webkit-slider-thumb,
+  .barra-progresso::-moz-range-thumb,
+  .barra-volume::-moz-range-thumb {
+    transition: none;
+  }
 }

@@ -59,7 +59,20 @@ function clampDegrau(n) {
 // resto da sessão: depois de PROBE_COOLDOWN_MS sem NENHUMA falha nova nele,
 // libera uma sondagem (ainda sujeita à janela de estabilidade normal pra
 // subir). Se falhar de novo, a paciência já cresce (falhasNoAlvo maior),
-// então sondagens repetidas ficam cada vez mais espaçadas na prática.
+// então sondagens repetidas ficam cada vez mais espaçadas na prática. Se a
+// sondagem vingar e o degrau se firmar de novo (JANELAS_BOAS_PARA_ESTAVEL),
+// o histórico de falhas dele é zerado — falhar 2x numa cena pesada não pode
+// virar penalidade permanente pro resto do anime se o degrau já provou de
+// novo que sustenta.
+//
+// Falha rápida pós-subida conta em dobro: se a descida acontece antes de o
+// degrau ter provado estabilidade (nunca chegou a JANELAS_BOAS_PARA_ESTAVEL
+// como "lembrado"), a troca 'cima' foi otimista e a GPU já devolveu a
+// resposta na primeira janela — não precisa de uma segunda tentativa pra
+// confirmar. Sem isso, cada teto novo custa 2 ciclos completos de
+// subida-travada-descida (cada troca de degrau é uma recompilação de shader,
+// visível como travadinha) antes de trancar; foi o padrão relatado ao vivo
+// (sobe e desce em janela curta, repetido no episódio).
 function bloqueadoParaSubida(falhas, ultimaFalhaEm) {
   return falhas >= MAX_FALHAS_POR_DEGRAU && Date.now() - ultimaFalhaEm < PROBE_COOLDOWN_MS;
 }
@@ -139,7 +152,13 @@ export function useControleAdaptativo({
       const origem = indiceRef.current;
       const alvo = Math.min(origem + passos, PISO);
       if (alvo === origem) return false;
-      falhasPorDegrauRef.current[origem] = (falhasPorDegrauRef.current[origem] || 0) + 1;
+      // Origem nunca provou estabilidade (subida recente, ainda otimista) →
+      // trava de cara, como falha de GPU. Origem já era um degrau firmado →
+      // mecanismo gentil de 2 tentativas antes de virar teto.
+      const falhaRapidaPosSubida = ultimoEstavelRef.current !== origem;
+      falhasPorDegrauRef.current[origem] = falhaRapidaPosSubida
+        ? MAX_FALHAS_POR_DEGRAU
+        : (falhasPorDegrauRef.current[origem] || 0) + 1;
       ultimaFalhaPorDegrauRef.current[origem] = Date.now();
       aplicarDegrau(alvo, 'baixo', motivo);
       return true;
@@ -292,12 +311,17 @@ export function useControleAdaptativo({
 
       janelasBoasRef.current += 1;
 
-      // Firma o degrau atual como "lembrado" antes de tentar subir.
+      // Firma o degrau atual como "lembrado" antes de tentar subir. Também
+      // perdoa o histórico de falhas dele: se voltou a ficar estável, as
+      // quedas antigas (possivelmente causadas por uma cena pesada pontual)
+      // não devem continuar travando tentativas futuras de subir até aqui.
       if (
         janelasBoasRef.current >= JANELAS_BOAS_PARA_ESTAVEL &&
         indiceRef.current !== ultimoEstavelRef.current
       ) {
         ultimoEstavelRef.current = indiceRef.current;
+        delete falhasPorDegrauRef.current[indiceRef.current];
+        delete ultimaFalhaPorDegrauRef.current[indiceRef.current];
         aoDegrauEstavelRef.current?.(indiceRef.current);
       }
 
