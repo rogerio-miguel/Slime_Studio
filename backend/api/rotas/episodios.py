@@ -37,6 +37,7 @@ router_admin = APIRouter(prefix="/api/admin/episodios", tags=["admin-episodios"]
 
 _TIPO_M3U8 = "application/vnd.apple.mpegurl"
 _TIPO_TS = "video/mp2t"
+_TIPO_JPEG = "image/jpeg"
 _CACHE_MANIFESTO = "private, max-age=60"
 # Nunca `immutable`/max-age longo aqui: a URL do segmento (`seg_%05d.ts`) é
 # determinística por anime/episódio (`diretorio_do_episodio`), não por
@@ -157,9 +158,12 @@ async def obter_recurso(
     config: Config = Depends(obter_config),
     sessao: AsyncSession = Depends(obter_sessao),
 ) -> FileResponse:
-    """Variante (`index.m3u8`) e segmentos (`seg_*.ts`) — o master os referencia
-    relativamente, então servir o master em `.../playlist.m3u8` faz o `hls.js`
-    resolver tudo daqui para baixo sem reescrever manifesto."""
+    """Variante (`index.m3u8`), segmentos (`seg_*.ts`) e o sprite de prévia de
+    hover (`storyboard.jpg`, opcional — ver `worker/pipeline/storyboard.py`).
+    O master referencia a variante/segmentos relativamente, então servir o
+    master em `.../playlist.m3u8` faz o `hls.js` resolver tudo daqui para
+    baixo sem reescrever manifesto; o storyboard não é referenciado por
+    nenhum manifesto, o frontend pede direto por nome fixo."""
     episodio = await sessao.get(Episodio, episodio_id)
     if episodio is None:
         raise HTTPException(
@@ -171,7 +175,15 @@ async def obter_recurso(
     except RecursoDeMidiaInvalido as excecao:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(excecao)) from excecao
 
-    tipo = _TIPO_M3U8 if caminho.suffix == ".m3u8" else _TIPO_TS
+    if caminho.suffix == ".m3u8":
+        tipo = _TIPO_M3U8
+    elif caminho.suffix == ".jpg":
+        tipo = _TIPO_JPEG
+    else:
+        tipo = _TIPO_TS
+    # storyboard.jpg segue a mesma política de cache dos segmentos: reprocessar
+    # o episódio gera bytes novos no mesmo caminho (mesmo motivo documentado
+    # em _CACHE_SEGMENTO acima) — nunca cacheável como imutável.
     cache = _CACHE_MANIFESTO if caminho.suffix == ".m3u8" else _CACHE_SEGMENTO
     return FileResponse(caminho, media_type=tipo, headers={"Cache-Control": cache})
 

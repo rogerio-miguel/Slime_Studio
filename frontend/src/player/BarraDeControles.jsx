@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import MenuDeConfiguracoes from './MenuDeConfiguracoes.jsx';
-import { IconePlay, IconePausa, IconeVolume, IconeFones, IconeTelaCheia, IconeSkip10 } from './Icones.jsx';
+import PreviaDeCena from './PreviaDeCena.jsx';
+import { IconePlay, IconePausa, IconeVolume, IconeTelaCheia, IconeSkip10 } from './Icones.jsx';
+import { usePreferencia } from './hooks/usePreferencia.js';
 
 function formatarTempo(segundos) {
   if (!Number.isFinite(segundos)) return '0:00';
@@ -19,7 +21,8 @@ function formatarTempo(segundos) {
 // deste componente. `min-w-14` (não `w-14` fixo) porque o botão HUD é
 // texto, não ícone. Mesmo tamanho de caixa do trio central (`h-14 min-w-14`,
 // pedido explícito do usuário: só o play fica maior, o resto — volume,
-// cinema, configurações, tela cheia, HUD — fecha igual a avançar/retroceder).
+// configurações, tela cheia, HUD — fecha igual a avançar/retroceder).
+// Áudio cinema saiu daqui (virou linha de MenuDeConfiguracoes.jsx).
 // Cobre os botões periféricos; o trio central usa `classeBotaoTrio` abaixo,
 // que só difere no estilo de hover (sem pill) e no play, com ícone maior.
 const classeBotao =
@@ -60,25 +63,37 @@ export default function BarraDeControles({
   aoAlternarCinema,
   cinemaHabilitado,
   cinemaFalhou,
-  // Opcionais e sem default — botões de avançar/retroceder 10s já entram na
-  // barra (referência Disney+), mas a lógica de pular ainda não foi
-  // decidida/implementada em PlayerAtivo.jsx; `?.()` no clique evita
-  // quebrar enquanto isso. Ligar é só passar as duas props de lá, mesmo
-  // padrão de aoAlternarReproducao/aoAlternarMudo etc.
+  // Avançar/retroceder 10s (PlayerAtivo.jsx), mesmo padrão de
+  // aoAlternarReproducao/aoAlternarMudo etc. `?.()` no clique é só defesa
+  // contra um chamador futuro que monte a barra sem passar as duas props.
   aoAvancar,
   aoRetroceder,
+  // URL do sprite de prévia (PlayerAtivo.jsx, derivada de `fonte`) — `undefined`
+  // é um valor válido (PreviaDeCena.jsx só não renderiza nada nesse caso).
+  storyboardUrl,
 }) {
   const [tocando, setTocando] = useState(false);
   const [progresso, setProgresso] = useState(0);
   const [tempoAtual, setTempoAtual] = useState(0);
   const [duracao, setDuracao] = useState(NaN);
-  const [mudo, setMudo] = useState(false);
-  const [volume, setVolume] = useState(1);
+  // Persistidos (localStorage) — video.volume/muted nascem em 1/false a cada
+  // novo <video>, sem isto o player sempre abriria no volume padrão em vez
+  // do que o usuário deixou da última vez.
+  const [mudo, setMudo] = usePreferencia('slime.mudo', false);
+  const [volume, setVolume] = usePreferencia('slime.volume', 1);
   const seekingRef = useRef(false);
+  // Posição do hover na barra de progresso, pra PreviaDeCena — `null` fora
+  // do hover. Vive aqui (não em PreviaDeCena) porque depende de `duracao`,
+  // já rastreada neste componente.
+  const [previa, setPrevia] = useState(null);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+
+    // Aplica a preferência salva uma vez, ao montar — ver comentário acima.
+    video.volume = volume;
+    video.muted = mudo;
 
     const aoTocar = () => setTocando(true);
     const aoPausar = () => setTocando(false);
@@ -109,6 +124,10 @@ export default function BarraDeControles({
       video.removeEventListener('timeupdate', aoAtualizarTempo);
       video.removeEventListener('volumechange', aoMudarVolume);
     };
+    // volume/mudo só lidos aqui pra semear o valor inicial ao montar — mudanças
+    // posteriores já chegam ao <video> via aoDigitarVolume/aoAlternarMudo, listar
+    // as duas aqui reiniciaria os listeners a cada ajuste de volume.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoRef]);
 
   function aoMoverSeek(event) {
@@ -121,6 +140,20 @@ export default function BarraDeControles({
 
   function aoSoltarSeek() {
     seekingRef.current = false;
+  }
+
+  // getBoundingClientRect() do wrapper (não do <input>): os dois têm a mesma
+  // largura (o input é w-full dentro dele), mas medir o wrapper evita
+  // qualquer desalinhamento por borda/padding do próprio range nativo.
+  function aoPassarMouseNoProgresso(event) {
+    if (!Number.isFinite(duracao) || duracao <= 0) return;
+    const retangulo = event.currentTarget.getBoundingClientRect();
+    const fracao = Math.min(1, Math.max(0, (event.clientX - retangulo.left) / retangulo.width));
+    setPrevia({ tempo: fracao * duracao, x: fracao * retangulo.width });
+  }
+
+  function aoSairDoProgresso() {
+    setPrevia(null);
   }
 
   function aoDigitarVolume(event) {
@@ -146,7 +179,9 @@ export default function BarraDeControles({
           ao lado; cada tempo vira label na ponta correspondente. `--fill`
           substitui o `accent-color` nativo (ver player.css): o preenchimento
           calculado à mão chega até a ponta de verdade em vez de parar um
-          pouco antes por causa do raio do thumb. */}
+          pouco antes por causa do raio do thumb. O <input> agora vive dentro
+          de um wrapper `relative` só pra ancorar PreviaDeCena (hover) —
+          `w-full` nele substitui o `flex-1` que era do próprio input. */}
       <div className="flex items-center gap-3">
         <span
           aria-hidden="true"
@@ -154,19 +189,28 @@ export default function BarraDeControles({
         >
           {formatarTempo(tempoAtual)}
         </span>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          step="0.01"
-          value={progresso}
-          onInput={aoMoverSeek}
-          onChange={aoSoltarSeek}
-          aria-label="Posição no vídeo"
-          aria-valuetext={`${formatarTempo(tempoAtual)} de ${formatarTempo(duracao)}`}
-          className="barra-progresso min-w-30 flex-1"
-          style={{ '--fill': `${progresso}%` }}
-        />
+        <div
+          className="relative min-w-30 flex-1"
+          onMouseMove={aoPassarMouseNoProgresso}
+          onMouseLeave={aoSairDoProgresso}
+        >
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="0.01"
+            value={progresso}
+            onInput={aoMoverSeek}
+            onChange={aoSoltarSeek}
+            aria-label="Posição no vídeo"
+            aria-valuetext={`${formatarTempo(tempoAtual)} de ${formatarTempo(duracao)}`}
+            className="barra-progresso w-full"
+            style={{ '--fill': `${progresso}%` }}
+          />
+          {previa && (
+            <PreviaDeCena url={storyboardUrl} tempo={previa.tempo} esquerda={previa.x} />
+          )}
+        </div>
         {/* aria-hidden nos dois: o tempo já é anunciado via aria-valuetext do
             slider — expor aqui também duplicaria pro leitor de tela. */}
         <span
@@ -224,29 +268,12 @@ export default function BarraDeControles({
               />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={aoAlternarCinema}
-            disabled={cinemaFalhou}
-            aria-pressed={cinemaFalhou ? false : cinemaHabilitado}
-            aria-label={
-              cinemaFalhou
-                ? 'Áudio cinema indisponível: a cadeia de áudio falhou ao montar, seguindo com áudio nativo'
-                : 'Áudio cinema (graves + crossfeed para fone)'
-            }
-            title={cinemaFalhou ? 'Áudio cinema indisponível: a cadeia de áudio falhou ao montar, seguindo com áudio nativo' : undefined}
-            className={classeBotao}
-          >
-            <IconeFones width={26} height={26} />
-          </button>
         </div>
 
         {/* Trio central — retroceder/play/avançar, mesma composição do
-            player do Disney+ referenciado. Skip ainda sem lógica (ver
-            comentário de aoAvancar/aoRetroceder acima); os botões já ficam
-            no lugar certo pra só ligar o callback depois. O "10" fica
-            empilhado abaixo do ícone dentro do próprio botão (flex-col),
-            não dentro do SVG — colado no traço da seta ficava ilegível. */}
+            player do Disney+ referenciado. O "10" fica empilhado abaixo do
+            ícone dentro do próprio botão (flex-col), não dentro do SVG —
+            colado no traço da seta ficava ilegível. */}
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -285,7 +312,13 @@ export default function BarraDeControles({
         </div>
 
         <div className="flex items-center justify-end gap-2">
-          <MenuDeConfiguracoes presetAtual={presetAtual} aoTrocar={aoTrocarPreset} />
+          <MenuDeConfiguracoes
+            presetAtual={presetAtual}
+            aoTrocar={aoTrocarPreset}
+            cinemaHabilitado={cinemaHabilitado}
+            cinemaFalhou={cinemaFalhou}
+            aoAlternarCinema={aoAlternarCinema}
+          />
           <button type="button" onClick={aoAlternarTelaCheia} aria-label="Tela cheia" className={classeBotao}>
             <IconeTelaCheia width={26} height={26} />
           </button>

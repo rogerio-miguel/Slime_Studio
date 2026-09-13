@@ -147,6 +147,31 @@ export default function PlayerAtivo({
     audioCinema.alternar(!audioCinema.habilitado);
   }, [audioCinema]);
 
+  // Mesmo clamp de useAtalhosDeTeclado.js (setas ←/→), só que com passo de
+  // 10s — os botões da barra são uma affordance à parte do atalho de
+  // teclado (5s), não o mesmo, então não compartilham callback.
+  const avancar = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+  }, []);
+
+  const retroceder = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = Math.max(0, video.currentTime - 10);
+  }, []);
+
+  // `fonte` é sempre ".../playlist.m3u8" (PaginaDoPlayer.jsx) — o storyboard
+  // (worker/pipeline/storyboard.py) vive como arquivo irmão no mesmo
+  // diretório do episódio, servido pela mesma rota catch-all de mídia.
+  // `undefined` (não a string de `fonte` intacta) se o formato não bater —
+  // PreviaDeCena.jsx trata isso como "sem prévia", nunca aponta pro m3u8.
+  const storyboardUrl = useMemo(
+    () => (fonte?.endsWith('/playlist.m3u8') ? fonte.replace(/playlist\.m3u8$/, 'storyboard.jpg') : undefined),
+    [fonte]
+  );
+
   const acoesDeTeclado = useMemo(
     () => ({ alternarReproducao, alternarTelaCheia, alternarMudo, alternarHud, alternarCinema }),
     [alternarReproducao, alternarTelaCheia, alternarMudo, alternarHud, alternarCinema]
@@ -210,6 +235,9 @@ export default function PlayerAtivo({
         aoAlternarCinema={alternarCinema}
         cinemaHabilitado={audioCinema.habilitado}
         cinemaFalhou={audioCinema.falhou}
+        aoAvancar={avancar}
+        aoRetroceder={retroceder}
+        storyboardUrl={storyboardUrl}
       />
     </div>
   );
