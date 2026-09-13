@@ -374,7 +374,11 @@ export function IndicadorDePlay({ emGrade, temThumb }) {
 // legenda abaixo da miniatura (grade) quanto na linha da lista. `naoNumerico`
 // (numero == null, ex. "Especial"): o rótulo cru da fonte entra no lugar de
 // "EP.N".
-function RotuloEpisodio({ numero, rotulo, titulo }) {
+// Exportado: `CartaoContinuarAssistindo.jsx` (prateleira da Inicio) reusa o
+// MESMO rótulo "EP.N - Título" em vez de reimplementar o formato à mão —
+// mesmo `titulo` (TMDB) que `ContinuarAssistindoSaida.titulo` já traz do
+// backend (backend/api/esquemas.py).
+export function RotuloEpisodio({ numero, rotulo, titulo }) {
   return (
     <span className="line-clamp-2 text-sm font-semibold text-white">
       {numero == null ? rotulo : `EP.${numero}${titulo ? ` - ${titulo}` : ''}`}

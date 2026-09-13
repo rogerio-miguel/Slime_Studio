@@ -3,6 +3,7 @@ import {
   FaixaDeConteudo,
   IndicadorDePlay,
   MiniaturaDoEpisodio,
+  RotuloEpisodio,
 } from './LinhaDeEpisodio.jsx';
 
 // Item da prateleira "Continuar assistindo" (paginas/Inicio.jsx). Não é uma
@@ -14,12 +15,15 @@ import {
 // (pedido do usuário após a primeira tentativa, que reimplementava esse CSS à
 // mão e não batia o tamanho do card real).
 //
-// Única diferença de conteúdo em relação ao ramo `pronto`: esta prateleira
-// cruza vários animes na mesma fileira — ao contrário da grade de episódios de
-// UM anime só em `PaginaDoAnime.jsx` — então o `rotulo` da `FaixaDeConteudo`
-// mostra o TÍTULO DO ANIME (não só "Episódio N"). Também não há badge "✓
-// assistido": a query do backend que alimenta esta prateleira já filtra por
-// episódio não concluído, então `trailing` fica de fora.
+// Diferenças de conteúdo em relação ao ramo `pronto`: esta prateleira cruza
+// vários animes na mesma fileira — ao contrário da grade de episódios de UM
+// anime só em `PaginaDoAnime.jsx` — então o `rotulo` da `FaixaDeConteudo`
+// abre com o TÍTULO DO ANIME antes do `RotuloEpisodio` ("EP.N - Título",
+// MESMO componente do card da página do anime, não reimplementado). Sem
+// sinopse (pedido do usuário — a prateleira é compacta, um card por anime já
+// em progresso). Também não há badge "✓ assistido": a query do backend que
+// alimenta esta prateleira já filtra por episódio não concluído, então
+// `trailing` fica de fora.
 //
 // `state` do Link segue o MESMO formato que LinhaDeEpisodio.jsx já passa pro
 // player (`{ episodio: { numero, animeId, animeTitulo, titulo } }`) — sem
@@ -63,8 +67,8 @@ export default function CartaoContinuarAssistindo({ item }) {
           modo="grade"
           rotulo={
             <span className="flex min-w-0 flex-col gap-0.5">
-              <h3 className="line-clamp-1 text-sm font-semibold text-white">{item.anime_titulo}</h3>
-              <p className="text-xs text-ink-muted">Episódio {item.numero}</p>
+              <h3 className="line-clamp-1 text-xs text-ink-muted">{item.anime_titulo}</h3>
+              <RotuloEpisodio numero={item.numero} titulo={item.titulo} />
             </span>
           }
           extra={
