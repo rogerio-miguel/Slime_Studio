@@ -52,40 +52,48 @@ export default function CartaoContinuarAssistindo({ item }) {
           titulo: item.titulo,
         },
       }}
+      // `legenda` (não `children`): no modo grade, `CartaoDeEpisodio` recorta
+      // `children` na caixa 16:9 e renderiza `legenda` ABAIXO dela, fora do
+      // recorte (ver rationale em components/LinhaDeEpisodio.jsx). Dentro de
+      // `children`, `FaixaDeConteudo` ficaria presa no `aspect-[16/9]` +
+      // `overflow-hidden` da caixa e sumiria (conteúdo maior que a caixa,
+      // cortado).
+      legenda={
+        <FaixaDeConteudo
+          modo="grade"
+          rotulo={
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <h3 className="line-clamp-1 text-sm font-semibold text-white">{item.anime_titulo}</h3>
+              <p className="text-xs text-ink-muted">Episódio {item.numero}</p>
+            </span>
+          }
+          extra={
+            percentualAssistido != null ? (
+              <span className="flex items-center gap-2">
+                <span
+                  role="progressbar"
+                  aria-label="progresso de reprodução"
+                  aria-valuenow={percentualAssistido}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
+                >
+                  <span
+                    style={{ width: `${percentualAssistido}%` }}
+                    className="block h-full rounded-full bg-neon"
+                  />
+                </span>
+                <span className="shrink-0 text-xs text-ink-muted font-semibold">
+                  faltam {minutosRestantes} min
+                </span>
+              </span>
+            ) : null
+          }
+        />
+      }
     >
       <MiniaturaDoEpisodio thumb={item.thumb} modo="grade" />
       <IndicadorDePlay emGrade temThumb={!!item.thumb} />
-      <FaixaDeConteudo
-        modo="grade"
-        rotulo={
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <h3 className="line-clamp-1 text-sm font-semibold text-white">{item.anime_titulo}</h3>
-            <p className="text-xs text-ink-muted">Episódio {item.numero}</p>
-          </span>
-        }
-        extra={
-          percentualAssistido != null ? (
-            <span className="flex items-center gap-2">
-              <span
-                role="progressbar"
-                aria-label="progresso de reprodução"
-                aria-valuenow={percentualAssistido}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
-              >
-                <span
-                  style={{ width: `${percentualAssistido}%` }}
-                  className="block h-full rounded-full bg-neon"
-                />
-              </span>
-              <span className="shrink-0 text-xs text-ink-muted font-semibold">
-                faltam {minutosRestantes} min
-              </span>
-            </span>
-          ) : null
-        }
-      />
     </CartaoDeEpisodio>
   );
 }

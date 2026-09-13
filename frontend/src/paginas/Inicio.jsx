@@ -26,7 +26,7 @@ import { rotularFileiras } from '../inicio/fileirasTematicas.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { intercalarDestaques } from '../inicio/intercalarDestaques.js';
 import { recorteVisivelDoCarrossel } from '../inicio/janelaDeDestaques.js';
-import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
+import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 
 // Rota "/" — introdução cinematográfica tocada por vídeo: fundo preto sólido
@@ -143,7 +143,8 @@ export default function Inicio() {
   // 50), EXCLUINDO o recorte que o carrossel exibe agora
   // (recorteVisivelDoCarrossel, ./janelaDeDestaques.js — mesma fórmula do
   // `base` do carrossel): as duas seções não mostram os mesmos animes. Sem
-  // sinopse (o bloco de conteúdo do carrossel também não tem). `rank` = posição
+  // sinopse — ao contrário do carrossel de destaques, o `DestaqueGrande` fica
+  // só no essencial (título + meta + CTA). `rank` = posição
   // no feed `em-alta` (já ordenado por trending/popularidade da AniList) + 1 —
   // vira a pill "#N em alta"; `indexOf` casa por referência (o feed não é
   // clonado em nenhum ponto). `amostraAleatoria` roda dentro do `useMemo` — só
@@ -232,19 +233,23 @@ export default function Inicio() {
   // busca na biblioteca: materializa o item AniList no catálogo local
   // (`POST /api/admin/animes`, get-or-create por slug no servidor — reenvio
   // acidental não duplica; um resultado de busca já catalogado só navega) e vai
-  // pro anime. Banner e cor dominante vão no payload pra alimentar o hero de
-  // `PaginaDoAnime`; a sinopse continua fora — a AniList não a traz no feed/
-  // busca em lista e ela é preenchida no primeiro carregamento da página.
+  // pro anime. Banner, cor dominante, título em inglês e — para itens do feed
+  // "em alta" — a sinopse vão no payload pra alimentar o hero de
+  // `PaginaDoAnime` já no primeiro render. O que faltar (ex. sinopse num
+  // resultado de busca, que não a traz) é preenchido no primeiro carregamento
+  // da página (`agendar_enriquecimento_de_metadados`).
   const materializarEIrPara = useCallback(
     (item) =>
       materializar(item.anilist_id ?? item.titulo_romaji, () =>
         criarAnime({
           titulo: item.titulo_romaji,
+          tituloIngles: item.titulo_ingles ?? undefined,
           anilistId: item.anilist_id ?? undefined,
           capaUrl: item.capa_url ?? item.banner_url ?? undefined,
           bannerUrl: item.banner_url ?? undefined,
           capaCor: item.capa_cor ?? undefined,
           generos: item.generos ?? undefined,
+          sinopse: item.sinopse ?? undefined,
         })
       ),
     [materializar]
@@ -270,11 +275,13 @@ export default function Inicio() {
       try {
         await criarAnime({
           titulo: item.titulo_romaji,
+          tituloIngles: item.titulo_ingles ?? undefined,
           anilistId: item.anilist_id ?? undefined,
           capaUrl: item.capa_url ?? item.banner_url ?? undefined,
           bannerUrl: item.banner_url ?? undefined,
           capaCor: item.capa_cor ?? undefined,
           generos: item.generos ?? undefined,
+          sinopse: item.sinopse ?? undefined,
         });
         setEstreiasSalvas((atual) => new Set(atual).add(chave));
       } catch (erroCapturado) {
@@ -320,6 +327,7 @@ export default function Inicio() {
           key="proximas-estreias"
           titulo="Próximas estreias"
           itens={proximaTemporada.dados}
+          comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
           renderItem={(item) => {
             const chave = chaveDoItemDoFeed(item);
@@ -343,6 +351,7 @@ export default function Inicio() {
           titulo="Continuar assistindo"
           itens={continuando.dados}
           tamanho="episodio"
+          comSombra={false}
           chaveDoItem={(item) => item.episodio_id}
           renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
         />
@@ -355,13 +364,14 @@ export default function Inicio() {
           key="top-10"
           titulo="Top 10 da semana"
           itens={top10}
+          comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
           // Numeral grande estilo Netflix/Disney+ DENTRO do card: canto
           // superior esquerdo, sobre a arte (`z-10`), com sombra forte pra
           // legibilidade (o topo do pôster não tem o degradê do rodapé).
           // `aria-hidden`/`pointer-events-none`: decorativo, não rouba o
           // clique. Vai como `sobreposicao` do AnimeCard (irmão do card no
-          // wrapper) pra crescer junto no `scale` do hover.
+          // wrapper).
           renderItem={(item, indice) =>
             renderCardDoFeed(
               item,
@@ -383,6 +393,7 @@ export default function Inicio() {
           key={fileira.chave}
           titulo={fileira.rotulo}
           itens={fileira.itens}
+          comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
           renderItem={(item) => renderCardDoFeed(item)}
         />
@@ -422,10 +433,14 @@ export default function Inicio() {
         // `min-h-screen`: evita uma página curta demais (ex. resultado de
         // busca vazio) quando ainda não há conteúdo suficiente pra preencher
         // 1 viewport.
-        // `bg-[#17171b]`: cor exata do `body` do Disney+ (medida ao vivo). É
-        // ela que faz a sombra do card do carrossel aparecer — sobre um preto
-        // mais fechado (ex. `bg-surface/70`) a sombra 69% preta some.
-        className={`relative z-10 min-h-screen bg-[#17171b] pt-22 transition-opacity duration-700 ease-out ${
+        // `bg-black` (não mais `bg-[#17171b]`, cor exata do `body` do
+        // Disney+): preto sólido, igual à Galeria (paginas/Galeria.jsx) —
+        // as fileiras e os resultados de busca não levam mais sombra
+        // (`comSombra={false}`, mesmo motivo de lá). Efeito colateral aceito:
+        // a sombra própria do card "Destaque grande" (inicio/DestaqueGrande.jsx,
+        // `boxShadow: SOMBRA_SLIDE_ATIVO`, não mudou) só aparecia sobre esse
+        // cinza — sobre preto sólido ela fica praticamente invisível.
+        className={`relative z-10 min-h-screen bg-black pt-22 transition-opacity duration-700 ease-out ${
           fase === 'revelado' ? 'opacity-100' : 'opacity-0'
         }`}
       >
@@ -437,11 +452,12 @@ export default function Inicio() {
           // a viewport inteira (igual às fileiras da Home) — um `px` aqui
           // encolheria esse container e os cards sairiam mais estreitos. Os
           // títulos e textos de estado recuperam o alinhamento com a borda do
-          // card via `paddingInline: PADDING_TITULO` (gutter 3.7% + 10px do
-          // slot), mesmo tratamento de paginas/Galeria.jsx.
+          // card via `paddingInline: PADDING_TITULO_GRADE` (só o gutter — o
+          // slot da grade não tem padding próprio), mesmo tratamento de
+          // paginas/Galeria.jsx.
           <section aria-label="Resultados da busca" className="pb-20">
             <h2
-              style={{ paddingInline: PADDING_TITULO }}
+              style={{ paddingInline: PADDING_TITULO_GRADE }}
               className="mt-20 text-2xl font-semibold text-white"
             >
               Resultados para “{termoBusca.trim()}”
@@ -450,7 +466,7 @@ export default function Inicio() {
                 O wrapper só repõe o `paddingInline` que antes vinha do `px` da
                 <section>; cada mensagem leva o próprio `mt-[22px]` (mesmo
                 respiro título->conteúdo que a grade traz no `pt-[22px]`). */}
-            <div style={{ paddingInline: PADDING_TITULO }}>
+            <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
               {catalogo.carregando && (
                 <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
               )}
@@ -475,6 +491,7 @@ export default function Inicio() {
               <GradeDeCatalogo
                 itens={animesFiltrados}
                 tamanho="pequeno"
+                comSombra={false}
                 chaveDoItem={(anime) => anime.id}
                 renderItem={(anime) => <AnimeCard anime={anime} />}
               />
@@ -483,7 +500,7 @@ export default function Inicio() {
             <section aria-labelledby={idResultadosBiblioteca}>
               <h2
                 id={idResultadosBiblioteca}
-                style={{ paddingInline: PADDING_TITULO }}
+                style={{ paddingInline: PADDING_TITULO_GRADE }}
                 className="mt-12 text-2xl font-semibold text-white"
               >
                 Adicionar da biblioteca
@@ -491,7 +508,7 @@ export default function Inicio() {
               {/* Textos de estado — wrapper só repõe o `paddingInline`; a grade
                   de resultados fica FORA dele (o `paddingInline` dobraria o
                   gutter dos cards). */}
-              <div style={{ paddingInline: PADDING_TITULO }}>
+              <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
                 {erroMaterializacao && (
                   <div role="alert" className="mt-[22px]">
                     <p className="text-sm text-red-400">{erroMaterializacao}</p>
@@ -537,6 +554,7 @@ export default function Inicio() {
                   <GradeDeCatalogo
                     itens={resultadosBiblioteca}
                     tamanho="pequeno"
+                    comSombra={false}
                     chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
                     renderItem={(item) => {
                       const chave = item.anilist_id ?? item.titulo_romaji;

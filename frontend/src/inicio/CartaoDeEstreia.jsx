@@ -24,11 +24,27 @@ import BotaoRemoverDoCatalogo from '../components/BotaoRemoverDoCatalogo.jsx';
 // em breve" até o próximo carregamento. Assim que o warm de lançamento roda,
 // `estreia_em` (data completa da AniList) ou pelo menos `ano` passam a existir.
 //
-// Mesma mecânica visual de hover/foco do AnimeCard/CartaoContinuarAssistindo
-// (Disney+): escala no wrapper + borda neon de 4px via overlay, grupo NOMEADO
-// `group/card` (a fileira horizontal tem `group/fileira` próprio pras setas).
-// A borda acende no `focus-within` — o foco pode cair no botão "Salvar" ou no
-// botão de remover.
+// Mesma mecânica visual de hover/foco do AnimeCard — sem escala (removida a
+// pedido do usuário): os DOIS gatilhos são independentes e cobrem o card
+// INTEIRO (pôster + legenda), não só a imagem — mesmo padrão descrito no
+// bloco de comentário equivalente em components/AnimeCard.jsx:
+//  - Hover de mouse → `hover:bg-surface-hover` sobre `p-3 -m-3` (o padding
+//    some o conteúdo do lugar, a margem negativa cancela; só revela a caixa
+//    de fundo quando o hover pinta ela).
+//  - Foco de teclado → borda neon via overlay `aria-hidden`, só com
+//    `group-focus-within/card` (o foco pode cair no botão "Salvar" ou no
+//    botão de remover).
+// Grupo NOMEADO `group/card` (a fileira horizontal tem `group/fileira`
+// próprio pras setas).
+//
+// Título ABAIXO do pôster, em fluxo normal — não mais sobre um degradê por
+// cima da imagem (rationale completo do porquê em components/AnimeCard.jsx,
+// mesma correção: o degradê deixava uma lasca sem escurecer no canto
+// arredondado em alguns motores gráficos). `BotaoRemoverDoCatalogo` (posição
+// `absolute right-2 top-2`) mora como irmão do pôster e da legenda dentro do
+// MESMO wrapper `relative` — como os dois têm `w-full`, o topo/direita do
+// wrapper coincide com o topo/direita do pôster mesmo com a legenda abaixo
+// mudando a altura total do card.
 
 // Instâncias únicas de módulo — recriar `Intl.*` por render é caro.
 const fmtDia = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'long' });
@@ -83,24 +99,27 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
   const capa = item.capa_url ?? item.capa_path ?? null;
 
   return (
-    <div className="group/card relative transition-transform duration-300 ease-out motion-reduce:transition-none hover:z-10 hover:scale-105 focus-within:z-10 focus-within:scale-105">
-      <div className="relative flex aspect-[2/3] w-full flex-col justify-end overflow-hidden rounded-xl bg-surface">
-        {capa && (
-          <img
-            src={capa}
-            alt=""
-            loading="lazy"
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/45 to-transparent" />
-        <div className="relative flex flex-col items-start gap-2 p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-white">
-            {textoDeEstreia(item)}
-          </p>
-          <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white lg:text-base">
-            {titulo}
-          </h3>
+    <div className="group/card relative">
+      <div className="relative flex w-full flex-col gap-2 rounded-xl p-3 -m-3 transition-colors duration-300 ease-out hover:bg-surface-hover motion-reduce:transition-none">
+        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-lg bg-surface">
+          {capa && (
+            <img
+              src={capa}
+              alt=""
+              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          )}
+        </div>
+        <div className="relative flex flex-col items-start gap-2">
+          <div className="flex flex-col gap-1">
+            <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors lg:text-base">
+              {titulo}
+            </h3>
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              {textoDeEstreia(item)}
+            </p>
+          </div>
           {aoSalvar &&
             (salvo ? (
               <span className="inline-flex items-center gap-1 rounded-md border border-neon-soft px-3 py-1.5 text-xs font-semibold text-ink-muted">
@@ -121,14 +140,14 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
               </button>
             ))}
         </div>
-        {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
-        {/* Borda neon: overlay por cima da capa/degradê (mesma técnica do
-            AnimeCard e do CarrosselDestaques). */}
+        {/* Anel de foco: overlay cobrindo o card INTEIRO (pôster + legenda), só
+            `group-focus-within/card` — mesma peça de components/AnimeCard.jsx. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 rounded-xl border-4 border-transparent transition-colors duration-300 ease-out group-hover/card:border-neon group-focus-within/card:border-neon motion-reduce:transition-none"
+          className="pointer-events-none absolute inset-0 rounded-xl border-4 border-transparent transition-colors duration-300 ease-out group-focus-within/card:border-neon motion-reduce:transition-none"
         />
       </div>
+      {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
     </div>
   );
 }

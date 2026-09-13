@@ -1,10 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// Seletor de temporada da página do anime (Fase 5) — geometria/idioma
-// copiados do dropdown do AnimeFire (pílula `rounded-full` com chevron que
-// gira ao abrir + menu ancorado embaixo, item atual em destaque). Substitui a
-// fileira de pills anterior.
+// Seletor de temporada da página do anime (Fase 5) — vive na barra de ações
+// abaixo do hero (`paginas/PaginaDoAnime.jsx`), como PRIMEIRO controle antes
+// de "Trocar fonte". O gatilho usa a MESMA linguagem visual dos outros botões
+// da barra (`rounded-md border-2 border-border-chrome px-3 py-1 text-xs`,
+// hover neon) — só o chevron que gira ao abrir + o menu ancorado embaixo (com
+// a temporada atual em destaque) o distinguem.
 //
 // `temporadas` é `anime.temporadas` (`AnimeDetalheSaida.temporadas`, já
 // ordenada por número, inclui a atual). Trocar de temporada é NAVEGAÇÃO de
@@ -104,13 +106,13 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
             setAberto(true);
           }
         }}
-        className="inline-flex items-center gap-3 rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white backdrop-blur-sm outline-none transition hover:bg-white/20 focus-visible:ring-2 focus-visible:ring-neon"
+        className="inline-flex items-center gap-2 rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
       >
         {rotuloDe(temporadaAtual)}
         <svg
           viewBox="0 0 24 24"
-          width="16"
-          height="16"
+          width="14"
+          height="14"
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
@@ -129,7 +131,7 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
           role="menu"
           aria-label="Temporada"
           onKeyDown={aoTeclarNoMenu}
-          className="absolute left-0 top-full z-10 mt-2 min-w-[12rem] overflow-hidden rounded-xl border border-border-chrome bg-[#1c1c22] py-1 shadow-xl shadow-black/50"
+          className="absolute left-0 top-full z-10 mt-1 min-w-[12rem] overflow-hidden rounded-md border border-border-chrome bg-[#1c1c22] py-1 shadow-xl shadow-black/50"
         >
           {temporadas.map((temporada, indice) => {
             const atual = temporada.id === animeIdAtual;
