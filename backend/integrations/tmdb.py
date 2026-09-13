@@ -32,6 +32,11 @@ _TAMANHO_STILL = "original"  # thumb de episódio (Fatia 5). `still_sizes` do TM
 # iguala a qualidade da thumb ao vivo (TMDB) com a persistida em `capa_path` na
 # captura, que já usa `still_src` cru do extractor (mesma URL "original").
 _IDIOMA = "pt-BR"  # TMDB cai pro pôster default quando não há arte pt-BR
+# Fallback de TEXTO (nome/sinopse de episódio) quando o TMDB não tem tradução
+# pt-BR — comum em anime: `name` costuma vir traduzido, `overview` muitas
+# vezes só no episódio 1 da temporada inteira. Nunca usado pra imagem (still/
+# backdrop/pôster não dependem de idioma). Ver `TmdbProvider.info_da_temporada`.
+_IDIOMA_FALLBACK = "en-US"
 # Estritamente < `integrations/servico.py::_TIMEOUT_POR_PROVEDOR_S` (8s) —
 # mesma razão de `integrations/anilist.py::_TIMEOUT_S`.
 _TIMEOUT_S = 6
@@ -232,7 +237,12 @@ class TmdbProvider(ProvedorDeArte):
         inteira de uma vez (Fatia 5/6), em vez de repescar esta URL por
         episódio. `nome`/`sinopse` vêm de `name`/`overview` no idioma
         `_IDIOMA` — string vazia do TMDB (comum sem tradução pt-BR) vira
-        `None`, nunca string vazia (`or None`)."""
+        `None`, nunca string vazia (`or None`). Quando sobra algum `None`
+        depois disso, `_preencher_com_fallback_en` completa com `_IDIOMA_
+        FALLBACK` (um único GET extra pra temporada inteira, não por
+        episódio) — nunca sobrescreve o que já veio em pt-BR; é o ponto de
+        encaixe pra um futuro sistema de tradução (só precisaria traduzir o
+        que ficou marcado como fallback, não a temporada inteira)."""
         dados = self._executar(
             f"/tv/{id_da_serie}/season/{numero_da_temporada}", {"language": _IDIOMA}
         )
@@ -241,18 +251,56 @@ class TmdbProvider(ProvedorDeArte):
             return None
 
         info: dict[int, InfoDeEpisodio] = {}
+        falta_traducao = False
         for episodio in episodios:
             if not isinstance(episodio, dict):
                 continue
             numero = episodio.get("episode_number")
             if not isinstance(numero, int):
                 continue
+            nome = episodio.get("name") or None
+            sinopse = episodio.get("overview") or None
+            if nome is None or sinopse is None:
+                falta_traducao = True
             info[numero] = InfoDeEpisodio(
                 still_url=_url_imagem(episodio.get("still_path"), _TAMANHO_STILL),
-                nome=episodio.get("name") or None,
-                sinopse=episodio.get("overview") or None,
+                nome=nome,
+                sinopse=sinopse,
             )
-        return info or None
+        if not info:
+            return None
+        if falta_traducao:
+            self._preencher_com_fallback_en(id_da_serie, numero_da_temporada, info)
+        return info
+
+    def _preencher_com_fallback_en(
+        self, id_da_serie: int, numero_da_temporada: int, info: dict[int, InfoDeEpisodio]
+    ) -> None:
+        """Completa, em `info` (mutado in-place), `nome`/`sinopse` que
+        ficaram `None` sem tradução pt-BR, com o mesmo GET em `_IDIOMA_
+        FALLBACK` — um por temporada, não por episódio (só chamado quando
+        `info_da_temporada` já viu que falta algo). Erro de rede/auth aqui
+        propaga igual ao `_executar` do pt-BR (não é engolido nesta camada,
+        ver docstring de `buscar_info_de_episodio`); `still_url` nunca muda
+        (imagem não depende de idioma)."""
+        dados = self._executar(
+            f"/tv/{id_da_serie}/season/{numero_da_temporada}", {"language": _IDIOMA_FALLBACK}
+        )
+        episodios = dados.get("episodes")
+        if not isinstance(episodios, list):
+            return
+        for episodio in episodios:
+            if not isinstance(episodio, dict):
+                continue
+            numero = episodio.get("episode_number")
+            atual = info.get(numero) if isinstance(numero, int) else None
+            if atual is None:
+                continue
+            info[numero] = InfoDeEpisodio(
+                still_url=atual.still_url,
+                nome=atual.nome or (episodio.get("name") or None),
+                sinopse=atual.sinopse or (episodio.get("overview") or None),
+            )
 
     def _resolver_serie(self, titulo: str, ano: int | None) -> dict | None:
         """Busca `GET /search/tv` por `titulo` e escolhe o melhor candidato
