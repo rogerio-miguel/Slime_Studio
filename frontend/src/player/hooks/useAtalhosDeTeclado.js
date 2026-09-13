@@ -1,28 +1,33 @@
 import { useEffect } from 'react';
 
-// Atalhos globais de teclado — porte do switch original (bench.js:716-758),
-// mesma guarda: ignora o atalho quando o foco está num <input>/<button>
-// (evita, por exemplo, Espaço acionando o clique nativo do botão focado E o
-// atalho ao mesmo tempo). Também ignora <select> — diferente do protótipo
-// (onde presets eram links em página separada), SeletorDePreset.jsx é um
-// <select> dentro da barra de controles, e sem este guard Espaço/setas
-// ficam interceptados pelo handler global e quebram a navegação nativa do
-// dropdown. `acoes` contém os callbacks compartilhados com
+// Atalhos globais de teclado — porte do switch original (bench.js:716-758).
+// A guarda original ignorava o atalho pra QUALQUER <input>/<button>/<select>
+// focado, pensada pra evitar, ex., Espaço acionando o clique nativo do botão
+// focado E o atalho ao mesmo tempo. Ampla demais na prática: como clicar em
+// qualquer botão da barra deixa o foco nele, TODOS os atalhos (setas, F, M,
+// H, C) morriam até clicar de novo no vídeo — bug relatado pelo usuário.
+// Restrita agora só às combinações que realmente colidem: Espaço/Enter
+// ativam nativamente o que estiver focado (só importa pra <button>); setas
+// navegam o valor de um <input type=range> focado (progresso/volume) — o
+// resto do teclado passa direto pro atalho global não importa o que esteja
+// focado. `acoes` contém os callbacks compartilhados com
 // BarraDeControles.jsx (mesma lógica pros dois pontos de entrada, sem
 // duplicar).
+const TECLAS_DE_SETA = ['arrowleft', 'arrowright', 'arrowup', 'arrowdown'];
+
 export function useAtalhosDeTeclado({ videoRef, acoes }) {
   useEffect(() => {
     function aoTeclar(event) {
-      if (
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLButtonElement ||
-        event.target instanceof HTMLSelectElement
-      )
-        return;
+      const alvo = event.target;
+      const tecla = event.key.toLowerCase();
+      if (alvo instanceof HTMLButtonElement && (tecla === ' ' || tecla === 'enter')) return;
+      if (alvo instanceof HTMLInputElement && TECLAS_DE_SETA.includes(tecla)) return;
+      if (alvo instanceof HTMLSelectElement) return;
+
       const video = videoRef.current;
       if (!video) return;
 
-      switch (event.key.toLowerCase()) {
+      switch (tecla) {
         case ' ':
           event.preventDefault();
           acoes.alternarReproducao();

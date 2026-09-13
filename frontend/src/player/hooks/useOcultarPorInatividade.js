@@ -12,7 +12,9 @@ import { useEffect } from 'react';
 //    dentro do palco. Aqui só decidimos QUANDO marcar inatividade — nunca
 //    "pode esconder com o foco de teclado dentro".
 //
-// Pausado nunca esconde: sem o vídeo andando, a UI é a única forma de retomar.
+// Pausado também esconde: mesmo com o vídeo parado, ficar sem tocar em nada
+// por ATRASO_MS oculta barra/título (a pedido do usuário) — qualquer
+// pointermove/tecla/foco reabre na hora, então a UI nunca fica inacessível.
 const CLASSE_PALCO_INATIVO = 'palco-inativo'; // par com player.css
 const ATRASO_MS = 1000;
 
@@ -25,14 +27,12 @@ export function useOcultarPorInatividade(videoRef, palcoRef) {
     let temporizador = 0;
 
     function ocultar() {
-      if (video.paused) return;
       palco.classList.add(CLASSE_PALCO_INATIVO);
     }
 
     function reiniciarContagem() {
       palco.classList.remove(CLASSE_PALCO_INATIVO);
       clearTimeout(temporizador);
-      if (video.paused) return;
       temporizador = setTimeout(ocultar, ATRASO_MS);
     }
 

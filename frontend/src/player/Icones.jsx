@@ -1,9 +1,14 @@
-// Ícones inline (sem dependência nova — Escada de Minimalismo, CLAUDE.md
-// §4): geometria SVG mínima, estilo stroke 24×24, mesmo padrão visual em
-// todos. Cada um já nasce aria-hidden/focusable=false porque o texto
-// acessível vem do aria-label do <button> que os envolve (BarraDeControles).
+// Adapter fino sobre lucide-react (Escada de Minimalismo, CLAUDE.md §4: uma
+// dependência já instalada/adotada resolve, não vale a pena manter SVG
+// desenhado à mão) — mantém os MESMOS nomes/API de antes (IconePlay,
+// IconeVolume com `nivel`, IconeSkip10 com `direcao`, etc.) para que
+// BarraDeControles/MenuDeConfiguracoes/LinhaDeEpisodio não precisem mudar
+// nenhuma chamada, só a implementação por trás muda. Continua exportando
+// componentes aria-hidden/focusable=false por padrão: o texto acessível vem
+// do aria-label do <button> que os envolve.
+import { Play, Pause, Headphones, Maximize, RotateCcw, RotateCw, Settings } from 'lucide-react';
+
 const propsBase = {
-  viewBox: '0 0 24 24',
   width: 18,
   height: 18,
   fill: 'none',
@@ -16,59 +21,66 @@ const propsBase = {
 };
 
 export function IconePlay(props) {
-  return (
-    <svg {...propsBase} {...props}>
-      <polygon points="5 3 19 12 5 21 5 3" />
-    </svg>
-  );
+  return <Play {...propsBase} {...props} />;
 }
 
 export function IconePausa(props) {
-  return (
-    <svg {...propsBase} {...props}>
-      <rect x="6" y="4" width="4" height="16" />
-      <rect x="14" y="4" width="4" height="16" />
-    </svg>
-  );
+  return <Pause {...propsBase} {...props} />;
 }
 
-export function IconeVolumeAlto(props) {
-  return (
-    <svg {...propsBase} {...props}>
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-    </svg>
-  );
-}
+// Exceção deliberada ao adapter de lucide (Escada de Minimalismo, CLAUDE.md
+// §4, passo 6: nada pronto resolve) — a lib não tem um glifo que MORPHA
+// entre mudo/baixo/alto, só 3 ícones estáticos (Volume2/Volume1/VolumeX)
+// trocados por inteiro, o que descartava a transição suave pedida (igual ao
+// ícone de volume do YouTube ao arrastar a barra). Volta ao desenho à mão:
+// um <svg> só, corpo do alto-falante fixo, e os 2 arcos + o X entram/saem
+// via opacity+scale — CSS anima a MUDANÇA de estado (não o valor contínuo
+// do volume), o que já basta pra sensação de morph do YouTube porque
+// `nivel` (3 estados) muda a cada vez que o arrasto cruza um limiar.
+const classeArco = 'origin-center transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none';
 
-export function IconeVolumeMudo(props) {
+export function IconeVolume({ nivel = 'alto', ...props }) {
   return (
-    <svg {...propsBase} {...props}>
+    <svg viewBox="0 0 24 24" {...propsBase} {...props}>
       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <line x1="23" y1="9" x2="17" y2="15" />
-      <line x1="17" y1="9" x2="23" y2="15" />
+      <path
+        d="M15.54 8.46a5 5 0 0 1 0 7.07"
+        className={classeArco}
+        style={{ opacity: nivel === 'mudo' ? 0 : 1, transform: nivel === 'mudo' ? 'scale(0.6)' : 'scale(1)' }}
+      />
+      <path
+        d="M19.07 4.93a10 10 0 0 1 0 14.14"
+        className={classeArco}
+        style={{ opacity: nivel === 'alto' ? 1 : 0, transform: nivel === 'alto' ? 'scale(1)' : 'scale(0.6)' }}
+      />
+      <g
+        className={classeArco}
+        style={{ opacity: nivel === 'mudo' ? 1 : 0, transform: nivel === 'mudo' ? 'scale(1)' : 'scale(0.6)' }}
+      >
+        <line x1="23" y1="9" x2="17" y2="15" />
+        <line x1="17" y1="9" x2="23" y2="15" />
+      </g>
     </svg>
   );
 }
 
 export function IconeFones(props) {
-  return (
-    <svg {...propsBase} {...props}>
-      <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
-      <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z" />
-      <path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
-    </svg>
-  );
+  return <Headphones {...propsBase} {...props} />;
 }
 
 export function IconeTelaCheia(props) {
-  return (
-    <svg {...propsBase} {...props}>
-      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-      <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-      <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-    </svg>
-  );
+  return <Maximize {...propsBase} {...props} />;
+}
+
+export function IconeEngrenagem(props) {
+  return <Settings {...propsBase} {...props} />;
+}
+
+// Mesma geometria (seta circular) pros dois sentidos, agora via dois glifos
+// prontos da lib (RotateCcw/RotateCw) em vez de espelhar um só via
+// transform — o "10" continua fora do SVG, empilhado no botão
+// (BarraDeControles.jsx).
+export function IconeSkip10({ direcao = 'frente', ...props }) {
+  const Icone = direcao === 'tras' ? RotateCcw : RotateCw;
+  return <Icone {...propsBase} {...props} />;
 }

@@ -12,6 +12,7 @@
   "dependencies": {
     "anime4k-webgpu": "^1.0.0",
     "hls.js": "^1.5.0",
+    "lucide-react": "^1.45.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^6.30.4"
