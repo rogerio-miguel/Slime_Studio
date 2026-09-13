@@ -355,8 +355,14 @@ export default function Inicio() {
           comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
           // Numeral grande estilo Netflix/Disney+ DENTRO do card: canto
-          // superior esquerdo, sobre a arte (`z-10`), com sombra forte pra
-          // legibilidade (o topo do pôster não tem o degradê do rodapé).
+          // superior esquerdo, sobre a arte (`z-10`), sangrando um pouco pra
+          // fora do canto do pôster (`-left-6 -top-4`, antes ficava contido em
+          // `left-2 top-0`) pra dar profundidade de camada. Passou por uma
+          // variante "fantasma atrás do pôster" (testada ao vivo, descartada
+          // pelo usuário 2026-09-13 — sobre a imagem de volta), mas a cor
+          // discreta dessa ideia (branco translúcido, sem sombra) permanece:
+          // pedido explícito do usuário, cor sólida ficava chamativa demais.
+          // `font-extrabold` (não mais `font-black`, menos blocudo).
           // `aria-hidden`/`pointer-events-none`: decorativo, não rouba o
           // clique. Vai como `sobreposicao` do AnimeCard (irmão do card no
           // wrapper).
@@ -365,7 +371,7 @@ export default function Inicio() {
               item,
               <span
                 aria-hidden="true"
-                className="pointer-events-none absolute left-2 top-0 z-10 select-none font-black leading-none text-white text-[3.5rem] drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[4.5rem] lg:text-[5.5rem]"
+                className="pointer-events-none absolute left-4 top-4 z-10 select-none font-extrabold leading-none text-black/80 text-[3.25rem] sm:text-[4.25rem] lg:text-[5.5rem] xl:text-[6.25rem]"
               >
                 {indice + 1}
               </span>
