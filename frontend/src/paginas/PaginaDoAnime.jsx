@@ -203,6 +203,23 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobsPorEpisodio, episodios.dados, episodios.recarregar]);
 
+  // Retry único e atrasado — cobre a corrida entre sair do player
+  // (PaginaDoPlayer.jsx, efeito de saída fire-and-forget: `liberarEpisodio`/
+  // `salvarProgresso` no cleanup, sem `await` antes de desmontar) e o GET
+  // acima (linha 157) chegando primeiro no backend: card renderiza sem a
+  // barra de progresso/badge "assistido" até um refresh manual. Sem sinal
+  // vivo pra essa corrida (diferente do guard de job "pronto" acima, que
+  // reage ao WebSocket) — 1s é um chute com folga pra cobrir o round-trip do
+  // POST de saída em rede local, não elimina a corrida de vez (só
+  // `useBlocker` segurando a navegação faria isso, atrasando toda saída do
+  // player). Reagenda a cada troca de `animeId`; sem guard feito à mão
+  // porque um `recarregar()` a mais é inofensivo.
+  useEffect(() => {
+    const id = setTimeout(() => episodios.recarregar(), 1000);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animeId]);
+
   const [numeroCapturando, setNumeroCapturando] = useState(null);
   const [erroCaptura, setErroCaptura] = useState(null);
   const [fonteAmbigua, setFonteAmbigua] = useState(null); // { dominio, candidatos, numero }
