@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { nomeDaFonte } from '../fontes.js';
 
 // `<dialog>` nativo: foco preso, backdrop e fechar com Esc de graça, sem lib
 // de modal — a única dependência de UI do projeto continua sendo Tailwind
@@ -24,7 +25,7 @@ export default function DialogoDeFonteAmbigua({ aberto, dominio, candidatos, aoE
       className="m-auto rounded-xl border border-neon-soft bg-surface p-6 text-white backdrop:bg-black/70"
     >
       <h2 id="titulo-fonte-ambigua" className="mb-2 text-base font-semibold">
-        Mais de um resultado em {dominio}
+        Mais de um resultado em {nomeDaFonte(dominio)}
       </h2>
       <p className="mb-4 text-sm text-ink-muted">
         Não foi possível decidir sozinho — escolha o título correto:
