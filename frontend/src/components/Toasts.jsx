@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const _DURACAO_MS = 6000;
+const _DURACAO_MS = 3000;
 const _ROTULO_POR_STATUS = {
   pronto: { texto: 'concluído', tom: 'sucesso' },
   falhou: { texto: 'falhou', tom: 'erro' },
