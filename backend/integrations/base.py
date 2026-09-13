@@ -43,10 +43,12 @@ class MetadadosDeAnime:
     """Campos de `models/anime.py::Anime` que o cadastro manual não preenche
     hoje — `integrations/servico.py` decide qual provedor preencheu qual.
 
-    `titulo_romaji`/`titulo_ingles` são material de corroboração de match por
-    título (o casamento por título é heurístico — quem consome decide se é bom o
-    bastante), **nunca persistidos**: `Anime.titulo` é o título local, não o do
-    provedor (mesma regra de `TitulosDeAnime`).
+    `titulo_romaji` é material de corroboração de match por título (o casamento
+    por título é heurístico — quem consome decide se é bom o bastante), **nunca
+    persistido**: `Anime.titulo` é o título local, não o do provedor (mesma
+    regra de `TitulosDeAnime`). `titulo_ingles` É persistido — em
+    `Anime.titulo_ingles`, campo SÓ de exibição (linha secundária do hero da
+    página do anime), que nunca substitui o `Anime.titulo` canônico.
     """
 
     capa_url: str | None
@@ -69,6 +71,7 @@ class MetadadosDeAnime:
     ano: int | None = None
     lancamento: LancamentoDeAnime | None = None
     titulo_romaji: str | None = None
+    # Persistido em `Anime.titulo_ingles` (só exibição — ver docstring).
     titulo_ingles: str | None = None
 
 
@@ -114,6 +117,11 @@ class AnimeEmAlta:
     ano_estreia: int | None = None
     generos: tuple[str, ...] = ()
     lancamento: LancamentoDeAnime | None = None
+    # Sinopse (`description` da AniList, já sanitizada) — só o feed "em alta"
+    # a traz (`_QUERY_EM_ALTA`); "próxima temporada"/fileiras temáticas/busca
+    # não pedem `description` e deixam no default. A Home usa no bloco de
+    # conteúdo do carrossel de destaques.
+    sinopse: str | None = None
     # Cor dominante da capa (`coverImage.color` da AniList, ex. "#e4a15d") — só o
     # AniList preenche; Kitsu deixa no default `None` (e a própria AniList às
     # vezes devolve `null`). A Home usa como fundo do slide do carrossel quando o
@@ -223,6 +231,19 @@ class ArteDeAnime:
     banner_url: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class InfoDeEpisodio:
+    """Still + nome + sinopse de UM episódio, resolvidos pelo `ProvedorDeArte`
+    (TMDB) na mesma chamada (Fatia 6 — os dois primeiros já existiam via
+    `still_url`/Fatia 5, `nome`/`sinopse` são novos). Qualquer campo pode ser
+    `None` — TMDB best-effort, sem tradução pt-BR pra muito anime (`nome`/
+    `sinopse` ficam vazios com mais frequência que `still_url`)."""
+
+    still_url: str | None
+    nome: str | None = None
+    sinopse: str | None = None
+
+
 class ProvedorDeArte(ABC):
     """Capability autônoma, NÃO um `ProvedorDeMetadados` (D1 do plano de arte
     TMDB): o TMDB não responde sinopse/ids/feed, só imagem — por isso ganha
@@ -248,14 +269,14 @@ class ProvedorDeArte(ABC):
         volta a ser resolvida só pela cadeia normal de `ProvedorDeMetadados`
         (AniList/Kitsu, que já modela capa por temporada corretamente)."""
 
-    def buscar_still_de_episodio(
+    def buscar_info_de_episodio(
         self, titulo: str, ano: int | None, numero: int, temporada: int | None
-    ) -> str | None:
-        """Thumb do episódio `numero` de `titulo`/`ano`. Com `temporada` dada
-        (o `n` da temporada, `Anime.numero_temporada`), `numero` é o número do
-        episódio DENTRO da temporada (1-based); com `temporada is None`,
-        `numero` é a numeração absoluta local sobre a série inteira e o
-        provedor resolve a temporada sozinho.
+    ) -> InfoDeEpisodio | None:
+        """Still/nome/sinopse do episódio `numero` de `titulo`/`ano`. Com
+        `temporada` dada (o `n` da temporada, `Anime.numero_temporada`),
+        `numero` é o número do episódio DENTRO da temporada (1-based); com
+        `temporada is None`, `numero` é a numeração absoluta local sobre a
+        série inteira e o provedor resolve a temporada sozinho.
 
         Capability opcional com implementação PADRÃO `None` (não abstrata,
         mesmo padrão de `ProvedorDeMetadados.buscar_metadados_por_anilist_id`).

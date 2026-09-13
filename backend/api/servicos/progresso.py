@@ -38,7 +38,7 @@ async def listar_continuar_assistindo(
                 Episodio.anime_id.label("anime_id"),
                 Anime.titulo.label("anime_titulo"),
                 # `capa_path` é a still TMDB do episódio (`api/servicos/jobs.py
-                # ::still_de_episodio`) — pode ser `NULL` (TMDB não achou);
+                # ::info_de_episodio`) — pode ser `NULL` (TMDB não achou);
                 # `COALESCE` cai pra arte do anime nesse caso, mesmo fallback
                 # de `PaginaDoAnime.jsx::thumbDoAnime`, nunca o thumb cru da
                 # fonte de scraping.

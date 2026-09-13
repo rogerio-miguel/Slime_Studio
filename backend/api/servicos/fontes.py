@@ -16,8 +16,8 @@ captura só reusa o mapeamento.
 
 `resolver_e_listar` não filtra por versão nem toca stills — cada chamador faz o
 seu. `listar_episodios_remotos` não persiste `Episodio`/`Job` (é só consulta) e
-sobrepõe, best-effort, a thumb de episódio do TMDB (Fatia 5 do
-`PLANO_ARTE_TMDB.md`) sobre `EpisodioRemoto.thumb_url`.
+sobrepõe, best-effort, a thumb/nome/sinopse de episódio do TMDB (Fatia 5/6 do
+`PLANO_ARTE_TMDB.md`) sobre `EpisodioRemoto.thumb_url`/`titulo`/`sinopse`.
 
 Não importa `fastapi`: devolve dataclasses ou levanta erro de `core/erros.py`;
 `api/rotas/animes.py` traduz para `HTTPException`/schemas.
@@ -40,7 +40,7 @@ from extractors.base import EpisodioRemoto
 from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
 from extractors.servico import filtrar_por_versao, listar_episodios_em
 from integrations import servico as servico_metadados
-from integrations.base import TitulosDeAnime
+from integrations.base import InfoDeEpisodio, TitulosDeAnime
 from models.anime import Anime
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ _TETO_METADADOS_S = 9
 _CONCORRENCIA_STILLS = 5
 _TETO_LOTE_STILLS_S = 18
 
-# Teto do lookup de UM still (`still_de_episodio`, usado na captura — ver
+# Teto do lookup de UM episódio (`info_de_episodio`, usado na captura — ver
 # `api/servicos/jobs.py`) — mesma ordem de grandeza de `_TETO_METADADOS_S`,
 # fora do lote, então sem a proteção do `asyncio.wait(timeout=...)` acima.
 _TETO_STILL_UNICO_S = 9
@@ -224,71 +224,74 @@ async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int
     return int(total or 0)
 
 
-async def _still_direto_ou_absoluto(
+async def _info_direto_ou_absoluto(
     anime: Anime, numero: int, offset_de_temporada: int
-) -> str | None:
-    """Still TMDB de um episódio: tenta primeiro o par DIRETO (`numero` dentro
-    da temporada, `anime.numero_temporada`) — o caso comum, onde o TMDB tem
-    uma season própria pra cada temporada da AniList. Só cai pro número
-    ABSOLUTO (`offset_de_temporada + numero`, `temporada=None`) quando o
-    direto não acha nada E há offset pra tentar — a franquia "achatada" numa
-    season só no TMDB (ex. Kusuriya no Hitorigoto — 2 temporadas na AniList, 1
-    season de 48 no TMDB).
+) -> InfoDeEpisodio | None:
+    """Still/nome/sinopse TMDB de um episódio: tenta primeiro o par DIRETO
+    (`numero` dentro da temporada, `anime.numero_temporada`) — o caso comum,
+    onde o TMDB tem uma season própria pra cada temporada da AniList. Só cai
+    pro número ABSOLUTO (`offset_de_temporada + numero`, `temporada=None`)
+    quando o direto não acha nada E há offset pra tentar — a franquia
+    "achatada" numa season só no TMDB (ex. Kusuriya no Hitorigoto — 2
+    temporadas na AniList, 1 season de 48 no TMDB).
 
     Direto primeiro, não o inverso: `offset_de_temporada` (`_offset_de_
     temporada`) só soma `total_episodios_anilist` das temporadas irmãs JÁ
     CATALOGADAS localmente com o mesmo `serie_ancora` — uma irmã anterior
     ainda não catalogada (comum: só as temporadas mais recentes de uma
     franquia longa costumam estar no catálogo) faz a soma sair sub-contada, e
-    o número absoluto calculado cai sobre a still de OUTRO episódio (real,
+    o número absoluto calculado cai sobre a info de OUTRO episódio (real,
     mas do lugar errado da série) em vez de vir vazio. Tentar o direto antes
     evita esse erro de atribuição sempre que o TMDB de fato tem a temporada
     separada — só recorre ao absoluto (com o mesmo risco de offset incompleto
     de sempre) quando o direto genuinamente não encontra a temporada."""
-    still = await servico_metadados.buscar_still_de_episodio(
+    info = await servico_metadados.buscar_info_de_episodio(
         anime.titulo, anime.ano, numero, anime.numero_temporada
     )
-    if still is not None or not offset_de_temporada:
-        return still
-    return await servico_metadados.buscar_still_de_episodio(
+    if info is not None or not offset_de_temporada:
+        return info
+    return await servico_metadados.buscar_info_de_episodio(
         anime.titulo, anime.ano, offset_de_temporada + numero, None
     )
 
 
-async def still_de_episodio(sessionmaker: _SessionMaker, anime: Anime, numero: int) -> str | None:
-    """Still TMDB de UM episódio — usado na CAPTURA (`api/servicos/jobs.py`)
-    pra gravar `Episodio.capa_path`, ao contrário de `_sobrepor_stills_de_
-    episodios` (lote, exibição). Mesma estratégia direto-depois-absoluto de
-    `_still_direto_ou_absoluto`; sem a concorrência/semáforo do lote, só um
-    episódio. `_offset_de_temporada` (consulta ao banco) só roda quando o
-    direto falha — poupa a consulta no caso comum.
+async def info_de_episodio(
+    sessionmaker: _SessionMaker, anime: Anime, numero: int
+) -> InfoDeEpisodio | None:
+    """Still/nome/sinopse TMDB de UM episódio — usado na CAPTURA
+    (`api/servicos/jobs.py`) pra gravar `Episodio.capa_path`/`titulo`/
+    `sinopse`, ao contrário de `_sobrepor_stills_de_episodios` (lote,
+    exibição). Mesma estratégia direto-depois-absoluto de `_info_direto_ou_
+    absoluto`; sem a concorrência/semáforo do lote, só um episódio.
+    `_offset_de_temporada` (consulta ao banco) só roda quando o direto falha
+    — poupa a consulta no caso comum.
 
     Best-effort com teto próprio (`_TETO_STILL_UNICO_S`, fora do `_chamar`
     interno de `integrations/servico.py`), um por tentativa: qualquer
     falha/timeout vira `None` e é logada — a captura não pode travar nem
-    falhar por causa de thumb."""
+    falhar por causa de thumb/sinopse."""
     try:
-        still = await asyncio.wait_for(
-            servico_metadados.buscar_still_de_episodio(
+        info = await asyncio.wait_for(
+            servico_metadados.buscar_info_de_episodio(
                 anime.titulo, anime.ano, numero, anime.numero_temporada
             ),
             timeout=_TETO_STILL_UNICO_S,
         )
-        if still is not None:
-            return still
+        if info is not None:
+            return info
 
         offset = await _offset_de_temporada(sessionmaker, anime)
         if not offset:
             return None
         return await asyncio.wait_for(
-            servico_metadados.buscar_still_de_episodio(
+            servico_metadados.buscar_info_de_episodio(
                 anime.titulo, anime.ano, offset + numero, None
             ),
             timeout=_TETO_STILL_UNICO_S,
         )
     except Exception as excecao:
         logger.warning(
-            "still TMDB best-effort falhou pro episódio %s de %r na captura: %s",
+            "info TMDB best-effort falhou pro episódio %s de %r na captura: %s",
             numero,
             anime.titulo,
             excecao,
@@ -323,22 +326,24 @@ async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
 async def _sobrepor_stills_de_episodios(
     anime: Anime, episodios: list[EpisodioRemoto], offset_de_temporada: int = 0
 ) -> list[EpisodioRemoto]:
-    """Overlay best-effort de thumb TMDB (Fatia 5, `PLANO_ARTE_TMDB.md`) sobre
-    `EpisodioRemoto.thumb_url`.
+    """Overlay best-effort de thumb/nome/sinopse TMDB (Fatia 5/6,
+    `PLANO_ARTE_TMDB.md`) sobre `EpisodioRemoto.thumb_url`/`titulo`/`sinopse`.
 
     Cada episódio tenta primeiro o par DIRETO (`episodio.numero`,
     `anime.numero_temporada`) e só cai pro ABSOLUTO (`offset_de_temporada +
     numero`, `temporada=None`, deixando a `TabelaDeTemporadas` do TMDB achar a
-    season) quando o direto não acha nada — ver `_still_direto_ou_absoluto`
+    season) quando o direto não acha nada — ver `_info_direto_ou_absoluto`
     pro porquê dessa ordem (offset incompleto de uma temporada irmã ainda não
     catalogada localmente já causou still de episódio ERRADO, não só ausente).
 
-    O fallback quando o TMDB não acha (id não resolvido, temporada fora do
-    range, still nulo) ou quando o lote não termina a tempo é a arte do
-    PRÓPRIO anime (`anime.banner_path` ou `anime.capa_path`) — NUNCA MAIS o
+    O fallback de THUMB quando o TMDB não acha (id não resolvido, temporada
+    fora do range, still nulo) ou quando o lote não termina a tempo é a arte
+    do PRÓPRIO anime (`anime.banner_path` ou `anime.capa_path`) — NUNCA MAIS o
     `thumb_url` que o extractor trouxe (pedido explícito do usuário: thumb de
     episódio não vem mais da fonte de scraping, só do TMDB ou da arte do
-    anime já catalogada). Episódio sem `numero` (rótulo não numérico, ex.
+    anime já catalogada). `titulo`/`sinopse` não têm fallback equivalente
+    (nenhum extractor os expõe) — ficam `None` quando o TMDB não acha ou não
+    tem tradução pt-BR. Episódio sem `numero` (rótulo não numérico, ex.
     "Especial") não tem como mapear pro TMDB — cai direto no fallback, sem
     tentar.
 
@@ -357,26 +362,24 @@ async def _sobrepor_stills_de_episodios(
 
     semaforo = asyncio.Semaphore(_CONCORRENCIA_STILLS)
 
-    async def _buscar_um(indice: int) -> tuple[int, str | None]:
+    async def _buscar_um(indice: int) -> tuple[int, InfoDeEpisodio | None]:
         episodio = episodios[indice]
         async with semaforo:
             try:
-                still = await _still_direto_ou_absoluto(
-                    anime, episodio.numero, offset_de_temporada
-                )
+                info = await _info_direto_ou_absoluto(anime, episodio.numero, offset_de_temporada)
             except Exception as excecao:
                 # Captura ampla e intencional (mesmo espírito de
                 # `api/servicos/capas.py::_consultar_um`): este overlay é
                 # best-effort, nenhuma falha de provedor pode derrubar a
                 # listagem nem os demais episódios do lote.
                 logger.warning(
-                    "overlay de still best-effort falhou pro episódio %s de %r: %s",
+                    "overlay de still/nome/sinopse best-effort falhou pro episódio %s de %r: %s",
                     episodio.numero,
                     anime.titulo,
                     excecao,
                 )
                 return indice, None
-        return indice, still
+        return indice, info
 
     tasks = [asyncio.ensure_future(_buscar_um(indice)) for indice in indices_elegiveis]
     concluidas, pendentes = await asyncio.wait(tasks, timeout=_TETO_LOTE_STILLS_S)
@@ -386,7 +389,13 @@ async def _sobrepor_stills_de_episodios(
         await asyncio.gather(*pendentes, return_exceptions=True)
 
     for tarefa in concluidas:
-        indice, still = tarefa.result()
-        if still is not None:
-            resultado[indice] = replace(resultado[indice], thumb_url=still)
+        indice, info = tarefa.result()
+        if info is None:
+            continue
+        resultado[indice] = replace(
+            resultado[indice],
+            thumb_url=info.still_url or fallback,
+            titulo=info.nome,
+            sinopse=info.sinopse,
+        )
     return resultado

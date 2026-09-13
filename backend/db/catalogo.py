@@ -83,6 +83,10 @@ async def aplicar_metadados(
             anime.ano = metadados.ano
         if anime.sinopse is None and metadados.sinopse is not None:
             anime.sinopse = metadados.sinopse
+        # `titulo_ingles` é só exibição (nunca substitui `Anime.titulo`) — mesma
+        # regra só-quando-nulo dos demais.
+        if anime.titulo_ingles is None and metadados.titulo_ingles is not None:
+            anime.titulo_ingles = metadados.titulo_ingles
         if anime.anilist_id is None and metadados.anilist_id is not None:
             anime.anilist_id = metadados.anilist_id
         if anime.kitsu_id is None and metadados.kitsu_id is not None:
@@ -436,6 +440,7 @@ async def criar_episodio_e_job(
     site_origem: str,
     titulo_episodio: str | None = None,
     capa_path: str | None = None,
+    sinopse: str | None = None,
     duracao_esperada_s: int | None = None,
 ) -> int:
     """Cria o `Episodio` e, em seguida, o `Job` (via `db.fila.criar_job`) — duas
@@ -458,6 +463,7 @@ async def criar_episodio_e_job(
         site_origem=site_origem,
         titulo_episodio=titulo_episodio,
         capa_path=capa_path,
+        sinopse=sinopse,
     )
     return await criar_job(sessionmaker, episodio_id, duracao_esperada_s)
 
@@ -511,6 +517,7 @@ async def _inserir_episodio(
     site_origem: str,
     titulo_episodio: str | None,
     capa_path: str | None = None,
+    sinopse: str | None = None,
     status: StatusEpisodio = StatusEpisodio.PENDENTE,
     assistido_em: datetime | None = None,
 ) -> int:
@@ -519,6 +526,7 @@ async def _inserir_episodio(
             anime_id=anime_id,
             numero=numero,
             titulo=titulo_episodio,
+            sinopse=sinopse,
             tipo=tipo,
             versao=versao,
             url_fonte=url_fonte,

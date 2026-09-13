@@ -10,8 +10,8 @@ banner" no fim do arquivo e `PLANO_ARTE_TMDB.md` (D4) para o racional
 completo (memo próprio, latch de autenticação, mecânica de lote). Capa
 (pôster) NÃO passa por este overlay — é responsabilidade exclusiva da cadeia
 normal de `ProvedorDeMetadados` (AniList/Kitsu) acima. A
-seção "overlay de still de episódio" logo depois (Fatia 5 do mesmo plano)
-expõe `buscar_still_de_episodio`, consumido por
+seção "overlay de still de episódio" logo depois (Fatia 5/6 do mesmo plano)
+expõe `buscar_info_de_episodio` (still/nome/sinopse), consumido por
 `api/servicos/fontes.py::listar_episodios_remotos` — não um dos 5 pontos de
 montagem acima, é chamado por episódio, não por registro de metadados/feed.
 
@@ -44,6 +44,7 @@ from integrations.base import (
     AnimeEmAlta,
     ArteDeAnime,
     FileiraTematica,
+    InfoDeEpisodio,
     LancamentoDeAnime,
     MetadadosDeAnime,
     NoDeSerie,
@@ -212,16 +213,16 @@ _fileiras_por_chave: dict[str, FileiraTematica] = {
 # entre testes (estado de módulo).
 _memo_arte: dict[tuple[str, int | None], tuple[float, ArteDeAnime | None]] = {}
 
-# Memo do overlay de still de episódio (PLANO_ARTE_TMDB.md Fatia 5). Chave de
-# `_memo_still`: `(slug do título, ano, temporada, numero)`, onde `temporada`
-# é `int` quando o chamador sabe o `n` da temporada (`Anime.numero_temporada`,
-# Fase 3) e `numero` é o episódio DENTRO dela; ou `None` (caminho legado) e
-# `numero` é a numeração absoluta sobre a série inteira. Os dois caminhos
-# nunca colidem (o `None` no 3º elemento os separa). A primeira consulta de
-# QUALQUER episódio de uma temporada popula o still de TODOS os episódios dela
-# de uma vez (`TmdbProvider.stills_da_temporada` devolve a temporada inteira),
-# então uma página com N episódios da mesma temporada paga só 1
-# `GET /tv/{id}/season/{n}`.
+# Memo do overlay de still/nome/sinopse de episódio (PLANO_ARTE_TMDB.md
+# Fatia 5/6). Chave de `_memo_info_episodio`: `(slug do título, ano,
+# temporada, numero)`, onde `temporada` é `int` quando o chamador sabe o `n`
+# da temporada (`Anime.numero_temporada`, Fase 3) e `numero` é o episódio
+# DENTRO dela; ou `None` (caminho legado) e `numero` é a numeração absoluta
+# sobre a série inteira. Os dois caminhos nunca colidem (o `None` no 3º
+# elemento os separa). A primeira consulta de QUALQUER episódio de uma
+# temporada popula a info de TODOS os episódios dela de uma vez
+# (`TmdbProvider.info_da_temporada` devolve a temporada inteira), então uma
+# página com N episódios da mesma temporada paga só 1 `GET /tv/{id}/season/{n}`.
 #
 # `_memo_temporadas` cacheia a `TabelaDeTemporadas` (id da série + primeiro
 # episódio absoluto por temporada) por `(slug, ano)` — usado SÓ no caminho
@@ -232,7 +233,9 @@ _memo_arte: dict[tuple[str, int | None], tuple[float, ArteDeAnime | None]] = {}
 # de arte acima. `tests/test_integrations_metadados.py` tem fixture autouse que
 # zera os três memos entre testes.
 _memo_temporadas: dict[tuple[str, int | None], tuple[float, TabelaDeTemporadas | None]] = {}
-_memo_still: dict[tuple[str, int | None, int | None, int], tuple[float, str | None]] = {}
+_memo_info_episodio: dict[
+    tuple[str, int | None, int | None, int], tuple[float, InfoDeEpisodio | None]
+] = {}
 
 # Latch: liga na primeira `TmdbNaoAutorizado` (token errado/revogado) e nunca
 # desliga sozinho — um token ruim não muda em runtime, só reiniciando o
@@ -687,7 +690,7 @@ def _gravar_memo_arte(chave: tuple[str, int | None], arte: ArteDeAnime | None) -
 def _desabilitar_arte_por_auth(provedor: ProvedorDeArte, excecao: TmdbNaoAutorizado) -> None:
     """Liga o latch de auth e loga em `ERROR` **só na primeira vez**. Sem
     `await` entre o check e o set, é atômico sob o scheduler cooperativo do
-    asyncio — mas `buscar_arte_por_titulo`/`buscar_still_de_episodio` já podem ter
+    asyncio — mas `buscar_arte_por_titulo`/`buscar_info_de_episodio` já podem ter
     disparado várias chamadas concorrentes (`_CONCORRENCIA_ARTE`, até 3 lotes
     em paralelo) antes de a primeira falha chegar aqui; sem esse guard, cada
     uma delas loga de novo ao resolver o próprio 401 — dezenas de linhas em
@@ -766,9 +769,9 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
     return None
 
 
-# --- overlay de still de episódio (TMDB, Fatia 5 do PLANO_ARTE_TMDB.md) ---
+# --- overlay de still/nome/sinopse de episódio (TMDB, Fatia 5/6 do PLANO_ARTE_TMDB.md) ---
 #
-# `buscar_still_de_episodio` tem dois caminhos: com `temporada` (o `n` da
+# `buscar_info_de_episodio` tem dois caminhos: com `temporada` (o `n` da
 # temporada, `Anime.numero_temporada`) vai direto a `GET /tv/{id}/season/{n}`
 # e `numero` é o episódio dentro dela; sem `temporada` (legado, quando
 # `numero_temporada` é desconhecido) `numero` é a numeração absoluta e a
@@ -785,48 +788,50 @@ def _gravar_memo_temporadas(
     _memo_temporadas[chave] = (time.monotonic() + _TTL_ARTE_S, tabela)
 
 
-def _gravar_memo_still(
-    chave: tuple[str, int | None, int | None, int], still: str | None
+def _gravar_memo_info_episodio(
+    chave: tuple[str, int | None, int | None, int], info: InfoDeEpisodio | None
 ) -> None:
     """Mesma política de `_gravar_memo_arte`: grava inclusive `None` (cache
     negativo), limpa o dict inteiro ao estourar `_LIMITE_MEMO_ARTE`."""
-    if len(_memo_still) >= _LIMITE_MEMO_ARTE:
-        _memo_still.clear()
-    _memo_still[chave] = (time.monotonic() + _TTL_ARTE_S, still)
+    if len(_memo_info_episodio) >= _LIMITE_MEMO_ARTE:
+        _memo_info_episodio.clear()
+    _memo_info_episodio[chave] = (time.monotonic() + _TTL_ARTE_S, info)
 
 
-async def buscar_still_de_episodio(
+async def buscar_info_de_episodio(
     titulo: str, ano: int | None, numero: int, temporada: int | None
-) -> str | None:
-    """Thumb TMDB do episódio `numero` de `titulo`/`ano` — overlay best-effort
-    consumido por `api/servicos/fontes.py::listar_episodios_remotos` sobre
-    `EpisodioRemoto.thumb_url`. Com `temporada` dada, `numero` é o episódio
-    dentro da temporada; sem ela, `numero` é a numeração absoluta local. `None`
-    sempre que não achar ou o provedor falhar — quem chama decide o fallback
-    (o `thumb_url` original do extractor). Compartilha o latch de autenticação
-    (`_arte_desabilitada_por_auth`) com `buscar_arte_por_titulo`: um token
-    rejeitado desabilita os dois overlays de uma vez, não só o de banner.
+) -> InfoDeEpisodio | None:
+    """Still/nome/sinopse TMDB do episódio `numero` de `titulo`/`ano` —
+    overlay best-effort consumido por `api/servicos/fontes.py::
+    listar_episodios_remotos` sobre `EpisodioRemoto` (`thumb_url`/`titulo`/
+    `sinopse`). Com `temporada` dada, `numero` é o episódio dentro da
+    temporada; sem ela, `numero` é a numeração absoluta local. `None` sempre
+    que não achar ou o provedor falhar — quem chama decide o fallback (a arte
+    do anime pro still; título/sinopse simplesmente ficam vazios). Compartilha
+    o latch de autenticação (`_arte_desabilitada_por_auth`) com
+    `buscar_arte_por_titulo`: um token rejeitado desabilita os dois overlays
+    de uma vez, não só o de banner.
     """
     if _arte_desabilitada_por_auth:
         return None
 
-    chave_still = (slugificar(titulo), ano, temporada, numero)
-    memo = _memo_still.get(chave_still)
+    chave_info = (slugificar(titulo), ano, temporada, numero)
+    memo = _memo_info_episodio.get(chave_info)
     if memo is not None:
-        expira_em, still = memo
+        expira_em, info = memo
         if time.monotonic() < expira_em:
-            return still
+            return info
 
     for provedor in provedores_de_arte():
         try:
-            still = await _buscar_still_de_um_provedor(provedor, titulo, ano, numero, temporada)
+            info = await _buscar_info_de_um_provedor(provedor, titulo, ano, numero, temporada)
         except TmdbNaoAutorizado as excecao:
             _desabilitar_arte_por_auth(provedor, excecao)
             return None
         except _ERROS_DE_PROVEDOR as excecao:
             logger.log(
                 _nivel_de_log_de_falha(excecao),
-                "provedor de arte %r falhou ao buscar still do episódio %s (temporada %s) "
+                "provedor de arte %r falhou ao buscar info do episódio %s (temporada %s) "
                 "de %r: %s",
                 provedor.nome,
                 numero,
@@ -836,20 +841,20 @@ async def buscar_still_de_episodio(
             )
             continue
 
-        if still is not None:
-            return still
+        if info is not None:
+            return info
 
     return None
 
 
-async def _buscar_still_de_um_provedor(
+async def _buscar_info_de_um_provedor(
     provedor: ProvedorDeArte, titulo: str, ano: int | None, numero: int, temporada: int | None
-) -> str | None:
-    """`TmdbProvider` (hoje o único `ProvedorDeArte`) busca os stills de TODA a
-    temporada de uma vez (`TmdbProvider.stills_da_temporada`) e popula
-    `_memo_still` pros outros episódios dela, não só o pedido:
+) -> InfoDeEpisodio | None:
+    """`TmdbProvider` (hoje o único `ProvedorDeArte`) busca a info de TODA a
+    temporada de uma vez (`TmdbProvider.info_da_temporada`) e popula
+    `_memo_info_episodio` pros outros episódios dela, não só o pedido:
 
-    - com `temporada` conhecida, vai direto (`stills_da_temporada_por_titulo`),
+    - com `temporada` conhecida, vai direto (`info_da_temporada_por_titulo`),
       sem `TabelaDeTemporadas`;
     - sem ela (legado), resolve/reusa a `TabelaDeTemporadas` via
       `_memo_temporadas` pra achar a temporada de `numero` (absoluto).
@@ -859,22 +864,22 @@ async def _buscar_still_de_um_provedor(
     slug = slugificar(titulo)
 
     if not isinstance(provedor, TmdbProvider):
-        still = await _chamar(
-            provedor, provedor.buscar_still_de_episodio, titulo, ano, numero, temporada
+        info = await _chamar(
+            provedor, provedor.buscar_info_de_episodio, titulo, ano, numero, temporada
         )
-        _gravar_memo_still((slug, ano, temporada, numero), still)
-        return still
+        _gravar_memo_info_episodio((slug, ano, temporada, numero), info)
+        return info
 
     if temporada is not None:
-        stills = await _chamar(
-            provedor, provedor.stills_da_temporada_por_titulo, titulo, ano, temporada
+        info_da_temporada = await _chamar(
+            provedor, provedor.info_da_temporada_por_titulo, titulo, ano, temporada
         )
-        if stills is None:
-            _gravar_memo_still((slug, ano, temporada, numero), None)
+        if info_da_temporada is None:
+            _gravar_memo_info_episodio((slug, ano, temporada, numero), None)
             return None
-        for numero_local, still_url in stills.items():
-            _gravar_memo_still((slug, ano, temporada, numero_local), still_url)
-        return stills.get(numero)
+        for numero_local, info_local in info_da_temporada.items():
+            _gravar_memo_info_episodio((slug, ano, temporada, numero_local), info_local)
+        return info_da_temporada.get(numero)
 
     chave_temporada = (slug, ano)
     memo_tabela = _memo_temporadas.get(chave_temporada)
@@ -892,17 +897,17 @@ async def _buscar_still_de_um_provedor(
         return None
     numero_da_temporada, numero_na_temporada = localizacao
 
-    stills = await _chamar(
-        provedor, provedor.stills_da_temporada, tabela.id_da_serie, numero_da_temporada
+    info_da_temporada = await _chamar(
+        provedor, provedor.info_da_temporada, tabela.id_da_serie, numero_da_temporada
     )
-    if stills is None:
+    if info_da_temporada is None:
         # Negativo só do episódio pedido (não dá pra "fatiar" uma temporada
         # que não veio) — evita repescar esta mesma temporada só por causa
         # deste episódio específico dentro do TTL.
-        _gravar_memo_still((slug, ano, None, numero), None)
+        _gravar_memo_info_episodio((slug, ano, None, numero), None)
         return None
 
-    # Popula o still de TODOS os episódios da temporada de uma vez — não só o
+    # Popula a info de TODOS os episódios da temporada de uma vez — não só o
     # pedido — evitando repescar `/tv/{id}/season/{n}` pros próximos episódios
     # da mesma temporada.
     primeiro_absoluto = next(
@@ -910,11 +915,11 @@ async def _buscar_still_de_um_provedor(
         for numero_temp, primeiro, _contagem in tabela.temporadas
         if numero_temp == numero_da_temporada
     )
-    for numero_local, still_url in stills.items():
+    for numero_local, info_local in info_da_temporada.items():
         chave = (slug, ano, None, primeiro_absoluto + numero_local - 1)
-        _gravar_memo_still(chave, still_url)
+        _gravar_memo_info_episodio(chave, info_local)
 
-    return stills.get(numero_na_temporada)
+    return info_da_temporada.get(numero_na_temporada)
 
 
 async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T:

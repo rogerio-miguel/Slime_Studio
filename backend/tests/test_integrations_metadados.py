@@ -203,6 +203,7 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
                         "coverImage": {"extraLarge": "https://img/1.jpg", "color": "#e4a15d"},
                         "bannerImage": "https://img/1-banner.jpg",
                         "genres": ["Action", "Fantasy"],
+                        "description": "Uma sinopse<br>com &amp; entidade.",
                         "seasonYear": 2021,
                         "startDate": {"year": 2021},
                     }
@@ -226,6 +227,7 @@ def test_anilist_listar_em_alta(monkeypatch: pytest.MonkeyPatch):
             anilist_id=1,
             ano_estreia=2021,
             generos=("Action", "Fantasy"),
+            sinopse="Uma sinopse\ncom & entidade.",
             # `seasonYear` presente sem status/next-airing: `_extrair_lancamento`
             # ainda devolve bloco com só o `ano_estreia` preenchido.
             lancamento=LancamentoDeAnime(
@@ -1444,10 +1446,10 @@ def test_tmdb_buscar_arte_por_titulo_nao_aceita_mais_numero_temporada():
         TmdbProvider("token").buscar_arte_por_titulo("Slime", None, numero_temporada=4)
 
 
-# --- TmdbProvider.buscar_still_de_episodio (Fatia 5, PLANO_ARTE_TMDB.md) ---
+# --- TmdbProvider.buscar_info_de_episodio (Fatia 5/6, PLANO_ARTE_TMDB.md) ---
 
 
-def test_tmdb_still_de_episodio_match_feliz(monkeypatch: pytest.MonkeyPatch):
+def test_tmdb_info_de_episodio_match_feliz(monkeypatch: pytest.MonkeyPatch):
     """Resolve a série, monta a tabela de temporadas (especial season_number=0
     fica fora da numeração absoluta; temporada 1 com 12 episódios, temporada 2
     começando no absoluto 13) e acha que o episódio absoluto 13 é o 1º da
@@ -1481,12 +1483,12 @@ def test_tmdb_still_de_episodio_match_feliz(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
 
-    resultado = TmdbProvider("token").buscar_still_de_episodio("Slime", 2018, 13)
+    resultado = TmdbProvider("token").buscar_info_de_episodio("Slime", 2018, 13, None)
 
-    assert resultado == "https://image.tmdb.org/t/p/original/ep13.jpg"
+    assert resultado.still_url == "https://image.tmdb.org/t/p/original/ep13.jpg"
 
 
-def test_tmdb_still_de_episodio_temporada_fora_do_range_devolve_none(
+def test_tmdb_info_de_episodio_temporada_fora_do_range_devolve_none(
     monkeypatch: pytest.MonkeyPatch,
 ):
     def _fake_get(url, **kwargs):
@@ -1502,10 +1504,10 @@ def test_tmdb_still_de_episodio_temporada_fora_do_range_devolve_none(
 
     # 99 fica fora do intervalo [1, 12] coberto pela única temporada — nunca
     # deveria disparar `/tv/999/season/{n}` (o fake levantaria se disparasse).
-    assert TmdbProvider("token").buscar_still_de_episodio("Slime", 2018, 99) is None
+    assert TmdbProvider("token").buscar_info_de_episodio("Slime", 2018, 99, None) is None
 
 
-def test_tmdb_still_de_episodio_still_nulo_devolve_none(monkeypatch: pytest.MonkeyPatch):
+def test_tmdb_info_de_episodio_still_nulo_devolve_none(monkeypatch: pytest.MonkeyPatch):
     def _fake_get(url, **kwargs):
         if url.endswith("/search/tv"):
             return _RespostaFalsa(
@@ -1514,21 +1516,24 @@ def test_tmdb_still_de_episodio_still_nulo_devolve_none(monkeypatch: pytest.Monk
         if url.endswith("/tv/999"):
             return _RespostaFalsa(corpo={"seasons": [{"season_number": 1, "episode_count": 12}]})
         if url.endswith("/tv/999/season/1"):
-            return _RespostaFalsa(corpo={"episodes": [{"episode_number": 5, "still_path": None}]})
+            return _RespostaFalsa(
+                corpo={"episodes": [{"episode_number": 5, "still_path": None}]}
+            )
         raise AssertionError(f"URL não mapeada no fake: {url}")
 
     monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
 
-    assert TmdbProvider("token").buscar_still_de_episodio("Slime", 2018, 5) is None
+    resultado = TmdbProvider("token").buscar_info_de_episodio("Slime", 2018, 5, None)
+    assert resultado.still_url is None
 
 
-def test_tmdb_still_de_episodio_id_nao_resolvido_devolve_none(monkeypatch: pytest.MonkeyPatch):
+def test_tmdb_info_de_episodio_id_nao_resolvido_devolve_none(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         "integrations.tmdb.requests.get",
         lambda *a, **k: _RespostaFalsa(corpo={"results": []}),
     )
 
-    assert TmdbProvider("token").buscar_still_de_episodio("Slime", None, 1) is None
+    assert TmdbProvider("token").buscar_info_de_episodio("Slime", None, 1, None) is None
 
 
 def test_tmdb_resolver_serie_busca_pelo_titulo_base_nao_pelo_romaji_por_temporada(
@@ -1555,12 +1560,12 @@ def test_tmdb_resolver_serie_busca_pelo_titulo_base_nao_pelo_romaji_por_temporad
 
     monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
 
-    resultado = TmdbProvider("token").buscar_still_de_episodio(
+    resultado = TmdbProvider("token").buscar_info_de_episodio(
         "Tensei Shitara Slime Datta Ken 2nd Season", 2021, 1, 2
     )
 
     assert queries == ["Tensei Shitara Slime Datta Ken"]
-    assert resultado == "https://image.tmdb.org/t/p/original/s2e1.jpg"
+    assert resultado.still_url == "https://image.tmdb.org/t/p/original/s2e1.jpg"
 
 
 # --- cadeia de fallback (integrations/servico.py) ---
@@ -1730,18 +1735,18 @@ def _limpa_caches_de_feed(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def _limpa_overlay_de_arte(monkeypatch: pytest.MonkeyPatch):
-    """`integrations.servico._memo_arte`/`._memo_temporadas`/`._memo_still` e
-    `._arte_desabilitada_por_auth` são estado de módulo (memo/latch dos
-    overlays de arte — capa/banner e still de episódio, PLANO_ARTE_TMDB.md D4
-    e Fatia 5) — isola cada teste pra não vazar memo/latch de um teste pro
-    outro (mesmo cuidado que `conftest.py` já toma com
-    `descoberta._refreshs_de_lancamento_em_voo`). `integrations.registro.
-    _provedores_de_arte` fica vazio por padrão (D2: nunca lido no import) —
-    quem quiser exercitar o overlay faz o próprio
+    """`integrations.servico._memo_arte`/`._memo_temporadas`/
+    `._memo_info_episodio` e `._arte_desabilitada_por_auth` são estado de
+    módulo (memo/latch dos overlays de arte — capa/banner e still/nome/
+    sinopse de episódio, PLANO_ARTE_TMDB.md D4 e Fatia 5/6) — isola cada teste
+    pra não vazar memo/latch de um teste pro outro (mesmo cuidado que
+    `conftest.py` já toma com `descoberta._refreshs_de_lancamento_em_voo`).
+    `integrations.registro._provedores_de_arte` fica vazio por padrão (D2:
+    nunca lido no import) — quem quiser exercitar o overlay faz o próprio
     `monkeypatch.setattr(registro, "_provedores_de_arte", (...))`."""
     monkeypatch.setattr(servico, "_memo_arte", {})
     monkeypatch.setattr(servico, "_memo_temporadas", {})
-    monkeypatch.setattr(servico, "_memo_still", {})
+    monkeypatch.setattr(servico, "_memo_info_episodio", {})
     monkeypatch.setattr(servico, "_memo_serie", {})
     monkeypatch.setattr(servico, "_arte_desabilitada_por_auth", False)
 
@@ -2344,18 +2349,19 @@ async def test_servico_latch_desliga_arte_apos_401_pro_resto_do_lote(
     assert servico._arte_desabilitada_por_auth is True
 
 
-# --- overlay de still de episódio (integrations/servico.py, Fatia 5) ---
+# --- overlay de still/nome/sinopse de episódio (integrations/servico.py, Fatia 5/6) ---
 
 
-async def test_servico_still_de_episodio_nenhum_provedor_devolve_none():
-    assert await servico.buscar_still_de_episodio("Slime", 2018, 1) is None
+async def test_servico_info_de_episodio_nenhum_provedor_devolve_none():
+    assert await servico.buscar_info_de_episodio("Slime", 2018, 1, None) is None
 
 
-async def test_servico_still_memo_evita_repescar_temporada_pro_proximo_episodio(
+async def test_servico_info_memo_evita_repescar_temporada_pro_proximo_episodio(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`_memo_temporadas` evita repetir `/search/tv`+`/tv/{id}` e `_memo_still`
-    evita repescar `/tv/{id}/season/{n}` pro 2º episódio da MESMA temporada —
+    """`_memo_temporadas` evita repetir `/search/tv`+`/tv/{id}` e `_memo_info_
+    episodio` evita repescar `/tv/{id}/season/{n}` pro 2º episódio da MESMA
+    temporada —
     a 1ª consulta popula o still da temporada inteira de uma vez; a 2ª (outro
     episódio, mesma temporada) e a 3ª (mesmo episódio da 1ª) não disparam
     nenhuma chamada nova."""
@@ -2383,12 +2389,12 @@ async def test_servico_still_memo_evita_repescar_temporada_pro_proximo_episodio(
     monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
     monkeypatch.setattr(registro, "_provedores_de_arte", (TmdbProvider("token"),))
 
-    primeiro = await servico.buscar_still_de_episodio("Slime", 2018, 1)
-    segundo = await servico.buscar_still_de_episodio("Slime", 2018, 2)
-    terceiro = await servico.buscar_still_de_episodio("Slime", 2018, 1)
+    primeiro = await servico.buscar_info_de_episodio("Slime", 2018, 1, None)
+    segundo = await servico.buscar_info_de_episodio("Slime", 2018, 2, None)
+    terceiro = await servico.buscar_info_de_episodio("Slime", 2018, 1, None)
 
-    assert primeiro == "https://image.tmdb.org/t/p/original/ep1.jpg"
-    assert segundo == "https://image.tmdb.org/t/p/original/ep2.jpg"
+    assert primeiro.still_url == "https://image.tmdb.org/t/p/original/ep1.jpg"
+    assert segundo.still_url == "https://image.tmdb.org/t/p/original/ep2.jpg"
     assert terceiro == primeiro
     # search/tv + tv/999 + tv/999/season/1 — uma vez cada, nunca mais.
     assert len(chamadas) == 3
