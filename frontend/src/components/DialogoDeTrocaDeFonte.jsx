@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { buscarEmFontes } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
+import { nomeDaFonte } from '../fontes.js';
 
 // Quando o site diferencia versão (`candidato.versao != null`), dublado não é
 // uma aba do mesmo card — é outra entrada de catálogo com slug próprio (ex.
@@ -181,7 +182,7 @@ export default function DialogoDeTrocaDeFonte({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm text-white">{candidato.titulo_exibicao}</p>
-                    <p className="text-xs text-ink-muted">{candidato.dominio}</p>
+                    <p className="text-xs text-ink-muted">{nomeDaFonte(candidato.dominio)}</p>
                     {candidato.correspondencia_incerta && (
                       <p className="text-xs font-semibold text-amber-300">Correspondência incerta</p>
                     )}
@@ -194,7 +195,7 @@ export default function DialogoDeTrocaDeFonte({
                       type="button"
                       onClick={() => aoConfirmar(candidato, 'legendado')}
                       disabled={confirmando}
-                      aria-label={`Baixar ${candidato.titulo_exibicao} (${candidato.dominio}) como legendado (site não confirma a versão)`}
+                      aria-label={`Baixar ${candidato.titulo_exibicao} (${nomeDaFonte(candidato.dominio)}) como legendado (site não confirma a versão)`}
                       className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Legendado
@@ -203,7 +204,7 @@ export default function DialogoDeTrocaDeFonte({
                       type="button"
                       onClick={() => aoConfirmar(candidato, 'dublado')}
                       disabled={confirmando}
-                      aria-label={`Baixar ${candidato.titulo_exibicao} (${candidato.dominio}) como dublado (site não confirma a versão)`}
+                      aria-label={`Baixar ${candidato.titulo_exibicao} (${nomeDaFonte(candidato.dominio)}) como dublado (site não confirma a versão)`}
                       className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Dublado
@@ -227,7 +228,7 @@ export default function DialogoDeTrocaDeFonte({
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm text-white">{principal.titulo_exibicao}</p>
-                  <p className="text-xs text-ink-muted">{principal.dominio}</p>
+                  <p className="text-xs text-ink-muted">{nomeDaFonte(principal.dominio)}</p>
                   {principal.correspondencia_incerta && (
                     <p className="text-xs font-semibold text-amber-300">Correspondência incerta</p>
                   )}
@@ -244,7 +245,7 @@ export default function DialogoDeTrocaDeFonte({
                           type="button"
                           onClick={() => aoConfirmar(candidatoVersao, versao)}
                           disabled={confirmando}
-                          aria-label={`Usar ${candidatoVersao.titulo_exibicao} (${candidatoVersao.dominio}) como ${rotulo.toLowerCase()}`}
+                          aria-label={`Usar ${candidatoVersao.titulo_exibicao} (${nomeDaFonte(candidatoVersao.dominio)}) como ${rotulo.toLowerCase()}`}
                           className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {rotulo}
