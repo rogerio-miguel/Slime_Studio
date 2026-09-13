@@ -11,7 +11,7 @@ import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 import { agruparEmFranquias } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
-import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
+import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
 
 // Rótulos em `core/enums.py::StatusLancamento` (backend) — mesmos valores
@@ -79,8 +79,8 @@ function ordenarAnimes(lista, criterio) {
 // estreitos que os da fileira "pequeno" da Home no mesmo viewport — o
 // alinhamento título/card e o tamanho de card dependem de os dois medirem
 // o mesmo container. Os títulos e os estados transitórios recuperam o
-// alinhamento via `paddingInline: PADDING_TITULO` (gutter 3.7% + 10px do
-// slot), não via `px` no `<main>`.
+// alinhamento via `paddingInline: PADDING_TITULO_GRADE` (só o gutter — o
+// slot da grade não tem padding próprio), não via `px` no `<main>`.
 export default function Galeria() {
   const idMeuCatalogo = useId();
   const idVideosLocais = useId();
@@ -206,13 +206,14 @@ export default function Galeria() {
         termoBusca={termoBusca}
         aoMudarBusca={setTermoBusca}
       />
-      {/* `bg-[#17171b]` + `min-h-screen`: mesmo par de classes do `<main>` de
-          paginas/Inicio.jsx (fonte da verdade lá — cor exata do `body` do
-          Disney+). É esse fundo que faz a drop shadow dos cards da grade
-          aparecer; sobre um preto mais fechado a sombra 69% preta some.
-          `min-h-screen` evita o fundo não cobrir a viewport quando o catálogo
-          é curto. */}
-      <main className="min-h-screen bg-[#17171b] pb-10 pt-24">
+      {/* `bg-black` (não mais `bg-[#17171b]` de paginas/Inicio.jsx): a Galeria
+          não leva mais a drop shadow dos cards (`comSombra={false}` nas duas
+          `GradeDeCatalogo` abaixo — ela só fazia sentido sobre aquele
+          cinza-quase-preto; num preto sólido ela sumia de qualquer jeito), e
+          sem sombra pra sustentar não há motivo pra não usar o preto sólido
+          do resto do app (`html{background:#000}`, index.css). `min-h-screen`
+          evita o fundo não cobrir a viewport quando o catálogo é curto. */}
+      <main className="min-h-screen bg-black pb-10 pt-24">
         <section aria-labelledby={idMeuCatalogo}>
           {/* Sem `mb`: o respiro até os cards vem do `pt-[22px]` interno de
               GradeDeCatalogo, igual às fileiras da Home. `paddingInline`
@@ -222,7 +223,7 @@ export default function Galeria() {
             ref={focoTitulo}
             tabIndex={-1}
             id={idMeuCatalogo}
-            style={{ paddingInline: PADDING_TITULO }}
+            style={{ paddingInline: PADDING_TITULO_GRADE }}
             className="text-2xl font-semibold text-white outline-none"
           >
             Meu Catálogo
@@ -233,7 +234,7 @@ export default function Galeria() {
               repõe o `paddingInline` que antes vinha do `px` do <main>; cada
               bloco leva o próprio `mt-[22px]` (mesmo respiro título->conteúdo
               da grade). Altura zero quando nada aparece. */}
-          <div style={{ paddingInline: PADDING_TITULO }}>
+          <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
             {carregando && (
               <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
             )}
@@ -337,6 +338,7 @@ export default function Galeria() {
           <GradeDeCatalogo
             itens={animesExibidos}
             tamanho="pequeno"
+            comSombra={false}
             chaveDoItem={(anime) => anime.id}
             renderItem={(anime) =>
               !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
@@ -359,7 +361,7 @@ export default function Galeria() {
           <section aria-labelledby={idVideosLocais} className="mt-10">
             <h2
               id={idVideosLocais}
-              style={{ paddingInline: PADDING_TITULO }}
+              style={{ paddingInline: PADDING_TITULO_GRADE }}
               className="text-2xl font-semibold text-white"
             >
               Vídeos locais
@@ -367,6 +369,7 @@ export default function Galeria() {
             <GradeDeCatalogo
               itens={VIDEOS_LOCAIS}
               tamanho="pequeno"
+              comSombra={false}
               chaveDoItem={(video) => video.slug}
               renderItem={(video) => <CartaoDeVideoLocal video={video} />}
             />

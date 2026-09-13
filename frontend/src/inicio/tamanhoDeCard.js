@@ -51,7 +51,14 @@ export const LARGURA_CARTAO_AVULSO = 'calc(92.6vw / var(--por-pagina) - 20px)';
 // Gutter de 3.7% de cada lado da trilha/grade (onde a fileira ancora as setas).
 export const CLASSE_GUTTER = 'px-[3.7%]';
 
-// padding-inline do título: alinha o texto com a borda do CARD (não do slot) —
-// gutter 3.7% + os 10px do `p-[10px]` do slot. Vai no `style` inline pelo
-// mesmo motivo de `FLEX_BASIS_SLOT` (calc arbitrário com `%`).
+// padding-inline do título ACIMA de uma FILEIRA: alinha o texto com a borda do
+// CARD (não do slot) — gutter 3.7% + os 10px do `p-[10px]` do slot da
+// FileiraDeCards.jsx. Vai no `style` inline pelo mesmo motivo de
+// `FLEX_BASIS_SLOT` (calc arbitrário com `%`).
 export const PADDING_TITULO = 'calc(3.7% + 10px)';
+
+// Idem, mas ACIMA de uma GradeDeCatalogo: o slot dela não tem padding (pedido
+// do usuário, zerado pra maximizar o pôster — ver comentário no topo de
+// GradeDeCatalogo.jsx), então o título alinha só com o gutter, sem o extra
+// de 10px da fileira.
+export const PADDING_TITULO_GRADE = '3.7%';

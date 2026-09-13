@@ -30,12 +30,19 @@ import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 //
 // Cada card leva a MESMA drop shadow do slide ativo do billboard
 // (`SOMBRA_SLIDE_ATIVO`, importada de CarrosselDestaques.jsx — fonte única) —
-// o usuário pediu a sombra do carrossel, não o "sem sombra" das prateleiras
-// reais do Disney+. Ela mora num wrapper só-da-sombra dentro do slot, não no
-// AnimeCard (compartilhado com a Galeria), e é ESTÁTICA: não acompanha o
-// `scale` do hover, igual ao billboard. Só aparece de fato sobre o fundo
-// `#17171b` do `<main>` (paginas/Inicio.jsx) — sobre um preto mais fechado
-// some.
+// histórico, pedido do usuário quando ainda fazia sentido visualmente. Ela
+// mora num wrapper só-da-sombra dentro do slot, não no AnimeCard
+// (compartilhado com a Galeria), e é ESTÁTICA: não acompanha o `scale` do
+// hover, igual ao billboard.
+// `comSombra = false` (hoje TODO chamador — as 4 fileiras de
+// paginas/Inicio.jsx — passa `false`; `true` só segue default por
+// retrocompatibilidade): desliga esse wrapper — mesmo prop e mesmo motivo de
+// inicio/GradeDeCatalogo.jsx (fonte única do rationale completo). A sombra só
+// tinha contraste visível sobre o cinza `#17171b` que o `<main>` da Home usava
+// (hoje `bg-black`, sólido, index.css), e com o card do catálogo em duas
+// partes (pôster + legenda abaixo, sem caixa própria) o wrapper `rounded-xl`
+// da sombra abraçando as DUAS partes lançava um halo escuro atrás do bloco de
+// texto.
 
 export default function FileiraDeCards({
   titulo,
@@ -44,6 +51,7 @@ export default function FileiraDeCards({
   chaveDoItem,
   idRotulo,
   tamanho = 'grande',
+  comSombra = true,
 }) {
   const idGerado = useId();
   const idTitulo = idRotulo ?? idGerado;
@@ -138,11 +146,10 @@ export default function FileiraDeCards({
           acender a borda de todos os cards de uma vez. */}
       <div className="group/fileira relative">
         {/* `pt-[22px] pb-[44px]` NÃO é cosmético: `overflow-x-auto` também
-            recorta no eixo Y, e aqui há DUAS coisas transbordando pra baixo —
-            o `scale-105` do card no hover (feito no AnimeCard) e, sobretudo, a
-            drop shadow do billboard, que desce ~46px abaixo da borda do card
-            (`0 26px 30px -10px`). O card fica 10px acima da borda do slot, daí
-            `pb` >= ~36px pra sombra não ser cortada; 44px dá folga. O `pt`
+            recorta no eixo Y, e a drop shadow do billboard desce ~46px abaixo
+            da borda do card (`0 26px 30px -10px`). O card fica 10px acima da
+            borda do slot, daí `pb` >= ~36px pra sombra não ser cortada; 44px
+            dá folga. O `pt`
             também é o respiro título -> cards (o h2 não tem `margin-bottom`).
             Mesma classe de armadilha do `py-16 -my-16` de CarrosselDestaques.jsx.
             Sem classe `gap-*`: o respiro entre cards vem do `p-[10px]` de cada
@@ -158,28 +165,27 @@ export default function FileiraDeCards({
           }`}
         >
           {lista.map((item, indice) => (
-            // `relative` + `hover:z-10 focus-within:z-10` no PRÓPRIO slot: o
-            // `AnimeCard` também tem `hover:z-10` no wrapper dele, mas esse
-            // z-index fica preso em ancestrais transformados e não escapa pro
-            // contexto da fileira — numa trilha justa (sem `gap`) o card
-            // ampliado no hover ficaria coberto pela borda do vizinho seguinte
-            // sem o z-index aqui.
             <li
               key={chaveDoItem(item)}
-              className="relative shrink-0 grow-0 p-[10px] hover:z-10 focus-within:z-10"
+              className="relative shrink-0 grow-0 p-[10px]"
               style={{ flexBasis: FLEX_BASIS_SLOT }}
             >
               {/* Wrapper só da sombra: traça o retângulo `rounded-xl` (mesmo
                   raio do AnimeCard) exatamente na borda do card. Não pode
                   morar no `<li>` (que tem `p-[10px]`) senão a sombra sairia
-                  destacada 10px do card. Não escala no hover — a sombra fica
-                  estática enquanto o card cresce por cima, igual ao billboard.
-                  `style` inline pelo mesmo motivo de CarrosselDestaques.jsx: o
+                  destacada 10px do card. `style` inline pelo mesmo motivo de
+                  CarrosselDestaques.jsx: o
                   parser de valor arbitrário do Tailwind v4 não gera de forma
-                  confiável sombra de 2 camadas começando pela cor. */}
-              <div className="rounded-xl" style={{ boxShadow: SOMBRA_SLIDE_ATIVO }}>
-                {renderItem(item, indice)}
-              </div>
+                  confiável sombra de 2 camadas começando pela cor.
+                  `comSombra=false` pula esse wrapper por completo (ver bloco
+                  de comentário acima). */}
+              {comSombra ? (
+                <div className="rounded-xl" style={{ boxShadow: SOMBRA_SLIDE_ATIVO }}>
+                  {renderItem(item, indice)}
+                </div>
+              ) : (
+                renderItem(item, indice)
+              )}
             </li>
           ))}
         </ul>

@@ -1,8 +1,9 @@
-// Aviso "episódio novo na fonte" logo ACIMA do título do card na galeria —
-// mesmo tratamento visual da linha de estreia de `inicio/CartaoDeEstreia.jsx`
-// (texto curto em caixa alta, neon, kicker sobre o título). Renderizado dentro
-// do fluxo flex do card (não mais como faixa sobreposta no topo), então não
-// precisa de `pointer-events-none` nem de degradê próprio.
+// Texto do aviso "episódio novo na fonte" — devolve só o TEXTO cru (não um
+// elemento pronto): quem chama (`components/AnimeCard.jsx`) decide onde
+// compor. Uso principal é inline, na MESMA linha da tag "Tn EP.n" ("T1 EP.24
+// - Novo episódio disponível", pedido explícito do usuário); sem a tag de
+// temporada (anime nunca refrescado), o chamador usa como linha própria —
+// nunca esconder a novidade só porque falta o outro dado.
 //
 // A origem já foi resolvida no backend (`GET /api/animes` → `episodios_novos`):
 // quantos episódios a FONTE real do anime expõe além da fronteira já capturada,
@@ -10,17 +11,9 @@
 // só o filtro (só anime EM_LANCAMENTO). Aqui a única regra é "número positivo →
 // mostra"; o texto não expõe a quantidade (decisão de produto), só sinaliza a
 // novidade. `quantidade` ausente (card do feed "em alta", que não carrega esse
-// campo), zero, `null` ou negativa não renderiza nada. Usada só na galeria — a
+// campo), zero, `null` ou negativa devolve `null`. Usada só na galeria — a
 // página do anime não mostra este aviso.
-export default function BadgeDeEpisodiosNovos({ quantidade }) {
+export default function textoEpisodiosNovos(quantidade) {
   if (!quantidade || quantidade < 1) return null;
-
-  const texto =
-    quantidade > 1 ? 'Novos episódios disponíveis' : 'Novo episódio disponível';
-
-  return (
-    <p className="text-xs font-semibold uppercase tracking-wide text-neon">
-      {texto}
-    </p>
-  );
+  return quantidade > 1 ? 'Novos eps' : 'Novo ep';
 }
