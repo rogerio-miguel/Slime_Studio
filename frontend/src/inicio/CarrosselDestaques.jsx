@@ -161,7 +161,7 @@ export function gradienteHeroSemBanner(cor) {
 // catalogado) e o `<button>` de materialização (item do feed), e reusado por
 // inicio/DestaqueGrande.jsx pro CTA do mesmo painel de info.
 export const CLASSE_BOTAO_HERO =
-  'inline-flex h-11 w-fit items-center gap-3 rounded-xl bg-white px-6 font-bold text-[#17171b] outline-none transition hover:brightness-90 focus-visible:ring-2 focus-visible:ring-neon motion-reduce:transition-none disabled:cursor-progress sm:h-12 lg:h-14 lg:text-xl';
+  'inline-flex h-11 w-fit items-center gap-3 rounded-xl bg-white px-6 font-bold text-[#17171b] outline-none transition hover:brightness-90 motion-reduce:transition-none disabled:cursor-progress sm:h-12 lg:h-14 lg:text-xl';
 
 // Pill do hero — usada pela tag de ranking ("#N em alta") e pela de estado
 // ("Anime no Catálogo"), lado a lado. Mesmo visual pras duas. Compartilhada
@@ -538,7 +538,7 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
                       {catalogado ? (
                         <Link
                           to={`/anime/${item.anime_id}`}
-                          className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-neon"
+                          className="rounded-sm outline-none"
                         >
                           {titulo}
                         </Link>
@@ -608,7 +608,7 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
               }}
               aria-label="Destaque anterior"
               aria-controls={idSlides}
-              className="absolute inset-y-0 left-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon group-hover:opacity-100 motion-reduce:transition-none"
+              className="absolute inset-y-0 left-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
             >
               <IconeSeta direcao="esquerda" />
             </button>
@@ -620,7 +620,7 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
               }}
               aria-label="Próximo destaque"
               aria-controls={idSlides}
-              className="absolute inset-y-0 right-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon group-hover:opacity-100 motion-reduce:transition-none"
+              className="absolute inset-y-0 right-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
             >
               <IconeSeta direcao="direita" />
             </button>
@@ -642,7 +642,7 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
                   }}
                   aria-label={`Ir para o destaque ${i + 1}`}
                   aria-current={i === indiceLogico ? 'true' : undefined}
-                  className="group/dot flex h-6 w-6 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-neon"
+                  className="group/dot flex h-6 w-6 items-center justify-center rounded-full outline-none"
                 >
                   <span
                     aria-hidden="true"

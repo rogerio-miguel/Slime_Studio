@@ -28,7 +28,7 @@ const ROTULOS_STATUS_LANCAMENTO = {
 // Classe compartilhada pelos três <select> do filtro/ordenação — mesmo padrão
 // visual de player/SeletorDePreset.jsx (único <select> já existente no app).
 const CLASSE_SELECT =
-  'rounded-md border border-border-chrome bg-[#222] px-3 py-1.5 text-sm text-white outline-none transition-colors hover:bg-[#2a2a2a] focus-visible:border-neon focus-visible:ring-2 focus-visible:ring-neon';
+  'rounded-md border border-border-chrome bg-[#222] px-3 py-1.5 text-sm text-white outline-none transition-colors hover:bg-[#2a2a2a] focus-visible:border-neon';
 const CLASSE_LABEL_FILTRO = 'text-xs font-semibold uppercase tracking-wide text-ink-muted';
 
 // Instante em ms de `proximo_ep_em`, ou `null` quando ausente/inválido —

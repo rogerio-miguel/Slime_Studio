@@ -65,7 +65,7 @@ export default function DialogoDeConfirmacao({
           type="button"
           onClick={aoConfirmar}
           disabled={confirmando}
-          className="rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg border border-red-500/60 px-4 py-2 text-sm text-red-400 outline-none transition-colors hover:border-red-400 hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {confirmando ? 'Removendo…' : rotuloConfirmar}
         </button>
@@ -73,7 +73,7 @@ export default function DialogoDeConfirmacao({
           type="button"
           onClick={fechar}
           disabled={confirmando}
-          className="text-xs text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
+          className="text-xs text-ink-muted underline outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
         >
           Cancelar
         </button>

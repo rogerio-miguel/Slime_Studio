@@ -230,7 +230,7 @@ export default function GradeRotativa({
             aria-expanded={expandido}
             aria-controls={idGrade}
             disabled={!botaoVisivel}
-            className="rounded-md border border-neon-soft bg-surface px-4 py-2 text-sm font-semibold text-neon outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+            className="rounded-md border border-neon-soft bg-surface px-4 py-2 text-sm font-semibold text-neon outline-none transition-colors hover:border-neon"
           >
             {expandido ? 'Mostrar menos' : `Mostrar todos (${itens.length})`}
           </button>

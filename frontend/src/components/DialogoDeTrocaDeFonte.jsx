@@ -144,11 +144,11 @@ export default function DialogoDeTrocaDeFonte({
           type="text"
           value={termo}
           onChange={(evento) => setTermo(evento.target.value)}
-          className="flex-1 rounded-lg border border-border-chrome bg-transparent px-3 py-2 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-neon"
+          className="flex-1 rounded-lg border border-border-chrome bg-transparent px-3 py-2 text-sm text-white outline-none"
         />
         <button
           type="submit"
-          className="rounded-lg border border-border-chrome px-4 py-2 text-sm outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+          className="rounded-lg border border-border-chrome px-4 py-2 text-sm outline-none transition-colors hover:border-neon"
         >
           Buscar
         </button>
@@ -196,7 +196,7 @@ export default function DialogoDeTrocaDeFonte({
                       onClick={() => aoConfirmar(candidato, 'legendado')}
                       disabled={confirmando}
                       aria-label={`Baixar ${candidato.titulo_exibicao} (${nomeDaFonte(candidato.dominio)}) como legendado (site não confirma a versão)`}
-                      className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Legendado
                     </button>
@@ -205,7 +205,7 @@ export default function DialogoDeTrocaDeFonte({
                       onClick={() => aoConfirmar(candidato, 'dublado')}
                       disabled={confirmando}
                       aria-label={`Baixar ${candidato.titulo_exibicao} (${nomeDaFonte(candidato.dominio)}) como dublado (site não confirma a versão)`}
-                      className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Dublado
                     </button>
@@ -246,7 +246,7 @@ export default function DialogoDeTrocaDeFonte({
                           onClick={() => aoConfirmar(candidatoVersao, versao)}
                           disabled={confirmando}
                           aria-label={`Usar ${candidatoVersao.titulo_exibicao} (${nomeDaFonte(candidatoVersao.dominio)}) como ${rotulo.toLowerCase()}`}
-                          className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50"
+                          className="rounded-md border border-border-chrome px-3 py-1 text-xs outline-none transition-colors hover:border-neon disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {rotulo}
                         </button>
@@ -263,7 +263,7 @@ export default function DialogoDeTrocaDeFonte({
         type="button"
         onClick={fechar}
         disabled={confirmando}
-        className="mt-4 text-xs text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
+        className="mt-4 text-xs text-ink-muted underline outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline"
       >
         Cancelar
       </button>

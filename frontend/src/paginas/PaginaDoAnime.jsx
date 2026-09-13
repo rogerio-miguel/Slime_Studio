@@ -958,7 +958,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             <button
               type="button"
               onClick={() => setTrocandoFonte(true)}
-              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon"
+              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white"
             >
               Trocar fonte
             </button>
@@ -973,7 +973,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               type="button"
               onClick={aoMarcarTodosAssistidos}
               disabled={marcandoTodosAssistidos || tudoAssistido}
-              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white focus-visible:ring-2 focus-visible:ring-neon disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-chrome disabled:hover:text-ink-muted"
+              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-chrome disabled:hover:text-ink-muted"
             >
               {marcandoTodosAssistidos
                 ? 'Marcando…'
@@ -988,7 +988,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             <button
               type="button"
               onClick={() => setConfirmandoRemocao(true)}
-              className="rounded-md border-2 border-red-500/50 px-3 py-1 text-xs text-red-400 outline-none transition-colors hover:border-red-400 hover:text-red-300 focus-visible:ring-2 focus-visible:ring-neon"
+              className="rounded-md border-2 border-red-500/50 px-3 py-1 text-xs text-red-400 outline-none transition-colors hover:border-red-400 hover:text-red-300"
             >
               Remover do catálogo
             </button>
@@ -1007,7 +1007,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                   onClick={() => mudarModoVisualizacao(modo)}
                   aria-pressed={modoVisualizacao === modo}
                   aria-label={rotulo}
-                  className={`rounded-md border-2 p-1.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-neon ${
+                  className={`rounded-md border-2 p-1.5 outline-none transition-colors ${
                     modoVisualizacao === modo
                       ? 'border-neon text-white'
                       : 'border-border-chrome text-ink-muted hover:border-neon hover:text-white'

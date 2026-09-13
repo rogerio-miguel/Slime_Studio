@@ -122,7 +122,6 @@ export default function FileiraDeCards({
   const classesSeta =
     'absolute inset-y-0 z-10 flex w-[3.7%] items-center justify-center ' +
     'text-white/60 outline-none transition-opacity duration-300 hover:text-neon ' +
-    'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-neon ' +
     'motion-reduce:transition-none opacity-0';
   const classesRevelar = 'group-hover/fileira:opacity-100 focus-visible:opacity-100';
 

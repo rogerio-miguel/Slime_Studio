@@ -6,8 +6,8 @@ import {
   listarAnimes,
   listarAnimesEmAlta,
   listarContinuarAssistindo,
-  listarFileirasTematicas,
   listarProximaTemporada,
+  removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
@@ -19,13 +19,13 @@ import CenarioDeEntrada from '../inicio/CenarioDeEntrada.jsx';
 // só não é renderizado por enquanto.
 import CarrosselDestaques from '../inicio/CarrosselDestaques.jsx';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
-import DestaqueGrande from '../inicio/DestaqueGrande.jsx';
+// DestaqueGrande e as fileiras temáticas ocultos a pedido do usuário
+// (2026-09-13) — arquivos/endpoints continuam existindo (inicio/DestaqueGrande.jsx,
+// inicio/fileirasTematicas.js, inicio/intercalarDestaques.js,
+// inicio/janelaDeDestaques.js), só não são renderizados/computados por enquanto.
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { topDaTemporada } from '../inicio/fileiras.js';
-import { rotularFileiras } from '../inicio/fileirasTematicas.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
-import { intercalarDestaques } from '../inicio/intercalarDestaques.js';
-import { recorteVisivelDoCarrossel } from '../inicio/janelaDeDestaques.js';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 
@@ -37,28 +37,19 @@ import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 //
 // Conteúdo (branch `!buscando`): o carrossel hero seguido das fileiras
 // horizontais (inicio/FileiraDeCards.jsx), nesta ordem — "Próximas estreias",
-// "Continuar assistindo", "Top 10 da semana", fileiras temáticas ("Isekai",
-// "Família encontrada" etc.). "Top 10" é recorte puro do feed
+// "Continuar assistindo", "Top 10 da semana". "Top 10" é recorte puro do feed
 // `GET /api/animes/em-alta` (inicio/fileiras.js); "Próximas estreias" vem do
 // feed próprio `GET /api/animes/proxima-temporada` (próxima temporada da
 // AniList — o feed "em alta" só traz o que já está no ar); "Continuar
-// assistindo" de `GET /api/episodios/continuar-assistindo`; as fileiras
-// temáticas vêm de `GET /api/animes/fileiras-tematicas`, uma por tema
-// pré-definido no backend, traduzidas e recortadas em
-// inicio/fileirasTematicas.js. Cada fileira some sozinha quando sua lista
-// está vazia (guard no próprio FileiraDeCards). As fileiras por gênero
-// (`fileirasPorGenero` em fileiras.js) saíram da Home e ainda não têm página
-// nova — a função segue exportada, o render não.
+// assistindo" de `GET /api/episodios/continuar-assistindo`. Cada fileira some
+// sozinha quando sua lista está vazia (guard no próprio FileiraDeCards). As
+// fileiras temáticas (`GET /api/animes/fileiras-tematicas`,
+// inicio/fileirasTematicas.js) e as fileiras por gênero (`fileirasPorGenero`
+// em fileiras.js) estão fora da Home — ver nota de import comentado acima.
 //
-// "Destaques grandes" (inicio/DestaqueGrande.jsx) — 2 cards banner+info,
-// seção ADICIONAL que não substitui carrossel nem "Top 10": 2 itens
-// ALEATÓRIOS (amostraAleatoria) do feed `em-alta` INTEIRO menos o recorte que
-// o carrossel exibe agora (recorteVisivelDoCarrossel) — de propósito NÃO
-// repete os animes do carrossel. Fica intercalada ao longo de TODAS as
-// fileiras da home (`fileirasDaHome` — "Próximas estreias", "Continuar
-// assistindo", "Top 10" e as temáticas), não só as temáticas, via
-// inicio/intercalarDestaques.js. Some sozinha quando não sobra item fora do
-// recorte do carrossel (mesma exibição silenciosa).
+// "Destaques grandes" (inicio/DestaqueGrande.jsx, intercalados via
+// inicio/intercalarDestaques.js) também estão ocultos — ver nota de import
+// comentado acima.
 // "Seu catálogo" segue FORA da Inicio de propósito — o catálogo local (listar,
 // abrir, remover) mora inteiro em `paginas/Galeria.jsx` (rota "/animes",
 // linkada na navbar). `DestaquePrincipal` também não está nesta ordem (pivot
@@ -77,20 +68,6 @@ import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 // src/inicio/ só importam de src/api/, components/ e react-router-dom —
 // nada de src/player/ (a única ligação com o player é a rota
 // "/assistir/:episodioId", string, não import).
-
-// Sorteia `tamanho` itens distintos de `lista`, sem repetir e sem mutar a
-// entrada (`[...lista]` antes do `splice`). Usada só pelos "destaques
-// grandes" (ver `destaquesGrandes` abaixo) — função pura, testável sem
-// precisar montar o componente.
-function amostraAleatoria(lista, tamanho) {
-  const copia = [...lista];
-  const amostra = [];
-  while (amostra.length < tamanho && copia.length > 0) {
-    const indice = Math.floor(Math.random() * copia.length);
-    amostra.push(copia.splice(indice, 1)[0]);
-  }
-  return amostra;
-}
 
 export default function Inicio() {
   const navigate = useNavigate();
@@ -121,50 +98,11 @@ export default function Inicio() {
   // silenciosa: em carregando/erro/vazio a fileira não aparece.
   const proximaTemporada = useRecurso(listarProximaTemporada, []);
 
-  // Fileiras temáticas — `GET /api/animes/fileiras-tematicas`. Mesma exibição
-  // silenciosa das demais fileiras auto-hospedadas: em carregando/erro a
-  // seção simplesmente não aparece (sem aviso visível), e cada fileira some
-  // sozinha se vier vazia (guard em FileiraDeCards). A tradução de `chave`
-  // para rótulo PT e o corte de itens (backend traz até 50 de propósito)
-  // ficam em `rotularFileiras` (inicio/fileirasTematicas.js).
-  const fileirasTematicas = useRecurso(listarFileirasTematicas, []);
-  const fileirasRotuladas = useMemo(
-    () => rotularFileiras(fileirasTematicas.dados ?? []),
-    [fileirasTematicas.dados]
-  );
-
   // "Top 10" — recorte puro do feed `em-alta` (inicio/fileiras.js). `?? []`
   // porque `emAlta.dados` é `null` até a primeira resposta. (As fileiras por
   // gênero — `fileirasPorGenero`, ainda exportada de fileiras.js — saíram da
   // Home; vão pra uma página própria.)
   const top10 = useMemo(() => topDaTemporada(emAlta.dados ?? []), [emAlta.dados]);
-
-  // "Destaques grandes" — 2 itens ALEATÓRIOS do feed `em-alta` INTEIRO (até
-  // 50), EXCLUINDO o recorte que o carrossel exibe agora
-  // (recorteVisivelDoCarrossel, ./janelaDeDestaques.js — mesma fórmula do
-  // `base` do carrossel): as duas seções não mostram os mesmos animes. Sem
-  // sinopse — ao contrário do carrossel de destaques, o `DestaqueGrande` fica
-  // só no essencial (título + meta + CTA). `rank` = posição
-  // no feed `em-alta` (já ordenado por trending/popularidade da AniList) + 1 —
-  // vira a pill "#N em alta"; `indexOf` casa por referência (o feed não é
-  // clonado em nenhum ponto). `amostraAleatoria` roda dentro do `useMemo` — só
-  // sorteia de novo quando o feed ou `continuando` mudam de fato, não a cada
-  // re-render por digitação na busca ou outro estado alheio. `continuarEm`:
-  // entrada correspondente em `continuando.dados` (mesma prateleira "Continuar
-  // assistindo" já carregada) — decide o rótulo do CTA.
-  const destaquesGrandes = useMemo(() => {
-    const feed = emAlta.dados ?? [];
-    const naJanela = new Set(recorteVisivelDoCarrossel(feed));
-    const disponiveis = feed.filter((item) => !naJanela.has(item));
-    const continuandoPorAnime = new Map(
-      (continuando.dados ?? []).map((entrada) => [entrada.anime_id, entrada])
-    );
-    return amostraAleatoria(disponiveis, 2).map((item) => ({
-      item,
-      rank: feed.indexOf(item) + 1,
-      continuarEm: item.anime_id != null ? (continuandoPorAnime.get(item.anime_id) ?? null) : null,
-    }));
-  }, [emAlta.dados, continuando.dados]);
 
   const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
   const [erroMaterializacao, setErroMaterializacao] = useState(null);
@@ -257,50 +195,105 @@ export default function Inicio() {
 
   // "Próximas estreias": os cards NÃO navegam. O anime da próxima temporada
   // ainda não existe em nenhuma fonte extratora — abrir `/anime/:id` levaria a
-  // uma página sem episódios e com resolução de fonte fadada a falhar. O botão
-  // "Salvar" materializa no catálogo local (`POST /api/admin/animes`,
-  // get-or-create por slug) como bookmark. `estreiasSalvas` guarda as chaves
-  // salvas nesta sessão pra virar o botão na hora: o feed cru é cacheado no
-  // servidor (TTL 6h), então sem isso o card só refletiria `anime_id` num
-  // reload posterior.
+  // uma página sem episódios e com resolução de fonte fadada a falhar. O ícone
+  // de fita é um TOGGLE: clicar salva (`POST /api/admin/animes`, get-or-create
+  // por slug) como bookmark; clicar de novo já salvo remove essa temporada
+  // (`DELETE /api/admin/animes/{id}`, mesma `removerAnime` da Galeria). Sem
+  // dialog de confirmação aqui de propósito — ao contrário da Galeria, um
+  // bookmark de estreia nunca tem episódio/captura associado pra perder, é só
+  // desmarcar; a interação esperada é o toggle instantâneo (like/bookmark do
+  // Instagram, não uma exclusão "pesada").
+  //
+  // `estreiasSalvas` guarda as CHAVES salvas nesta sessão pra virar o ícone na
+  // hora: o feed cru é cacheado no servidor (TTL 6h), então sem isso o card só
+  // refletiria `anime_id` num reload posterior. `estreiasSalvasIds` guarda o
+  // `id` retornado por `criarAnime` pra essas mesmas chaves — necessário pra
+  // remover depois um item que NASCEU sem `item.anime_id` (materializado
+  // nesta sessão, o feed em si não é mutado). `estreiasRemovidas` é o inverso:
+  // chaves cujo `anime_id` o SERVIDOR já reporta (feed cacheado antigo), mas
+  // que foram removidas nesta sessão — sem isso o card voltaria a aparecer
+  // "salvo" a cada re-render até o feed expirar.
   const [estreiasSalvas, setEstreiasSalvas] = useState(() => new Set());
+  const [estreiasSalvasIds, setEstreiasSalvasIds] = useState(() => new Map());
+  const [estreiasRemovidas, setEstreiasRemovidas] = useState(() => new Set());
   const [chaveSalvandoEstreia, setChaveSalvandoEstreia] = useState(null);
 
-  const salvarEstreia = useCallback(
+  // Mesma chave usada por TODOS os feeds AniList não catalogados desta página
+  // ("Próximas estreias", "Top 10", fileiras temáticas) — declarada aqui em
+  // vez de mais abaixo (junto de `renderCardDoFeed`) porque o bloco de
+  // "Próximas estreias" precisa dela primeiro.
+  const chaveDoItemDoFeed = (item) => item.anilist_id ?? item.titulo_romaji;
+  const estreiaEstaSalva = (item) => {
+    const chave = chaveDoItemDoFeed(item);
+    return (item.anime_id != null || estreiasSalvas.has(chave)) && !estreiasRemovidas.has(chave);
+  };
+
+  const alternarEstreiaSalva = useCallback(
     async (item) => {
-      const chave = item.anilist_id ?? item.titulo_romaji;
+      const chave = chaveDoItemDoFeed(item);
       if (chaveSalvandoEstreia != null) return;
+      // Mesma regra de `estreiaEstaSalva`, inline: chamar a função de fora
+      // puxaria ela pras deps do `useCallback` sem necessidade (ela já lê as
+      // duas MESMAS variáveis de estado que já estão na lista abaixo).
+      const jaSalvo =
+        (item.anime_id != null || estreiasSalvas.has(chave)) && !estreiasRemovidas.has(chave);
       setChaveSalvandoEstreia(chave);
       setErroMaterializacao(null);
       try {
-        await criarAnime({
-          titulo: item.titulo_romaji,
-          tituloIngles: item.titulo_ingles ?? undefined,
-          anilistId: item.anilist_id ?? undefined,
-          capaUrl: item.capa_url ?? item.banner_url ?? undefined,
-          bannerUrl: item.banner_url ?? undefined,
-          capaCor: item.capa_cor ?? undefined,
-          generos: item.generos ?? undefined,
-          sinopse: item.sinopse ?? undefined,
-        });
-        setEstreiasSalvas((atual) => new Set(atual).add(chave));
+        if (jaSalvo) {
+          const id = item.anime_id ?? estreiasSalvasIds.get(chave);
+          await removerAnime(id);
+          setEstreiasRemovidas((atual) => new Set(atual).add(chave));
+          setEstreiasSalvas((atual) => {
+            if (!atual.has(chave)) return atual;
+            const novo = new Set(atual);
+            novo.delete(chave);
+            return novo;
+          });
+        } else {
+          const criado = await criarAnime({
+            titulo: item.titulo_romaji,
+            tituloIngles: item.titulo_ingles ?? undefined,
+            anilistId: item.anilist_id ?? undefined,
+            capaUrl: item.capa_url ?? item.banner_url ?? undefined,
+            bannerUrl: item.banner_url ?? undefined,
+            capaCor: item.capa_cor ?? undefined,
+            generos: item.generos ?? undefined,
+            sinopse: item.sinopse ?? undefined,
+          });
+          setEstreiasSalvas((atual) => new Set(atual).add(chave));
+          setEstreiasSalvasIds((atual) => new Map(atual).set(chave, criado.id));
+          setEstreiasRemovidas((atual) => {
+            if (!atual.has(chave)) return atual;
+            const novo = new Set(atual);
+            novo.delete(chave);
+            return novo;
+          });
+        }
       } catch (erroCapturado) {
-        console.error('falha ao salvar estreia no catálogo', erroCapturado);
-        setErroMaterializacao('Não foi possível salvar este anime — tente novamente.');
+        console.error(
+          jaSalvo ? 'falha ao remover estreia do catálogo' : 'falha ao salvar estreia no catálogo',
+          erroCapturado
+        );
+        setErroMaterializacao(
+          jaSalvo
+            ? 'Não foi possível remover este anime — tente novamente.'
+            : 'Não foi possível salvar este anime — tente novamente.'
+        );
       } finally {
         setChaveSalvandoEstreia(null);
       }
     },
-    [chaveSalvandoEstreia]
+    [chaveSalvandoEstreia, estreiasSalvas, estreiasSalvasIds, estreiasRemovidas]
   );
 
-  // renderItem/chaveDoItem da fileira "Top 10", alimentada pelo feed `em-alta` —
-  // mesmo contrato que a busca em fontes já usa: card de item ainda não
-  // catalogado que materializa e navega ao ativar; todos ficam desabilitados
-  // enquanto uma materialização está em voo. `sobreposicao` (opcional) vai pro
-  // AnimeCard como irmão do card DENTRO do wrapper, pra crescer junto no hover
-  // — é por onde entra o numeral do Top 10.
-  const chaveDoItemDoFeed = (item) => item.anilist_id ?? item.titulo_romaji;
+  // renderItem da fileira "Top 10", alimentada pelo feed `em-alta` — mesmo
+  // contrato que a busca em fontes já usa: card de item ainda não catalogado
+  // que materializa e navega ao ativar; todos ficam desabilitados enquanto uma
+  // materialização está em voo. `sobreposicao` (opcional) vai pro AnimeCard
+  // como irmão do card DENTRO do wrapper, pra crescer junto no hover — é por
+  // onde entra o numeral do Top 10. `chaveDoItemDoFeed` declarada mais acima,
+  // junto do estado de "Próximas estreias".
   const renderCardDoFeed = (item, sobreposicao) => (
     <AnimeCard
       anime={item}
@@ -312,13 +305,8 @@ export default function Inicio() {
 
   // Fileiras horizontais da home NA ORDEM em que aparecem, cada uma já como
   // nó pronto (com `key`). Só entram as que de fato vão renderizar (lista não
-  // vazia) — assim o `passo` de intercalarDestaques conta prateleiras visíveis,
-  // não fantasmas. Antes só as fileiras temáticas alimentavam a intercalação
-  // dos "destaques grandes"; agora TODAS entram, então um destaque pode cair
-  // logo depois de "Próximas estreias"/"Continuar assistindo"/"Top 10", não só
-  // no meio dos temas. Montado no corpo do render (não `useMemo`): são ~10
-  // objetos + JSX leve, e memoizar exigiria arrastar toda a lista de callbacks
-  // de materialização pras deps.
+  // vazia). Montado no corpo do render (não `useMemo`): são poucos objetos +
+  // JSX leve.
   const fileirasDaHome = [
     (proximaTemporada.dados ?? []).length > 0 && {
       chave: 'proximas-estreias',
@@ -334,9 +322,9 @@ export default function Inicio() {
             return (
               <CartaoDeEstreia
                 item={item}
-                salvo={item.anime_id != null || estreiasSalvas.has(chave)}
+                salvo={estreiaEstaSalva(item)}
                 salvando={chaveSalvandoEstreia === chave}
-                aoSalvar={() => salvarEstreia(item)}
+                aoSalvar={() => alternarEstreiaSalva(item)}
               />
             );
           }}
@@ -386,25 +374,7 @@ export default function Inicio() {
         />
       ),
     },
-    ...fileirasRotuladas.map((fileira) => ({
-      chave: fileira.chave,
-      node: (
-        <FileiraDeCards
-          key={fileira.chave}
-          titulo={fileira.rotulo}
-          itens={fileira.itens}
-          comSombra={false}
-          chaveDoItem={chaveDoItemDoFeed}
-          renderItem={(item) => renderCardDoFeed(item)}
-        />
-      ),
-    })),
   ].filter(Boolean);
-
-  // Intercala os "destaques grandes" ao longo de TODAS as fileiras da home
-  // (ver inicio/intercalarDestaques.js) — lista final de blocos pro `.map()`
-  // do render.
-  const blocosDeConteudo = intercalarDestaques(fileirasDaHome, destaquesGrandes);
 
   return (
     <>
@@ -412,7 +382,7 @@ export default function Inicio() {
         <button
           type="button"
           onClick={revelar}
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-30 focus:rounded-md focus:border focus:border-neon-soft focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-neon focus:outline-none focus-visible:ring-2 focus-visible:ring-neon"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-30 focus:rounded-md focus:border focus:border-neon-soft focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-neon focus:outline-none"
         >
           Pular introdução
         </button>
@@ -436,10 +406,7 @@ export default function Inicio() {
         // `bg-black` (não mais `bg-[#17171b]`, cor exata do `body` do
         // Disney+): preto sólido, igual à Galeria (paginas/Galeria.jsx) —
         // as fileiras e os resultados de busca não levam mais sombra
-        // (`comSombra={false}`, mesmo motivo de lá). Efeito colateral aceito:
-        // a sombra própria do card "Destaque grande" (inicio/DestaqueGrande.jsx,
-        // `boxShadow: SOMBRA_SLIDE_ATIVO`, não mudou) só aparecia sobre esse
-        // cinza — sobre preto sólido ela fica praticamente invisível.
+        // (`comSombra={false}`, mesmo motivo de lá).
         className={`relative z-10 min-h-screen bg-black pt-22 transition-opacity duration-700 ease-out ${
           fase === 'revelado' ? 'opacity-100' : 'opacity-0'
         }`}
@@ -641,8 +608,7 @@ export default function Inicio() {
                 "Top 10" (recorte de `em-alta`) se auto-escondem quando suas
                 listas chegam vazias — feed indisponível vira fileira ausente,
                 não erro. A ordem e o guard de lista vazia de cada prateleira
-                moram em `fileirasDaHome` (corpo do componente), que também é a
-                lista que intercala os "destaques grandes".
+                moram em `fileirasDaHome` (corpo do componente).
                 `relative z-10`: promove todo o bloco de fileiras pra um
                 contexto de empilhamento acima do hero. Sem isso o `<h2>` da
                 primeira fileira (`position:static`) fica ATRÁS do banner e do
@@ -654,20 +620,7 @@ export default function Inicio() {
                 primeira fileira sob o fade). Sem carrossel (feed vazio/erro),
                 `space-y-10`/`pb-20` e o `pt-22` do <main> já dão respiro. */}
             <div className="relative z-10 space-y-10 pb-20 pt-0">
-              {blocosDeConteudo.map((bloco) =>
-                bloco.tipo === 'destaque' ? (
-                  <DestaqueGrande
-                    key={bloco.chave}
-                    item={bloco.destaque.item}
-                    rank={bloco.destaque.rank}
-                    continuarEm={bloco.destaque.continuarEm}
-                    aoMaterializar={materializarEIrPara}
-                    materializando={chaveEmMaterializacao != null}
-                  />
-                ) : (
-                  bloco.fileira.node
-                )
-              )}
+              {fileirasDaHome.map((fileira) => fileira.node)}
             </div>
 
           </>

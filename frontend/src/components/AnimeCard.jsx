@@ -48,30 +48,22 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // se `group/card` ficasse só lá dentro o `group-hover/card:` do botão nunca
 // casaria.
 //
-// Hover/foco do card (pedido explícito do usuário — sem escala: o card NÃO
-// cresce mais no hover/foco, só reage nos dois gatilhos abaixo, cobrindo o
-// card INTEIRO — pôster + bloco de legenda, não só a imagem):
-//  - Hover de mouse → `hover:bg-surface-hover` direto no Link/button
-//    (`classesConteudo`), um cinza sutil (token `surface-hover` do tema,
-//    já usado no card "sem capa" abaixo e no card de episódio em lista,
-//    components/LinhaDeEpisodio.jsx) sobre `p-2 -m-2` — o padding some o
-//    conteúdo visualmente do lugar (a margem negativa cancela o padding), só
-//    revela a caixa de fundo maior que o pôster+legenda quando o hover pinta
-//    ela. Sem isso a caixa de fundo nasceria já visível fora do hover.
-//  - Foco de teclado → `anelFoco`, borda neon só com o gatilho de foco (sem
-//    `hover:`): fundo sozinho não tem contraste suficiente pra servir de
-//    indicador de foco (~1.1:1 entre `surface` e `surface-hover`, bem abaixo
-//    do 3:1 mínimo) — CLAUDE.md §4 proíbe cortar acessibilidade por
-//    minimalismo. Overlay `aria-hidden` `absolute inset-0`, ÚLTIMO filho da
-//    caixa — não `border`/`ring` real pelo mesmo motivo de sempre (border
-//    real encolheria o content-box; ring ficaria atrás dos filhos
-//    `absolute inset-0` por causa do `overflow-hidden`, mesmo problema
-//    resolvido no overlay de borda de `inicio/CarrosselDestaques.jsx`). Nos
-//    dois casos (com/sem capa) envolve o card INTEIRO, não só o pôster.
-// `group-focus-within/card:border-neon` no `anelFoco`: o Link/button fica com
-// `outline-none` e sem `focus-visible:ring`. Card desabilitado não renderiza
-// o overlay (`{!desabilitado && …}`). Grupo NOMEADO `group/card` (não `group`
-// puro): a fileira horizontal tem `group` próprio pras setas.
+// Hover do card (pedido explícito do usuário — sem escala: o card NÃO cresce
+// mais no hover, só reage a `hover:bg-surface-hover` direto no Link/button
+// (`classesConteudo`), um cinza sutil (token `surface-hover` do tema, já
+// usado no card "sem capa" abaixo e no card de episódio em lista,
+// components/LinhaDeEpisodio.jsx) sobre `p-2 -m-2` — o padding some o
+// conteúdo visualmente do lugar (a margem negativa cancela o padding), só
+// revela a caixa de fundo maior que o pôster+legenda quando o hover pinta
+// ela. Sem isso a caixa de fundo nasceria já visível fora do hover. Cobre o
+// card INTEIRO (pôster + legenda) nos dois casos (com/sem capa).
+// Sem indicador de foco de teclado por decisão explícita do usuário
+// (2026-09-13) — havia um `anelFoco` aqui (overlay `border-4`, acendendo
+// `border-neon` via `group-focus-within/card`), removido junto com todo
+// `focus-visible:ring-neon` do sistema (mesma sessão). Grupo `group/card`
+// (não `group` puro) continua existindo só porque a fileira horizontal tem
+// `group` próprio pras setas — sem isso `group-hover:` da borda/título
+// casaria com QUALQUER ancestral `.group`.
 //
 // `sobreposicao` (opcional): nó renderizado como IRMÃO do Link/button, DENTRO
 // do `wrapper`. Usado pelo numeral grande da fileira "Top 10"
@@ -131,28 +123,20 @@ export default function AnimeCard({
   // pôster (`relative` na div do pôster) de forma confiável, não por sorte de
   // fluxo (a `<img>` acima é `absolute`, então hoje a pill seria o único
   // conteúdo em fluxo e "funcionaria" mesmo com `relative`, mas isso quebra
-  // no primeiro filho novo que alguém adicionar ali). `h-7` explícito +
+  // no primeiro filho novo que alguém adicionar ali). `h-8` explícito +
   // `inline-flex items-center` (não `py-*`): mesma altura EXATA do botão de
-  // remover (`p-1.5` ao redor do ícone `h-4` = 28px = `h-7`) — alinha os dois
-  // pelo centro vertical independente da métrica de linha do texto.
+  // remover (`p-1` ao redor do ícone `h-6` = 32px = `h-8`,
+  // components/BotaoRemoverDoCatalogo.jsx) — alinha os dois pelo centro
+  // vertical independente da métrica de linha do texto.
   const badgeAssistido = assistido && (
     <span
-      className="absolute left-2 top-2 z-10 inline-flex h-7 items-center rounded-2xl bg-black/60 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white"
+      className="absolute left-2 top-2 z-10 inline-flex h-8 items-center rounded-2xl bg-black/60 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white"
       aria-label="já assistido"
     >
       Assistido
     </span>
   );
 
-  // Anel de foco (ver bloco de comentário no topo) — só reage a
-  // `group-focus-within/card`, sem gatilho de hover. Card desabilitado ou
-  // `estatico` não recebe: nem cresce nem acende.
-  const anelFoco = !desabilitado && !estatico && (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 rounded-xl border-4 border-transparent transition-colors duration-300 ease-out group-focus-within/card:border-neon motion-reduce:transition-none"
-    />
-  );
 
   // Tag "Tn EP.n" logo abaixo do título — pedido explícito do usuário.
   // `numero_temporada` cai pra 1 quando NULL (anime sem franquia resolvida
@@ -219,8 +203,7 @@ export default function AnimeCard({
     // pôster+legenda quando `hover:bg-surface-hover` pinta ela; ver bloco de
     // comentário no topo). 12px de cada lado: teto seguro é o `p-[10px]` do
     // slot da grade (GradeDeCatalogo.jsx/FileiraDeCards.jsx) somado ao do
-    // vizinho — até ~16px ainda não encosta no pôster ao lado. `relative` pro
-    // `anelFoco` (último filho) cobrir a caixa inteira.
+    // vizinho — até ~16px ainda não encosta no pôster ao lado.
     classesConteudo =
       'relative flex w-full flex-col gap-2 rounded-2xl p-3 -m-3 text-left outline-none transition-colors duration-300 ease-out hover:bg-surface-hover motion-reduce:transition-none';
     conteudo = (
@@ -230,7 +213,6 @@ export default function AnimeCard({
           {badgeAssistido}
         </div>
         {!semLegenda && <div className="relative flex flex-col gap-1">{legenda}</div>}
-        {anelFoco}
       </>
     );
   } else {
@@ -244,7 +226,6 @@ export default function AnimeCard({
       <>
         {badgeAssistido}
         {!semLegenda && <div className="relative mt-auto flex flex-col gap-1">{legenda}</div>}
-        {anelFoco}
       </>
     );
   }
@@ -255,7 +236,7 @@ export default function AnimeCard({
   // título casaria com QUALQUER ancestral `.group` e acenderia todos os cards
   // da fileira de uma vez ao passar o mouse em qualquer ponto dela. Sem
   // escala (removida a pedido do usuário): só serve de raiz pro grupo, sem
-  // classe própria de hover/foco — quem reage é `classesConteudo`/`anelFoco`.
+  // classe própria de hover/foco — quem reage é `classesConteudo`.
   const wrapper = 'group/card relative';
 
   if (estatico) {

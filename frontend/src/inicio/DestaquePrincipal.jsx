@@ -33,7 +33,7 @@ export default function DestaquePrincipal({ item, aoMaterializar, materializando
       {item.anime_id != null ? (
         <Link
           to={`/anime/${item.anime_id}`}
-          className="inline-block rounded-md bg-neon px-6 py-3 text-sm font-semibold text-black outline-none transition-colors hover:bg-neon/90 focus-visible:ring-2 focus-visible:ring-neon focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          className="inline-block rounded-md bg-neon px-6 py-3 text-sm font-semibold text-black outline-none transition-colors hover:bg-neon/90"
         >
           Ver episódios
         </Link>
@@ -42,7 +42,7 @@ export default function DestaquePrincipal({ item, aoMaterializar, materializando
           type="button"
           onClick={() => aoMaterializar(item)}
           disabled={materializando}
-          className="inline-block rounded-md bg-neon px-6 py-3 text-sm font-semibold text-black outline-none transition-colors hover:bg-neon/90 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-neon focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          className="inline-block rounded-md bg-neon px-6 py-3 text-sm font-semibold text-black outline-none transition-colors hover:bg-neon/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {materializando ? 'Adicionando…' : 'Adicionar e assistir'}
         </button>
