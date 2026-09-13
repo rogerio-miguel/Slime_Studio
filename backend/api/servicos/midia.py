@@ -1,9 +1,10 @@
 """Resolução de caminho de mídia HLS (episódio -> arquivo em disco), com guarda
 contra path traversal (ESPECIFICACAO.md §5, Passo 3 do plano da Fase 3).
 
-Só cobre a rota catch-all (variante `index.m3u8` + segmentos `seg_*.ts`) — o
-master manifest (`Episodio.hls_path`, dado do servidor, não input do usuário) é
-resolvido direto em `api/rotas/episodios.py`, sem passar por aqui.
+Só cobre a rota catch-all (variante `index.m3u8`, segmentos `seg_*.ts` e o
+sprite `storyboard.jpg`, opcional) — o master manifest (`Episodio.hls_path`,
+dado do servidor, não input do usuário) é resolvido direto em
+`api/rotas/episodios.py`, sem passar por aqui.
 """
 
 from pathlib import Path
@@ -12,7 +13,8 @@ from core.config import Config
 from core.erros import ErroSlimeStudio
 from models.episodio import Episodio
 
-_SUFIXOS_PERMITIDOS = {".m3u8", ".ts"}
+# .jpg: storyboard.jpg (worker/pipeline/storyboard.py)
+_SUFIXOS_PERMITIDOS = {".m3u8", ".ts", ".jpg"}
 
 
 class RecursoDeMidiaInvalido(ErroSlimeStudio):
@@ -25,7 +27,9 @@ def resolver_caminho(config: Config, episodio: Episodio, recurso: str) -> Path:
     """`Episodio.hls_path` é relativo a `MEDIA_ROOT` e aponta para o master
     manifest do episódio (`<dir>/master.m3u8`); `recurso` é o nome de arquivo
     pedido dentro do MESMO diretório (variante `index.m3u8` ou segmento
-    `seg_%05d.ts`, referenciados pelo master relativamente)."""
+    `seg_%05d.ts`, referenciados pelo master relativamente; ou
+    `storyboard.jpg`, pedido direto pelo frontend — não referenciado por
+    nenhum manifesto)."""
     if episodio.hls_path is None:
         raise RecursoDeMidiaInvalido(f"episódio {episodio.id} não tem HLS empacotado")
 

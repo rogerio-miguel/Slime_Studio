@@ -42,6 +42,7 @@ from models.episodio import Episodio
 from models.job import Job
 from worker.pipeline.fonte import resolver_fonte
 from worker.pipeline.hls import empacotar
+from worker.pipeline.storyboard import gerar_storyboard
 from worker.pipeline.validacao import conferir_decodificacao, decidir_plano, sondar
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,16 @@ async def processar(job_id: int, sessionmaker: _SessionMaker, config: Config) ->
         logger.info(
             "job %s: empacotamento HLS concluído em %.1fs", job_id, time.monotonic() - inicio
         )
+
+        # Best-effort — prévia de hover é acessório (frontend degrada sem ela
+        # se o arquivo não existir), nunca deve marcar o job/episódio como
+        # falho por causa disso.
+        try:
+            await gerar_storyboard(caminho_fonte, destino, sondagem.duracao_s, config.ffmpeg)
+        except FalhaDeFerramenta as excecao:
+            logger.warning(
+                "job %s: falha ao gerar storyboard (não crítico): %s", job_id, excecao
+            )
 
         await _marcar_episodio_pronto(
             sessionmaker,

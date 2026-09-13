@@ -25,14 +25,21 @@ const classeBotaoHeader =
 // Painel de configurações com 2 telas (raiz → "Qualidade" → lista de
 // presets), no mesmo formato do painel de configurações do Disney+
 // referenciado pelo usuário: cabeçalho com título + botão de fechar, e a
-// tela raiz lista itens de menu (label à esquerda, sublabel+caret à
-// direita) — só que com uma única opção ("Qualidade"), já que o player não
-// tem legenda/áudio pra configurar. Mesmo padrão de acessibilidade do já
-// existente SeletorDeTemporada.jsx (aria-haspopup/expanded/controls,
-// role=menu/menuitem, roving tabindex, ↑/↓/Home/End, Esc fecha e devolve
-// foco, clique fora fecha) — reaproveitado, não reinventado (Escada de
-// Minimalismo + CLAUDE.md §3 "Reaproveitamento").
-export default function MenuDeConfiguracoes({ presetAtual, aoTrocar }) {
+// tela raiz lista itens de menu — "Qualidade" navega pra sub-tela
+// (label à esquerda, sublabel+caret à direita), "Áudio cinema" alterna
+// direto sem navegar (label à esquerda, estado Ligado/Desligado à direita).
+// Mesmo padrão de acessibilidade do já existente SeletorDeTemporada.jsx
+// (aria-haspopup/expanded/controls, role=menu/menuitem, roving tabindex,
+// ↑/↓/Home/End, Esc fecha e devolve foco, clique fora fecha) —
+// reaproveitado, não reinventado (Escada de Minimalismo + CLAUDE.md §3
+// "Reaproveitamento").
+export default function MenuDeConfiguracoes({
+  presetAtual,
+  aoTrocar,
+  cinemaHabilitado,
+  cinemaFalhou,
+  aoAlternarCinema,
+}) {
   const [aberto, setAberto] = useState(false);
   const [tela, setTela] = useState('raiz'); // 'raiz' | 'qualidade'
   const [indiceAtivo, setIndiceAtivo] = useState(0);
@@ -43,10 +50,11 @@ export default function MenuDeConfiguracoes({ presetAtual, aoTrocar }) {
 
   const opcaoAtual = opcoesDeQualidade.find((opcao) => opcao.valor === presetAtual);
   const rotuloAtual = presetAtual === 'auto' ? 'Automático' : (opcaoAtual?.rotulo ?? presetAtual);
-  // Tela 'raiz' tem 1 item focável (a linha "Qualidade"); 'qualidade' tem uma
-  // linha por opção — o botão de voltar do cabeçalho fica fora da navegação
-  // por seta (mesmo tratamento do botão de fechar), não entra na contagem.
-  const totalDeItens = tela === 'raiz' ? 1 : opcoesDeQualidade.length;
+  // Tela 'raiz' tem 2 itens focáveis ("Qualidade" + "Áudio cinema");
+  // 'qualidade' tem uma linha por opção — o botão de voltar do cabeçalho
+  // fica fora da navegação por seta (mesmo tratamento do botão de fechar),
+  // não entra na contagem.
+  const totalDeItens = tela === 'raiz' ? 2 : opcoesDeQualidade.length;
 
   const fechar = (devolverFoco = true) => {
     setAberto(false);
@@ -168,6 +176,40 @@ export default function MenuDeConfiguracoes({ presetAtual, aoTrocar }) {
                 <span className="flex items-center gap-1 text-ink-muted">
                   {rotuloAtual}
                   <ChevronRight width={16} height={16} aria-hidden="true" />
+                </span>
+              </button>
+              {/* Toggle, não navega pra sub-tela (sem chevron) — por isso
+                  role="menuitemcheckbox" (booleano), diferente do
+                  role="menuitemradio" da lista de qualidade abaixo (opções
+                  mutuamente exclusivas). `aria-disabled` (não `disabled`) e o
+                  guard dentro do onClick: um <button disabled> sai da ordem
+                  de foco e quebra a navegação por seta (roving tabindex)
+                  deste menu — aqui só precisa ficar inerte ao clique/Enter,
+                  continuando alcançável pelo teclado como qualquer item. */}
+              <button
+                ref={(no) => {
+                  itensRef.current[1] = no;
+                }}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={!cinemaFalhou && cinemaHabilitado}
+                aria-disabled={cinemaFalhou || undefined}
+                tabIndex={indiceAtivo === 1 ? 0 : -1}
+                onClick={() => {
+                  if (!cinemaFalhou) aoAlternarCinema();
+                }}
+                title={
+                  cinemaFalhou
+                    ? 'Áudio cinema indisponível: a cadeia de áudio falhou ao montar, seguindo com áudio nativo'
+                    : undefined
+                }
+                className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3.5 text-left text-base outline-none transition-colors focus-visible:bg-white/10 hover:bg-white/10 ${
+                  cinemaFalhou ? 'cursor-not-allowed text-ink-muted opacity-50' : 'text-white'
+                }`}
+              >
+                <span>Áudio cinema</span>
+                <span className="text-ink-muted">
+                  {cinemaFalhou ? 'Indisponível' : cinemaHabilitado ? 'Ligado' : 'Desligado'}
                 </span>
               </button>
             </div>
