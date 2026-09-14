@@ -213,6 +213,15 @@ async def listar_animes(
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
     assistidos = await servico_lancamentos.ids_totalmente_assistidos(sessao, animes)
+    # Badge "Dublado"/"Legendado" (uma query batched, não uma por card — ver
+    # docstring de `versoes_confirmadas_mais_recentes_por_anime`) e aviso
+    # "Nª temporada estreia em ..." (agrupamento de franquia rodado uma vez,
+    # `_agrupar_franquias`, reaproveitado por card — ver docstring de
+    # `_temporadas_e_proxima`).
+    versoes_confirmadas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
+        sessao, ids
+    )
+    grupos_de_franquia = await _agrupar_franquias(sessao)
     # Aquecimento opt-in via `?aquecer=true`: carona fire-and-forget que sonda a
     # fonte real (scraping) dos animes em lançamento com contagem velha/ausente e
     # aquece o `status_lancamento` (filtro do badge) via AniList/Kitsu. Só a
@@ -230,22 +239,29 @@ async def listar_animes(
     # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios`,
     # `assistido` e `episodios_atuais` são derivados e precisam ser injetados à
     # parte.
-    return [
-        AnimeSaida.model_validate(anime).model_copy(
-            update={
-                "episodios_novos": servico_lancamentos.episodios_novos(
-                    anime, maior_capturado.get(anime.id, 0)
-                ),
-                "tem_episodios": anime.id in com_episodios,
-                "assistido": anime.id in assistidos,
-                "episodios_atuais": max(
-                    maior_capturado.get(anime.id, 0), anime.episodios_na_fonte or 0
-                )
-                or None,
-            }
+    resultado_saida = []
+    for anime in animes:
+        _, proxima_temporada = _temporadas_e_proxima(
+            anime.id, anime.numero_temporada, grupos_de_franquia[anime.id]
         )
-        for anime in animes
-    ]
+        resultado_saida.append(
+            AnimeSaida.model_validate(anime).model_copy(
+                update={
+                    "episodios_novos": servico_lancamentos.episodios_novos(
+                        anime, maior_capturado.get(anime.id, 0)
+                    ),
+                    "tem_episodios": anime.id in com_episodios,
+                    "assistido": anime.id in assistidos,
+                    "episodios_atuais": max(
+                        maior_capturado.get(anime.id, 0), anime.episodios_na_fonte or 0
+                    )
+                    or None,
+                    "versao_confirmada_mais_recente": versoes_confirmadas.get(anime.id),
+                    "proxima_temporada": proxima_temporada,
+                }
+            )
+        )
+    return resultado_saida
 
 
 # `/em-alta` precisa vir ANTES de `/{anime_id}` — um `{anime_id}` declarado
@@ -410,7 +426,10 @@ async def obter_anime(
         else {}
     )
     servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
-    temporadas, proxima_temporada = await _franquia_do_anime(sessao, anime)
+    grupos = await _agrupar_franquias(sessao)
+    temporadas, proxima_temporada = _temporadas_e_proxima(
+        anime.id, anime.numero_temporada, grupos[anime.id]
+    )
     return AnimeDetalheSaida(
         id=anime.id,
         titulo=anime.titulo,
@@ -433,30 +452,22 @@ async def obter_anime(
     )
 
 
-async def _franquia_do_anime(
-    sessao: AsyncSession, anime: Anime
-) -> tuple[list[TemporadaIrmaSaida], TemporadaIrmaSaida | None]:
-    """`(temporadas_do_seletor, proxima_temporada_prevista)` da franquia de `anime`.
+async def _agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
+    """`{anime_id: grupo}` — agrupa o catálogo INTEIRO em componentes conexos de
+    franquia (união por `serie_ancora` OU slug do título base, `core/
+    franquia.py` — o segundo sinal cobre o walk de `relations` que erra com
+    OVA/ONA/split-cour no meio, Fase 6), uma query só. `grupo` é a lista
+    ordenada por `numero_temporada` (NULL por último) de TODAS as linhas da
+    franquia — mesma lista (referência compartilhada) pra cada `anime_id`
+    membro dela, então indexar o dict não duplica dado. Espelha o agrupamento
+    de `frontend/src/inicio/franquia.js`.
 
-    Franquia = componente conexo onde dois animes se ligam por compartilhar
-    `serie_ancora` OU o slug do título base (`core/franquia.py`) — o segundo
-    sinal cobre o walk de `relations` que erra com OVA/ONA/split-cour no meio
-    (Fase 6). Varre o catálogo inteiro (dezenas de linhas, uso pessoal) a cada
-    leitura de detalhe — barato o bastante pra não justificar índice. Espelha o
-    agrupamento de `frontend/src/inicio/franquia.js`.
-
-    - `temporadas_do_seletor`: irmãs (inclui a própria) ordenadas por
-      `numero_temporada` (NULL por último), EXCETO as que ainda não existem como
-      conteúdo — `nao_lancado` e sem episódio capturado, i.e. bookmark de
-      "Próximas estreias" — porque navegar pra elas só levaria a página vazia. A
-      própria temporada de `anime` fica sempre. `[]` quando sobra só ela (nada a
-      oferecer no seletor). Espelha `temporadaAcessivel` de `inicio/franquia.js`.
-    - `proxima_temporada_prevista`: a irmã `nao_lancado` de menor
-      `numero_temporada` acima da atual que já tem `estreia_em` no futuro, ou —
-      quando a AniList ainda não fechou a data completa — pelo menos `ano` no
-      ano corrente ou adiante. Alimenta o aviso "Nª temporada estreia em ..." no
-      hero (data completa quando há, senão só o ano). `None` quando não há
-      nenhuma nesse estado."""
+    A parte cara de `_temporadas_e_proxima`: varrer o catálogo inteiro (dezenas
+    de linhas, uso pessoal — barato o bastante pra não justificar índice) só
+    UMA VEZ por request, não por anime. `obter_anime` chama isto pro grupo de 1
+    anime; `listar_animes` reaproveita o mesmo dict pra cada card da grade —
+    sem isso, calcular `proxima_temporada` pro catálogo inteiro escanearia o
+    catálogo inteiro de novo a cada anime (O(N²))."""
     tem_episodio = exists().where(Episodio.anime_id == Anime.id)
     linhas = (
         await sessao.execute(
@@ -494,15 +505,47 @@ async def _franquia_do_anime(
         if linha.serie_ancora is not None:
             une(no, ("anc", linha.serie_ancora))
 
-    raiz = acha(("id", anime.id))
-    grupo = sorted(
-        (linha for linha in linhas if acha(("id", linha.id)) == raiz),
-        key=lambda linha: (linha.numero_temporada is None, linha.numero_temporada or 0, linha.id),
-    )
+    grupos_por_raiz: dict[object, list[object]] = {}
+    for linha in linhas:
+        grupos_por_raiz.setdefault(acha(("id", linha.id)), []).append(linha)
+    for grupo in grupos_por_raiz.values():
+        grupo.sort(
+            key=lambda linha: (
+                linha.numero_temporada is None,
+                linha.numero_temporada or 0,
+                linha.id,
+            )
+        )
+
+    return {linha.id: grupos_por_raiz[acha(("id", linha.id))] for linha in linhas}
+
+
+def _temporadas_e_proxima(
+    anime_id: int, numero_temporada_atual: int | None, grupo: list[object]
+) -> tuple[list[TemporadaIrmaSaida], TemporadaIrmaSaida | None]:
+    """`(temporadas_do_seletor, proxima_temporada_prevista)` do anime `anime_id`
+    dentro do `grupo` (de `_agrupar_franquias`) da sua franquia. Sem I/O — só a
+    lógica pura, reaproveitada por anime tanto em `obter_anime` (grupo de 1
+    anime) quanto em `listar_animes` (mesmo grupo, uma vez por franquia,
+    reaproveitado pra cada membro que aparece na grade).
+
+    - `temporadas_do_seletor`: irmãs (inclui a própria) ordenadas por
+      `numero_temporada` (NULL por último), EXCETO as que ainda não existem como
+      conteúdo — `nao_lancado` e sem episódio capturado, i.e. bookmark de
+      "Próximas estreias" — porque navegar pra elas só levaria a página vazia. A
+      própria temporada de `anime_id` fica sempre. `[]` quando sobra só ela
+      (nada a oferecer no seletor). Espelha `temporadaAcessivel` de
+      `inicio/franquia.js`.
+    - `proxima_temporada_prevista`: a irmã `nao_lancado` de menor
+      `numero_temporada` acima da atual que já tem `estreia_em` no futuro, ou —
+      quando a AniList ainda não fechou a data completa — pelo menos `ano` no
+      ano corrente ou adiante. Alimenta o aviso "Nª temporada estreia em ..." no
+      hero da página do anime e no card do catálogo (data completa quando há,
+      senão só o ano). `None` quando não há nenhuma nesse estado."""
 
     def _acessivel(linha: object) -> bool:
         return (
-            linha.id == anime.id
+            linha.id == anime_id
             or bool(linha.tem_episodios)
             or linha.status_lancamento != StatusLancamento.NAO_LANCADO
         )
@@ -520,14 +563,14 @@ async def _franquia_do_anime(
     )
 
     hoje = datetime.now(UTC).date()
-    numero_atual = anime.numero_temporada or 0
+    numero_atual = numero_temporada_atual or 0
 
     def _prevista(linha: object) -> bool:
         """Irmã que ainda vem: `nao_lancado`, numerada acima da atual, e com
         alguma âncora temporal no futuro — data completa (`estreia_em`) de
         preferência, senão o `ano` (>= ano corrente) como fallback pro aviso
         degradar pra "estreia em 2026" em vez de sumir."""
-        if linha.id == anime.id or linha.status_lancamento != StatusLancamento.NAO_LANCADO:
+        if linha.id == anime_id or linha.status_lancamento != StatusLancamento.NAO_LANCADO:
             return False
         if (linha.numero_temporada or 0) <= numero_atual:
             return False

@@ -57,6 +57,38 @@ export function tituloBaseDeTemporada(titulo, numeroTemporada) {
   return semNumero === '' ? base : semNumero;
 }
 
+// Instância única de módulo (recriar `Intl.*` por render é caro).
+const fmtDataEstreia = new Intl.DateTimeFormat('pt-BR', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+// "2ª temporada estreia em 4 de outubro de 2026" (`curto: false`, default) ou
+// "2ª temporada em 4 de outubro de 2026" (`curto: true`, card do catálogo —
+// espaço menor, "estreia" é redundante ao lado do resto da legenda) a partir
+// de `anime.proxima_temporada` (`AnimeSaida`/`AnimeDetalheSaida`) — a
+// temporada seguinte da franquia que ainda não saiu. Com `estreia_em` (ISO
+// `YYYY-MM-DD`, parse com `T00:00:00` pra cair na meia-noite LOCAL, evita o
+// dia anterior por fuso) mostra a data completa; sem ela, degrada pro ano
+// (`proxima.ano`). `null` = nada a anunciar. Usado no hero da página do
+// anime (`paginas/PaginaDoAnime.jsx`) e no card do catálogo
+// (`components/AnimeCard.jsx`) — mesma função, só a variante muda.
+export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
+  if (!proxima) return null;
+  const ordinal =
+    proxima.numero_temporada != null ? `${proxima.numero_temporada}ª temporada` : proxima.titulo;
+  const verbo = curto ? 'em' : 'estreia em';
+  if (proxima.estreia_em) {
+    const data = new Date(`${proxima.estreia_em}T00:00:00`);
+    if (!Number.isNaN(data.getTime())) {
+      return `${ordinal} ${verbo} ${fmtDataEstreia.format(data)}`;
+    }
+  }
+  if (proxima.ano) return `${ordinal} ${verbo} ${proxima.ano}`;
+  return null;
+}
+
 // Agrupa uma lista de `AnimeSaida` (`GET /api/animes`) em franquias. Cada item
 // devolvido é o ANIME REPRESENTANTE do grupo (maior `numero_temporada`, `NULL`
 // conta como 0) — com `id`/`capa_path`/`status_lancamento`/`proximo_ep_em` da
