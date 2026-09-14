@@ -25,7 +25,7 @@ import {
   imagemEmAltaResolucao,
   CLASSE_PILL_HERO,
 } from '../inicio/CarrosselDestaques.jsx';
-import { tituloBaseDeTemporada } from '../inicio/franquia.js';
+import { textoDeProximaTemporada, tituloBaseDeTemporada } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
@@ -43,35 +43,6 @@ const ROTULO_VERSAO = {
 // backend/core/enums.py::SITE_LOCAL — mesmo valor de string, espelhado aqui
 // (padrão já usado em ROTULOS_STATUS de LinhaDeEpisodio.jsx).
 const SITE_LOCAL = 'local';
-
-// Instância única de módulo (recriar `Intl.*` por render é caro) — mesmo padrão
-// de `inicio/CartaoDeEstreia.jsx`.
-const fmtDataEstreia = new Intl.DateTimeFormat('pt-BR', {
-  day: 'numeric',
-  month: 'long',
-  year: 'numeric',
-});
-
-// "2ª temporada estreia em 4 de outubro de 2026" a partir de
-// `anime.proxima_temporada` (`AnimeDetalheSaida`) — a temporada seguinte da
-// franquia que ainda não saiu. Com `estreia_em` (ISO `YYYY-MM-DD`, parse com
-// `T00:00:00` pra cair na meia-noite LOCAL, mesmo motivo de `CartaoDeEstreia.jsx`)
-// mostra a data completa; sem ela, degrada pro ano (`proxima.ano`) — "estreia em
-// 2026" —, igual ao passo 4 de `CartaoDeEstreia.textoDeEstreia`. `null` = nada a
-// anunciar (o hero não renderiza a linha).
-function textoDeProximaTemporada(proxima) {
-  if (!proxima) return null;
-  const ordinal =
-    proxima.numero_temporada != null ? `${proxima.numero_temporada}ª temporada` : proxima.titulo;
-  if (proxima.estreia_em) {
-    const data = new Date(`${proxima.estreia_em}T00:00:00`);
-    if (!Number.isNaN(data.getTime())) {
-      return `${ordinal} estreia em ${fmtDataEstreia.format(data)}`;
-    }
-  }
-  if (proxima.ano) return `${ordinal} estreia em ${proxima.ano}`;
-  return null;
-}
 
 // Um episódio local só conta como "já capturado" pra grade quando pertence à
 // fonte/versão ativas — senão, depois de uma troca de fonte (`Trocar fonte`),

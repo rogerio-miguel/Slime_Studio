@@ -100,6 +100,27 @@ class CriarAnimeRequest(BaseModel):
     titulo_ingles: str | None = None
 
 
+class TemporadaIrmaSaida(BaseModel):
+    """Uma temporada da mesma franquia (`Anime.serie_ancora` em comum) — item do
+    seletor de temporada da página do anime (Fase 5). `numero_temporada` pode ser
+    NULL (marcador do título ausente e walk de `relations` sem resultado); o
+    front cai no `titulo` como rótulo nesse caso. `estreia_em`/`ano` só vêm
+    preenchidos quando este objeto é a `proxima_temporada` de `AnimeSaida`/
+    `AnimeDetalheSaida` (aviso de estreia no card do catálogo e no hero) — nos
+    itens do seletor são sempre `None`. `ano` é o fallback quando a AniList
+    ainda não fechou a data completa: o aviso vira "Nª temporada estreia em
+    2026" (mesma degradação de `CartaoDeEstreia`). Definida ANTES de
+    `AnimeSaida`/`AnimeDetalheSaida` porque as duas a referenciam em
+    `proxima_temporada` — Pydantic resolve o tipo na ordem de definição do
+    módulo, não por forward reference automático."""
+
+    id: int
+    numero_temporada: int | None
+    titulo: str
+    estreia_em: date | None = None
+    ano: int | None = None
+
+
 class AnimeSaida(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -174,6 +195,20 @@ class AnimeSaida(BaseModel):
     # (`inicio/DestaqueGrande.jsx`) sem precisar de um request por item —
     # `AnimeDetalheSaida` (GET /api/animes/{id}) já expõe o mesmo campo.
     sinopse: str | None = None
+    # Derivado, injetado na rota (`api/rotas/animes.py::listar_animes`) — badge
+    # "Dublado"/"Legendado" do card (`components/AnimeCard.jsx`). `None` sem
+    # nenhuma `FonteAnime` mapeada ainda; `desconhecida` quando a fonte mapeada
+    # não diferencia versão (`VersaoDeFonte.NAO_DIFERENCIADA`) — nenhum dos dois
+    # rótulos aparece nesse caso. Mesmo campo/semântica de
+    # `AnimeDetalheSaida.versao_confirmada_mais_recente` abaixo.
+    versao_confirmada_mais_recente: VersaoEpisodio | None = None
+    # Aviso "Nª temporada estreia em ..." no card do catálogo — derivado,
+    # injetado na rota a partir do mesmo agrupamento de franquia usado no hero
+    # da página do anime (`api/rotas/animes.py::_agrupar_franquias` +
+    # `_temporadas_e_proxima`, reaproveitado por `obter_anime` abaixo).
+    # `estreia_em`/`ano` vêm preenchidos aqui (ver docstring de
+    # `TemporadaIrmaSaida`); `None` quando não há irmã `nao_lancado` prevista.
+    proxima_temporada: TemporadaIrmaSaida | None = None
 
 
 class AnimeEmAltaSaida(BaseModel):
@@ -226,23 +261,6 @@ class FileiraTematicaSaida(BaseModel):
 
     chave: str
     itens: list[AnimeEmAltaSaida]
-
-
-class TemporadaIrmaSaida(BaseModel):
-    """Uma temporada da mesma franquia (`Anime.serie_ancora` em comum) — item do
-    seletor de temporada da página do anime (Fase 5). `numero_temporada` pode ser
-    NULL (marcador do título ausente e walk de `relations` sem resultado); o
-    front cai no `titulo` como rótulo nesse caso. `estreia_em`/`ano` só vêm
-    preenchidos quando este objeto é a `proxima_temporada` de `AnimeDetalheSaida`
-    (aviso de estreia no hero) — nos itens do seletor são sempre `None`. `ano` é
-    o fallback quando a AniList ainda não fechou a data completa: o aviso vira
-    "Nª temporada estreia em 2026" (mesma degradação de `CartaoDeEstreia`)."""
-
-    id: int
-    numero_temporada: int | None
-    titulo: str
-    estreia_em: date | None = None
-    ano: int | None = None
 
 
 class AnimeDetalheSaida(BaseModel):

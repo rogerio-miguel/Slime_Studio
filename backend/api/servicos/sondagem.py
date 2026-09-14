@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import descoberta
 from api.servicos.fontes import resolver_e_listar
+from api.servicos.jobs import versao_episodio_da_fonte
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from db.catalogo import atualizar_contagem_na_fonte
@@ -90,20 +91,19 @@ def versao_de_sondagem(versao_de_fonte: VersaoDeFonte) -> VersaoEpisodio:
 _CARIMBO_MINIMO = datetime.min.replace(tzinfo=UTC)
 
 
-async def versoes_de_sondagem_por_anime(
+async def _escolha_de_fonte_mais_recente_por_anime(
     sessao: AsyncSession, ids: Iterable[int]
-) -> dict[int, VersaoEpisodio]:
-    """`{anime_id: versão a sondar}` para os `ids` com ao menos uma linha em
-    `FonteAnime`. A versão vem da linha de maior `resolvido_em` — a última
-    escolha manual de fonte do usuário, a mesma que uma captura usaria
-    (`extractors.resolucao._resolver_em_mapeadas`) e que `obter_anime` expõe como
-    `versao_confirmada_mais_recente`.
+) -> dict[int, VersaoDeFonte]:
+    """`{anime_id: VersaoDeFonte da linha de maior resolvido_em}` para os `ids`
+    com ao menos uma linha em `FonteAnime` — a última escolha manual de fonte do
+    usuário, a mesma que uma captura usaria
+    (`extractors.resolucao._resolver_em_mapeadas`). Query única, roda na sessão
+    da request. Anime sem linha em `FonteAnime` não aparece no resultado.
 
-    Roda na sessão da request (não abre outra), igual
-    `lancamentos.maior_numero_capturado_por_anime` — `agendar_sondagens` consome
-    o dict pronto, sem I/O. Anime sem linha em `FonteAnime` não aparece no
-    resultado.
-    """
+    Base compartilhada por `versoes_de_sondagem_por_anime` (traduz pra "o que
+    sondar", NUNCA `DESCONHECIDA`) e `versoes_confirmadas_mais_recentes_por_anime`
+    (traduz pra "o que exibir no catálogo", `DESCONHECIDA` quando a fonte não
+    diferencia) — mesma query, tradução final diferente."""
     lista_ids = list(ids)
     if not lista_ids:
         return {}
@@ -120,10 +120,32 @@ async def versoes_de_sondagem_por_anime(
         if anterior is None or resolvido_em > anterior[0]:
             escolha_por_anime[anime_id] = (resolvido_em, versao)
 
-    return {
-        anime_id: versao_de_sondagem(versao)
-        for anime_id, (_, versao) in escolha_por_anime.items()
-    }
+    return {anime_id: versao for anime_id, (_, versao) in escolha_por_anime.items()}
+
+
+async def versoes_de_sondagem_por_anime(
+    sessao: AsyncSession, ids: Iterable[int]
+) -> dict[int, VersaoEpisodio]:
+    """`{anime_id: versão a sondar}` — ver `_escolha_de_fonte_mais_recente_por_anime`.
+    `agendar_sondagens` consome o dict pronto, sem I/O."""
+    escolha = await _escolha_de_fonte_mais_recente_por_anime(sessao, ids)
+    return {anime_id: versao_de_sondagem(versao) for anime_id, versao in escolha.items()}
+
+
+async def versoes_confirmadas_mais_recentes_por_anime(
+    sessao: AsyncSession, ids: Iterable[int]
+) -> dict[int, VersaoEpisodio]:
+    """`{anime_id: versão a exibir no catálogo}` — mesma escolha de
+    `versoes_de_sondagem_por_anime` (ver `_escolha_de_fonte_mais_recente_por_anime`),
+    mas traduzida com `jobs.versao_episodio_da_fonte`: `NAO_DIFERENCIADA` vira
+    `DESCONHECIDA` (sem badge), não `LEGENDADO` — usar a tradução de sondagem
+    aqui mostraria "Legendado" em fonte que não confirma nada. Alimenta
+    `AnimeSaida.versao_confirmada_mais_recente` (badge "Dublado"/"Legendado" do
+    card, `components/AnimeCard.jsx`) via `api/rotas/animes.py::listar_animes`;
+    `obter_anime` já tem a linha via outra query e resolve inline sem chamar
+    esta."""
+    escolha = await _escolha_de_fonte_mais_recente_por_anime(sessao, ids)
+    return {anime_id: versao_episodio_da_fonte(versao) for anime_id, versao in escolha.items()}
 
 
 def agendar_sondagens(

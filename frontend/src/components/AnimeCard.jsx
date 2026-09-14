@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
+import { textoDeProximaTemporada } from '../inicio/franquia.js';
 import textoEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 
@@ -147,7 +148,7 @@ export default function AnimeCard({
   const badgeAssistido = assistido && (
     <span
       id={idBadge}
-      className="absolute left-2 top-2 z-10 inline-flex h-8 items-center rounded-2xl bg-black/60 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white"
+      className="absolute left-2 top-2 z-10 inline-flex h-8 items-center rounded-2xl bg-black/80 backdrop-blur-md px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white"
       aria-label="já assistido"
     >
       Assistido
@@ -173,20 +174,59 @@ export default function AnimeCard({
     anime.episodios_atuais ?? anime.total_episodios_anilist ?? anime.total_episodios ?? null;
   // Aviso "episódio novo" (`textoEpisodiosNovos`, texto cru — ver
   // components/BadgeDeEpisodiosNovos.jsx) anexado na MESMA linha da tag de
-  // temporada, formato "T1 EP.24 - Novo episódio disponível" (pedido
+  // temporada, formato "T1 EP.24 • Novo episódio disponível" (pedido
   // explícito do usuário). Sem tag de temporada (`numeroDeEpisodios` nulo —
   // anime nunca refrescado), cai pra linha própria, mesmo tom neon: nunca
   // esconder a novidade só porque falta o outro dado.
   const avisoNovos = textoEpisodiosNovos(anime.episodios_novos);
+  // Rótulo "Dublado"/"Legendado" (`AnimeSaida.versao_confirmada_mais_recente`,
+  // backend/api/rotas/animes.py::listar_animes) na mesma linha — `null` sem
+  // fonte mapeada ainda OU quando ela não diferencia versão
+  // (`desconhecida`): nenhum dos dois rótulos é informação confiável nesse
+  // caso, melhor omitir que arriscar errado.
+  const rotuloVersao =
+    anime.versao_confirmada_mais_recente === 'dublado'
+      ? 'Dublado'
+      : anime.versao_confirmada_mais_recente === 'legendado'
+        ? 'Legendado'
+        : null;
+  const separador = (
+    <span aria-hidden="true" className="text-ink-muted">
+      {' '}
+      •{' '}
+    </span>
+  );
   const tagTemporada = numeroDeEpisodios != null && (
     <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-      T{anime.numero_temporada ?? 1} EP.{numeroDeEpisodios} 
-      {avisoNovos && <span className="text-neon"><span class="text-ink-muted"> - </span>{avisoNovos}</span>}
+      T{anime.numero_temporada ?? 1} EP.{numeroDeEpisodios}
+      {rotuloVersao && (
+        <>
+          {separador}
+          {rotuloVersao}
+        </>
+      )}
+      {avisoNovos && (
+        <span className="text-neon">
+          {separador}
+          {avisoNovos}
+        </span>
+      )}
     </p>
   );
 
+  // Aviso "Nª temporada em ..." — variante curta (`curto: true`, sem
+  // "estreia") da mesma função do hero da página do anime
+  // (`textoDeProximaTemporada`, `inicio/franquia.js`): o card já deixa claro
+  // que é uma temporada futura pelo resto da legenda, "estreia" só ocupa
+  // espaço. `anime.proxima_temporada` já vem pronto do backend
+  // (`AnimeSaida.proxima_temporada`), inclusive no representante de franquia
+  // agrupado por `agruparEmFranquias` (spread do anime representante,
+  // `inicio/franquia.js`).
+  const avisoProximaTemporada = textoDeProximaTemporada(anime.proxima_temporada, { curto: true });
+
   // Título primeiro (sem cor de hover — pedido explícito do usuário),
-  // badges/tags (temporada + episódios novos, aviso, fonte) abaixo dele.
+  // badges/tags (temporada + episódios novos, próxima temporada, aviso,
+  // fonte) abaixo dele.
   const legenda = !semLegenda && (
     <>
       <h2 className="line-clamp-2 text-sm font-semibold leading-snug text-white lg:text-base">
@@ -196,8 +236,13 @@ export default function AnimeCard({
       {!tagTemporada && avisoNovos && (
         <p className="text-xs font-semibold uppercase tracking-wide text-neon">{avisoNovos}</p>
       )}
+      {avisoProximaTemporada && (
+        <p className="text-xs font-semibold uppercase tracking-wide text-neon">
+          {avisoProximaTemporada}
+        </p>
+      )}
       {aviso && (
-        <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">{aviso}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-neon">{aviso}</p>
       )}
       {fonte && (
         <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{fonte}</p>
