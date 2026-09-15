@@ -329,6 +329,54 @@ async def test_criar_job_modo_site_reaproveita_episodio_liberado(
     assert len(todos) == 1  # reaproveitou a linha, não criou outra
 
 
+async def test_criar_job_modo_site_reaproveita_episodio_falhou(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """D2: episódio `FALHOU` (esgotou as retentativas de extração,
+    `worker/executor.py::_MAX_TENTATIVAS_EXTRACAO`) reaproveita a linha como
+    `LIBERADO` — sem isto o aviso de falha ficava preso pra sempre, mesmo
+    recarregando a página, sem caminho de retentativa pelo frontend."""
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Falhou")
+    episodio_id = await _criar_episodio_existente(
+        sessionmaker_api,
+        anime_id,
+        status=StatusEpisodio.FALHOU,
+        site_origem="animefire.io",
+    )
+
+    async def _resolver_fake(sessionmaker, anime, versao):
+        return FonteResolvida(
+            dominio="animefire.io",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
+
+    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+
+    resposta = await cliente.post(
+        "/api/admin/jobs",
+        json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
+    )
+
+    assert resposta.status_code == 201
+
+    async with sessionmaker_api() as sessao:
+        episodio = await sessao.get(Episodio, episodio_id)
+        assert episodio.status == StatusEpisodio.PENDENTE
+        assert episodio.url_fonte == "https://x/ep1-recapturado"
+
+        todos = (
+            await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
+        ).scalars().all()
+    assert len(todos) == 1  # reaproveitou a linha, não criou outra
+
+
 async def test_criar_job_modo_site_reaproveita_episodio_de_fonte_diferente(
     cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,

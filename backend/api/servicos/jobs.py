@@ -88,14 +88,16 @@ async def criar_job_site(
 
     Ponto único de recaptura (D2): se já existe um `Episodio` para a
     identidade resolvida (`anime.id`, `numero`, `tipo`, `versao_do_episodio`)
-    e ele está `LIBERADO` (Feature 1) ou foi capturado numa fonte diferente
-    da resolvida agora, a linha é reaproveitada (`_reaproveitar_episodio_
-    para_recaptura`) em vez de bater em `uq_episodio_identidade` e propagar
-    `EpisodioJaExiste` — ver ESPECIFICACAO.md/plano da feature "continuar
-    assistindo"/"liberar arquivo". Fora desses dois casos (ex.: já `PRONTO`
-    na mesma fonte), o comportamento de sempre continua valendo: o insert
-    abaixo bate no unique index e `db/catalogo.py::_inserir_episodio` propaga
-    `EpisodioJaExiste`.
+    e ele está `LIBERADO` (Feature 1), `FALHOU` (esgotou as retentativas de
+    extração — sem isto o aviso de falha ficava preso mesmo depois de
+    recarregar a página, sem caminho de retentativa pelo frontend) ou foi
+    capturado numa fonte diferente da resolvida agora, a linha é reaproveitada
+    (`_reaproveitar_episodio_para_recaptura`) em vez de bater em
+    `uq_episodio_identidade` e propagar `EpisodioJaExiste` — ver
+    ESPECIFICACAO.md/plano da feature "continuar assistindo"/"liberar arquivo".
+    Fora desses casos (ex.: já `PRONTO` na mesma fonte), o comportamento de
+    sempre continua valendo: o insert abaixo bate no unique index e
+    `db/catalogo.py::_inserir_episodio` propaga `EpisodioJaExiste`.
     """
     fonte = await resolver_e_listar(sessionmaker, anime, versao, resolver_canonico=False)
 
@@ -156,7 +158,7 @@ async def criar_job_site(
         sessionmaker, anime.id, numero, tipo, versao_do_episodio
     )
     if episodio_existente is not None and (
-        episodio_existente.status == StatusEpisodio.LIBERADO
+        episodio_existente.status in (StatusEpisodio.LIBERADO, StatusEpisodio.FALHOU)
         or episodio_existente.site_origem != fonte.dominio
     ):
         return await _reaproveitar_episodio_para_recaptura(
@@ -309,10 +311,14 @@ async def _reaproveitar_episodio_para_recaptura(
     duracao_esperada_s: int | None,
 ) -> int:
     """D2 — episódio já cadastrado sob a mesma identidade, `LIBERADO` (Feature
-    1) ou capturado numa fonte diferente da resolvida agora: reaproveita a
-    linha em vez de bater em `uq_episodio_identidade`. Apaga os arquivos da
-    captura anterior (`remover_arquivos_do_episodio`, best-effort), zera os
-    campos de mídia e volta o episódio para `PENDENTE`; `assistido_em`
+    1), `FALHOU` (tentativa de captura anterior esgotou as retentativas —
+    sem isto o episódio ficava com o aviso de falha preso pra sempre, mesmo
+    recarregando a página, até intervenção manual no banco) ou capturado numa
+    fonte diferente da resolvida agora: reaproveita a linha em vez de bater em
+    `uq_episodio_identidade`. Apaga os arquivos da captura anterior
+    (`remover_arquivos_do_episodio`, best-effort — num `FALHOU` normalmente não
+    há nada pra apagar, o download nunca chegou a terminar), zera os campos de
+    mídia e volta o episódio para `PENDENTE`; `assistido_em`
     sobrevive (indicador de "já assistido" não reinicia numa recaptura), mas
     `progresso_s`/`progresso_atualizado_em` NÃO sobrevivem — o arquivo novo
     pode vir de outra fonte/duração, uma posição de retomada antiga não tem
