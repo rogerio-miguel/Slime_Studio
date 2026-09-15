@@ -102,6 +102,17 @@ def conferir_link_de_midia(link: LinkDeMidia, *, timeout_s: int = _TIMEOUT_S) ->
             )
         return
 
+    if link.formato is FormatoDeMidia.HLS:
+        # Mesma fachada de `.jpg` que o DASH acima, corpo é playlist `#EXTM3U` em
+        # vez de MPD (AnimeFire, confirmado ao vivo em 2026-09-14). Mesmo desvio
+        # dos pisos de tamanho/content-type pelo mesmo motivo.
+        if not corpo_como_texto.lstrip().startswith(_ASSINATURA_PLAYLIST):
+            raise FalhaDeExtracao(
+                f"playlist HLS mascarada sem assinatura #EXTM3U: {link.url}",
+                permite_retentativa=True,
+            )
+        return
+
     if any(marcador in corpo_como_texto for marcador in _MARCADORES_ISCA_HTML):
         raise FalhaDeExtracao(
             f"link de mídia devolveu HTML no lugar de mídia: {link.url}", permite_retentativa=True
@@ -153,9 +164,12 @@ async def baixar(
     Remove qualquer parcial (`.part`, `.bruto`) em `BaseException` — nunca deixa
     lixo em `MEDIA_ROOT/raw/`.
 
-    `FormatoDeMidia.DASH` desvia para `yt-dlp` (`_baixar_dash`) — o demuxer `dash`
-    do `ffmpeg` trunca silenciosamente diante dos fragmentos-isca vazios que
-    alguns CDNs de anime servem (ver `_MAX_TENTATIVAS_FRAGMENTO`). Para URLs
+    `FormatoDeMidia.DASH`/`HLS` desviam para `yt-dlp` (`_baixar_dash`) — o demuxer
+    `dash` do `ffmpeg` trunca silenciosamente diante dos fragmentos-isca vazios
+    que alguns CDNs de anime servem (ver `_MAX_TENTATIVAS_FRAGMENTO`); tratamos o
+    HLS mascarado do mesmo CDN (AnimeFire/`akumast.net`) com a mesma cautela —
+    `yt-dlp` já sabe distinguir os dois pelo `Content-Type` da resposta, então
+    nenhuma flag extra é necessária pro caso HLS. Para URLs
     `*.googlevideo.com` baixa o mp4 cru em blocos (Range requests, para escapar
     do throttle de conexão única do Google) para `<destino>.bruto` e só então
     remuxa localmente com `ffmpeg -c copy`. Para todo o resto, `ffmpeg` baixa e
@@ -169,7 +183,7 @@ async def baixar(
     destino.parent.mkdir(parents=True, exist_ok=True)
     parcial = destino.with_name(destino.name + ".part")
 
-    if link.formato is FormatoDeMidia.DASH:
+    if link.formato in (FormatoDeMidia.DASH, FormatoDeMidia.HLS):
         return await _baixar_dash(link, destino, ffmpeg_bin, ffprobe_bin)
 
     if _eh_googlevideo(link.url):
@@ -199,10 +213,11 @@ async def baixar(
 async def _baixar_dash(
     link: LinkDeMidia, destino: Path, ffmpeg_bin: str, ffprobe_bin: str | None
 ) -> Path:
-    """Baixa um manifesto DASH via `yt-dlp` (fragmento a fragmento, com retry por
-    fragmento) para um diretório temporário no mesmo filesystem de `destino`, e
-    promove com `os.replace()` atômico. `yt-dlp` cuida da fusão vídeo+áudio
-    (`--merge-output-format mkv`, usando o `ffmpeg` que passamos).
+    """Baixa um manifesto mascarado (DASH ou HLS, ver `FormatoDeMidia`) via
+    `yt-dlp` (fragmento a fragmento, com retry por fragmento) para um diretório
+    temporário no mesmo filesystem de `destino`, e promove com `os.replace()`
+    atômico. `yt-dlp` cuida da fusão vídeo+áudio (`--merge-output-format mkv`,
+    usando o `ffmpeg` que passamos).
 
     Falha do `yt-dlp` (rede, CDN) vira `FalhaDeExtracao` retentável. Arquivo
     ausente após saída 0 é `FalhaDeFerramenta` (bug interno). Download que passou
@@ -280,7 +295,14 @@ async def _conferir_duracao_dash(
     arquivo com o `mediaPresentationDuration` do manifesto. Manifesto sem
     duração declarada, ou inacessível agora, não bloqueia (não dá pra conferir —
     o arquivo já está baixado). Sem `ffprobe_bin` (chamador de teste), pula a
-    checagem."""
+    checagem.
+
+    Cobre só DASH de verdade: uma playlist HLS mascarada (`FormatoDeMidia.HLS`)
+    não tem duração total na master playlist, então `_duracao_do_manifesto_dash`
+    não casa o regex e devolve `None` — a checagem é pulada nesse caso, sem
+    lançar. Sem incidente real de truncamento em HLS até agora (ver
+    `_MAX_TENTATIVAS_FRAGMENTO`/`--skip-unavailable-fragments`, que já cobrem o
+    fragmento-isca esparso); revisitar se aparecer."""
     if ffprobe_bin is None:
         return
     duracao_manifesto = await asyncio.to_thread(_duracao_do_manifesto_dash, link)

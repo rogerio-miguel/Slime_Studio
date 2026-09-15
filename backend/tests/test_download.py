@@ -189,6 +189,33 @@ def test_conferir_link_de_midia_dash_sem_assinatura_falha(monkeypatch):
         download.conferir_link_de_midia(link)
 
 
+def test_conferir_link_de_midia_hls_aceita_playlist_mascarada_de_jpg(monkeypatch):
+    """Regressão: AnimeFire passou a servir HLS mascarado de `.jpg` (confirmado
+    ao vivo em 2026-09-14) em vez de DASH — mesma fachada, corpo `#EXTM3U`."""
+    monkeypatch.setattr(
+        download,
+        "_baixar_amostra",
+        lambda url, cabecalhos, timeout_s: ("image/jpeg", b"#EXTM3U\n#EXT-X-STREAM-INF:...\n"),
+    )
+    link = LinkDeMidia(
+        url="https://akumast.net/i/token/h.jpg", cabecalhos={}, formato=FormatoDeMidia.HLS
+    )
+
+    download.conferir_link_de_midia(link)  # não levanta
+
+
+def test_conferir_link_de_midia_hls_sem_assinatura_falha(monkeypatch):
+    monkeypatch.setattr(
+        download, "_baixar_amostra", lambda url, cabecalhos, timeout_s: ("image/jpeg", b"lixo")
+    )
+    link = LinkDeMidia(
+        url="https://akumast.net/i/token/h.jpg", cabecalhos={}, formato=FormatoDeMidia.HLS
+    )
+
+    with pytest.raises(FalhaDeExtracao):
+        download.conferir_link_de_midia(link)
+
+
 async def test_baixar_traduz_falha_do_ffmpeg_em_falha_de_extracao_retentavel(tmp_path, monkeypatch):
     """Download truncado pelo CDN (ffmpeg sai != 0) vira `FalhaDeExtracao`
     retentável — o executor reagenda com backoff em vez de falha definitiva — e
@@ -213,6 +240,26 @@ async def test_baixar_traduz_falha_do_ffmpeg_em_falha_de_extracao_retentavel(tmp
     assert "187" in str(info.value)
     assert "End of file" in str(info.value)
     assert not parcial.exists()
+
+
+@pytest.mark.parametrize("formato", [FormatoDeMidia.DASH, FormatoDeMidia.HLS])
+async def test_baixar_desvia_manifesto_mascarado_para_ytdlp(tmp_path, monkeypatch, formato):
+    """DASH e HLS mascarados (ver `FormatoDeMidia`) vão os dois para `_baixar_dash`
+    (yt-dlp) — nunca para o `ffmpeg` direto, que trunca nos fragmentos-isca."""
+    chamadas = []
+
+    async def _baixar_dash_falso(link, destino, ffmpeg_bin, ffprobe_bin):
+        chamadas.append(link)
+        return destino
+
+    monkeypatch.setattr(download, "_baixar_dash", _baixar_dash_falso)
+    link = LinkDeMidia(url="https://akumast.net/i/token/m.jpg", cabecalhos={}, formato=formato)
+    destino = tmp_path / "raw" / "anime-teste" / "001-regular-legendado.mkv"
+
+    resultado = await download.baixar(link, destino, "ffmpeg", "ffprobe")
+
+    assert resultado == destino
+    assert chamadas == [link]
 
 
 async def test_baixar_nao_traduz_part_ausente_apos_ffmpeg_ok(tmp_path, monkeypatch):
