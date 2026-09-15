@@ -470,20 +470,24 @@ export function FaixaDeConteudo({ modo, rotulo, trailing, sinopse, extra }) {
 //     de progresso quando `episodio.progresso_s` (Feature "continuar
 //     assistindo") já tem valor;
 // (2) `episodio.status === 'liberado'` (Feature "liberar arquivo ao terminar")
-//     OU episódio local existe mas foi descartado da fonte/versão ativas pelo
-//     filtro de `PaginaDoAnime.jsx::pertenceAFonteAtiva` (Feature "episódios
-//     grudados", `episodioDescartado`): ramo de captura (alvo <button>), mas
-//     com badge "✓ assistido" (quando `assistido_em` de qualquer uma das duas
-//     fontes) e verbo "Recapturar" em vez de "Capturar" — o backend (D2,
-//     `api/servicos/jobs.py::criar_job_site`) reaproveita a linha existente
-//     nesses dois casos. No caso `episodioDescartado` de MESMO site mas versão
-//     diferente da ativa, uma nota "(versão real)" indica a origem (ver
-//     `notaOrigem` abaixo). A nota "(via {site})" pra `episodioDescartado` de
-//     outro site foi removida a pedido do usuário — ruído visual ao trocar de
-//     fonte;
-// (3) capturado mas ainda em processamento (ou falhou): status ao vivo,
-//     cruzado com `job` do WS quando disponível. Alvo estático <div> (não
-//     clicável hoje);
+//     OU `episodio.status === 'falhou'` (esgotou as retentativas de extração,
+//     `worker/executor.py::_MAX_TENTATIVAS_EXTRACAO`) OU episódio local existe
+//     mas foi descartado da fonte/versão ativas pelo filtro de
+//     `PaginaDoAnime.jsx::pertenceAFonteAtiva` (Feature "episódios grudados",
+//     `episodioDescartado`): ramo de captura (alvo <button>), com badge
+//     "✓ assistido" quando aplicável (nunca no caso `falhou`, que nunca
+//     terminou de baixar) e verbo "Recapturar" em vez de "Capturar" — o
+//     backend (D2, `api/servicos/jobs.py::criar_job_site`) reaproveita a linha
+//     existente nesses três casos, em vez de deixar o aviso de falha preso
+//     pra sempre (nem recarregar a página resolvia, já que `falhou` é estado
+//     persistido no `Episodio`, não algo que uma nova aba limpa). No caso
+//     `episodioDescartado` de MESMO site mas versão diferente da ativa, uma
+//     nota "(versão real)" indica a origem (ver `notaOrigem` abaixo). A nota
+//     "(via {site})" pra `episodioDescartado` de outro site foi removida a
+//     pedido do usuário — ruído visual ao trocar de fonte;
+// (3) capturado mas ainda em processamento: status ao vivo, cruzado com `job`
+//     do WS quando disponível. Alvo estático <div> (não clicável hoje) — não
+//     cobre mais `falhou` (ramo 2 acima trata a retentativa);
 // (4) nunca capturado: o card/linha inteiro dispara a captura (alvo <button>),
 //     ou alvo estático <div> quando `numero` é `null` (rótulo não numérico na
 //     fonte, ex. "Especial": aparece na lista mas capturá-lo está fora de
@@ -624,7 +628,14 @@ export default function LinhaDeEpisodio({
     );
   }
 
-  const liberadoOuDescartado = episodio?.status === 'liberado' ? episodio : episodioDescartado;
+  // `falhou`: tentativa de captura anterior esgotou as retentativas do worker
+  // (`worker/executor.py::_MAX_TENTATIVAS_EXTRACAO`) e marcou o episódio como
+  // falho definitivamente — sem tratar esse status aqui, a linha caía no ramo
+  // (3) abaixo (estático, não clicável) e o aviso de falha ficava preso pra
+  // sempre, mesmo recarregando a página (o backend já reaproveita `FALHOU` do
+  // mesmo jeito que `LIBERADO`, ver `api/servicos/jobs.py::criar_job_site`).
+  const permiteRecaptura = episodio?.status === 'liberado' || episodio?.status === 'falhou';
+  const liberadoOuDescartado = permiteRecaptura ? episodio : episodioDescartado;
   if (liberadoOuDescartado) {
     // Nota de origem: só o caso "mesmo domínio da fonte ativa, versão
     // diferente" (ex. dublado gravado enquanto a fonte ativa agora pede
