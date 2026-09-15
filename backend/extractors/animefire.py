@@ -358,10 +358,11 @@ class AnimeFireProvider(ExtratorDeSite):
         return f"{self.BASE_URL}/anime/{identificador}?ep={id_episodio}&audio={audio}"
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:
-        """Resolve o stream (manifesto MPEG-DASH disfarçado de imagem) do
-        episódio, escolhendo entre `data.streams[]` da API de episódio pelo
-        áudio pedido na URL sintética (`_url_sintetica_de_episodio`, fatia
-        irmã de `listar_episodios`).
+        """Resolve o stream (playlist HLS disfarçada de imagem — era manifesto
+        MPEG-DASH até a mudança de CDN confirmada ao vivo em 2026-09-14, ver
+        `FormatoDeMidia`) do episódio, escolhendo entre `data.streams[]` da API
+        de episódio pelo áudio pedido na URL sintética (`_url_sintetica_de_episodio`,
+        fatia irmã de `listar_episodios`).
 
         Sem `Referer`: a URL sintética que geramos não é uma página real que
         um player enviaria como referer, e a chamada ao vivo (confirmada em
@@ -421,7 +422,7 @@ class AnimeFireProvider(ExtratorDeSite):
         return LinkDeMidia(
             url=link_direto,
             cabecalhos={"User-Agent": cliente.user_agent()},
-            formato=FormatoDeMidia.DASH,
+            formato=FormatoDeMidia.HLS,
         )
 
     def _escolher_stream(

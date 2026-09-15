@@ -73,14 +73,21 @@ class FormatoDeMidia(StrEnum):
     fronteira, não algo que o resto do sistema precisa conhecer).
 
     `DESCONHECIDO` é o default: quem baixa infere o formato como sempre (extensão
-    da URL/probe automático do ffmpeg). `DASH` sinaliza um manifesto MPEG-DASH
-    disfarçado de imagem (ex. AnimeFire: URL termina em `.jpg`, mas o corpo é XML
-    de MPD) — sem essa distinção explícita, tanto a checagem de amostra quanto o
-    probe do ffmpeg seriam enganados pela extensão de fachada.
+    da URL/probe automático do ffmpeg). `DASH` e `HLS` sinalizam um manifesto
+    mascarado de imagem (ex. AnimeFire: URL termina em `.jpg`, mas o corpo é XML
+    de MPD ou uma playlist `#EXTM3U`) — sem essa distinção explícita, tanto a
+    checagem de amostra quanto o probe do ffmpeg seriam enganados pela extensão
+    de fachada.
+
+    AnimeFire servia DASH mascarado até então; confirmado ao vivo em 2026-09-14
+    que o CDN (`akumast.net`) passou a servir HLS mascarado do mesmo jeito
+    (`content-type: application/vnd.apple.mpegurl`, corpo `#EXTM3U`) — daí `HLS`
+    existir ao lado de `DASH` em vez de substituí-lo.
     """
 
     DESCONHECIDO = "desconhecido"
     DASH = "dash"
+    HLS = "hls"
 
 
 @dataclass(frozen=True, slots=True)

@@ -383,7 +383,7 @@ def test_resolver_midia_escolhe_o_stream_do_audio_pedido_dublado(extrator):
     assert link == LinkDeMidia(
         url="https://akumast.net/i/tokendublado/m.jpg",
         cabecalhos={"User-Agent": "ClienteFalso/1.0"},
-        formato=FormatoDeMidia.DASH,
+        formato=FormatoDeMidia.HLS,
     )
 
 
@@ -593,7 +593,7 @@ def test_resolver_midia_desempate_por_is_mtl_prefere_nao_mtl(extrator):
     assert link.url == "https://akumast.net/i/tokennaomtl/m.jpg"
 
 
-def test_resolver_midia_retorno_tem_formato_dash_e_sem_referer(extrator):
+def test_resolver_midia_retorno_tem_formato_hls_e_sem_referer(extrator):
     ep_id = "ep-s1-1"
     url_episodio = _url_sintetica(ep_id, "dublado")
     url_episode_api = f"{_API_URL}/episode/{ep_id}"
@@ -601,6 +601,6 @@ def test_resolver_midia_retorno_tem_formato_dash_e_sem_referer(extrator):
 
     link = extrator.resolver_midia(cliente, url_episodio)
 
-    assert link.formato == FormatoDeMidia.DASH
+    assert link.formato == FormatoDeMidia.HLS
     assert link.cabecalhos == {"User-Agent": "ClienteFalso/1.0"}
     assert "Referer" not in link.cabecalhos
