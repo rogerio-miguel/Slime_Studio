@@ -35,16 +35,18 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_S = 15
 # Sem token — endpoint de busca/detalhe é API JSON pública (confirmado ao vivo
 # em 2026-09-04). `BASE_URL` continua servindo só pra URLs "humanas"
-# (`ResultadoBusca.url`, listagem de episódios, página de episódio).
-_API_URL = "https://api.animefire.io"
+# (`ResultadoBusca.url`, listagem de episódios, página de episódio). Domínio
+# migrado de .io para .one (site inteiro, API incluída — confirmado pelo
+# usuário em 2026-09-15, API .io parou de responder).
+_API_URL = "https://api.animefire.one"
 
 
 class AnimeFireProvider(ExtratorDeSite):
-    BASE_URL = "https://animefire.io"
+    BASE_URL = "https://animefire.one"
 
     @property
     def dominio(self) -> str:
-        return "animefire.io"
+        return "animefire.one"
 
     @property
     def exige_navegador(self) -> bool:

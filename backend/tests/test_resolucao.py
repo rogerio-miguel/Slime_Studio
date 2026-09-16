@@ -153,7 +153,7 @@ async def test_fonte_mapeada_confirmada_devolve_direto_sem_buscar(sessionmaker):
         sessao.add(
             FonteAnime(
                 anime_id=anime.id,
-                site_dominio="animefire.io",
+                site_dominio="animefire.one",
                 versao=VersaoDeFonte.LEGENDADO,
                 identificador_no_site="slime-datta-ken",
                 prioridade=0,
@@ -166,7 +166,7 @@ async def test_fonte_mapeada_confirmada_devolve_direto_sem_buscar(sessionmaker):
     )
 
     assert resultado == resolucao.FonteResolvida(
-        dominio="animefire.io",
+        dominio="animefire.one",
         identificador="slime-datta-ken",
         versao_da_fonte=VersaoDeFonte.LEGENDADO,
     )
@@ -178,7 +178,7 @@ async def test_fonte_mapeada_sem_versao_pedida_usa_nao_diferenciada_do_mesmo_sit
         sessao.add(
             FonteAnime(
                 anime_id=anime.id,
-                site_dominio="animefire.io",
+                site_dominio="animefire.one",
                 versao=VersaoDeFonte.NAO_DIFERENCIADA,
                 identificador_no_site="slime-datta-ken",
                 prioridade=0,
@@ -191,7 +191,7 @@ async def test_fonte_mapeada_sem_versao_pedida_usa_nao_diferenciada_do_mesmo_sit
     )
 
     assert resultado == resolucao.FonteResolvida(
-        dominio="animefire.io",
+        dominio="animefire.one",
         identificador="slime-datta-ken",
         versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
     )
@@ -294,7 +294,7 @@ async def test_troca_manual_para_site_nao_diferenciado_vence_confirmada_antiga_d
                 ),
                 FonteAnime(
                     anime_id=anime.id,
-                    site_dominio="animefire.io",
+                    site_dominio="animefire.one",
                     versao=VersaoDeFonte.NAO_DIFERENCIADA,
                     identificador_no_site="slime-datta-ken",
                     prioridade=1,
@@ -309,7 +309,7 @@ async def test_troca_manual_para_site_nao_diferenciado_vence_confirmada_antiga_d
     )
 
     assert resultado == resolucao.FonteResolvida(
-        dominio="animefire.io",
+        dominio="animefire.one",
         identificador="slime-datta-ken",
         versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
     )
@@ -319,7 +319,7 @@ async def test_sem_mapeamento_site_nao_diferenciado_resolve_e_grava_nao_diferenc
     sessionmaker, monkeypatch
 ):
     extrator = _ExtratorFalso(
-        "animefire.io",
+        "animefire.one",
         candidatos=[
             ResultadoBusca(
                 titulo_exibicao="Slime Datta Ken", identificador="slime", url="http://x/slime"
@@ -334,13 +334,13 @@ async def test_sem_mapeamento_site_nao_diferenciado_resolve_e_grava_nao_diferenc
     )
 
     assert resultado == resolucao.FonteResolvida(
-        dominio="animefire.io",
+        dominio="animefire.one",
         identificador="slime",
         versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
     )
     async with sessionmaker() as sessao:
         fonte = await sessao.get(
-            FonteAnime, (anime.id, "animefire.io", VersaoDeFonte.NAO_DIFERENCIADA)
+            FonteAnime, (anime.id, "animefire.one", VersaoDeFonte.NAO_DIFERENCIADA)
         )
         assert fonte is not None
         assert fonte.identificador_no_site == "slime"
@@ -362,7 +362,7 @@ async def test_titulo_com_subtitulo_resolve_via_variante_truncada_sem_confirmaca
         titulo_exibicao="Anime Principal", identificador="anime-principal", url="http://x/ap"
     )
     extrator = _ExtratorTruncamentoFalso(
-        "animefire.io", termo_truncado=titulo_truncado, candidato=candidato
+        "animefire.one", termo_truncado=titulo_truncado, candidato=candidato
     )
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
     anime = await _criar_anime(sessionmaker, titulo_completo)
@@ -372,7 +372,7 @@ async def test_titulo_com_subtitulo_resolve_via_variante_truncada_sem_confirmaca
     )
 
     assert resultado == resolucao.FonteResolvida(
-        dominio="animefire.io",
+        dominio="animefire.one",
         identificador="anime-principal",
         versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
     )
@@ -445,7 +445,7 @@ async def test_candidatos_ambiguos_site_nao_diferenciado_devolve_confirmacao_nec
         ResultadoBusca(titulo_exibicao="Slime Datta Ken", identificador="a", url="x"),
         ResultadoBusca(titulo_exibicao="Slime Datta Ken OVA", identificador="b", url="y"),
     ]
-    extrator = _ExtratorFalso("animefire.io", candidatos=candidatos)
+    extrator = _ExtratorFalso("animefire.one", candidatos=candidatos)
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
     anime = await _criar_anime(sessionmaker, "Slime Datta Ke")  # não bate exato com nenhum
 
@@ -454,7 +454,7 @@ async def test_candidatos_ambiguos_site_nao_diferenciado_devolve_confirmacao_nec
     )
 
     assert resultado == resolucao.ConfirmacaoNecessaria(
-        dominio="animefire.io", candidatos=candidatos
+        dominio="animefire.one", candidatos=candidatos
     )
 
 
@@ -463,7 +463,7 @@ async def test_candidatos_com_match_exato_desambigua_automaticamente(sessionmake
         ResultadoBusca(titulo_exibicao="Slime Datta Ken OVA", identificador="ova", url="y"),
         ResultadoBusca(titulo_exibicao="Slime Datta Ken", identificador="principal", url="x"),
     ]
-    extrator = _ExtratorFalso("animefire.io", candidatos=candidatos)
+    extrator = _ExtratorFalso("animefire.one", candidatos=candidatos)
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
     anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
 
@@ -472,7 +472,7 @@ async def test_candidatos_com_match_exato_desambigua_automaticamente(sessionmake
     )
 
     assert resultado == resolucao.FonteResolvida(
-        dominio="animefire.io",
+        dominio="animefire.one",
         identificador="principal",
         versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
     )
@@ -488,7 +488,7 @@ async def test_variante_curta_devolve_card_de_outro_anime_nao_resolve_o_site(
     por `corresponde_a_alguma_referencia` antes (card de 1 palavra não valida
     referência de 2+ palavras) e o site não vira fonte."""
     extrator = _ExtratorFalso(
-        "animefire.io",
+        "animefire.one",
         candidatos=[
             ResultadoBusca(titulo_exibicao="Naruto", identificador="naruto", url="http://x/naruto")
         ],
@@ -503,7 +503,7 @@ async def test_variante_curta_devolve_card_de_outro_anime_nao_resolve_o_site(
     assert resultado == resolucao.VersaoIndisponivel(versao=VersaoEpisodio.LEGENDADO)
     async with sessionmaker() as sessao:
         fonte = await sessao.get(
-            FonteAnime, (anime.id, "animefire.io", VersaoDeFonte.NAO_DIFERENCIADA)
+            FonteAnime, (anime.id, "animefire.one", VersaoDeFonte.NAO_DIFERENCIADA)
         )
         assert fonte is None
 
@@ -692,7 +692,7 @@ async def test_site_que_diferencia_desambigua_por_identificador_com_titulo_entre
             versao=VersaoEpisodio.DUBLADO,
         ),
     ]
-    extrator = _ExtratorFalso("animefire.io", candidatos=candidatos, diferencia_versao=True)
+    extrator = _ExtratorFalso("animefire.one", candidatos=candidatos, diferencia_versao=True)
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
     anime = await _criar_anime(sessionmaker, "One Piece")
 
@@ -701,7 +701,7 @@ async def test_site_que_diferencia_desambigua_por_identificador_com_titulo_entre
     )
 
     assert resultado == resolucao.FonteResolvida(
-        dominio="animefire.io",
+        dominio="animefire.one",
         identificador="one-piece-dublado",
         versao_da_fonte=VersaoDeFonte.DUBLADO,
     )
@@ -784,7 +784,7 @@ async def test_site_que_diferencia_particao_pedida_vazia_continua_pro_proximo_si
 
 
 async def test_nenhum_site_serve_versao_devolve_versao_indisponivel(sessionmaker, monkeypatch):
-    extrator = _ExtratorFalso("animefire.io", candidatos=[])
+    extrator = _ExtratorFalso("animefire.one", candidatos=[])
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
     anime = await _criar_anime(sessionmaker, "Anime Obscuro")
 
@@ -796,7 +796,7 @@ async def test_nenhum_site_serve_versao_devolve_versao_indisponivel(sessionmaker
 
 
 async def test_resolver_fonte_do_anime_rejeita_versao_desconhecida(sessionmaker, monkeypatch):
-    extrator = _ExtratorFalso("animefire.io", candidatos=[])
+    extrator = _ExtratorFalso("animefire.one", candidatos=[])
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
     anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
 
@@ -875,12 +875,12 @@ async def test_proximo_site_para_sem_mapeamento_seguinte_descobre_novo_site(
 
 
 async def test_proximo_site_para_sem_nenhuma_opcao_devolve_none(sessionmaker, monkeypatch):
-    extrator = _ExtratorFalso("animefire.io")
+    extrator = _ExtratorFalso("animefire.one")
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
     anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
 
     resultado = await resolucao.proximo_site_para(
-        sessionmaker, anime, {"animefire.io"}, VersaoEpisodio.LEGENDADO
+        sessionmaker, anime, {"animefire.one"}, VersaoEpisodio.LEGENDADO
     )
 
     assert resultado is None

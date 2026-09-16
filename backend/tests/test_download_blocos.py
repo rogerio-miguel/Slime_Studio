@@ -76,7 +76,7 @@ def test_eh_googlevideo_aceita_hosts_do_google(url):
 @pytest.mark.parametrize(
     "url",
     [
-        "https://animefire.io/video/123.mp4",
+        "https://animefire.one/video/123.mp4",
         "https://evil-googlevideo.com.br/x",
         "https://googlevideo.com.attacker.net/x",
         "https://cdn.exemplo/master.m3u8",

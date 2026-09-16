@@ -13,7 +13,7 @@ O enriquecimento de capa (`capas_por_titulo`) saiu de `busca.py` para
 resolve o anime canônico no provedor UPFRONT (`buscar_titulos`, SEMPRE
 chamado agora, não só quando a busca por regex deu zero), monta a escada
 combinada `_termos_de_busca` e as `_referencias_de_anime`, consulta o site
-padrão (`EXTRATORES[0]`, animefire.io) com `buscar_em_com_variantes` e — só se
+padrão (`EXTRATORES[0]`, animefire.one) com `buscar_em_com_variantes` e — só se
 o melhor candidato dele NÃO bate uma chave exata de referência — faz um
 fan-out único (`buscar_por_site_com_variantes`, `dominios=EXTRATORES[1:]`) nos
 sites restantes, elegendo UMA fonte vencedora por `proximidade_a_referencias`
@@ -99,7 +99,7 @@ async def test_site_padrao_match_exato_faz_early_exit_sem_tocar_os_restantes(
     assert resultado.termo_alternativo is None
     assert resultado.dominio_alternativo is None
     assert resultado.fontes[0].candidatos == [candidato]
-    assert chamadas == ["animefire.io"]
+    assert chamadas == ["animefire.one"]
 
 
 async def test_vencedor_e_site_nao_padrao_quando_so_ele_acha_no_fan_out(
@@ -111,7 +111,7 @@ async def test_vencedor_e_site_nao_padrao_quando_so_ele_acha_no_fan_out(
     candidato = ResultadoBusca(titulo_exibicao="Naruto", identificador="2", url="https://y/1")
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        assert dominio == "animefire.io"
+        assert dominio == "animefire.one"
         return _fonte(dominio), None
 
     async def _buscar_por_site_com_variantes_fake(
@@ -135,7 +135,7 @@ async def test_vencedor_e_site_nao_padrao_quando_so_ele_acha_no_fan_out(
 
     assert resultado.termo_alternativo is None
     assert resultado.dominio_alternativo == "animesdrive"
-    # animesdrive é o 3º (último) de EXTRATORES: animefire.io → meusanimes → animesdrive.
+    # animesdrive é o 3º (último) de EXTRATORES: animefire.one → meusanimes → animesdrive.
     assert resultado.fontes[2].candidatos == [candidato]
 
 
@@ -149,7 +149,7 @@ async def test_card_do_site_padrao_casa_titulo_de_provedor_reporta_termo_alterna
     candidato = ResultadoBusca(titulo_exibicao=romaji, identificador="1", url="https://x/1")
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        assert dominio == "animefire.io"
+        assert dominio == "animefire.one"
         return _fonte(dominio, candidato), None
 
     async def _falha_se_chamado(sessionmaker, variantes, *, referencias, dominios=None):
@@ -184,7 +184,7 @@ async def test_digitado_casa_o_card_vencedor_nao_reporta_termo_alternativo(
     candidato = ResultadoBusca(titulo_exibicao="Frieren", identificador="1", url="https://x/1")
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        assert dominio == "animefire.io"
+        assert dominio == "animefire.one"
         return _fonte(dominio, candidato), None
 
     async def _falha_se_chamado(sessionmaker, variantes, *, referencias, dominios=None):
@@ -305,8 +305,8 @@ async def test_desempate_do_fan_out_por_prioridade_de_extratores(
     )
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        assert dominio == "animefire.io"
-        return _fonte("animefire.io", candidato_af), None
+        assert dominio == "animefire.one"
+        return _fonte("animefire.one", candidato_af), None
 
     async def _buscar_por_site_com_variantes_fake(
         sessionmaker, variantes, *, referencias, dominios=None
@@ -327,14 +327,14 @@ async def test_desempate_do_fan_out_por_prioridade_de_extratores(
 
     resultado = await servico_busca.buscar_com_titulos_alternativos(None, "Naruto")
 
-    # animefire.io (EXTRATORES[0]) venceu o desempate, não animesdrive.
+    # animefire.one (EXTRATORES[0]) venceu o desempate, não animesdrive.
     assert resultado.dominio_alternativo is None
     # "Naruto" já alcança o card "Naruto Shippuden Movie 6" por prefixo
     # (`corresponde_a_alguma_referencia`) — houve resultado pro que foi digitado,
     # então nada de banner de termo alternativo mesmo o romaji diferindo.
     assert resultado.termo_alternativo is None
     fontes_por_dominio = {f.dominio: f for f in resultado.fontes}
-    assert fontes_por_dominio["animefire.io"].candidatos == [candidato_af]
+    assert fontes_por_dominio["animefire.one"].candidatos == [candidato_af]
     # animesdrive achou candidato_ad de verdade (fan-out paralelo), mas
     # perdeu o desempate — não pode vazar numa resposta de fonte única.
     assert fontes_por_dominio["animesdrive"].candidatos == []
@@ -361,9 +361,9 @@ async def test_site_padrao_em_cooldown_fica_fora_do_fan_out(monkeypatch: pytest.
     dominios_fan_out: list[list[str] | None] = []
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        assert dominio == "animefire.io"
+        assert dominio == "animefire.one"
         chamadas_site_padrao.append(variantes)
-        return _fonte_indisponivel("animefire.io", "em cooldown"), None
+        return _fonte_indisponivel("animefire.one", "em cooldown"), None
 
     async def _buscar_por_site_com_variantes_fake(
         sessionmaker, variantes, *, referencias, dominios=None
@@ -417,7 +417,7 @@ async def test_nenhum_site_acha_nada(monkeypatch: pytest.MonkeyPatch):
     assert resultado.termo_alternativo is None
     assert resultado.dominio_alternativo is None
     dominios = {fonte.dominio for fonte in resultado.fontes}
-    assert dominios == {"animefire.io", "meusanimes", "animesdrive"}
+    assert dominios == {"animefire.one", "meusanimes", "animesdrive"}
     # Todos os sites foram de fato consultados (não "não consultado") — nenhum
     # candidato, nenhum indisponível, motivo None em todos.
     assert all(not fonte.indisponivel and fonte.candidatos == [] for fonte in resultado.fontes)
@@ -554,7 +554,7 @@ async def test_fan_out_reporta_indisponivel_fresco_dos_sites_restantes(
     for dominio in ("meusanimes", "animesdrive"):
         assert fontes[dominio].indisponivel is True
         assert fontes[dominio].motivo == "caiu durante o fan-out"
-    assert fontes["animefire.io"].indisponivel is False
+    assert fontes["animefire.one"].indisponivel is False
 
 
 async def test_falha_de_metadados_nao_propaga_degrada_para_titulo_digitado(
@@ -591,7 +591,7 @@ async def test_falha_de_metadados_nao_propaga_degrada_para_titulo_digitado(
     assert resultado.termo_alternativo is None
     assert resultado.dominio_alternativo is None
     dominios = {fonte.dominio for fonte in resultado.fontes}
-    assert dominios == {"animefire.io", "meusanimes", "animesdrive"}
+    assert dominios == {"animefire.one", "meusanimes", "animesdrive"}
 
 
 # --- buscar_em_todas_as_fontes_com_titulos_alternativos (escopo `todas`) ---
@@ -620,11 +620,11 @@ async def test_todas_fase2_termo_de_provedor_acha_quando_fase1_vazia(
     ):
         if romaji in variantes:
             return {
-                "animefire.io": _fonte("animefire.io", candidato),
+                "animefire.one": _fonte("animefire.one", candidato),
                 "animesdrive": _fonte("animesdrive"),
             }
         return {
-            "animefire.io": _fonte("animefire.io"),
+            "animefire.one": _fonte("animefire.one"),
             "animesdrive": _fonte("animesdrive"),
         }
 
@@ -669,10 +669,10 @@ async def test_todas_fase1_combinada_une_romaji_e_ingles_numa_rodada_so(
     ):
         rodadas.append(dominios)
         return {
-            "animefire.io": (
-                _fonte("animefire.io", candidato_af)
+            "animefire.one": (
+                _fonte("animefire.one", candidato_af)
                 if romaji in variantes
-                else _fonte("animefire.io")
+                else _fonte("animefire.one")
             ),
             "meusanimes": _fonte("meusanimes"),
             "animesdrive": (
@@ -697,7 +697,7 @@ async def test_todas_fase1_combinada_une_romaji_e_ingles_numa_rodada_so(
 
     assert rodadas == [None]  # Fase 1 só; a Fase 2 (redundante) não toca a rede
     fontes_por_dominio = {f.dominio: f for f in resultado.fontes}
-    assert fontes_por_dominio["animefire.io"].candidatos == [candidato_af]
+    assert fontes_por_dominio["animefire.one"].candidatos == [candidato_af]
     assert fontes_por_dominio["animesdrive"].candidatos == [candidato_ad]
     assert fontes_por_dominio["meusanimes"].candidatos == []
     assert resultado.termo_alternativo is None
@@ -728,7 +728,7 @@ async def test_todas_titulo_ingles_do_provedor_alcanca_site_pendente(
     ):
         rodadas.append(dominios)
         return {
-            "animefire.io": _fonte("animefire.io", candidato_af),
+            "animefire.one": _fonte("animefire.one", candidato_af),
             "meusanimes": _fonte("meusanimes"),
             "animesdrive": (
                 _fonte("animesdrive", candidato_ad)
@@ -754,7 +754,7 @@ async def test_todas_titulo_ingles_do_provedor_alcanca_site_pendente(
 
     assert rodadas == [None]  # uma rodada de scraping só — o inglês entrou na Fase 1
     fontes = {f.dominio: f for f in resultado.fontes}
-    assert fontes["animefire.io"].candidatos == [candidato_af]
+    assert fontes["animefire.one"].candidatos == [candidato_af]
     assert fontes["animesdrive"].candidatos == [candidato_ad]
     assert fontes["meusanimes"].candidatos == []
     assert resultado.termo_alternativo is None
@@ -784,7 +784,7 @@ async def test_todas_fase2_nao_roda_quando_todos_os_sites_ja_acharam(
     ):
         rodadas.append(dominios)
         return {
-            "animefire.io": _fonte("animefire.io", candidato_af),
+            "animefire.one": _fonte("animefire.one", candidato_af),
             "meusanimes": _fonte("meusanimes", candidato_am),
             "animesdrive": _fonte("animesdrive", candidato_ad),
         }
@@ -806,7 +806,7 @@ async def test_todas_fase2_nao_roda_quando_todos_os_sites_ja_acharam(
     assert resultado.termo_alternativo is None
     assert resultado.dominio_alternativo is None
     fontes = {f.dominio: f for f in resultado.fontes}
-    assert fontes["animefire.io"].candidatos == [candidato_af]
+    assert fontes["animefire.one"].candidatos == [candidato_af]
     assert fontes["meusanimes"].candidatos == [candidato_am]
     assert fontes["animesdrive"].candidatos == [candidato_ad]
 
@@ -823,7 +823,7 @@ async def test_todas_fase1_toda_vazia_e_preservada(monkeypatch: pytest.MonkeyPat
         sessionmaker, variantes, *, referencias, dominios=None
     ):
         return {
-            "animefire.io": _fonte("animefire.io"),
+            "animefire.one": _fonte("animefire.one"),
             "meusanimes": _fonte("meusanimes"),
             "animesdrive": _fonte("animesdrive"),
         }
@@ -861,7 +861,7 @@ async def test_todas_fase2_falha_de_metadados_nao_propaga_devolve_rodada_da_fase
     ):
         referencias_vistas.append(referencias)
         return {
-            "animefire.io": _fonte("animefire.io"),
+            "animefire.one": _fonte("animefire.one"),
             "meusanimes": _fonte("meusanimes"),
             "animesdrive": _fonte("animesdrive"),
         }
@@ -883,7 +883,7 @@ async def test_todas_fase2_falha_de_metadados_nao_propaga_devolve_rodada_da_fase
     assert resultado.termo_alternativo is None
     assert resultado.dominio_alternativo is None
     dominios = {fonte.dominio for fonte in resultado.fontes}
-    assert dominios == {"animefire.io", "meusanimes", "animesdrive"}
+    assert dominios == {"animefire.one", "meusanimes", "animesdrive"}
 
 
 async def test_todas_todos_os_sites_indisponiveis_ainda_resolve_o_canonico_upfront(
@@ -902,7 +902,7 @@ async def test_todas_todos_os_sites_indisponiveis_ainda_resolve_o_canonico_upfro
     ):
         rodadas.append(dominios)
         return {
-            "animefire.io": _fonte_indisponivel("animefire.io"),
+            "animefire.one": _fonte_indisponivel("animefire.one"),
             "meusanimes": _fonte_indisponivel("meusanimes"),
             "animesdrive": _fonte_indisponivel("animesdrive"),
         }

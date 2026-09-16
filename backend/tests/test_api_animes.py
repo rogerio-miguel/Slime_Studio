@@ -63,7 +63,7 @@ async def test_listar_episodios_remotos_caminho_feliz(
 
     async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -74,7 +74,7 @@ async def test_listar_episodios_remotos_caminho_feliz(
                 rotulo="1",
                 numero=1,
                 url="https://x/ep1",
-                thumb_url="https://animefire.io/img/video/42/1.webp",
+                thumb_url="https://animefire.one/img/video/42/1.webp",
             ),
             EpisodioRemoto(rotulo="2", numero=2, url="https://x/ep2"),
             EpisodioRemoto(rotulo="especial", numero=None, url="https://x/ep-especial"),
@@ -92,7 +92,7 @@ async def test_listar_episodios_remotos_caminho_feliz(
     # `test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_anime`).
     assert resposta.status_code == 200
     assert resposta.json() == {
-        "dominio": "animefire.io",
+        "dominio": "animefire.one",
         "episodios": [
             {"rotulo": "1", "numero": 1, "thumb_url": None, "titulo": None, "sinopse": None},
             {"rotulo": "2", "numero": 2, "thumb_url": None, "titulo": None, "sinopse": None},
@@ -116,7 +116,7 @@ async def test_listar_episodios_remotos_fonte_ambigua_409(
 
     async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return ConfirmacaoNecessaria(
-            dominio="animefire.io",
+            dominio="animefire.one",
             candidatos=[
                 ResultadoBusca(titulo_exibicao="A", identificador="1", url="https://x/1"),
                 ResultadoBusca(titulo_exibicao="B", identificador="2", url="https://x/2"),
@@ -160,7 +160,7 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ani
 
     async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -224,7 +224,7 @@ async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_
 
     async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="7",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -295,7 +295,7 @@ async def test_listar_episodios_remotos_still_direto_nunca_cai_pro_absoluto_com_
 
     async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="7",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -913,7 +913,7 @@ def _espiar_sondagem(
     monkeypatch: pytest.MonkeyPatch,
     *,
     episodios: list[EpisodioRemoto] | None = None,
-    dominio: str = "animefire.io",
+    dominio: str = "animefire.one",
     erro: Exception | None = None,
 ) -> list[tuple[int, VersaoEpisodio]]:
     """Troca `sondagem.listar_episodios_remotos` por um espião: registra
@@ -957,7 +957,7 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
     async with sessionmaker_api() as sessao:
         anime = await sessao.get(Anime, anime_id)
         assert anime.episodios_na_fonte == 3
-        assert anime.fonte_verificada_dominio == "animefire.io"
+        assert anime.fonte_verificada_dominio == "animefire.one"
 
     segunda = await cliente.get("/api/animes?aquecer=true")
     item = next(i for i in segunda.json() if i["id"] == anime_id)
@@ -1065,10 +1065,10 @@ async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
     resposta = await cliente.post(
         f"/api/admin/animes/{anime_id}/fontes/confirmar",
         json={
-            "dominio": "animefire.io",
+            "dominio": "animefire.one",
             "identificador": "42",
             "titulo_exibicao": "One Piece",
-            "url": "https://animefire.io/anime/42",
+            "url": "https://animefire.one/anime/42",
             "versao": "dublado",
         },
     )
@@ -1078,7 +1078,7 @@ async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
         fonte = (
             await sessao.execute(
                 select(FonteAnime).where(
-                    FonteAnime.anime_id == anime_id, FonteAnime.site_dominio == "animefire.io"
+                    FonteAnime.anime_id == anime_id, FonteAnime.site_dominio == "animefire.one"
                 )
             )
         ).scalar_one()

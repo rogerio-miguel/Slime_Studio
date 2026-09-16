@@ -5,7 +5,7 @@
 Escopo `padrao` (reescrito em 2026-09-06): resolve o anime canônico no
 provedor de metadados (`integrations.servico.buscar_titulos`) UPFRONT — SEMPRE
 chamado agora, não só como último recurso —, consulta o site padrão
-(`EXTRATORES[0]`, animefire.io) com `buscar_em_com_variantes` e, só se o
+(`EXTRATORES[0]`, animefire.one) com `buscar_em_com_variantes` e, só se o
 melhor candidato dele NÃO bate uma chave exata de referência, faz um fan-out
 único nos sites restantes (`buscar_por_site_com_variantes`), elegendo UMA
 fonte vencedora. `buscar_em_com_variantes` é monkeypatchado em
@@ -85,8 +85,8 @@ async def test_buscar_fontes_falha_de_um_extrator_nao_derruba_resposta(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        if dominio == "animefire.io":
-            return _fonte_indisponivel("animefire.io", "site fora do ar"), None
+        if dominio == "animefire.one":
+            return _fonte_indisponivel("animefire.one", "site fora do ar"), None
         if dominio == "meusanimes":
             return _fonte("meusanimes"), None
         candidato = ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1")
@@ -107,12 +107,12 @@ async def test_buscar_fontes_falha_de_um_extrator_nao_derruba_resposta(
     assert len(corpo["resultados"]) == 1
     assert corpo["resultados"][0]["dominio"] == "animesdrive"
     assert corpo["resultados"][0]["titulo_exibicao"] == "Naruto"
-    # Quem respondeu não foi o site padrão (animefire.io falhou) — preenchido.
+    # Quem respondeu não foi o site padrão (animefire.one falhou) — preenchido.
     assert corpo["dominio_alternativo"] == "animesdrive"
 
     fontes_por_dominio = {fonte["dominio"]: fonte for fonte in corpo["fontes"]}
-    assert fontes_por_dominio["animefire.io"]["indisponivel"] is True
-    assert fontes_por_dominio["animefire.io"]["motivo"] == "site fora do ar"
+    assert fontes_por_dominio["animefire.one"]["indisponivel"] is True
+    assert fontes_por_dominio["animefire.one"]["motivo"] == "site fora do ar"
     assert fontes_por_dominio["animesdrive"]["indisponivel"] is False
 
 
@@ -126,9 +126,9 @@ async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
     achei nada"."""
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        if dominio == "animefire.io":
+        if dominio == "animefire.one":
             return (
-                _fonte_indisponivel("animefire.io", "em cooldown até 2026-01-01 12:00:00 UTC"),
+                _fonte_indisponivel("animefire.one", "em cooldown até 2026-01-01 12:00:00 UTC"),
                 None,
             )
         if dominio == "meusanimes":
@@ -153,9 +153,9 @@ async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
     assert corpo["dominio_alternativo"] == "animesdrive"
 
     fontes_por_dominio = {fonte["dominio"]: fonte for fonte in corpo["fontes"]}
-    assert fontes_por_dominio["animefire.io"]["indisponivel"] is True
+    assert fontes_por_dominio["animefire.one"]["indisponivel"] is True
     motivo_esperado = "em cooldown até 2026-01-01 12:00:00 UTC"
-    assert fontes_por_dominio["animefire.io"]["motivo"] == motivo_esperado
+    assert fontes_por_dominio["animefire.one"]["motivo"] == motivo_esperado
     assert fontes_por_dominio["animesdrive"]["indisponivel"] is False
 
 
@@ -169,8 +169,8 @@ async def test_buscar_fontes_site_padrao_indisponivel_faz_fan_out_e_preserva_o_m
     "não achei nada")."""
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        if dominio == "animefire.io":
-            return _fonte_indisponivel("animefire.io", "em cooldown"), None
+        if dominio == "animefire.one":
+            return _fonte_indisponivel("animefire.one", "em cooldown"), None
         return _fonte(dominio), None
 
     monkeypatch.setattr(
@@ -182,9 +182,9 @@ async def test_buscar_fontes_site_padrao_indisponivel_faz_fan_out_e_preserva_o_m
     assert resposta.status_code == 200
     corpo = resposta.json()
     fontes_por_dominio = {fonte["dominio"]: fonte for fonte in corpo["fontes"]}
-    assert set(fontes_por_dominio) == {"animefire.io", "meusanimes", "animesdrive"}
-    assert fontes_por_dominio["animefire.io"]["indisponivel"] is True
-    assert fontes_por_dominio["animefire.io"]["motivo"] == "em cooldown"
+    assert set(fontes_por_dominio) == {"animefire.one", "meusanimes", "animesdrive"}
+    assert fontes_por_dominio["animefire.one"]["indisponivel"] is True
+    assert fontes_por_dominio["animefire.one"]["motivo"] == "em cooldown"
     assert corpo["resultados"] == []
     assert corpo["termo_alternativo"] is None
     assert corpo["dominio_alternativo"] is None
@@ -218,7 +218,7 @@ async def test_buscar_fontes_registrada_antes_do_catch_all_anime_id(
     assert corpo["termo_alternativo"] is None
     assert corpo["dominio_alternativo"] is None
     assert {fonte["dominio"] for fonte in corpo["fontes"]} == {
-        "animefire.io",
+        "animefire.one",
         "meusanimes",
         "animesdrive",
     }
@@ -232,7 +232,7 @@ async def test_buscar_fontes_expande_com_titulo_alternativo_quando_termo_digitad
     disponíveis, mas o provedor de metadados acha o romaji, que devolve
     candidato — a resposta final expõe esse candidato junto com
     `termo_alternativo` preenchido, para a UI avisar que o resultado veio de um
-    termo diferente. Como quem respondeu foi o site padrão (animefire.io),
+    termo diferente. Como quem respondeu foi o site padrão (animefire.one),
     `dominio_alternativo` continua `None` — só o termo mudou, não o site."""
 
     romaji = "Tensei Shitara Slime Datta Ken"
@@ -264,7 +264,7 @@ async def test_buscar_fontes_expande_com_titulo_alternativo_quando_termo_digitad
     assert corpo["dominio_alternativo"] is None
     assert len(corpo["resultados"]) == 1
     assert corpo["resultados"][0]["titulo_exibicao"] == romaji
-    assert corpo["resultados"][0]["dominio"] == "animefire.io"
+    assert corpo["resultados"][0]["dominio"] == "animefire.one"
 
 
 # --- fatia 2 da Fase B: parâmetro `escopo` (PLANO_PADRONIZACAO_FONTES.md) ---
@@ -278,7 +278,7 @@ async def test_buscar_fontes_escopo_ausente_e_padrao_explicito_sao_identicos(
     fatia (só existia o caminho `padrao`) não pode mudar."""
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        if dominio == "animefire.io":
+        if dominio == "animefire.one":
             candidato = ResultadoBusca(
                 titulo_exibicao="Naruto", identificador="1", url="https://x/1"
             )
@@ -310,7 +310,7 @@ async def test_buscar_fontes_padrao_lista_dominio_nao_consultado_quando_primeiro
     quando na verdade só um site foi de fato tentado."""
 
     async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
-        assert dominio == "animefire.io", "sites de fallback não deveriam ser consultados"
+        assert dominio == "animefire.one", "sites de fallback não deveriam ser consultados"
         candidato = ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1")
         return _fonte(dominio, candidato), None
 
@@ -324,7 +324,7 @@ async def test_buscar_fontes_padrao_lista_dominio_nao_consultado_quando_primeiro
     corpo = resposta.json()
     assert len(corpo["resultados"]) == 1
     fontes_por_dominio = {fonte["dominio"]: fonte for fonte in corpo["fontes"]}
-    assert set(fontes_por_dominio) == {"animefire.io", "meusanimes", "animesdrive"}
+    assert set(fontes_por_dominio) == {"animefire.one", "meusanimes", "animesdrive"}
     for nao_consultado in ("meusanimes", "animesdrive"):
         assert fontes_por_dominio[nao_consultado]["indisponivel"] is False
         assert "não consultado" in fontes_por_dominio[nao_consultado]["motivo"]
@@ -352,7 +352,7 @@ async def test_buscar_fontes_escopo_todas_usa_caminho_paralelo_e_preserva_domini
             titulo_exibicao="Naruto (Dublado)", identificador="2", url="https://ad/2"
         )
         return {
-            "animefire.io": _fonte("animefire.io", candidato_af),
+            "animefire.one": _fonte("animefire.one", candidato_af),
             "meusanimes": _fonte("meusanimes"),
             "animesdrive": _fonte("animesdrive", candidato_ad),
         }
@@ -380,8 +380,8 @@ async def test_buscar_fontes_escopo_todas_usa_caminho_paralelo_e_preserva_domini
     assert titulos_chamado == ["naruto"]  # canônico resolvido upfront no escopo `todas`
     assert len(corpo["resultados"]) == 2
     por_dominio = {resultado["dominio"]: resultado for resultado in corpo["resultados"]}
-    assert set(por_dominio) == {"animefire.io", "animesdrive"}
-    assert por_dominio["animefire.io"]["identificador"] == "1"
+    assert set(por_dominio) == {"animefire.one", "animesdrive"}
+    assert por_dominio["animefire.one"]["identificador"] == "1"
     assert por_dominio["animesdrive"]["identificador"] == "2"
 
 

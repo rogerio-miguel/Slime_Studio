@@ -32,45 +32,45 @@ async def sessionmaker(tmp_path: Path) -> async_sessionmaker[AsyncSession]:
 
 
 async def test_site_sem_registro_nao_esta_em_cooldown(sessionmaker):
-    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.io") is False
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.one") is False
 
 
 async def test_registrar_sucesso_sem_registro_previo_nao_falha(sessionmaker):
-    await circuit_breaker.registrar_sucesso(sessionmaker, "animefire.io")
-    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.io") is False
+    await circuit_breaker.registrar_sucesso(sessionmaker, "animefire.one")
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.one") is False
 
 
 async def test_falhas_abaixo_do_limite_nao_abrem_cooldown_longo(sessionmaker):
-    await circuit_breaker.registrar_falha(sessionmaker, "animefire.io", RuntimeError("x"))
-    await circuit_breaker.registrar_falha(sessionmaker, "animefire.io", RuntimeError("x"))
+    await circuit_breaker.registrar_falha(sessionmaker, "animefire.one", RuntimeError("x"))
+    await circuit_breaker.registrar_falha(sessionmaker, "animefire.one", RuntimeError("x"))
 
     # Ainda dentro do backoff curto (30s/120s) — não é o cooldown de 1h.
-    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.io") is True
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.one") is True
 
 
 async def test_falhas_alem_do_limite_abrem_cooldown(sessionmaker):
     for _ in range(4):
-        await circuit_breaker.registrar_falha(sessionmaker, "animefire.io", RuntimeError("x"))
+        await circuit_breaker.registrar_falha(sessionmaker, "animefire.one", RuntimeError("x"))
 
-    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.io") is True
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.one") is True
 
 
 async def test_registrar_sucesso_depois_de_falha_fecha_cooldown(sessionmaker):
-    await circuit_breaker.registrar_falha(sessionmaker, "animefire.io", RuntimeError("x"))
-    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.io") is True
+    await circuit_breaker.registrar_falha(sessionmaker, "animefire.one", RuntimeError("x"))
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.one") is True
 
-    await circuit_breaker.registrar_sucesso(sessionmaker, "animefire.io")
+    await circuit_breaker.registrar_sucesso(sessionmaker, "animefire.one")
 
-    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.io") is False
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, "animefire.one") is False
 
 
 async def test_registrar_falha_grava_mensagem_de_erro(sessionmaker):
     from models.estado_site import EstadoSite
 
-    await circuit_breaker.registrar_falha(sessionmaker, "animefire.io", RuntimeError("boom"))
+    await circuit_breaker.registrar_falha(sessionmaker, "animefire.one", RuntimeError("boom"))
 
     async with sessionmaker() as sessao:
-        estado = await sessao.get(EstadoSite, "animefire.io")
+        estado = await sessao.get(EstadoSite, "animefire.one")
         assert estado.falhas_consecutivas == 1
         assert estado.ultimo_erro == "boom"
         assert estado.ultima_falha_em is not None

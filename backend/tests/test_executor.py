@@ -145,7 +145,7 @@ async def test_processar_com_falha_de_extracao_retentavel_reagenda_job(
     tmp_path, sessionmaker, config, monkeypatch
 ):
     job_id, episodio_id = await _criar_job(
-        sessionmaker, url_fonte="https://animefire.io/animes/x/1", site_origem="animefire.io"
+        sessionmaker, url_fonte="https://animefire.one/animes/x/1", site_origem="animefire.one"
     )
 
     async def _resolver_fonte_falso(sessionmaker, config, *, anime, episodio):
@@ -171,7 +171,7 @@ async def test_processar_com_falha_de_extracao_nao_retentavel_aguarda_intervenca
     tmp_path, sessionmaker, config, monkeypatch
 ):
     job_id, episodio_id = await _criar_job(
-        sessionmaker, url_fonte="https://animefire.io/animes/x/1", site_origem="animefire.io"
+        sessionmaker, url_fonte="https://animefire.one/animes/x/1", site_origem="animefire.one"
     )
 
     async def _resolver_fonte_falso(sessionmaker, config, *, anime, episodio):

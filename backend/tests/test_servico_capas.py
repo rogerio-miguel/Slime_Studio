@@ -32,7 +32,7 @@ async def test_capas_por_titulo_preenche_dict_com_capa_encontrada(
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
 
     fonte = _fonte(
-        "animefire.io",
+        "animefire.one",
         ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1"),
     )
 
@@ -54,7 +54,7 @@ async def test_capas_por_titulo_dedupe_por_titulo_normalizado(monkeypatch: pytes
 
     fontes = [
         _fonte(
-            "animefire.io",
+            "animefire.one",
             ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1"),
         ),
         _fonte(
@@ -82,7 +82,7 @@ async def test_capas_por_titulo_falha_de_uma_consulta_nao_derruba_as_outras(
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
 
     fonte = _fonte(
-        "animefire.io",
+        "animefire.one",
         ResultadoBusca(titulo_exibicao="Naruto", identificador="1", url="https://x/1"),
         ResultadoBusca(titulo_exibicao="Bleach", identificador="2", url="https://x/2"),
     )
@@ -100,6 +100,6 @@ async def test_capas_por_titulo_sem_candidatos_nao_consulta_provedor(
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _falha_se_chamado)
 
-    capas = await servico_capas.capas_por_titulo([_fonte("animefire.io")])
+    capas = await servico_capas.capas_por_titulo([_fonte("animefire.one")])
 
     assert capas == {}

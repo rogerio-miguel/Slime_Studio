@@ -35,19 +35,19 @@ async def sessionmaker(tmp_path: Path) -> async_sessionmaker[AsyncSession]:
 
 
 async def test_carregar_sem_sessao_devolve_none(sessionmaker):
-    assert await sessao_cache.carregar(sessionmaker, "animefire.io") is None
+    assert await sessao_cache.carregar(sessionmaker, "animefire.one") is None
 
 
 async def test_salvar_e_carregar_devolve_cookies_e_user_agent(sessionmaker):
     await sessao_cache.salvar(
         sessionmaker,
-        "animefire.io",
+        "animefire.one",
         {"cf_clearance": "abc123"},
         "Mozilla/5.0 teste",
         ttl_s=3600,
     )
 
-    contexto = await sessao_cache.carregar(sessionmaker, "animefire.io")
+    contexto = await sessao_cache.carregar(sessionmaker, "animefire.one")
 
     assert contexto is not None
     assert contexto.cookies == {"cf_clearance": "abc123"}
@@ -56,13 +56,13 @@ async def test_salvar_e_carregar_devolve_cookies_e_user_agent(sessionmaker):
 
 async def test_salvar_duas_vezes_faz_upsert(sessionmaker):
     await sessao_cache.salvar(
-        sessionmaker, "animefire.io", {"a": "1"}, "ua-antigo", ttl_s=3600
+        sessionmaker, "animefire.one", {"a": "1"}, "ua-antigo", ttl_s=3600
     )
     await sessao_cache.salvar(
-        sessionmaker, "animefire.io", {"b": "2"}, "ua-novo", ttl_s=3600
+        sessionmaker, "animefire.one", {"b": "2"}, "ua-novo", ttl_s=3600
     )
 
-    contexto = await sessao_cache.carregar(sessionmaker, "animefire.io")
+    contexto = await sessao_cache.carregar(sessionmaker, "animefire.one")
 
     assert contexto.cookies == {"b": "2"}
     assert contexto.user_agent == "ua-novo"
@@ -72,7 +72,7 @@ async def test_carregar_sessao_vencida_devolve_none(sessionmaker):
     async with sessionmaker() as sessao:
         sessao.add(
             SessaoBypass(
-                site_dominio="animefire.io",
+                site_dominio="animefire.one",
                 cookies_json='{"a": "1"}',
                 user_agent="ua",
                 expira_estimado_em=datetime.now(UTC) - timedelta(seconds=1),
@@ -80,15 +80,15 @@ async def test_carregar_sessao_vencida_devolve_none(sessionmaker):
         )
         await sessao.commit()
 
-    assert await sessao_cache.carregar(sessionmaker, "animefire.io") is None
+    assert await sessao_cache.carregar(sessionmaker, "animefire.one") is None
 
 
 async def test_invalidar_remove_sessao(sessionmaker):
-    await sessao_cache.salvar(sessionmaker, "animefire.io", {"a": "1"}, "ua", ttl_s=3600)
+    await sessao_cache.salvar(sessionmaker, "animefire.one", {"a": "1"}, "ua", ttl_s=3600)
 
-    await sessao_cache.invalidar(sessionmaker, "animefire.io")
+    await sessao_cache.invalidar(sessionmaker, "animefire.one")
 
-    assert await sessao_cache.carregar(sessionmaker, "animefire.io") is None
+    assert await sessao_cache.carregar(sessionmaker, "animefire.one") is None
 
 
 async def test_invalidar_sem_sessao_nao_falha(sessionmaker):

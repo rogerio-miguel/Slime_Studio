@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Final
 
 # Discriminador do modo "arquivo local" em `Episodio.site_origem` — distingue do
-# domínio de um site real (ex. "animefire.io") para decidir se `resolver_fonte`
+# domínio de um site real (ex. "animefire.one") para decidir se `resolver_fonte`
 # (worker/pipeline/fonte.py) pula a extração remota.
 SITE_LOCAL: Final[str] = "local"
 
