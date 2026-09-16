@@ -253,8 +253,8 @@ async def test_baixar_com_fallback_de_site_loga_duracao_e_sites_tentados_no_suce
         numero=1,
         tipo=TipoEpisodio.REGULAR,
         versao=VersaoEpisodio.LEGENDADO,
-        url_fonte="https://animefire.io/segredo-de-sessao/ep1",
-        site_origem="animefire.io",
+        url_fonte="https://animefire.one/segredo-de-sessao/ep1",
+        site_origem="animefire.one",
     )
     destino = tmp_path / "saida.mp4"
 
@@ -305,8 +305,8 @@ async def test_baixar_com_fallback_de_site_conta_sites_tentados_apos_fallback(
         numero=1,
         tipo=TipoEpisodio.REGULAR,
         versao=VersaoEpisodio.DESCONHECIDA,
-        url_fonte="https://animefire.io/ep1",
-        site_origem="animefire.io",
+        url_fonte="https://animefire.one/ep1",
+        site_origem="animefire.one",
     )
     destino = tmp_path / "saida.mp4"
 
@@ -337,7 +337,7 @@ async def test_baixar_com_fallback_de_site_conta_sites_tentados_apos_fallback(
         )
 
     assert resultado == destino
-    assert chamadas == ["animefire.io", "animesdrive"]
+    assert chamadas == ["animefire.one", "animesdrive"]
     assert "sites_tentados=2" in caplog.text
     # Fase E2: dentro do orçamento padrão, a cadeia completa sem o log de
     # estouro de deadline — comportamento idêntico ao de antes do E2 existir.
@@ -357,8 +357,8 @@ async def test_baixar_com_fallback_de_site_loga_ao_esgotar_sites_disponiveis(
         numero=1,
         tipo=TipoEpisodio.REGULAR,
         versao=VersaoEpisodio.LEGENDADO,
-        url_fonte="https://animefire.io/segredo-de-sessao/ep1",
-        site_origem="animefire.io",
+        url_fonte="https://animefire.one/segredo-de-sessao/ep1",
+        site_origem="animefire.one",
     )
     destino = tmp_path / "saida.mp4"
 
@@ -423,8 +423,8 @@ async def test_baixar_com_fallback_de_site_deadline_estourado_nao_tenta_proximo_
         numero=1,
         tipo=TipoEpisodio.REGULAR,
         versao=VersaoEpisodio.DESCONHECIDA,
-        url_fonte="https://animefire.io/segredo-1/ep1",
-        site_origem="animefire.io",
+        url_fonte="https://animefire.one/segredo-1/ep1",
+        site_origem="animefire.one",
     )
     destino = tmp_path / "saida.mp4"
 
@@ -439,7 +439,7 @@ async def test_baixar_com_fallback_de_site_deadline_estourado_nao_tenta_proximo_
     monkeypatch.setattr(servico, "listar_episodios_em", _listar_fake)
 
     chamadas: list[str] = []
-    falha_original = FonteNaoEncontrada("não encontrado no site", dominio="animefire.io")
+    falha_original = FonteNaoEncontrada("não encontrado no site", dominio="animefire.one")
 
     async def _baixar_episodio_fake(
         sessionmaker, config, *, extrator, url_episodio, destino, prazo=None
@@ -460,7 +460,7 @@ async def test_baixar_com_fallback_de_site_deadline_estourado_nao_tenta_proximo_
             )
 
     assert excinfo.value is falha_original  # a mesma falha, não um erro novo de deadline
-    assert chamadas == ["animefire.io"]  # site de fallback nunca chegou a ser tentado
+    assert chamadas == ["animefire.one"]  # site de fallback nunca chegou a ser tentado
     assert "abortou a busca por outro site" in caplog.text  # novo log: estouro na descoberta
     assert "animesdrive" not in caplog.text  # domínio nunca chegou a ser descoberto
     assert "segredo-1" not in caplog.text  # nunca a URL crua do episódio original
@@ -529,8 +529,8 @@ async def test_baixar_com_fallback_de_site_deadline_estoura_entre_listar_e_baixa
         numero=1,
         tipo=TipoEpisodio.REGULAR,
         versao=VersaoEpisodio.DESCONHECIDA,
-        url_fonte="https://animefire.io/ep1",
-        site_origem="animefire.io",
+        url_fonte="https://animefire.one/ep1",
+        site_origem="animefire.one",
     )
     destino = tmp_path / "saida.mp4"
 
@@ -568,7 +568,7 @@ async def test_baixar_com_fallback_de_site_deadline_estoura_entre_listar_e_baixa
         )
 
     assert buscas == ["animesdrive"]  # a listagem no site novo aconteceu de verdade
-    assert chamadas == ["animefire.io"]  # mas o download por lá nunca foi tentado
+    assert chamadas == ["animefire.one"]  # mas o download por lá nunca foi tentado
 
 
 async def test_baixar_com_fallback_de_site_propaga_falha_original_quando_proximo_site_e_lento(
@@ -591,12 +591,12 @@ async def test_baixar_com_fallback_de_site_propaga_falha_original_quando_proximo
         numero=1,
         tipo=TipoEpisodio.REGULAR,
         versao=VersaoEpisodio.DESCONHECIDA,
-        url_fonte="https://animefire.io/ep1",
-        site_origem="animefire.io",
+        url_fonte="https://animefire.one/ep1",
+        site_origem="animefire.one",
     )
     destino = tmp_path / "saida.mp4"
 
-    falha_original = EstruturaDoSiteMudou("estrutura mudou", dominio="animefire.io")
+    falha_original = EstruturaDoSiteMudou("estrutura mudou", dominio="animefire.one")
 
     async def _baixar_episodio_fake(
         sessionmaker, config, *, extrator, url_episodio, destino, prazo=None
@@ -673,8 +673,8 @@ async def test_baixar_com_fallback_de_site_tentativa_original_respeita_orcamento
         numero=1,
         tipo=TipoEpisodio.REGULAR,
         versao=VersaoEpisodio.DESCONHECIDA,
-        url_fonte="https://animefire.io/ep1",
-        site_origem="animefire.io",
+        url_fonte="https://animefire.one/ep1",
+        site_origem="animefire.one",
     )
     destino = tmp_path / "saida.mp4"
 

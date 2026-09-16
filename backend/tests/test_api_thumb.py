@@ -58,14 +58,14 @@ async def test_thumb_host_permitido_repassa_imagem(
     monkeypatch.setattr("requests.get", fake)
 
     resposta = await cliente.get(
-        "/api/thumb", params={"url": "https://animefire.io/img/video/42/1.webp"}
+        "/api/thumb", params={"url": "https://animefire.one/img/video/42/1.webp"}
     )
 
     assert resposta.status_code == 200
     assert resposta.headers["content-type"] == "image/webp"
     assert resposta.headers["cache-control"] == "public, max-age=86400"
     assert resposta.content == b"RIFFxxxxWEBP"
-    assert fake.capturado["headers"]["Referer"] == "https://animefire.io/"
+    assert fake.capturado["headers"]["Referer"] == "https://animefire.one/"
     assert fake.capturado["allow_redirects"] is False
 
 
@@ -121,7 +121,7 @@ async def test_thumb_esquema_http_rejeitado_sem_rede(
     monkeypatch.setattr("requests.get", _get_que_explode)
 
     resposta = await cliente.get(
-        "/api/thumb", params={"url": "http://animefire.io/img/video/42/1.webp"}
+        "/api/thumb", params={"url": "http://animefire.one/img/video/42/1.webp"}
     )
 
     assert resposta.status_code == 404
@@ -166,7 +166,7 @@ async def test_thumb_redirect_nao_e_seguido(
     )
 
     resposta = await cliente.get(
-        "/api/thumb", params={"url": "https://animefire.io/img/video/42/1.webp"}
+        "/api/thumb", params={"url": "https://animefire.one/img/video/42/1.webp"}
     )
 
     assert resposta.status_code == 404
@@ -182,7 +182,7 @@ async def test_thumb_corpo_acima_do_teto_vira_404(
     )
 
     resposta = await cliente.get(
-        "/api/thumb", params={"url": "https://animefire.io/img/video/42/1.webp"}
+        "/api/thumb", params={"url": "https://animefire.one/img/video/42/1.webp"}
     )
 
     assert resposta.status_code == 404
@@ -199,7 +199,7 @@ async def test_thumb_falha_de_rede_vira_404(
     monkeypatch.setattr("requests.get", _get)
 
     resposta = await cliente.get(
-        "/api/thumb", params={"url": "https://animefire.io/img/video/42/1.webp"}
+        "/api/thumb", params={"url": "https://animefire.one/img/video/42/1.webp"}
     )
 
     assert resposta.status_code == 404

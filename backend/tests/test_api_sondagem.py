@@ -350,14 +350,14 @@ async def test_sondagem_bem_sucedida_persiste_as_tres_colunas(
 ):
     async def _fake(sessionmaker, anime, versao):
         return EpisodiosRemotosResultado(
-            dominio="animefire.io", episodios=[_ep("1", 1), _ep("2", 2), _ep("3", 3)]
+            dominio="animefire.one", episodios=[_ep("1", 1), _ep("2", 2), _ep("3", 3)]
         )
 
     monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
     anime_id = await _criar_anime(
         sessionmaker_api, "persiste", status_lancamento=StatusLancamento.EM_LANCAMENTO
     )
-    await _mapear_fonte(sessionmaker_api, anime_id, dominio="animefire.io")
+    await _mapear_fonte(sessionmaker_api, anime_id, dominio="animefire.one")
 
     antes = datetime.now(UTC)
     animes = await _carregar(sessionmaker_api, anime_id)
@@ -367,7 +367,7 @@ async def test_sondagem_bem_sucedida_persiste_as_tres_colunas(
     async with sessionmaker_api() as sessao:
         anime = await sessao.get(Anime, anime_id)
         assert anime.episodios_na_fonte == 3
-        assert anime.fonte_verificada_dominio == "animefire.io"
+        assert anime.fonte_verificada_dominio == "animefire.one"
         assert anime.fonte_verificada_em is not None
         assert anime.fonte_verificada_em >= antes
 

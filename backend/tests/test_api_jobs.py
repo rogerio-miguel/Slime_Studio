@@ -137,7 +137,7 @@ async def test_criar_job_modo_site_ambiguo_409(
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return ConfirmacaoNecessaria(
-            dominio="animefire.io",
+            dominio="animefire.one",
             candidatos=[
                 ResultadoBusca(
                     titulo_exibicao="Anime Ambíguo A", identificador="1", url="https://x/1"
@@ -168,7 +168,7 @@ async def test_criar_job_modo_site_episodio_nao_encontrado_404(
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -201,7 +201,7 @@ async def test_criar_job_modo_site_colisao_de_numero_usa_primeiro_e_loga(
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -244,7 +244,7 @@ async def test_criar_job_modo_site_versao_do_episodio_deriva_da_fonte_nao_do_req
     async def _resolver_fake(sessionmaker, anime, versao):
         assert versao == VersaoEpisodio.DUBLADO  # propagado do request
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -288,14 +288,14 @@ async def test_criar_job_modo_site_reaproveita_episodio_liberado(
         sessionmaker_api,
         anime_id,
         status=StatusEpisodio.LIBERADO,
-        site_origem="animefire.io",
+        site_origem="animefire.one",
         assistido_em=assistido_em,
         progresso_s=300,
     )
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -317,7 +317,7 @@ async def test_criar_job_modo_site_reaproveita_episodio_liberado(
         episodio = await sessao.get(Episodio, episodio_id)
         assert episodio.status == StatusEpisodio.PENDENTE
         assert episodio.url_fonte == "https://x/ep1-recapturado"
-        assert episodio.site_origem == "animefire.io"
+        assert episodio.site_origem == "animefire.one"
         assert episodio.hls_path is None
         assert episodio.assistido_em is not None
         assert episodio.progresso_s is None
@@ -343,12 +343,12 @@ async def test_criar_job_modo_site_reaproveita_episodio_falhou(
         sessionmaker_api,
         anime_id,
         status=StatusEpisodio.FALHOU,
-        site_origem="animefire.io",
+        site_origem="animefire.one",
     )
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -437,7 +437,7 @@ async def test_criar_job_modo_site_persiste_thumb_da_fonte_em_capa_path(
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -448,7 +448,7 @@ async def test_criar_job_modo_site_persiste_thumb_da_fonte_em_capa_path(
                 rotulo="1",
                 numero=1,
                 url="https://x/ep1",
-                thumb_url="https://animefire.io/img/video/42/1.webp",
+                thumb_url="https://animefire.one/img/video/42/1.webp",
             )
         ]
 
@@ -465,7 +465,7 @@ async def test_criar_job_modo_site_persiste_thumb_da_fonte_em_capa_path(
         episodio = (
             await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
         ).scalar_one()
-    assert episodio.capa_path == "https://animefire.io/img/video/42/1.webp"
+    assert episodio.capa_path == "https://animefire.one/img/video/42/1.webp"
 
 
 async def test_criar_job_modo_site_recaptura_sem_thumb_preserva_capa_path(
@@ -481,13 +481,13 @@ async def test_criar_job_modo_site_recaptura_sem_thumb_preserva_capa_path(
         sessionmaker_api,
         anime_id,
         status=StatusEpisodio.LIBERADO,
-        site_origem="animefire.io",
-        capa_path="https://animefire.io/img/video/42/1.webp",
+        site_origem="animefire.one",
+        capa_path="https://animefire.one/img/video/42/1.webp",
     )
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
@@ -506,7 +506,7 @@ async def test_criar_job_modo_site_recaptura_sem_thumb_preserva_capa_path(
     assert resposta.status_code == 201
     async with sessionmaker_api() as sessao:
         episodio = await sessao.get(Episodio, episodio_id)
-    assert episodio.capa_path == "https://animefire.io/img/video/42/1.webp"
+    assert episodio.capa_path == "https://animefire.one/img/video/42/1.webp"
 
 
 async def test_criar_job_modo_site_recaptura_com_job_ativo_409(
@@ -523,7 +523,7 @@ async def test_criar_job_modo_site_recaptura_com_job_ativo_409(
         sessionmaker_api,
         anime_id,
         status=StatusEpisodio.LIBERADO,
-        site_origem="animefire.io",
+        site_origem="animefire.one",
     )
     async with sessionmaker_api() as sessao:
         job_ativo = Job(episodio_id=episodio_id, status=StatusJob.TRANSCODIFICANDO)
@@ -532,7 +532,7 @@ async def test_criar_job_modo_site_recaptura_com_job_ativo_409(
 
     async def _resolver_fake(sessionmaker, anime, versao):
         return FonteResolvida(
-            dominio="animefire.io",
+            dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )

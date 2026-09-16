@@ -28,7 +28,7 @@ def extrator() -> AnimeFireProvider:
     return AnimeFireProvider()
 
 
-_API_URL = "https://api.animefire.io"
+_API_URL = "https://api.animefire.one"
 
 
 class _ClienteComExcecao404:
@@ -233,7 +233,7 @@ def test_buscar_titulo_com_virgula_formata_termo_via_slugificar(extrator):
     """Regressão: `.replace(" ", "-")` sozinho preservava vírgula literal na
     URL de busca (`.../kimi-to,-me-ni-...`), que nunca casava com o slug real
     do card (`.../kimi-to-me-ni-...`, vírgula colapsada junto do espaço num
-    único hífen — confirmado ao vivo contra animefire.io). Mesma formatação de
+    único hífen — confirmado ao vivo contra animefire.one). Mesma formatação de
     `q` vale pro endpoint JSON, que aceita hífen ou espaço."""
     titulo = "Toumei na Yoru ni Kakeru Kimi to, Me ni Mienai Koi wo Shita"
     url_busca = (

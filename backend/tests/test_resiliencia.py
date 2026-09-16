@@ -14,7 +14,7 @@ from extractors.cliente import ClienteDeSite
 from models.base import Base
 from models.estado_site import EstadoSite
 
-_DOMINIO = "animefire.io"
+_DOMINIO = "animefire.one"
 
 
 class _ExtratorFalso(ExtratorDeSite):
