@@ -2,11 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import logo from '../assets/logo2.png';
 
-// Navbar fixa (z-20, sempre acima do vídeo de intro e do conteúdo revelado) —
-// opacidade e `inert` controlados pela fase da intro (paginas/Inicio.jsx via
-// inicio/useIntroPorVideo.js): invisível e inalcançável por teclado até
-// `revelado`, mesma fase que dispara o fade-in do `main` (paginas/Inicio.jsx)
-// — navbar e conteúdo aparecem juntos, ao final do vídeo.
+// Navbar fixa (z-20, sempre acima do conteúdo).
 //
 // Gêneros: decisão do usuário sobre dado faltante — não existe gênero no
 // modelo hoje, então fica visível mas desabilitado (`disabled` +
@@ -31,14 +27,12 @@ import logo from '../assets/logo2.png';
 // mais escuro que o `<main>` (#17171b) pra manter contraste com o conteúdo
 // que passa por baixo.
 export default function BarraDeNavegacao({
-  fase,
   transparente = false,
   termoBusca,
   aoMudarBusca,
   aoSubmeterBusca,
 }) {
   const idBusca = useId();
-  const visivel = fase === 'revelado';
   const { pathname } = useLocation();
   const emInicio = pathname === '/';
   const emAnimes = pathname.startsWith('/animes');
@@ -62,10 +56,7 @@ export default function BarraDeNavegacao({
   return (
     <nav
       aria-label="Principal"
-      inert={fase !== 'revelado'}
-      className={`fixed inset-x-0 top-0 z-20 flex h-20 items-center justify-between gap-6 px-6 transition-[opacity,background-color] duration-700 ease-out md:px-10 ${fundo} ${
-        visivel ? 'opacity-100' : 'opacity-0'
-      }`}
+      className={`fixed inset-x-0 top-0 z-20 flex h-20 items-center justify-between gap-6 px-6 transition-[background-color] duration-700 ease-out md:px-10 ${fundo}`}
     >
       <div className="flex items-center gap-10">
         {/* Decorativa: não navega. Altura da nav é fixa (h-20 acima) e não
@@ -76,10 +67,6 @@ export default function BarraDeNavegacao({
           <li>
             <Link
               to="/"
-              // `state.revelado`: sinaliza pra Inicio.jsx (via `location.state`)
-              // que a navegação veio deste link — pula a intro de vídeo
-              // direto pro estado final em vez de reiniciá-la do zero.
-              state={{ revelado: true }}
               aria-current={emInicio ? 'page' : undefined}
               className={`outline-none transition-colors font-bold hover:text-neon ${
                 emInicio ? 'text-neon' : 'focus-visible:text-white'

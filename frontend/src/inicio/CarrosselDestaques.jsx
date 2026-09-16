@@ -70,7 +70,7 @@ import BlocoConteudoHero from './BlocoConteudoHero.jsx';
 // `<section>` (sem listener global). O track tem `aria-live` (silencioso
 // enquanto o auto-avanço roda; `polite` quando parado por hover/foco/
 // `prefers-reduced-motion`) e o auto-avanço reagenda um `setTimeout` por slide
-// — gate por `ativa`, hover/foco e movimento reduzido.
+// — gate por hover/foco e movimento reduzido.
 
 // `TAMANHO_DA_JANELA` (destaques por vez) e `INTERVALO_ROTACAO_MS` (de quanto
 // em quanto a janela desliza pelo pool), junto com `embaralharComSemente`,
@@ -193,7 +193,7 @@ export function IconeEmAlta(props) {
   );
 }
 
-export default function CarrosselDestaques({ itens, ativa, aoMaterializar, materializando }) {
+export default function CarrosselDestaques({ itens, aoMaterializar, materializando }) {
   const idTitulo = useId();
   const idSlides = useId();
   const trackRef = useRef(null);
@@ -294,16 +294,15 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
   }, [pausado]);
 
   // Rotação da janela: a cada `INTERVALO_ROTACAO_MS` avança um bloco pelo pool.
-  // Gate por `ativa` (não gira atrás da introdução) e por haver mais itens que
-  // a janela. Hover/foco só adiam o próximo avanço (via `pausadoRef`), não
-  // reiniciam o timer.
+  // Gate por haver mais itens que a janela. Hover/foco só adiam o próximo
+  // avanço (via `pausadoRef`), não reiniciam o timer.
   useEffect(() => {
-    if (!ativa || pool.length <= TAMANHO_DA_JANELA) return undefined;
+    if (pool.length <= TAMANHO_DA_JANELA) return undefined;
     const id = setInterval(() => {
       if (!pausadoRef.current) setBlocoDaJanela((b) => b + 1);
     }, INTERVALO_ROTACAO_MS);
     return () => clearInterval(id);
-  }, [ativa, pool.length]);
+  }, [pool.length]);
 
   // Janela girou: o recorte inteiro trocou de conteúdo. Corta pro começo da
   // cópia do meio SEM animar (mesmo `semTransicao` da normalização) — um
@@ -320,9 +319,9 @@ export default function CarrosselDestaques({ itens, ativa, aoMaterializar, mater
   }, [blocoDaJanela, n]);
 
   // Gate único do auto-avanço, reusado no efeito e no `aria-live` do track:
-  // intro revelada (`ativa`), sem preferência por menos movimento, sem pausa
-  // por hover/foco e com mais de um destaque.
-  const autoAvancando = ativa && !movimentoReduzido && !pausado && n > 1;
+  // sem preferência por menos movimento, sem pausa por hover/foco e com mais
+  // de um destaque.
+  const autoAvancando = !movimentoReduzido && !pausado && n > 1;
 
   // Cadeia de timeouts: cada disparo avança 1 slide; ao mudar `pos` (inclusive
   // por navegação manual) o efeito reexecuta e a janela de 7s reinicia. Fora

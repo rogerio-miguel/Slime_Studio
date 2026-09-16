@@ -124,7 +124,7 @@ export function CartaoDeEpisodio({
       : 'rgba(0,0,0,0.38) 0 8px 10px -4px, rgba(0,0,0,0.28) 0 2px 4px -3px',
   };
   const classeCaixa = `relative flex w-full overflow-hidden bg-surface text-left text-sm ${cor} ${
-    emGrade ? 'aspect-[16/9] rounded-2xl' : 'rounded-lg'
+    emGrade ? 'aspect-[16/9] ' : ''
   }`;
   // `cor` repetido aqui: no modo grade a legenda mora FORA da caixa acima,
   // então precisa da própria herança de cor/peso de fonte (ex. o
@@ -177,7 +177,7 @@ export function CartaoDeEpisodio({
     // `AnimeCard.jsx`), sem deslocar o conjunto pra esquerda.
     const classe =
       `group/cartao relative flex w-[calc(100%+1rem)] flex-col gap-1.5 text-left text-sm ${cor} ` +
-      'cursor-pointer rounded-2xl p-2 -m-2 outline-none transition-colors duration-300 ease-out ' +
+      'cursor-pointer p-2 -m-2 outline-none transition-colors duration-300 ease-out ' +
       'hover:bg-surface-hover motion-reduce:transition-none';
     const miolo = (
       <>
@@ -398,12 +398,19 @@ function SinopseEpisodio({ sinopse }) {
 
 // "Assistido": o episódio foi visto até o fim (`assistido_em`) — distinto da
 // pista de "pronto pra assistir" (IndicadorDePlay, centralizada sobre a thumb).
-// Pill de fundo neon (mesmo `bg-neon` do accent do app); mesmo estilo nos ramos
-// `pronto` e `liberadoOuDescartado`.
-function BadgeAssistido() {
+// Mesmo estilo nos ramos `pronto` e `liberadoOuDescartado`. `flutuante`
+// (pedido explícito do usuário, 2026-09-15): modo GRADE move o badge pra
+// DENTRO da caixa recortada, ancorado no canto inferior direito da miniatura
+// — mesmo texto/tipografia, só a posição muda (sem ícone, sem fundo novo); o
+// contraste contra a thumb vem do `ScrimAssistido` já aplicado por baixo dele
+// nesse modo. Modo lista continua sem `flutuante`, em fluxo normal no
+// `trailing` da legenda (FaixaDeConteudo).
+function BadgeAssistido({ flutuante = false }) {
   return (
     <span
-      className="px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-white"
+      className={`px-2.5 py-0.5 bg-black/80 text-xs font-semibold uppercase tracking-wide text-white ${
+        flutuante ? 'absolute bottom-2 right-2 z-10' : ''
+      }`}
       aria-label="já assistido"
     >
       Assistido
@@ -418,7 +425,7 @@ function BadgeAssistido() {
 // IndicadorDePlay, do rodapé em degradê e da borda neon na árvore — nada disso
 // é esmaecido, só a imagem. `aria-hidden`: o BadgeAssistido carrega o rótulo.
 function ScrimAssistido() {
-  return <span aria-hidden="true" className="absolute inset-0 bg-[#0b0b0d]/40" />;
+  return <span aria-hidden="true" className="absolute inset-0 bg-[#0b0b0d]/10" />;
 }
 
 // Verbo de captura como texto — renderizado SÓ no modo lista. No modo grade
@@ -594,7 +601,7 @@ export default function LinhaDeEpisodio({
           <FaixaDeConteudo
             modo={modo}
             rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} titulo={titulo} />}
-            trailing={episodio.assistido_em ? <BadgeAssistido /> : null}
+            trailing={!emGrade && episodio.assistido_em ? <BadgeAssistido /> : null}
             sinopse={<SinopseEpisodio sinopse={sinopse} />}
             extra={
               percentualAssistido != null ? (
@@ -624,6 +631,7 @@ export default function LinhaDeEpisodio({
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
         {emGrade && episodio.assistido_em && <ScrimAssistido />}
         <IndicadorDePlay emGrade={emGrade} temThumb={!!thumb} />
+        {emGrade && episodio.assistido_em && <BadgeAssistido flutuante />}
       </CartaoDeEpisodio>
     );
   }
@@ -657,16 +665,19 @@ export default function LinhaDeEpisodio({
     ) {
       notaOrigem = ROTULO_VERSAO[episodioDescartado.versao] ?? episodioDescartado.versao;
     }
-    // Trailing: "✓ assistido" (de qualquer uma das duas fontes), a nota de
-    // origem entre parênteses e — só no modo lista, só com número — o verbo
-    // "Recapturar". No modo grade o "Capturando…" transitório é overlay
-    // (overlayCapturando) e não há verbo em repouso; `naoNumerico` (defensivo,
-    // um episódio liberado sempre tem número) também não recapura.
+    // Trailing: "✓ assistido" (de qualquer uma das duas fontes, só modo
+    // lista — modo grade renderiza a versão flutuante sobre a miniatura, ver
+    // `conteudo` abaixo), a nota de origem entre parênteses e — só no modo
+    // lista, só com número — o verbo "Recapturar". No modo grade o
+    // "Capturando…" transitório é overlay (overlayCapturando) e não há verbo
+    // em repouso; `naoNumerico` (defensivo, um episódio liberado sempre tem
+    // número) também não recapura.
+    const mostraAssistidoTrailing = !emGrade && liberadoOuDescartado.assistido_em;
     const mostraAcao = !emGrade && !naoNumerico;
     const trailing =
-      liberadoOuDescartado.assistido_em || notaOrigem || mostraAcao ? (
+      mostraAssistidoTrailing || notaOrigem || mostraAcao ? (
         <span className="flex shrink-0 items-start gap-2">
-          {liberadoOuDescartado.assistido_em && <BadgeAssistido />}
+          {mostraAssistidoTrailing && <BadgeAssistido />}
           {notaOrigem && <span className="text-sm font-semibold text-white">({notaOrigem})</span>}
           {mostraAcao && <RotuloDeAcao verbo="Recapturar" capturando={capturando} />}
         </span>
@@ -676,6 +687,7 @@ export default function LinhaDeEpisodio({
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
         {emGrade && liberadoOuDescartado.assistido_em && <ScrimAssistido />}
         {overlayCapturando}
+        {emGrade && liberadoOuDescartado.assistido_em && <BadgeAssistido flutuante />}
       </>
     );
     const legenda = (

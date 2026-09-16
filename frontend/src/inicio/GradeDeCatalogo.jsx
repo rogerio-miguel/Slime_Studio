@@ -6,15 +6,20 @@ import { SlotDeCard } from './GradeDeCards.jsx';
 // em vez de rolar. Compartilha o vocabulário de tamanho de ./tamanhoDeCard.js
 // (mesmo `--por-pagina` por breakpoint via `CLASSES_POR_PAGINA`, mesmo
 // `CLASSE_GUTTER`, mesmo `FLEX_BASIS_SLOT`), então o card sai com a MESMA
-// largura de slot que a fileira por construção — a única diferença é o
-// padding do `<li>` abaixo (ZERADO aqui, a fileira usa `p-[10px]`): pedido
-// explícito do usuário pra não sobrar respiro nenhum entre cards, maximizando
-// o pôster mantendo `--por-pagina` intacto (6 por linha no xl, tamanho
-// "pequeno"). Nenhuma fileira usa "pequeno" hoje, então a diferença de
-// respiro não aparece lado a lado em lugar nenhum. Consequência conhecida:
-// com o respiro zerado, o halo cinza do hover (`p-3 -m-3` em
-// components/AnimeCard.jsx, ~12px) não tem mais pra onde vazar sem invadir o
-// pôster vizinho — não corrigido aqui, avisar se incomodar visualmente.
+// largura de slot que a fileira por construção — desde que as duas passem o
+// MESMO `tamanho`: as fileiras de pôster da Home (Próximas estreias, Top 10)
+// e as duas grades daqui passam `tamanho="pequeno"` explicitamente (pedido
+// explícito do usuário, 2026-09-15 — antes as fileiras caíam no default
+// "grande" do componente e saíam maiores que a Galeria; ver ./tamanhoDeCard.js
+// pro vocabulário completo). `<li>` sem padding — pedido explícito do usuário
+// pra não sobrar respiro nenhum entre cards, maximizando o pôster mantendo
+// `--por-pagina` intacto (6 por linha no xl, tamanho "pequeno").
+// FileiraDeCards.jsx usava `p-[10px]` no slot antes; depois (2026-09-15) o
+// usuário removeu de lá também, então hoje as duas telas têm o MESMO
+// tratamento de padding também. Consequência conhecida: com o respiro
+// zerado, o halo cinza do hover (`p-3 -m-3` em components/AnimeCard.jsx,
+// ~12px) não tem mais pra onde vazar sem invadir o pôster vizinho — não
+// corrigido aqui, avisar se incomodar visualmente.
 //
 // Sem setas / `onScroll` / `medirLimites` / `useRef`: não há trilha rolável
 // pra medir. Nada aqui recorta o overflow (não há `overflow-x-auto` como na

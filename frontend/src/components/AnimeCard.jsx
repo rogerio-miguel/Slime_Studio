@@ -1,5 +1,6 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
+import { Calendar, Check, Sparkles } from 'lucide-react';
 import { textoDeProximaTemporada } from '../inicio/franquia.js';
 import textoEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
@@ -130,27 +131,26 @@ export default function AnimeCard({
   // topo do arquivo) — só usados nos ramos com Link/button real (`estatico`
   // não precisa, não navega).
   const idBadge = useId();
+  const idBadgeAviso = useId();
   const idLegenda = useId();
 
-  // Marca "assistido": só a pill no canto do pôster (sem scrim — decisão de
-  // produto, o card do catálogo não escurece a capa; o scrim mora só no card
-  // de episódio, components/LinhaDeEpisodio.jsx). Canto esquerdo pra não
-  // colidir com o botão de remover (canto direito). `absolute` (não
-  // `relative`) pelo mesmo motivo do botão de remover — ancora no canto do
-  // pôster (`relative` na div do pôster) de forma confiável, não por sorte de
-  // fluxo (a `<img>` acima é `absolute`, então hoje a pill seria o único
-  // conteúdo em fluxo e "funcionaria" mesmo com `relative`, mas isso quebra
-  // no primeiro filho novo que alguém adicionar ali). `h-8` explícito +
-  // `inline-flex items-center` (não `py-*`): mesma altura EXATA do ícone
-  // (`h-8`, sem padding ao redor) do botão de remover
+  // Marca "assistido": pill dentro do grupo empilhado no canto superior
+  // esquerdo do pôster (`pillsSuperiores`, ver abaixo) — pedido explícito do
+  // usuário (2026-09-15) pra unificar TODAS as pills do card no mesmo canto,
+  // mesmo design. Ícone `Check` (lucide-react, pedido explícito do usuário)
+  // pra igualar as outras duas pills (`Calendar`/`Sparkles` em `badgeAviso`
+  // abaixo), que já tinham ícone. `h-8`
+  // explícito + `inline-flex items-center` (não `py-*`): mesma altura EXATA
+  // do ícone (`h-8`, sem padding ao redor) do botão de remover
   // (components/BotaoRemoverDoCatalogo.jsx) — alinha os dois pelo centro
   // vertical independente da métrica de linha do texto.
   const badgeAssistido = assistido && (
     <span
       id={idBadge}
-      className="absolute left-2 top-2 z-10 inline-flex h-8 items-center rounded-2xl bg-black/80 backdrop-blur-md px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white"
+      className="inline-flex h-8 items-center gap-1 whitespace-nowrap bg-black/80 backdrop-blur-md px-2.5 text-xs font-semibold uppercase tracking-wide text-white"
       aria-label="já assistido"
     >
+      <Check aria-hidden="true" className="h-4 w-4" />
       Assistido
     </span>
   );
@@ -173,12 +173,10 @@ export default function AnimeCard({
   const numeroDeEpisodios =
     anime.episodios_atuais ?? anime.total_episodios_anilist ?? anime.total_episodios ?? null;
   // Aviso "episódio novo" (`textoEpisodiosNovos`, texto cru — ver
-  // components/BadgeDeEpisodiosNovos.jsx) anexado na MESMA linha da tag de
-  // temporada, formato "T1 EP.24 • Novo episódio disponível" (pedido
-  // explícito do usuário). Sem tag de temporada (`numeroDeEpisodios` nulo —
-  // anime nunca refrescado), cai pra linha própria, mesmo tom neon: nunca
-  // esconder a novidade só porque falta o outro dado.
-  const avisoNovos = textoEpisodiosNovos(anime.episodios_novos);
+  // components/BadgeDeEpisodiosNovos.jsx) — virou badge sobre o pôster (ver
+  // `textoBadgeAviso`/`badgeAviso` abaixo), não mais texto na legenda.
+  // `!semLegenda &&` pelo mesmo motivo de `assistido`/`avisoProximaTemporada`.
+  const avisoNovos = !semLegenda && textoEpisodiosNovos(anime.episodios_novos);
   // Rótulo "Dublado"/"Legendado" (`AnimeSaida.versao_confirmada_mais_recente`,
   // backend/api/rotas/animes.py::listar_animes) na mesma linha — `null` sem
   // fonte mapeada ainda OU quando ela não diferencia versão
@@ -205,12 +203,6 @@ export default function AnimeCard({
           {rotuloVersao}
         </>
       )}
-      {avisoNovos && (
-        <span className="text-neon">
-          {separador}
-          {avisoNovos}
-        </span>
-      )}
     </p>
   );
 
@@ -222,25 +214,69 @@ export default function AnimeCard({
   // (`AnimeSaida.proxima_temporada`), inclusive no representante de franquia
   // agrupado por `agruparEmFranquias` (spread do anime representante,
   // `inicio/franquia.js`).
-  const avisoProximaTemporada = textoDeProximaTemporada(anime.proxima_temporada, { curto: true });
+  // `!semLegenda &&` no início pelo mesmo motivo de `assistido` acima: nos
+  // usos `semLegenda` (card-ilustração de paginas/PaginaDoAnime.jsx) o card
+  // já está ao lado do próprio texto de próxima temporada no hero da página —
+  // repetir a badge sobre o pôster seria redundante.
+  const avisoProximaTemporada =
+    !semLegenda && textoDeProximaTemporada(anime.proxima_temporada, { curto: true });
+
+  // Badge única, compartilhada por "próxima temporada" e "episódio novo" — os
+  // dois avisos nunca coexistem no mesmo card na prática: a franquia só ganha
+  // `proxima_temporada` enquanto a temporada seguinte está `nao_lancado`
+  // (backend, `api/rotas/animes.py::_prevista`); assim que o 1º episódio é
+  // detectado, o status vira `em_lancamento` e ela some do campo — só a
+  // partir daí `episodios_novos` passa a fazer sentido. Prioridade (`||`) é
+  // só defensiva pro caso raro de dado inconsistente/em trânsito entre os
+  // dois estados. Ícone por variante (lucide-react, conferido contra a
+  // biblioteca antes de desenhar à mão): `Sparkles` pra "episódio novo",
+  // `Calendar` pra "próxima temporada" — pedido explícito do usuário
+  // (2026-09-15) pra igualar a linguagem visual das duas pills, que antes só
+  // uma tinha ícone.
+  const ehAvisoNovosEps = !avisoProximaTemporada && Boolean(avisoNovos);
+  const textoBadgeAviso = avisoProximaTemporada || avisoNovos;
+  const badgeAviso = textoBadgeAviso && (
+    <span
+      id={idBadgeAviso}
+      className="inline-flex h-8 items-center gap-1 whitespace-nowrap bg-black/80 backdrop-blur-md px-2.5 text-xs font-semibold uppercase tracking-wide text-white"
+    >
+      {ehAvisoNovosEps ? (
+        <Sparkles aria-hidden="true" className="h-4 w-4" />
+      ) : (
+        <Calendar aria-hidden="true" className="h-4 w-4" />
+      )}
+      {textoBadgeAviso}
+    </span>
+  );
+
+  // Grupo que empilha TODAS as pills do card no canto superior esquerdo do
+  // pôster (pedido explícito do usuário, 2026-09-15) — quando `badgeAssistido`
+  // e `badgeAviso` coexistem, ficam uma embaixo da outra (`flex-col`), não
+  // lado a lado: em fila horizontal as duas juntas (ex. "ASSISTIDO" + "2ª TEMP
+  // • 4 OUT") facilmente estourariam a largura do pôster e colidiriam com
+  // `BotaoRemoverDoCatalogo` (canto superior direito); empilhado, cada pill
+  // usa a largura que precisa e o conjunto só cresce pra baixo — o pôster tem
+  // altura de sobra (`aspect-[2/3]`) pra isso. `items-start` alinha as duas
+  // pelo canto esquerdo mesmo com larguras diferentes. `absolute` (não
+  // `relative`) ancora no canto do pôster (`relative` na div da capa) de
+  // forma confiável — mesmo raciocínio que já valia pra cada pill isolada
+  // antes desta mudança.
+  const pillsSuperiores = (badgeAssistido || badgeAviso) && (
+    <div className="absolute left-2 top-2 z-10 flex flex-col items-start gap-1.5">
+      {badgeAssistido}
+      {badgeAviso}
+    </div>
+  );
 
   // Título primeiro (sem cor de hover — pedido explícito do usuário),
-  // badges/tags (temporada + episódios novos, próxima temporada, aviso,
-  // fonte) abaixo dele.
+  // badges/tags (temporada, aviso, fonte) abaixo dele — próxima temporada e
+  // episódio novo saíram daqui, viraram a badge sobre o pôster (acima).
   const legenda = !semLegenda && (
     <>
       <h2 className="line-clamp-2 text-sm font-semibold leading-snug text-white lg:text-base">
         {titulo}
       </h2>
       {tagTemporada}
-      {!tagTemporada && avisoNovos && (
-        <p className="text-xs font-semibold uppercase tracking-wide text-neon">{avisoNovos}</p>
-      )}
-      {avisoProximaTemporada && (
-        <p className="text-xs font-semibold uppercase tracking-wide text-neon">
-          {avisoProximaTemporada}
-        </p>
-      )}
       {aviso && (
         <p className="text-xs font-semibold uppercase tracking-wide text-neon">{aviso}</p>
       )}
@@ -263,16 +299,18 @@ export default function AnimeCard({
     // conteúdo do lugar — a margem negativa cancela o padding no layout do
     // slot, então o pôster não encolhe —, só revelando a caixa maior que
     // pôster+legenda quando `hover:bg-surface-hover` pinta ela; ver bloco de
-    // comentário no topo). 12px de cada lado: teto seguro é o `p-[10px]` do
-    // slot da grade (GradeDeCatalogo.jsx/FileiraDeCards.jsx) somado ao do
-    // vizinho — até ~16px ainda não encosta no pôster ao lado.
+    // comentário no topo). 12px de cada lado: o slot da grade/fileira
+    // (GradeDeCatalogo.jsx/FileiraDeCards.jsx) não tem mais padding nenhum
+    // (removido a pedido do usuário, 2026-09-15) — o halo de hover INVADE o
+    // pôster vizinho agora (consequência conhecida, documentada no topo de
+    // GradeDeCatalogo.jsx; não corrigido aqui).
     classesConteudo =
-      'relative flex w-full flex-col gap-2 rounded-2xl p-3 -m-3 text-left transition-colors duration-300 ease-out group-hover/card:bg-surface-hover motion-reduce:transition-none';
+      'relative flex w-full flex-col gap-2  p-3 -m-3 text-left transition-colors duration-300 ease-out group-hover/card:bg-surface-hover motion-reduce:transition-none';
     conteudo = (
       <>
-        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl bg-surface">
+        <div className="relative aspect-[2/3] w-full overflow-hidden bg-surface">
           <img src={capa} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
-          {badgeAssistido}
+          {pillsSuperiores}
           {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
         </div>
         {!semLegenda && (
@@ -291,7 +329,7 @@ export default function AnimeCard({
       'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left transition-all duration-200 group-hover/card:bg-surface-hover';
     conteudo = (
       <>
-        {badgeAssistido}
+        {pillsSuperiores}
         {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
         {!semLegenda && (
           <div id={idLegenda} className="relative mt-auto flex flex-col gap-1">
@@ -324,13 +362,21 @@ export default function AnimeCard({
     );
   }
 
-  // Nome acessível da camada de navegação: `aria-labelledby` junta o badge
-  // "Assistido" (quando presente) com o bloco de legenda (título + tags),
+  // Nome acessível da camada de navegação: `aria-labelledby` junta os badges
+  // "Assistido" e de aviso (próxima temporada OU episódio novo, quando
+  // presentes, nessa ordem — mesma ordem visual de cima pra baixo no
+  // empilhamento de `pillsSuperiores`) com o bloco de legenda (título + tags),
   // igual ao texto que seria lido se estivesse tudo dentro do próprio
   // Link/button. `semLegenda` nunca ocorre nestes dois ramos na prática (só
   // combina com `estatico`, ver comentário no topo do arquivo), mas o
   // fallback pro `titulo` cru cobre esse caso defensivamente.
-  const idsRotulo = [assistido && idBadge, !semLegenda && idLegenda].filter(Boolean).join(' ');
+  const idsRotulo = [
+    assistido && idBadge,
+    textoBadgeAviso && idBadgeAviso,
+    !semLegenda && idLegenda,
+  ]
+    .filter(Boolean)
+    .join(' ');
   const propsRotulo = idsRotulo ? { 'aria-labelledby': idsRotulo } : { 'aria-label': titulo };
 
   if (idCatalogado != null) {

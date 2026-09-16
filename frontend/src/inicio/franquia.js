@@ -57,35 +57,57 @@ export function tituloBaseDeTemporada(titulo, numeroTemporada) {
   return semNumero === '' ? base : semNumero;
 }
 
-// Instância única de módulo (recriar `Intl.*` por render é caro).
+// Instâncias únicas de módulo (recriar `Intl.*` por render é caro).
 const fmtDataEstreia = new Intl.DateTimeFormat('pt-BR', {
   day: 'numeric',
   month: 'long',
   year: 'numeric',
 });
+// Curta pro card do catálogo (`curto: true`): dia + mês abreviado, sem o "de"
+// que o pt-BR do Intl insere entre os dois (`formatToParts` pra descartar só
+// esse literal) e sem o ponto da abreviação ("out." -> "Out") — a pill já
+// força caixa alta via CSS (`uppercase` em `components/AnimeCard.jsx`), a
+// capitalização aqui é só pra ficar legível no código-fonte.
+const fmtDataEstreiaCurta = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'short' });
+function dataCurta(data) {
+  const partes = fmtDataEstreiaCurta.formatToParts(data);
+  const dia = partes.find((p) => p.type === 'day').value;
+  const mes = partes.find((p) => p.type === 'month').value.replace('.', '');
+  return `${dia} ${mes.charAt(0).toUpperCase()}${mes.slice(1)}`;
+}
 
-// "2ª temporada estreia em 4 de outubro de 2026" (`curto: false`, default) ou
-// "2ª temporada em 4 de outubro de 2026" (`curto: true`, card do catálogo —
-// espaço menor, "estreia" é redundante ao lado do resto da legenda) a partir
-// de `anime.proxima_temporada` (`AnimeSaida`/`AnimeDetalheSaida`) — a
+// "2ª temporada estreia em 4 de outubro de 2026" (`curto: false`, default,
+// hero da página do anime) ou "2ª Temp • 4 Out" / "2ª Temp • 2026" (`curto:
+// true`, card do catálogo — pill pequena, formato pedido explícito do
+// usuário 2026-09-15, mesma abreviação "Temp" nos dois fallbacks de data) a
+// partir de `anime.proxima_temporada` (`AnimeSaida`/`AnimeDetalheSaida`) — a
 // temporada seguinte da franquia que ainda não saiu. Com `estreia_em` (ISO
 // `YYYY-MM-DD`, parse com `T00:00:00` pra cair na meia-noite LOCAL, evita o
-// dia anterior por fuso) mostra a data completa; sem ela, degrada pro ano
+// dia anterior por fuso) mostra a data; sem ela, degrada pro ano
 // (`proxima.ano`). `null` = nada a anunciar. Usado no hero da página do
 // anime (`paginas/PaginaDoAnime.jsx`) e no card do catálogo
 // (`components/AnimeCard.jsx`) — mesma função, só a variante muda.
 export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
   if (!proxima) return null;
-  const ordinal =
-    proxima.numero_temporada != null ? `${proxima.numero_temporada}ª temporada` : proxima.titulo;
-  const verbo = curto ? 'em' : 'estreia em';
-  if (proxima.estreia_em) {
-    const data = new Date(`${proxima.estreia_em}T00:00:00`);
-    if (!Number.isNaN(data.getTime())) {
-      return `${ordinal} ${verbo} ${fmtDataEstreia.format(data)}`;
+  const numero = proxima.numero_temporada;
+  const data = proxima.estreia_em ? new Date(`${proxima.estreia_em}T00:00:00`) : null;
+  const dataValida = data && !Number.isNaN(data.getTime());
+
+  if (curto) {
+    if (dataValida) {
+      const ordinal = numero != null ? `${numero}ª Temp` : proxima.titulo;
+      return `${ordinal} • ${dataCurta(data)}`;
     }
+    if (proxima.ano) {
+      const ordinal = numero != null ? `${numero}ª Temp` : proxima.titulo;
+      return `${ordinal} • ${proxima.ano}`;
+    }
+    return null;
   }
-  if (proxima.ano) return `${ordinal} ${verbo} ${proxima.ano}`;
+
+  const ordinal = numero != null ? `${numero}ª temporada` : proxima.titulo;
+  if (dataValida) return `${ordinal} estreia em ${fmtDataEstreia.format(data)}`;
+  if (proxima.ano) return `${ordinal} estreia em ${proxima.ano}`;
   return null;
 }
 

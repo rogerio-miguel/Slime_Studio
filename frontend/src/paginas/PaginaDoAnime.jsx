@@ -66,42 +66,57 @@ function pertenceAFonteAtiva(episodio, { dominioAtivo, versaoAtiva }) {
 // `usePreferencia` — mesmo prefixo `slime.` de `slime.preset`/`slime.hudVisivel`).
 const CHAVE_MODO_VISUALIZACAO = 'slime.modoVisualizacaoEpisodios';
 
-// Ícones inline do alternador lista/grade — sem lib de ícones (Escada de
-// Minimalismo, CLAUDE.md §4; mesmo padrão de `player/Icones.jsx`).
-// `aria-hidden`: o texto acessível vem do `aria-label` de cada <button>.
+// Ícones do alternador grade/lista — SVG à mão (Escada de Minimalismo,
+// CLAUDE.md §4, mesmo padrão de `player/Icones.jsx`): o `lucide-react` já
+// instalado tem `LayoutGrid`/`List` equivalentes, mas nenhum dos dois suporta
+// pintar só PARTE do ícone (a lib só preenche a peça inteira ou deixa tudo
+// contorno) — sem cobrir a necessidade, mão na massa é o passo certo. Inspirado
+// nos ícones `fad fa-th-large`/`fad fa-th-list` de um site de referência
+// (2026-09-15) — a proposta inicial era duotone (metade pintada, metade
+// contorno) só no `IconeGrade`; o `IconeLista` já nasceu com os 3 marcadores
+// sólidos e as barras em opacidade reduzida, e o `IconeGrade` virou 100%
+// sólido a pedido do usuário (mesma sessão), sem duotone. `width`/`height`
+// (22 na lista, 20 na grade — ajuste fino pedido explícito do usuário,
+// mesma sessão: com 22 os blocos cheios da grade pareciam pesados demais
+// perto da lista) cabem na caixa útil dentro do `<button>` `h-8 w-8` com
+// `border-2` (32px menos 2×2px de borda = 28px, com folga de cada lado): o
+// botão passou a ter tamanho FIXO (não mais o padding+conteúdo de antes) só
+// pra isso ser possível sem inflar o botão junto. `aria-hidden`: o texto
+// acessível vem do `aria-label` de cada <button>.
 const propsIconeVisualizacao = {
   viewBox: '0 0 24 24',
-  width: 16,
-  height: 16,
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 2,
-  strokeLinecap: 'round',
-  strokeLinejoin: 'round',
+  width: 22,
+  height: 22,
   'aria-hidden': 'true',
   focusable: 'false',
 };
 
-function IconeLista() {
+// Os 4 quadrados levam `stroke` além do `fill` (não só fill): sem ele, na
+// versão duotone anterior, o par sem preenchimento parecia maior — o SVG
+// centraliza o traço em cima do próprio path (1px vaza pra fora, 1px pra
+// dentro), então o contorno tinha 1px a mais de borda-a-borda que o
+// preenchido puro. Manter o mesmo `stroke`/`strokeWidth` nos 4 (mesmo agora
+// que todos são sólidos) preserva essa borda externa idêntica.
+function IconeGrade() {
   return (
-    <svg {...propsIconeVisualizacao}>
-      <line x1="8" y1="6" x2="21" y2="6" />
-      <line x1="8" y1="12" x2="21" y2="12" />
-      <line x1="8" y1="18" x2="21" y2="18" />
-      <line x1="3" y1="6" x2="3.01" y2="6" />
-      <line x1="3" y1="12" x2="3.01" y2="12" />
-      <line x1="3" y1="18" x2="3.01" y2="18" />
+    <svg {...propsIconeVisualizacao} width={20} height={20}>
+      <rect x="3" y="3" width="7" height="7" rx="1" fill="currentColor" stroke="currentColor" strokeWidth="2" />
+      <rect x="14" y="3" width="7" height="7" rx="1" fill="currentColor" stroke="currentColor" strokeWidth="2" />
+      <rect x="3" y="14" width="7" height="7" rx="1" fill="currentColor" stroke="currentColor" strokeWidth="2" />
+      <rect x="14" y="14" width="7" height="7" rx="1" fill="currentColor" stroke="currentColor" strokeWidth="2" />
     </svg>
   );
 }
 
-function IconeGrade() {
+function IconeLista() {
   return (
     <svg {...propsIconeVisualizacao}>
-      <rect x="3" y="3" width="7" height="7" />
-      <rect x="14" y="3" width="7" height="7" />
-      <rect x="3" y="14" width="7" height="7" />
-      <rect x="14" y="14" width="7" height="7" />
+      <rect x="3" y="3.5" width="5" height="5" rx="1.5" fill="currentColor" />
+      <rect x="3" y="9.5" width="5" height="5" rx="1.5" fill="currentColor" />
+      <rect x="3" y="15.5" width="5" height="5" rx="1.5" fill="currentColor" />
+      <rect x="10.5" y="4" width="10.5" height="4" rx="1.5" fill="currentColor" opacity="0.6" />
+      <rect x="10.5" y="10" width="10.5" height="4" rx="1.5" fill="currentColor" opacity="0.6" />
+      <rect x="10.5" y="16" width="10.5" height="4" rx="1.5" fill="currentColor" opacity="0.6" />
     </svg>
   );
 }
@@ -701,13 +716,11 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
 
   return (
     <>
-      {/* `fase="revelado"` fixo, mesmo uso de `paginas/Galeria.jsx` — não há
-          scrub de vídeo aqui, a navbar já nasce visível/interativa. Sem
-          `termoBusca`/`aoMudarBusca`: esta página não tem uma lista pra
+      {/* Sem `termoBusca`/`aoMudarBusca`: esta página não tem uma lista pra
           filtrar, então a caixa de busca nem renderiza (ver
           `components/BarraDeNavegacao.jsx`). `transparente`: sem fundo no topo
           (deixa a arte do hero aparecer sob a navbar), escurece ao rolar. */}
-      <BarraDeNavegacao fase="revelado" transparente />
+      <BarraDeNavegacao transparente />
       {/* `bg-black`: mesmo preto sólido de Galeria/Início (pedido explícito do
           usuário — antes esta página ficava em `#17171b`, cor histórica do
           Disney+, porque a grade de episódios em modo grade tem sombra
@@ -929,7 +942,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             <button
               type="button"
               onClick={() => setTrocandoFonte(true)}
-              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white"
+              className="rounded-md border-2 border-border-chrome px-2.5 h-8 text-xs text-ink-muted font-semibold outline-none transition-colors hover:border-neon hover:text-white cursor-pointer"
             >
               Trocar fonte
             </button>
@@ -944,7 +957,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               type="button"
               onClick={aoMarcarTodosAssistidos}
               disabled={marcandoTodosAssistidos || tudoAssistido}
-              className="rounded-md border-2 border-border-chrome px-3 py-1 text-xs text-ink-muted outline-none transition-colors hover:border-neon hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-chrome disabled:hover:text-ink-muted"
+              className="rounded-md border-2 border-border-chrome px-2.5 h-8 text-xs text-ink-muted font-semibold outline-none transition-colors hover:border-neon hover:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border-chrome disabled:hover:text-ink-muted cursor-pointer"
             >
               {marcandoTodosAssistidos
                 ? 'Marcando…'
@@ -959,7 +972,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
             <button
               type="button"
               onClick={() => setConfirmandoRemocao(true)}
-              className="rounded-md border-2 border-red-500/50 px-3 py-1 text-xs text-red-400 outline-none transition-colors hover:border-red-400 hover:text-red-300"
+              className="rounded-md border-2 border-red-500/50 px-2.5 h-8 text-xs text-red-400 font-semibold outline-none transition-colors hover:border-red-400 hover:text-red-300 cursor-pointer"
             >
               Remover do catálogo
             </button>
@@ -978,7 +991,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                   onClick={() => mudarModoVisualizacao(modo)}
                   aria-pressed={modoVisualizacao === modo}
                   aria-label={rotulo}
-                  className={`rounded-md border-2 p-1.5 outline-none transition-colors ${
+                  className={`flex h-8 w-8 items-center justify-center rounded-md border-2 outline-none transition-colors ${
                     modoVisualizacao === modo
                       ? 'border-neon text-white'
                       : 'border-border-chrome text-ink-muted hover:border-neon hover:text-white'
