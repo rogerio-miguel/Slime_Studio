@@ -2,6 +2,7 @@
 // tradução de campos camelCase (uso no frontend) <-> snake_case (contrato
 // HTTP) fica só aqui, nunca espalhada pelas páginas/componentes.
 import { requisitar } from './cliente.js';
+import { invalidar } from './invalidacao.js';
 
 // `aquecer` (opt-in) liga a carona fire-and-forget do backend — sondagem da
 // fonte real + aquecimento de `status_lancamento` via AniList/Kitsu. Só a
@@ -62,7 +63,10 @@ export function buscarEmFontes(titulo) {
 }
 
 export function marcarAssistido(episodioId) {
-  return requisitar(`/api/episodios/${episodioId}/assistido`, { metodo: 'POST' });
+  return requisitar(`/api/episodios/${episodioId}/assistido`, { metodo: 'POST' }).then((resultado) => {
+    invalidar('episodios');
+    return resultado;
+  });
 }
 
 // Botão "Marcar como assistido" da página do anime — marca em lote todo
@@ -75,6 +79,9 @@ export function marcarTodosAssistidos(animeId, versao) {
   const query = versao ? `?versao=${encodeURIComponent(versao)}` : '';
   return requisitar(`/api/admin/animes/${animeId}/marcar-todos-assistidos${query}`, {
     metodo: 'POST',
+  }).then((resultado) => {
+    invalidar('episodios');
+    return resultado;
   });
 }
 
@@ -96,6 +103,9 @@ export function salvarProgresso(episodioId, segundos, { manterVivo } = {}) {
     metodo: 'POST',
     corpo: { segundos },
     manterVivo,
+  }).then((resultado) => {
+    invalidar('episodios');
+    return resultado;
   });
 }
 
@@ -110,7 +120,12 @@ export function listarContinuarAssistindo() {
 // porque este request costuma sair de dentro de um listener de `pagehide`,
 // com a página já sendo descartada.
 export function liberarEpisodio(episodioId, { manterVivo } = {}) {
-  return requisitar(`/api/episodios/${episodioId}/liberar`, { metodo: 'POST', manterVivo });
+  return requisitar(`/api/episodios/${episodioId}/liberar`, { metodo: 'POST', manterVivo }).then(
+    (resultado) => {
+      invalidar('episodios');
+      return resultado;
+    }
+  );
 }
 
 // `anilistId`/`kitsuId`/`capaUrl`/`sinopse`/`bannerUrl`/`capaCor`/`generos`/
@@ -146,6 +161,9 @@ export function criarAnime({
       generos: generos,
       titulo_ingles: tituloIngles,
     },
+  }).then((resultado) => {
+    invalidar('animes');
+    return resultado;
   });
 }
 
@@ -174,5 +192,8 @@ export function confirmarFonte(animeId, { dominio, identificador, tituloExibicao
 }
 
 export function removerAnime(animeId) {
-  return requisitar(`/api/admin/animes/${animeId}`, { metodo: 'DELETE' });
+  return requisitar(`/api/admin/animes/${animeId}`, { metodo: 'DELETE' }).then((resultado) => {
+    invalidar('animes');
+    return resultado;
+  });
 }

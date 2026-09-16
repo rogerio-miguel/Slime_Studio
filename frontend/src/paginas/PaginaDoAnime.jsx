@@ -140,7 +140,11 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   } = useRecurso(() => obterAnime(animeId), [animeId]);
   const animeNaoEncontrado = erroAnime instanceof ErroDeApi && erroAnime.status === 404;
 
-  const episodios = useRecurso(() => listarEpisodios(animeId), [animeId]);
+  // Chave 'episodios' (invalidacao.js): recarrega sozinho quando
+  // `marcarAssistido`/`marcarTodosAssistidos`/`salvarProgresso`/
+  // `liberarEpisodio` resolve — inclusive quando disparado por
+  // `PaginaDoPlayer.jsx` já desmontada (saída fire-and-forget do player).
+  const episodios = useRecurso(() => listarEpisodios(animeId), [animeId], 'episodios');
 
   // Guard anti-loop do efeito abaixo: cada par `episodio.id:job.id` cujo job
   // já chegou a `pronto` sem o REST ainda refletir dispara UM `recarregar()`,
@@ -188,23 +192,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     // aqui rodaria o efeito em todo render, não só quando os dados mudam.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobsPorEpisodio, episodios.dados, episodios.recarregar]);
-
-  // Retry único e atrasado — cobre a corrida entre sair do player
-  // (PaginaDoPlayer.jsx, efeito de saída fire-and-forget: `liberarEpisodio`/
-  // `salvarProgresso` no cleanup, sem `await` antes de desmontar) e o GET
-  // acima (linha 157) chegando primeiro no backend: card renderiza sem a
-  // barra de progresso/badge "assistido" até um refresh manual. Sem sinal
-  // vivo pra essa corrida (diferente do guard de job "pronto" acima, que
-  // reage ao WebSocket) — 1s é um chute com folga pra cobrir o round-trip do
-  // POST de saída em rede local, não elimina a corrida de vez (só
-  // `useBlocker` segurando a navegação faria isso, atrasando toda saída do
-  // player). Reagenda a cada troca de `animeId`; sem guard feito à mão
-  // porque um `recarregar()` a mais é inofensivo.
-  useEffect(() => {
-    const id = setTimeout(() => episodios.recarregar(), 1000);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animeId]);
 
   const [numeroCapturando, setNumeroCapturando] = useState(null);
   const [erroCaptura, setErroCaptura] = useState(null);
@@ -610,13 +597,17 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     setMarcandoTodosAssistidos(true);
     setErroMarcarAssistidos(null);
     try {
+      // Sem `episodios.recarregar()` explícito no sucesso: `marcarTodosAssistidos`
+      // já invalida a chave 'episodios' (invalidacao.js) assim que resolve.
       await marcarTodosAssistidos(animeId, versaoPedida);
-      episodios.recarregar();
     } catch (erroCapturado) {
       // Mesmo segundo passo de `capturar` acima: resolve a fonte remota pra
       // criar os episódios faltantes, então pode bater nos mesmos erros de
       // fonte (o `UPDATE` dos já capturados já rodou nesses casos — só o
-      // passo de criar os que faltam falhou).
+      // passo de criar os que faltam falhou). Aqui o `recarregar()` segue
+      // manual: a Promise rejeitou, então `invalidar()` (dentro de
+      // `marcarTodosAssistidos`) nunca rodou, mas o UPDATE parcial já foi
+      // commitado no servidor.
       if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'fonte_ambigua') {
         setFonteAmbigua({ ...erroCapturado.detail, numero: null });
       } else if (
