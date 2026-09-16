@@ -129,8 +129,10 @@ export default function FileiraDeCards({
     <section aria-labelledby={idTitulo}>
       {/* Sem `margin-bottom`: o respiro até os cards vem do `pt` da trilha.
           `PADDING_TITULO` (./tamanhoDeCard.js) alinha o título com a borda do
-          CARD interno (gutter de 3.7% + os 10px de padding do slot); vai no
-          `style` pelo mesmo motivo do `flex-basis` abaixo. */}
+          CARD — hoje só o gutter de 3.7%, sem inset a mais: o slot não tem
+          mais padding (removido a pedido do usuário, 2026-09-15), então a
+          borda do card já coincide com a do gutter. Vai no `style` pelo mesmo
+          motivo do `flex-basis` abaixo. */}
       <h2
         id={idTitulo}
         style={{ paddingInline: PADDING_TITULO }}
@@ -146,15 +148,22 @@ export default function FileiraDeCards({
       <div className="group/fileira relative">
         {/* `pt-[22px] pb-[44px]` NÃO é cosmético: `overflow-x-auto` também
             recorta no eixo Y, e a drop shadow do billboard desce ~46px abaixo
-            da borda do card (`0 26px 30px -10px`). O card fica 10px acima da
-            borda do slot, daí `pb` >= ~36px pra sombra não ser cortada; 44px
-            dá folga. O `pt`
-            também é o respiro título -> cards (o h2 não tem `margin-bottom`).
-            Mesma classe de armadilha do `py-16 -my-16` de CarrosselDestaques.jsx.
-            Sem classe `gap-*`: o respiro entre cards vem do `p-[10px]` de cada
-            `<li>`. Scrollbar escondida nos dois motores (Firefox / WebKit).
-            `--por-pagina` (via `CLASSES_POR_PAGINA[tamanho]`) por breakpoint
-            aqui, nunca como prop numérica. */}
+            da borda do card (`0 26px 30px -10px`). O `pb-[44px]` foi calibrado
+            de quando o slot ainda tinha `p-[10px]` (card 10px acima da borda
+            do slot, `pb` só precisava cobrir ~36px) — hoje, sem esse padding
+            (removido a pedido do usuário, 2026-09-15), a borda do card
+            coincide com a do slot e o `pb` ideal seria ~46px; não ajustado
+            porque `comSombra` é `false` em todo chamador hoje (ver bloco de
+            comentário no topo do arquivo) — a sombra nem renderiza, então a
+            folga de 2px não tem efeito visual algum na prática. Revisitar se
+            `comSombra=true` voltar a ser usado. O `pt` também é o respiro
+            título -> cards (o h2 não tem `margin-bottom`). Mesma classe de
+            armadilha do `py-16 -my-16` de CarrosselDestaques.jsx. Sem classe
+            `gap-*` e sem padding no `<li>`: cards colam borda a borda (mesmo
+            tratamento de GradeDeCatalogo.jsx, ver comentário lá). Scrollbar
+            escondida nos dois motores (Firefox / WebKit). `--por-pagina` (via
+            `CLASSES_POR_PAGINA[tamanho]`) por breakpoint aqui, nunca como prop
+            numérica. */}
         <ul
           ref={trilhaRef}
           id={idTrilha}
@@ -166,14 +175,16 @@ export default function FileiraDeCards({
           {lista.map((item, indice) => (
             <li
               key={chaveDoItem(item)}
-              className="relative shrink-0 grow-0 p-[10px]"
+              className="relative shrink-0 grow-0"
               style={{ flexBasis: FLEX_BASIS_SLOT }}
             >
               {/* Wrapper só da sombra: traça o retângulo `rounded-xl` (mesmo
-                  raio do AnimeCard) exatamente na borda do card. Não pode
-                  morar no `<li>` (que tem `p-[10px]`) senão a sombra sairia
-                  destacada 10px do card. `style` inline pelo mesmo motivo de
-                  CarrosselDestaques.jsx: o
+                  raio do AnimeCard) exatamente na borda do card — hoje a
+                  borda do `<li>` já É a borda do card (slot sem padding, ver
+                  comentário acima), então este wrapper não corrige inset
+                  nenhum mais, só continua existindo como o lugar natural pra
+                  aplicar a sombra caso `comSombra` volte a ser usado.
+                  `style` inline pelo mesmo motivo de CarrosselDestaques.jsx: o
                   parser de valor arbitrário do Tailwind v4 não gera de forma
                   confiável sombra de 2 camadas começando pela cor.
                   `comSombra=false` pula esse wrapper por completo (ver bloco

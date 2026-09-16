@@ -9,7 +9,6 @@ import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 import { agruparEmFranquias } from '../inicio/franquia.js';
-import { traduzirGenero } from '../inicio/generos.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
@@ -62,9 +61,7 @@ function ordenarAnimes(lista, criterio) {
 // (`paginas/Inicio.jsx`, `POST /api/admin/animes`), não por um formulário
 // nesta página.
 //
-// Navbar renderizada com `fase="revelado"` fixo (mesma prop que
-// `paginas/Inicio.jsx` deriva de `useIntroPorVideo`, aqui não há intro —
-// a navbar já nasce totalmente visível/interativa). Busca é local: mesmo
+// Busca é local: mesmo
 // padrão de `termoBusca`/filtro em memória de `paginas/Inicio.jsx`, sem
 // `?q=` na URL nem `aoSubmeterBusca` — esta página não busca em fontes
 // externas, só filtra o catálogo já carregado (`GET /api/animes` não
@@ -84,7 +81,6 @@ function ordenarAnimes(lista, criterio) {
 export default function Galeria() {
   const idMeuCatalogo = useId();
   const idVideosLocais = useId();
-  const idFiltroGenero = useId();
   const idFiltroStatus = useId();
   const idOrdenacao = useId();
   const [termoBusca, setTermoBusca] = useState('');
@@ -99,22 +95,12 @@ export default function Galeria() {
     []
   );
 
-  const [generoSelecionado, setGeneroSelecionado] = useState('');
   const [statusSelecionado, setStatusSelecionado] = useState('');
   const [ordenacao, setOrdenacao] = useState('titulo');
 
   // Opções construídas a partir do catálogo já carregado — nunca hardcoded:
-  // um gênero/status que não aparece em nenhum anime não vira opção morta no
-  // dropdown. `anime.generos` é nullable (coluna ainda não populada para todo
-  // anime) — `?? []` cobre. Rótulo ordena as opções (não a chave crua).
-  const generosDisponiveis = useMemo(() => {
-    const encontrados = new Set();
-    for (const anime of animes ?? []) {
-      for (const genero of anime.generos ?? []) encontrados.add(genero);
-    }
-    return [...encontrados].sort((a, b) => traduzirGenero(a).localeCompare(traduzirGenero(b), 'pt-BR'));
-  }, [animes]);
-
+  // um status que não aparece em nenhum anime não vira opção morta no
+  // dropdown. Rótulo ordena as opções (não a chave crua).
   const statusDisponiveis = useMemo(() => {
     const encontrados = new Set();
     for (const anime of animes ?? []) {
@@ -131,8 +117,8 @@ export default function Galeria() {
   // só ganhou `serie_ancora`/`numero_temporada`, a lista é pequena (uso pessoal).
   const franquias = useMemo(() => agruparEmFranquias(animes ?? []), [animes]);
 
-  // Busca -> gênero -> status -> ordenação, sempre client-side sobre as franquias
-  // já agrupadas (sem chamada de API nova). Cada filtro bate se QUALQUER
+  // Busca -> status -> ordenação, sempre client-side sobre as franquias já
+  // agrupadas (sem chamada de API nova). Cada filtro bate se QUALQUER
   // temporada da franquia bate.
   const animesExibidos = useMemo(() => {
     let lista = franquias;
@@ -143,14 +129,11 @@ export default function Galeria() {
         )
       );
     }
-    if (generoSelecionado) {
-      lista = lista.filter((franquia) => franquia.generos.includes(generoSelecionado));
-    }
     if (statusSelecionado) {
       lista = lista.filter((franquia) => franquia.statusDaFranquia.includes(statusSelecionado));
     }
     return ordenarAnimes(lista, ordenacao);
-  }, [franquias, termoBuscaNormalizado, generoSelecionado, statusSelecionado, ordenacao]);
+  }, [franquias, termoBuscaNormalizado, statusSelecionado, ordenacao]);
 
   const [animeParaRemover, setAnimeParaRemover] = useState(null);
   const [removendo, setRemovendo] = useState(false);
@@ -200,12 +183,7 @@ export default function Galeria() {
 
   return (
     <>
-      <BarraDeNavegacao
-        fase="revelado"
-        transparente
-        termoBusca={termoBusca}
-        aoMudarBusca={setTermoBusca}
-      />
+      <BarraDeNavegacao transparente termoBusca={termoBusca} aoMudarBusca={setTermoBusca} />
       {/* `bg-black` (não mais `bg-[#17171b]` de paginas/Inicio.jsx): a Galeria
           não leva mais a drop shadow dos cards (`comSombra={false}` nas duas
           `GradeDeCatalogo` abaixo — ela só fazia sentido sobre aquele
@@ -253,35 +231,15 @@ export default function Galeria() {
               <p className="mt-[22px] text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
             )}
 
-            {/* Filtro por gênero/status + ordenação — <select> nativo (mesmo
-                padrão de player/SeletorDePreset.jsx), sem chamada de API nova:
-                as três derivações rodam em memória sobre `animes`. Cada
-                <select> só renderiza se há pelo menos uma opção real (ver
-                `generosDisponiveis`/`statusDisponiveis` acima) — um dropdown
-                com só "Todos" seria um controle morto. Ordenação sempre
-                aparece: "Título (A-Z)" funciona mesmo sem nenhum dado extra. */}
+            {/* Filtro por status + ordenação — <select> nativo (mesmo padrão
+                de player/SeletorDePreset.jsx), sem chamada de API nova: as
+                derivações rodam em memória sobre `animes`. O <select> de
+                status só renderiza se há pelo menos uma opção real (ver
+                `statusDisponiveis` acima) — um dropdown com só "Todos" seria
+                um controle morto. Ordenação sempre aparece: "Título (A-Z)"
+                funciona mesmo sem nenhum dado extra. */}
             {!carregando && !erro && animes?.length > 0 && (
               <div className="mt-[22px] flex flex-wrap items-end gap-4">
-                {generosDisponiveis.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor={idFiltroGenero} className={CLASSE_LABEL_FILTRO}>
-                      Gênero
-                    </label>
-                    <select
-                      id={idFiltroGenero}
-                      value={generoSelecionado}
-                      onChange={(event) => setGeneroSelecionado(event.target.value)}
-                      className={CLASSE_SELECT}
-                    >
-                      <option value="">Todos os gêneros</option>
-                      {generosDisponiveis.map((genero) => (
-                        <option key={genero} value={genero}>
-                          {traduzirGenero(genero)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
                 {statusDisponiveis.length > 0 && (
                   <div className="flex flex-col gap-1">
                     <label htmlFor={idFiltroStatus} className={CLASSE_LABEL_FILTRO}>

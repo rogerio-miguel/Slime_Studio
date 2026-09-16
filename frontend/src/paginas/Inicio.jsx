@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   buscarAnimes,
   criarAnime,
@@ -13,7 +13,6 @@ import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
-import CenarioDeEntrada from '../inicio/CenarioDeEntrada.jsx';
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
 // só não é renderizado por enquanto.
@@ -27,13 +26,12 @@ import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { topDaTemporada } from '../inicio/fileiras.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
-import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 
-// Rota "/" — introdução cinematográfica tocada por vídeo: fundo preto sólido
-// com o vídeo da logo (inicio/CenarioDeEntrada.jsx) tocando uma vez; ao
-// terminar, a interface principal do streaming (navbar + carrossel hero
-// "Destaques da temporada") aparece suavemente (fade de opacidade). O hook
-// inicio/useIntroPorVideo.js só deriva as 2 fases (entrada/revelado).
+// Rota "/" — interface principal do streaming: navbar + carrossel hero
+// "Destaques da temporada" seguido das fileiras horizontais. A introdução
+// cinematográfica por vídeo (CenarioDeEntrada.jsx, useIntroPorVideo.js) foi
+// removida a pedido do usuário (2026-09-15) — a página renderiza direto, sem
+// fase de reveal.
 //
 // Conteúdo (branch `!buscando`): o carrossel hero seguido das fileiras
 // horizontais (inicio/FileiraDeCards.jsx), nesta ordem — "Próximas estreias",
@@ -72,20 +70,6 @@ import { useIntroPorVideo } from '../inicio/useIntroPorVideo.js';
 export default function Inicio() {
   const navigate = useNavigate();
   const idResultadosBiblioteca = useId();
-  const { fase, movimentoReduzido, revelar } = useIntroPorVideo();
-  const location = useLocation();
-
-  // Clique na logo (BarraDeNavegacao.jsx) navega pra "/" com
-  // `state.revelado` — em vez de reiniciar a introdução do zero, pula
-  // direto pro estado final (mesmo mecanismo do botão "Pular introdução").
-  // `replace` limpa o state depois de consumido, senão um refresh ou
-  // "voltar" do navegador reexecutaria o pulo.
-  useEffect(() => {
-    if (location.state?.revelado) {
-      revelar();
-      navigate('.', { replace: true, state: null });
-    }
-  }, [location.state, revelar, navigate]);
 
   const emAlta = useRecurso(listarAnimesEmAlta, []);
   const catalogo = useRecurso(listarAnimes, []);
@@ -315,6 +299,7 @@ export default function Inicio() {
           key="proximas-estreias"
           titulo="Próximas estreias"
           itens={proximaTemporada.dados}
+          tamanho="pequeno"
           comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
           renderItem={(item) => {
@@ -352,6 +337,7 @@ export default function Inicio() {
           key="top-10"
           titulo="Top 10 da semana"
           itens={top10}
+          tamanho="pequeno"
           comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
           // Numeral do Top 10: selo escuro com blur (`bg-black/80
@@ -381,20 +367,7 @@ export default function Inicio() {
 
   return (
     <>
-      {fase !== 'revelado' && (
-        <button
-          type="button"
-          onClick={revelar}
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-30 focus:rounded-md focus:border focus:border-neon-soft focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-neon focus:outline-none"
-        >
-          Pular introdução
-        </button>
-      )}
-
-      <CenarioDeEntrada fase={fase} movimentoReduzido={movimentoReduzido} aoTerminar={revelar} />
-
       <BarraDeNavegacao
-        fase={fase}
         transparente
         termoBusca={termoBusca}
         aoMudarBusca={setTermoBusca}
@@ -402,7 +375,6 @@ export default function Inicio() {
       />
 
       <main
-        inert={fase !== 'revelado'}
         // `min-h-screen`: evita uma página curta demais (ex. resultado de
         // busca vazio) quando ainda não há conteúdo suficiente pra preencher
         // 1 viewport.
@@ -410,9 +382,7 @@ export default function Inicio() {
         // Disney+): preto sólido, igual à Galeria (paginas/Galeria.jsx) —
         // as fileiras e os resultados de busca não levam mais sombra
         // (`comSombra={false}`, mesmo motivo de lá).
-        className={`relative z-10 min-h-screen bg-black pt-22 transition-opacity duration-700 ease-out ${
-          fase === 'revelado' ? 'opacity-100' : 'opacity-0'
-        }`}
+        className="relative z-10 min-h-screen bg-black pt-22"
       >
         {buscando ? (
           // `pb-20`: só aqui, não em <main> — este bloco rola normalmente e
@@ -590,14 +560,8 @@ export default function Inicio() {
               // gradiente é `pointer-events-none`, então a sobreposição não
               // rouba clique dos cards. Casado com `pt-0` no <div> das fileiras.
               <section className="-mt-22 -mb-32">
-                {/* `ativa`: gate do auto-avanço do carrossel (ver
-                    CarrosselDestaques.jsx) — a fase só vira "revelado"
-                    quando <main> deixa de estar inert/opacity-0; sem o
-                    gate o carrossel trocaria de slide enquanto ainda
-                    invisível atrás da introdução. */}
                 <CarrosselDestaques
                   itens={emAlta.dados}
-                  ativa={fase === 'revelado'}
                   aoMaterializar={materializarEIrPara}
                   materializando={chaveEmMaterializacao != null}
                 />

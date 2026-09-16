@@ -147,8 +147,8 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
 
   return (
     <div className="group/card relative">
-      <div className="relative flex w-full flex-col gap-2 rounded-2xl p-3 -m-3 transition-colors duration-300 ease-out hover:bg-surface-hover motion-reduce:transition-none">
-        <div className="relative aspect-[2/3] w-full overflow-hidden rounded-2xl bg-surface">
+      <div className="relative flex w-full flex-col gap-2  p-3 -m-3 transition-colors duration-300 ease-out hover:bg-surface-hover motion-reduce:transition-none">
+        <div className="relative aspect-[2/3] w-full overflow-hidden  bg-surface">
           {capa && (
             <img
               src={capa}
