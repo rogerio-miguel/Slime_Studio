@@ -90,9 +90,12 @@ export default function Galeria() {
   // do backend (sondagem da fonte real + aquecimento de `status_lancamento`); a
   // Home chama `listarAnimes()` sem a flag. `recarregar` do `useRecurso` segue
   // funcionando: reexecuta este mesmo `buscar`.
+  // Chave 'animes' (invalidacao.js): recarrega sozinho quando `criarAnime`/
+  // `removerAnime` resolve, mesmo se disparado por outra página.
   const { dados: animes, carregando, erro, recarregar } = useRecurso(
     () => listarAnimes({ aquecer: true }),
-    []
+    [],
+    'animes'
   );
 
   const [statusSelecionado, setStatusSelecionado] = useState('');
@@ -141,7 +144,10 @@ export default function Galeria() {
 
   // Remove a franquia INTEIRA: um DELETE por temporada (`idsDaFranquia`). Falha
   // no meio (ex. temporada com captura em andamento) para o laço e deixa as já
-  // removidas removidas — o `recarregar` no `finally` mostra o estado real.
+  // removidas removidas — cada `removerAnime` bem-sucedido já invalida
+  // 'animes' (invalidacao.js) e recarrega esta grade sozinho, refletindo o
+  // estado real mesmo numa remoção parcial, sem precisar de um `recarregar()`
+  // manual aqui.
   const confirmarRemocao = useCallback(async () => {
     if (!animeParaRemover) return;
     setRemovendo(true);
@@ -163,9 +169,8 @@ export default function Galeria() {
       }
     } finally {
       setRemovendo(false);
-      recarregar();
     }
-  }, [animeParaRemover, recarregar]);
+  }, [animeParaRemover]);
 
   // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
   // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior

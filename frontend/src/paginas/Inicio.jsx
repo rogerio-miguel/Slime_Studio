@@ -16,7 +16,7 @@ import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.j
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
 // só não é renderizado por enquanto.
-import CarrosselDestaques from '../inicio/CarrosselDestaques.jsx';
+import CarrosselDestaques, { IconeEmAlta } from '../inicio/CarrosselDestaques.jsx';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 // DestaqueGrande e as fileiras temáticas ocultos a pedido do usuário
 // (2026-09-13) — arquivos/endpoints continuam existindo (inicio/DestaqueGrande.jsx,
@@ -35,7 +35,7 @@ import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 //
 // Conteúdo (branch `!buscando`): o carrossel hero seguido das fileiras
 // horizontais (inicio/FileiraDeCards.jsx), nesta ordem — "Próximas estreias",
-// "Continuar assistindo", "Top 10 da semana". "Top 10" é recorte puro do feed
+// "Continuar assistindo", "Top 10 em alta". "Top 10" é recorte puro do feed
 // `GET /api/animes/em-alta` (inicio/fileiras.js); "Próximas estreias" vem do
 // feed próprio `GET /api/animes/proxima-temporada` (próxima temporada da
 // AniList — o feed "em alta" só traz o que já está no ar); "Continuar
@@ -72,11 +72,16 @@ export default function Inicio() {
   const idResultadosBiblioteca = useId();
 
   const emAlta = useRecurso(listarAnimesEmAlta, []);
-  const catalogo = useRecurso(listarAnimes, []);
+  // Chave 'animes' (invalidacao.js): recarrega sozinho quando `criarAnime`/
+  // `removerAnime` resolve em qualquer lugar do app (ex. materializar um
+  // item do feed abaixo), sem precisar de um `recarregar()` manual aqui.
+  const catalogo = useRecurso(listarAnimes, [], 'animes');
   // Prateleira "Continuar assistindo" — independente do feed `em-alta`
   // (posição em episódio já capturado). Mesma exibição silenciosa da
   // Galeria: em carregando/erro/vazio a fileira simplesmente não aparece.
-  const continuando = useRecurso(listarContinuarAssistindo, []);
+  // Chave 'episodios': recarrega quando `salvarProgresso`/`marcarAssistido`/
+  // `liberarEpisodio` resolve (ex. saiu do player e voltou pra Home).
+  const continuando = useRecurso(listarContinuarAssistindo, [], 'episodios');
   // "Próximas estreias" — feed próprio da próxima temporada da AniList (não
   // sai do feed `em-alta`, que só lista o que já está no ar). Mesma exibição
   // silenciosa: em carregando/erro/vazio a fileira não aparece.
@@ -335,7 +340,7 @@ export default function Inicio() {
       node: (
         <FileiraDeCards
           key="top-10"
-          titulo="Top 10 da semana"
+          titulo="Top 10 em alta"
           itens={top10}
           tamanho="pequeno"
           comSombra={false}
@@ -348,14 +353,16 @@ export default function Inicio() {
           // fundo próprio), que ficava difícil de ler sobre capas claras.
           // `aria-hidden`/`pointer-events-none`: decorativo, não rouba o
           // clique. Vai como `sobreposicao` do AnimeCard (irmão do card no
-          // wrapper).
+          // wrapper). `IconeEmAlta` (chama) ao lado do número: mesmo ícone da
+          // pill "#N em alta" do hero (inicio/CarrosselDestaques.jsx).
           renderItem={(item, indice) =>
             renderCardDoFeed(
               item,
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute left-4 top-6 z-10 flex h-8 items-center justify-center rounded bg-black/80 px-2 backdrop-blur-md"
+                className="pointer-events-none absolute left-4 top-6 z-10 flex h-8 items-center gap-1 bg-black/80 px-2 backdrop-blur-md"
               >
+                <IconeEmAlta/>
                 <span className="font-semibold text-white">#{indice + 1}</span>
               </div>
             )
