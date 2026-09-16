@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import requests
@@ -43,12 +44,19 @@ _ASSINATURA_MPD = "<mpd"
 _MARCADORES_ISCA_HTML = ("<html", "<!doctype html")
 
 # Download em blocos (Range requests) para `*.googlevideo.com`: o Google throttla
-# conexão única, então baixamos em blocos sequenciais como o yt-dlp faz.
-# 10 MiB por bloco é o default do yt-dlp; 60 s de teto por requisição de bloco;
-# até 4 tentativas do mesmo bloco em erro de rede, com backoff `2 ** tentativa`.
+# conexão única, então baixamos em blocos via requisições novas, como o yt-dlp
+# faz. 10 MiB por bloco é o default do yt-dlp; 60 s de teto por requisição de
+# bloco; até 4 tentativas do mesmo bloco em erro de rede, com backoff `2 **
+# tentativa`.
 _TAMANHO_BLOCO_BYTES = 10 * 1024 * 1024
 _TIMEOUT_BLOCO_S = 60
 _MAX_TENTATIVAS_BLOCO = 4
+# Só entra em jogo quando o primeiro bloco já revelou o tamanho total (ver
+# `_baixar_em_blocos`) — sem isso não dá pra planejar quantos blocos faltam.
+# Pedido explícito do usuário (2026-09-15, mesmo racional da paralelização de
+# fragmentos HLS do AnimeFire — ver `_FRAGMENTOS_CONCORRENTES`): medido ao vivo
+# contra googlevideo.com, 86% de redução no mesmo episódio (7.3s -> 1.0s).
+_BLOCOS_CONCORRENTES = 8
 _CONTENT_RANGE_RE = re.compile(r"\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*", re.IGNORECASE)
 
 # Download DASH via `yt-dlp` em vez de `ffmpeg -f dash -i` (confirmado ao vivo
@@ -61,6 +69,15 @@ _CONTENT_RANGE_RE = re.compile(r"\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*", re.IGNOREC
 # episódio inteiro. É por isso que `_montar_comando`/`FormatoDeMidia.DASH` só
 # tem valor pra `conferir_link_de_midia` agora — `baixar` desvia DASH pra cá.
 _MAX_TENTATIVAS_FRAGMENTO = 10
+# Sem isso o yt-dlp baixa um segmento HLS/DASH por vez, round-trip completo
+# cada um — gargalo real medido contra `meusanimes.py` (link direto, `ffmpeg
+# -c copy` de conexão única, sem essa serialização). Medido ao vivo em
+# 2026-09-15/16: 4 já corta ~86% do tempo (76s -> 10.3s, ep. de 609MB); 8
+# rendeu mais 82% (18s -> 3.3s); 16 rendeu mais 44% em cima de 8 (12.1s -> 6.8s,
+# ep. de 390MB), ainda sem erro/retentativa de fragmento — parada em 16 por
+# decisão do usuário, não por teto técnico observado (throughput a 16 ainda
+# fica bem abaixo do que o googlevideo.com aguenta, CDN bem maior).
+_FRAGMENTOS_CONCORRENTES = 16
 # Piso de duração do arquivo baixado vs. o `mediaPresentationDuration` do
 # manifesto. Abaixo disso o download veio truncado (CDN dropou uma faixa
 # inteira de segmentos, não só os fragmentos-isca esparsos que o yt-dlp já
@@ -257,7 +274,12 @@ def _montar_comando_ytdl(link: LinkDeMidia, saida_modelo: str, ffmpeg_bin: str) 
     — mesmo venv, sem depender de um console-script no PATH. `--skip-unavailable-
     fragments` + `--fragment-retries` cobrem os fragmentos-isca vazios; `--no-part`
     escreve direto (o diretório temporário já isola parciais); `--no-progress`
-    mantém o stdout enxuto pro `communicate()` de `executar`."""
+    mantém o stdout enxuto pro `communicate()` de `executar`. `--concurrent-fragments`
+    (pedido explícito do usuário, 2026-09-15 — download do AnimeFire muito mais
+    lento que o de `meusanimes.py`, que não passa por aqui: link direto vai pro
+    `ffmpeg -c copy` de conexão única): sem isso o yt-dlp baixa os segmentos HLS
+    um de cada vez, round-trip completo por segmento; valor calibrado ao vivo
+    (ver `_FRAGMENTOS_CONCORRENTES`), não o default do yt-dlp."""
     argumentos = [
         sys.executable,
         "-m",
@@ -271,6 +293,8 @@ def _montar_comando_ytdl(link: LinkDeMidia, saida_modelo: str, ffmpeg_bin: str) 
         "--retries",
         str(_MAX_TENTATIVAS_FRAGMENTO),
         "--skip-unavailable-fragments",
+        "--concurrent-fragments",
+        str(_FRAGMENTOS_CONCORRENTES),
         "--ffmpeg-location",
         ffmpeg_bin,
         "-f",
@@ -424,68 +448,176 @@ def _baixar_em_blocos(
     url: str, cabecalhos: dict[str, str], destino: Path, *, timeout_s: int
 ) -> None:
     """Baixa `url` inteira para `destino` (arquivo cru, tipicamente mp4 progressivo)
-    em blocos sequenciais de `_TAMANHO_BLOCO_BYTES` via header `Range`. Função
-    bloqueante — o chamador (`baixar`) a roda em `asyncio.to_thread`, fora do
-    event loop.
+    em blocos de `_TAMANHO_BLOCO_BYTES` via header `Range`. Função bloqueante —
+    o chamador (`baixar`) a roda em `asyncio.to_thread`, fora do event loop.
 
-    Se o servidor ignorar o `Range` e responder 200 no primeiro bloco, cai para
-    download de conexão única em streaming (sai throttled, mas funciona). 200 fora
-    de hora, `Content-Range` incoerente ou bloco vazio viram `FalhaDeExtracao`
-    retentável — nunca corrompe o arquivo em silêncio.
+    O primeiro bloco sempre sai sozinho — é ele que revela se o servidor ignora
+    `Range` (200: cai pra streaming de conexão única, sai throttled mas
+    funciona) e, no caso normal (206), o tamanho total via `Content-Range`.
+    Sabendo o total, os blocos restantes não dependem uns dos outros: saem
+    todos de uma vez em paralelo (`_continuar_em_blocos_paralelo`) em vez de
+    round-trip por bloco — pedido explícito do usuário (2026-09-15), mesmo
+    racional de `_FRAGMENTOS_CONCORRENTES` pro AnimeFire. Sem total conhecido
+    (`Content-Range` com `*`, nunca observado ao vivo até aqui) não dá pra
+    planejar blocos adiante, então cai pro caminho sequencial original
+    (`_continuar_em_blocos_sequencial`).
+
+    200 fora de hora, `Content-Range` incoerente ou bloco vazio viram
+    `FalhaDeExtracao` retentável — nunca corrompe o arquivo em silêncio.
 
     Teto de tempo total igual ao do `ffmpeg` (`_TIMEOUT_DOWNLOAD_S`): sem ele, um
     servidor que devolvesse 206 sem fim manteria a thread presa para sempre e o
     heartbeat do worker seguiria batendo (o event loop está livre), sem
     `reciclar_jobs_orfaos` nunca detectar o job travado."""
     prazo_final = time.monotonic() + _TIMEOUT_DOWNLOAD_S
-    inicio = 0
+    faixa_pedida = f"bytes=0-{_TAMANHO_BLOCO_BYTES - 1}"
+    cabecalhos_bloco = {**cabecalhos, "Range": faixa_pedida}
+    with _get_bloco_com_retry(url, cabecalhos_bloco, timeout_s=timeout_s) as resposta:
+        if resposta.status_code == 200:
+            with open(destino, "wb") as arquivo:
+                for pedaco in resposta.iter_content(chunk_size=_TAMANHO_BLOCO_BYTES):
+                    arquivo.write(pedaco)
+            return
+
+        if resposta.status_code == 416:
+            raise FalhaDeExtracao(
+                f"servidor respondeu 416 no primeiro bloco: {url}", permite_retentativa=True
+            )
+
+        primeiro_corpo, faixa_fim, total = _extrair_corpo_valido(resposta, 0, url)
+
     with open(destino, "wb") as arquivo:
-        while True:
-            if time.monotonic() > prazo_final:
+        arquivo.write(primeiro_corpo)
+        inicio = faixa_fim + 1
+        if total is not None and inicio >= total:
+            return
+        if total is None:
+            _continuar_em_blocos_sequencial(
+                arquivo, url, cabecalhos, inicio, timeout_s, prazo_final
+            )
+        else:
+            _continuar_em_blocos_paralelo(
+                arquivo, url, cabecalhos, inicio, total, timeout_s, prazo_final
+            )
+
+
+def _extrair_corpo_valido(
+    resposta: requests.Response, inicio: int, url: str
+) -> tuple[bytes, int, int | None]:
+    """Valida um 206 (corpo não vazio, `Content-Range` coerente com `inicio`) e
+    devolve `(corpo, faixa_fim, total)` — checagem compartilhada pelo primeiro
+    bloco, pelo caminho sequencial e pelo paralelo; só o chamador decide o que
+    fazer com `total`."""
+    corpo = resposta.content
+    if not corpo:
+        raise FalhaDeExtracao(
+            f"bloco 206 sem corpo — abortado para não entrar em laço: {url}",
+            permite_retentativa=True,
+        )
+    faixa_inicio, faixa_fim, total = _parse_content_range(
+        resposta.headers.get("Content-Range", ""), url
+    )
+    if faixa_inicio != inicio or len(corpo) != faixa_fim - faixa_inicio + 1:
+        raise FalhaDeExtracao(
+            f"bloco incoerente com o Content-Range "
+            f"(faixa {faixa_inicio}-{faixa_fim}, {len(corpo)} bytes) em {url}",
+            permite_retentativa=True,
+        )
+    return corpo, faixa_fim, total
+
+
+def _continuar_em_blocos_sequencial(
+    arquivo, url: str, cabecalhos: dict[str, str], inicio: int, timeout_s: int, prazo_final: float
+) -> None:
+    """Fallback do comportamento original: usado só quando o primeiro bloco não
+    revelou o tamanho total (`Content-Range` com `*`) — sem `total` não dá pra
+    planejar os blocos restantes, então seguem um de cada vez. Caso raro na
+    prática (nenhum CDN de vídeo observado até aqui faz isso)."""
+    while True:
+        if time.monotonic() > prazo_final:
+            raise FalhaDeExtracao(
+                f"download em blocos excedeu {_TIMEOUT_DOWNLOAD_S}s: {url}",
+                permite_retentativa=True,
+            )
+        faixa_pedida = f"bytes={inicio}-{inicio + _TAMANHO_BLOCO_BYTES - 1}"
+        cabecalhos_bloco = {**cabecalhos, "Range": faixa_pedida}
+        with _get_bloco_com_retry(url, cabecalhos_bloco, timeout_s=timeout_s) as resposta:
+            if resposta.status_code == 200:
                 raise FalhaDeExtracao(
-                    f"download em blocos excedeu {_TIMEOUT_DOWNLOAD_S}s: {url}",
+                    f"servidor respondeu 200 no meio do download em blocos: {url}",
                     permite_retentativa=True,
                 )
-            faixa_pedida = f"bytes={inicio}-{inicio + _TAMANHO_BLOCO_BYTES - 1}"
-            cabecalhos_bloco = {**cabecalhos, "Range": faixa_pedida}
-            with _get_bloco_com_retry(url, cabecalhos_bloco, timeout_s=timeout_s) as resposta:
-                if resposta.status_code == 200:
-                    if inicio != 0:
-                        raise FalhaDeExtracao(
-                            f"servidor respondeu 200 no meio do download em blocos: {url}",
-                            permite_retentativa=True,
-                        )
-                    for pedaco in resposta.iter_content(chunk_size=_TAMANHO_BLOCO_BYTES):
-                        arquivo.write(pedaco)
-                    return
+            if resposta.status_code == 416:
+                return
+            corpo, faixa_fim, total = _extrair_corpo_valido(resposta, inicio, url)
+        arquivo.write(corpo)
+        inicio = faixa_fim + 1
+        if total is not None and inicio >= total:
+            return
 
-                if resposta.status_code == 416:
-                    if inicio == 0:
-                        raise FalhaDeExtracao(
-                            f"servidor respondeu 416 no primeiro bloco: {url}",
-                            permite_retentativa=True,
-                        )
-                    return
 
-                corpo = resposta.content
-                if not corpo:
+def _continuar_em_blocos_paralelo(
+    arquivo,
+    url: str,
+    cabecalhos: dict[str, str],
+    inicio: int,
+    total: int,
+    timeout_s: int,
+    prazo_final: float,
+) -> None:
+    """Total já conhecido (primeiro bloco trouxe `Content-Range`) — os blocos
+    restantes não dependem uns dos outros, então saem todos de uma vez
+    (`_BLOCOS_CONCORRENTES` threads) em vez de round-trip por bloco. Escreve
+    cada um no offset certo (`seek`) conforme completa, fora de ordem se for o
+    caso — `open(..., "wb")` permite escrita além do fim atual (arquivo esparso
+    até o buraco ser preenchido por outro bloco), então a ordem de chegada não
+    importa contanto que todos completem. Qualquer falha cancela o resto e
+    propaga — o chamador (`baixar`) já limpa o arquivo parcial."""
+    faixas = []
+    while inicio < total:
+        faixas.append(inicio)
+        inicio += _TAMANHO_BLOCO_BYTES
+
+    with ThreadPoolExecutor(max_workers=_BLOCOS_CONCORRENTES) as pool:
+        futuros = {
+            pool.submit(_buscar_bloco_paralelo, url, cabecalhos, ini, timeout_s): ini
+            for ini in faixas
+        }
+        try:
+            for futuro in as_completed(futuros):
+                if time.monotonic() > prazo_final:
                     raise FalhaDeExtracao(
-                        f"bloco 206 sem corpo — abortado para não entrar em laço: {url}",
+                        f"download em blocos excedeu {_TIMEOUT_DOWNLOAD_S}s: {url}",
                         permite_retentativa=True,
                     )
-                faixa_inicio, faixa_fim, total = _parse_content_range(
-                    resposta.headers.get("Content-Range", ""), url
-                )
-                if faixa_inicio != inicio or len(corpo) != faixa_fim - faixa_inicio + 1:
-                    raise FalhaDeExtracao(
-                        f"bloco incoerente com o Content-Range "
-                        f"(faixa {faixa_inicio}-{faixa_fim}, {len(corpo)} bytes) em {url}",
-                        permite_retentativa=True,
-                    )
+                corpo = futuro.result()
+                arquivo.seek(futuros[futuro])
                 arquivo.write(corpo)
-                inicio = faixa_fim + 1
-                if total is not None and inicio >= total:
-                    return
+        except BaseException:
+            for futuro_pendente in futuros:
+                futuro_pendente.cancel()
+            raise
+
+
+def _buscar_bloco_paralelo(
+    url: str, cabecalhos: dict[str, str], inicio: int, timeout_s: int
+) -> bytes:
+    """Um bloco da fase paralela (`_continuar_em_blocos_paralelo`), numa thread
+    do pool — mesma validação do primeiro bloco (`_extrair_corpo_valido`). 200
+    ou 416 aqui são erro: como o total já é conhecido e só pedimos blocos
+    dentro dele, um bloco só pode legitimamente vir como 206 (diferente do
+    caminho sequencial, onde 416 sem total pode ser fim legítimo)."""
+    faixa_pedida = f"bytes={inicio}-{inicio + _TAMANHO_BLOCO_BYTES - 1}"
+    cabecalhos_bloco = {**cabecalhos, "Range": faixa_pedida}
+    with _get_bloco_com_retry(url, cabecalhos_bloco, timeout_s=timeout_s) as resposta:
+        if resposta.status_code in (200, 416):
+            raise FalhaDeExtracao(
+                f"servidor respondeu {resposta.status_code} inesperado pro bloco em "
+                f"{inicio} de {url}",
+                permite_retentativa=True,
+            )
+        corpo, _faixa_fim, _total = _extrair_corpo_valido(resposta, inicio, url)
+    return corpo
 
 
 def _get_bloco_com_retry(
