@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Activity } from 'lucide-react';
 import MenuDeConfiguracoes from './MenuDeConfiguracoes.jsx';
 import PreviaDeCena from './PreviaDeCena.jsx';
 import { IconePlay, IconePausa, IconeVolume, IconeTelaCheia, IconeSkip10 } from './Icones.jsx';
@@ -311,7 +312,19 @@ export default function BarraDeControles({
           </button>
         </div>
 
-        <div className="flex items-center justify-end gap-2">
+        {/* `relative` mora aqui (não mais dentro de MenuDeConfiguracoes.jsx)
+            de propósito: o gatilho (engrenagem) fica no meio do grupo — entre
+            HUD e Tela cheia, ordem pedida pelo usuário —, mas o painel que
+            abre (`absolute right-0` em MenuDeConfiguracoes.jsx) ancora no
+            elemento posicionado mais próximo. Sendo ESTE grupo o ancestral
+            posicionado, o painel fica flush com a borda direita do grupo
+            inteiro — a mesma borda onde a linha de progresso acima termina
+            (tempo total) — em vez de flush só com o próprio botão pequeno da
+            engrenagem, que ficaria desalinhado da barra por estar no meio. */}
+        <div className="relative flex items-center justify-end gap-2">
+          <button type="button" onClick={aoAlternarHud} aria-label="Alternar HUD" className={classeBotao}>
+            <Activity width={22} height={22} />
+          </button>
           <MenuDeConfiguracoes
             presetAtual={presetAtual}
             aoTrocar={aoTrocarPreset}
@@ -321,9 +334,6 @@ export default function BarraDeControles({
           />
           <button type="button" onClick={aoAlternarTelaCheia} aria-label="Tela cheia" className={classeBotao}>
             <IconeTelaCheia width={26} height={26} />
-          </button>
-          <button type="button" onClick={aoAlternarHud} aria-label="Alternar HUD" className={classeBotao}>
-            HUD
           </button>
         </div>
       </div>

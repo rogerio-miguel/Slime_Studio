@@ -112,7 +112,11 @@ export default function MenuDeConfiguracoes({
   };
 
   return (
-    <div ref={containerRef} className="relative">
+    // Sem `relative` aqui de propósito: o painel abaixo (`absolute right-0`)
+    // precisa ancorar no grupo de botões inteiro (BarraDeControles.jsx), não
+    // neste wrapper pequeno — ver comentário lá. `containerRef` continua só
+    // pra detecção de clique fora (contains), não depende de position.
+    <div ref={containerRef}>
       <button
         ref={gatilhoRef}
         type="button"
@@ -140,7 +144,7 @@ export default function MenuDeConfiguracoes({
           // cobre a linha de progresso + o respiro entre as duas linhas da
           // barra (pt-8 do container + altura do texto/slider da linha 1 +
           // gap-3 ≈ 68px), sobrando ~12px de vão real entre painel e barra.
-          className="absolute bottom-full right-0 z-10 mb-10 w-96 overflow-hidden rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50"
+          className="absolute bottom-full right-0 z-10 mb-12 w-96 overflow-hidden rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50"
         >
           {/* Cabeçalho — título alinhado à ESQUERDA (não centralizado: era o
               que estava errado antes), fechar sempre à direita, sem borda
