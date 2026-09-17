@@ -162,6 +162,15 @@ export default function PlayerAtivo({
     video.currentTime = Math.max(0, video.currentTime - 10);
   }, []);
 
+  // Avançar 1m30 (90s) — botão à parte do trio central, pedido explícito do
+  // usuário (2026-09-17) pra viver junto de HUD/config/tela cheia. Mesmo
+  // clamp de `avancar`/`retroceder` acima, só com passo maior.
+  const avancarNoventa = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 90);
+  }, []);
+
   // `fonte` é sempre ".../playlist.m3u8" (PaginaDoPlayer.jsx) — o storyboard
   // (worker/pipeline/storyboard.py) vive como arquivo irmão no mesmo
   // diretório do episódio, servido pela mesma rota catch-all de mídia.
@@ -237,6 +246,7 @@ export default function PlayerAtivo({
         cinemaFalhou={audioCinema.falhou}
         aoAvancar={avancar}
         aoRetroceder={retroceder}
+        aoAvancarNoventa={avancarNoventa}
         storyboardUrl={storyboardUrl}
       />
     </div>
