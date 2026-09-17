@@ -111,10 +111,10 @@ class AnimeFireProvider(ExtratorDeSite):
         anime nos dois, versões diferentes) — ex. `"Dublado & Legendado"`."""
         try:
             identificador = item["id"]
-            titulo_exibicao = item["title"]
+            titulo_exibicao = self._titulo_preferido(item["titles"], url)
         except (TypeError, KeyError) as excecao:
             raise EstruturaDoSiteMudou(
-                f"item de busca do AnimeFire sem 'id'/'title' em {url}: {excecao}",
+                f"item de busca do AnimeFire sem 'id'/'titles' em {url}: {excecao}",
                 dominio=self.dominio,
             ) from excecao
 
@@ -154,6 +154,26 @@ class AnimeFireProvider(ExtratorDeSite):
             )
             for versao in versoes
         ]
+
+    # Ordem de preferência de locale — confirmado ao vivo em 2026-09-17: a
+    # API trocou `title` (string única) por `titles` (objeto por região,
+    # chaves observadas `BR`/`US`/`JP`, nem sempre as três presentes). `BR`
+    # é o título em português que o site exibia como `title` antes da
+    # mudança — mesmo papel; cai para qualquer chave presente quando falta
+    # (ex. animes sem tradução BR, só `US`/`JP`).
+    _ORDEM_LOCALE_TITULO = ("BR", "US", "JP")
+
+    def _titulo_preferido(self, titulos: object, url: str) -> str:
+        if not isinstance(titulos, dict) or not titulos:
+            raise EstruturaDoSiteMudou(
+                f"item de busca do AnimeFire com 'titles' vazio ou inválido em {url}",
+                dominio=self.dominio,
+            )
+        for locale in self._ORDEM_LOCALE_TITULO:
+            titulo = titulos.get(locale)
+            if titulo:
+                return titulo
+        return next(iter(titulos.values()))
 
     def listar_episodios(
         self, cliente: ClienteDeSite, identificador: str, temporada: int | None

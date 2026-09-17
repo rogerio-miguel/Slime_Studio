@@ -2,7 +2,7 @@
   "data": [
     {
       "id": "tensei-shitara-slime-datta-ken",
-      "title": "Tensei Shitara Slime Datta Ken",
+      "titles": {"BR": "Tensei Shitara Slime Datta Ken"},
       "audio": "Legendado",
       "poster_src": "https://image.tmdb.org/t/p/original/slime1.jpg",
       "status": "completed",
@@ -11,7 +11,7 @@
     },
     {
       "id": "tensei-shitara-slime-datta-ken-2",
-      "title": "Tensei Shitara Slime Datta Ken 2",
+      "titles": {"BR": "Tensei Shitara Slime Datta Ken 2"},
       "audio": "Legendado",
       "poster_src": "https://image.tmdb.org/t/p/original/slime2.jpg",
       "status": "completed",

@@ -118,7 +118,7 @@ def test_buscar_com_audio_so_dublado_gera_uma_entrada_sem_duplicar(extrator):
                 "data": [
                     {
                         "id": "one-piece",
-                        "title": "One Piece",
+                        "titles": {"BR": "One Piece"},
                         "audio": "Dublado",
                         "poster_src": "https://image.tmdb.org/t/p/original/op.jpg",
                     }
@@ -261,7 +261,7 @@ def test_listar_episodios_calcula_numero_absoluto_e_fan_out_por_audio_com_dedup(
         json_por_url={url_anime: _ler_fixture_json("anime_detalhe.json")}
     )
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert episodios == [
         EpisodioRemoto(
@@ -305,7 +305,7 @@ def test_listar_episodios_sem_data_levanta_estrutura_do_site_mudou(extrator):
     cliente = ClienteFalso(json_por_url={url_anime: {"error": "Serviço indisponível"}})
 
     with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador)
+        extrator.listar_episodios(cliente, identificador, None)
 
 
 def test_listar_episodios_com_episodes_em_formato_invalido_levanta_estrutura_do_site_mudou(
@@ -318,7 +318,7 @@ def test_listar_episodios_com_episodes_em_formato_invalido_levanta_estrutura_do_
     )
 
     with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador)
+        extrator.listar_episodios(cliente, identificador, None)
 
 
 def test_listar_episodios_com_lista_vazia_levanta_estrutura_do_site_mudou(extrator):
@@ -331,7 +331,7 @@ def test_listar_episodios_com_lista_vazia_levanta_estrutura_do_site_mudou(extrat
     )
 
     with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador)
+        extrator.listar_episodios(cliente, identificador, None)
 
 
 def test_listar_episodios_com_temporada_ausente_em_seasons_levanta_estrutura_do_site_mudou(
@@ -363,7 +363,7 @@ def test_listar_episodios_com_temporada_ausente_em_seasons_levanta_estrutura_do_
     )
 
     with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador)
+        extrator.listar_episodios(cliente, identificador, None)
 
 
 def _url_sintetica(ep_id: str, audio: str | None = None) -> str:
