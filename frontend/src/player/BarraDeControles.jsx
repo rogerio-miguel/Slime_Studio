@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Activity } from 'lucide-react';
 import MenuDeConfiguracoes from './MenuDeConfiguracoes.jsx';
-import PreviaDeCena from './PreviaDeCena.jsx';
+import PreviaDeCena, { LARGURA_THUMB } from './PreviaDeCena.jsx';
 import {
   IconePlay,
   IconePausa,
@@ -11,15 +11,7 @@ import {
   IconeAvancarPlayer,
 } from './Icones.jsx';
 import { usePreferencia } from './hooks/usePreferencia.js';
-
-function formatarTempo(segundos) {
-  if (!Number.isFinite(segundos)) return '0:00';
-  const m = Math.floor(segundos / 60);
-  const s = Math.floor(segundos % 60)
-    .toString()
-    .padStart(2, '0');
-  return `${m}:${s}`;
-}
+import { formatarTempo } from './formatarTempo.js';
 
 // Ghost pill (transparente, acende no hover) — a mesma família visual do
 // Disney+/YouTube (ícones flutuando sobre o vídeo, sem caixa/borda própria),
@@ -160,7 +152,24 @@ export default function BarraDeControles({
     if (!Number.isFinite(duracao) || duracao <= 0) return;
     const retangulo = event.currentTarget.getBoundingClientRect();
     const fracao = Math.min(1, Math.max(0, (event.clientX - retangulo.left) / retangulo.width));
-    setPrevia({ tempo: fracao * duracao, x: fracao * retangulo.width });
+    const centroCursor = fracao * retangulo.width;
+    // Clampa contra a borda real do PLAYER (`.controls`, mesma largura do
+    // palco em tela cheia — `inset-x-0` na raiz do JSX abaixo), não contra a
+    // faixa estreita do `<input>` (que sobra bem mais curta por causa dos
+    // tempos/gaps ao lado): sem isto a prévia parava de seguir o cursor bem
+    // antes da borda de verdade, sobrando um respiro grande e sem uso perto
+    // das pontas. `GUTTER` é só uma folga visual além do `px-6` que `.controls`
+    // já tem — não deixa a miniatura ficar colada na borda do vídeo.
+    const retanguloControles = event.currentTarget.closest('.controls')?.getBoundingClientRect();
+    let centro = centroCursor;
+    if (retanguloControles) {
+      const GUTTER = 8;
+      const metade = LARGURA_THUMB / 2;
+      const limiteEsquerdo = retanguloControles.left + GUTTER - retangulo.left + metade;
+      const limiteDireito = retanguloControles.right - GUTTER - retangulo.left - metade;
+      centro = Math.min(limiteDireito, Math.max(limiteEsquerdo, centroCursor));
+    }
+    setPrevia({ tempo: fracao * duracao, x: centro });
   }
 
   function aoSairDoProgresso() {
@@ -190,9 +199,15 @@ export default function BarraDeControles({
           ao lado; cada tempo vira label na ponta correspondente. `--fill`
           substitui o `accent-color` nativo (ver player.css): o preenchimento
           calculado à mão chega até a ponta de verdade em vez de parar um
-          pouco antes por causa do raio do thumb. O <input> agora vive dentro
-          de um wrapper `relative` só pra ancorar PreviaDeCena (hover) —
-          `w-full` nele substitui o `flex-1` que era do próprio input. */}
+          pouco antes por causa do raio do thumb. O <input> vive dentro de um
+          wrapper `relative` só pra ancorar PreviaDeCena (hover) — `w-full`
+          nele substitui o `flex-1` que era do próprio input. `flex
+          items-center` no wrapper (2026-09-17, corrigindo desalinhamento
+          reportado pelo usuário): sem isso o <input> — replaced element
+          dentro de um bloco comum — sobra espaço de descendente abaixo dele e
+          fica encostado no topo da própria caixa, desalinhado dos tempos ao
+          lado; MESMO bug que o wrapper do slider de volume abaixo já
+          corrige. */}
       <div className="flex items-center gap-3">
         <span
           aria-hidden="true"
@@ -201,7 +216,7 @@ export default function BarraDeControles({
           {formatarTempo(tempoAtual)}
         </span>
         <div
-          className="relative min-w-30 flex-1"
+          className="relative flex min-w-30 flex-1 items-center"
           onMouseMove={aoPassarMouseNoProgresso}
           onMouseLeave={aoSairDoProgresso}
         >
@@ -218,9 +233,7 @@ export default function BarraDeControles({
             className="barra-progresso w-full"
             style={{ '--fill': `${progresso}%` }}
           />
-          {previa && (
-            <PreviaDeCena url={storyboardUrl} tempo={previa.tempo} esquerda={previa.x} />
-          )}
+          {previa && <PreviaDeCena url={storyboardUrl} tempo={previa.tempo} esquerda={previa.x} />}
         </div>
         {/* aria-hidden nos dois: o tempo já é anunciado via aria-valuetext do
             slider — expor aqui também duplicaria pro leitor de tela. */}
