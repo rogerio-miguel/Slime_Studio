@@ -302,6 +302,7 @@ export default function Galeria() {
             itens={animesExibidos}
             tamanho="pequeno"
             comSombra={false}
+            comAnimacao={false}
             chaveDoItem={(anime) => anime.id}
             renderItem={(anime) =>
               !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
@@ -333,6 +334,7 @@ export default function Galeria() {
               itens={VIDEOS_LOCAIS}
               tamanho="pequeno"
               comSombra={false}
+              comAnimacao={false}
               chaveDoItem={(video) => video.slug}
               renderItem={(video) => <CartaoDeVideoLocal video={video} />}
             />
