@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Activity } from 'lucide-react';
 import MenuDeConfiguracoes from './MenuDeConfiguracoes.jsx';
 import PreviaDeCena from './PreviaDeCena.jsx';
-import { IconePlay, IconePausa, IconeVolume, IconeTelaCheia, IconeSkip10 } from './Icones.jsx';
+import {
+  IconePlay,
+  IconePausa,
+  IconeVolume,
+  IconeTelaCheia,
+  IconeSkip10,
+  IconeAvancarPlayer,
+} from './Icones.jsx';
 import { usePreferencia } from './hooks/usePreferencia.js';
 
 function formatarTempo(segundos) {
@@ -69,6 +76,9 @@ export default function BarraDeControles({
   // contra um chamador futuro que monte a barra sem passar as duas props.
   aoAvancar,
   aoRetroceder,
+  // Avançar 1m30 (PlayerAtivo.jsx) — botão à parte do trio, vive no grupo de
+  // HUD/config/tela cheia (pedido explícito do usuário, 2026-09-17).
+  aoAvancarNoventa,
   // URL do sprite de prévia (PlayerAtivo.jsx, derivada de `fonte`) — `undefined`
   // é um valor válido (PreviaDeCena.jsx só não renderiza nada nesse caso).
   storyboardUrl,
@@ -272,20 +282,18 @@ export default function BarraDeControles({
         </div>
 
         {/* Trio central — retroceder/play/avançar, mesma composição do
-            player do Disney+ referenciado. O "10" fica empilhado abaixo do
-            ícone dentro do próprio botão (flex-col), não dentro do SVG —
-            colado no traço da seta ficava ilegível. */}
+            player do Disney+ referenciado. O "10" não fica mais empilhado
+            embaixo do ícone num <span> à parte (removido a pedido do
+            usuário, 2026-09-17) — agora é composto DENTRO do círculo da
+            seta, direto em IconeSkip10 (Icones.jsx), sem mudar nada aqui. */}
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => aoRetroceder?.()}
             aria-label="Retroceder 10 segundos"
-            className={`${classeBotaoTrio} flex-col gap-0 leading-none`}
+            className={classeBotaoTrio}
           >
             <IconeSkip10 direcao="tras" width={32} height={32} />
-            <span aria-hidden="true" className="text-[0.6rem] font-bold">
-              10
-            </span>
           </button>
           <button
             type="button"
@@ -303,12 +311,9 @@ export default function BarraDeControles({
             type="button"
             onClick={() => aoAvancar?.()}
             aria-label="Avançar 10 segundos"
-            className={`${classeBotaoTrio} flex-col gap-0 leading-none`}
+            className={classeBotaoTrio}
           >
             <IconeSkip10 direcao="frente" width={32} height={32} />
-            <span aria-hidden="true" className="text-[0.6rem] font-bold">
-              10
-            </span>
           </button>
         </div>
 
@@ -322,6 +327,18 @@ export default function BarraDeControles({
             (tempo total) — em vez de flush só com o próprio botão pequeno da
             engrenagem, que ficaria desalinhado da barra por estar no meio. */}
         <div className="relative flex items-center justify-end gap-2">
+          {/* Placeholder visual (ghost pill, mesma classeBotao dos vizinhos)
+              — usuário vai customizar o estilo depois; por ora só ícone+texto
+              funcional, mesmo ícone "frente" do trio central. */}
+          <button
+            type="button"
+            onClick={() => aoAvancarNoventa?.()}
+            aria-label="Avançar 1 minuto e 30 segundos"
+            className={`${classeBotao} gap-2 whitespace-nowrap`}
+          >
+            <IconeAvancarPlayer width={20} height={20} />
+            Avançar 1m30
+          </button>
           <button type="button" onClick={aoAlternarHud} aria-label="Alternar HUD" className={classeBotao}>
             <Activity width={22} height={22} />
           </button>

@@ -76,11 +76,40 @@ export function IconeEngrenagem(props) {
   return <Settings {...propsBase} {...props} />;
 }
 
-// Mesma geometria (seta circular) pros dois sentidos, agora via dois glifos
-// prontos da lib (RotateCcw/RotateCw) em vez de espelhar um só via
-// transform — o "10" continua fora do SVG, empilhado no botão
-// (BarraDeControles.jsx).
-export function IconeSkip10({ direcao = 'frente', ...props }) {
+// Seta circular (RotateCcw/RotateCw) com o "10" composto DENTRO do círculo
+// — não mais um <span> empilhado abaixo do ícone (removido a pedido do
+// usuário, 2026-09-17: primeiro pro trio virar o glifo de player só
+// SkipBack/SkipForward, depois revertido pro par de seta circular original,
+// mas com o número sobreposto ao próprio glifo, tipo o "replay 10"/
+// "forward 10" do YouTube). `<span>` wrapper (não <svg> — o número é texto,
+// não caminho vetorial) do tamanho exato de `width`/`height`, com o ícone e
+// o texto empilhados via `absolute inset-0` um sobre o outro; o vão vazio no
+// centro do traço do RotateCcw/RotateCw (a seta só ocupa o anel externo)
+// sobra espaço de sobra pro número sem colidir com o traço.
+export function IconeSkip10({ direcao = 'frente', width = 18, height = 18, ...props }) {
   const Icone = direcao === 'tras' ? RotateCcw : RotateCw;
-  return <Icone {...propsBase} {...props} />;
+  return (
+    <span
+      aria-hidden="true"
+      style={{ width, height }}
+      className="relative inline-flex shrink-0 items-center justify-center"
+    >
+      <Icone {...propsBase} width={width} height={height} {...props} />
+      <span
+        style={{ fontSize: Math.round(Number(width) * 0.34) }}
+        className="absolute inset-0 flex items-center justify-center pt-px font-bold leading-none text-white"
+      >
+        10
+      </span>
+    </span>
+  );
+}
+
+// Mesmo triângulo do botão de play (IconePlay, mesmo componente `Play` da
+// lib) pro botão "Avançar 1m30" (BarraDeControles.jsx, grupo secundário —
+// HUD/config/tela cheia) — pedido explícito do usuário, 2026-09-17, no
+// lugar do glifo SkipForward de antes. `fill="currentColor"`: mesmo
+// triângulo maciço do play, não outline.
+export function IconeAvancarPlayer(props) {
+  return <Play {...propsBase} fill="currentColor" {...props} />;
 }
