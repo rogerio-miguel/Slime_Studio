@@ -98,27 +98,38 @@ class CriarAnimeRequest(BaseModel):
     # Título em inglês (`title.english` da AniList) do item do feed — persiste
     # em `Anime.titulo_ingles` (só exibição, nunca substitui `Anime.titulo`).
     titulo_ingles: str | None = None
+    # `format` cru da AniList do item clicado na busca da Home
+    # (`AnimeEmAltaSaida.formato` abaixo) — `None` (padrão, série TV) segue o
+    # cadastro de sempre; "MOVIE"/"OVA"/"ONA"/"SPECIAL" grava em `Anime.
+    # formato_midia` na criação (`db.catalogo.obter_ou_criar_anime_id`) e
+    # desvia a resolução de franquia pra `_aplicar_ancora_de_midia` (só
+    # `serie_ancora`, nunca `numero_temporada`) — o item se agrupa no anime
+    # original em vez de virar card solto no catálogo.
+    formato: str | None = None
 
 
 class TemporadaIrmaSaida(BaseModel):
     """Uma temporada da mesma franquia (`Anime.serie_ancora` em comum) — item do
     seletor de temporada da página do anime (Fase 5). `numero_temporada` pode ser
-    NULL (marcador do título ausente e walk de `relations` sem resultado); o
-    front cai no `titulo` como rótulo nesse caso. `estreia_em`/`ano` só vêm
-    preenchidos quando este objeto é a `proxima_temporada` de `AnimeSaida`/
-    `AnimeDetalheSaida` (aviso de estreia no card do catálogo e no hero) — nos
-    itens do seletor são sempre `None`. `ano` é o fallback quando a AniList
-    ainda não fechou a data completa: o aviso vira "Nª temporada estreia em
-    2026" (mesma degradação de `CartaoDeEstreia`). Definida ANTES de
-    `AnimeSaida`/`AnimeDetalheSaida` porque as duas a referenciam em
-    `proxima_temporada` — Pydantic resolve o tipo na ordem de definição do
-    módulo, não por forward reference automático."""
+    NULL tanto pra série TV sem marcador de título quanto pra filme/OVA/ONA/
+    especial (`formato_midia` distingue os dois — front cai no `titulo` como
+    rótulo nos dois casos, mas só mostra o selo de formato quando `formato_
+    midia` não é `None`). `estreia_em`/`ano` só vêm preenchidos quando este
+    objeto é a `proxima_temporada` de `AnimeSaida`/`AnimeDetalheSaida` (aviso
+    de estreia no card do catálogo e no hero) — nos itens do seletor são
+    sempre `None`. `ano` é o fallback quando a AniList ainda não fechou a data
+    completa: o aviso vira "Nª temporada estreia em 2026" (mesma degradação de
+    `CartaoDeEstreia`). Definida ANTES de `AnimeSaida`/`AnimeDetalheSaida`
+    porque as duas a referenciam em `proxima_temporada` — Pydantic resolve o
+    tipo na ordem de definição do módulo, não por forward reference
+    automático."""
 
     id: int
     numero_temporada: int | None
     titulo: str
     estreia_em: date | None = None
     ano: int | None = None
+    formato_midia: str | None = None
 
 
 class AnimeSaida(BaseModel):
@@ -249,6 +260,12 @@ class AnimeEmAltaSaida(BaseModel):
     # traz; nos demais feeds (`/buscar`, próxima temporada, fileiras) fica
     # `None`. A Home a usa no bloco de conteúdo do carrossel de destaques.
     sinopse: str | None = None
+    # `format` cru da AniList — só a busca livre (`/buscar`) traz hoje
+    # (`integrations.base.AnimeEmAlta.formato`); os demais feeds ficam no
+    # default `None`. O frontend repassa pra `POST /api/admin/animes`
+    # (`CriarAnimeRequest.formato`) quando materializa um item clicado —
+    # decide se ele vira temporada normal ou filme/OVA/especial agrupado.
+    formato: str | None = None
 
 
 class FileiraTematicaSaida(BaseModel):

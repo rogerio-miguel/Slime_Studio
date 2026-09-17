@@ -177,6 +177,7 @@ export default function Inicio() {
           capaCor: item.capa_cor ?? undefined,
           generos: item.generos ?? undefined,
           sinopse: item.sinopse ?? undefined,
+          formato: item.formato ?? undefined,
         })
       ),
     [materializar]

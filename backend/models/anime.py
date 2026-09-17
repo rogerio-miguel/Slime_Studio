@@ -58,6 +58,21 @@ class Anime(Base):
     # âncora — nunca aponta para si mesmo nesse caso). Preenchida por
     # `db.catalogo.aplicar_posicao_na_serie` (materialização + backfill).
     serie_ancora: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # `format` cru da AniList quando este anime NÃO é uma temporada de TV —
+    # "MOVIE"/"OVA"/"ONA"/"SPECIAL" (vocabulário da AniList, sem tradução
+    # aqui — pt-BR é responsabilidade do frontend). `NULL` é o caso normal
+    # (série TV, `numero_temporada`/`serie_ancora` acima seguem valendo como
+    # sempre). Não-nulo: `numero_temporada` NUNCA é preenchido (sem posição
+    # narrativa numerada) e `serie_ancora` é resolvido por série-mãe, não pelo
+    # walk `PREQUEL` normal (`api/servicos/descoberta.py::
+    # _aplicar_ancora_de_midia`, via `integrations/servico.py::
+    # resolver_ancora_de_midia`). Preenchido na criação a partir do payload de
+    # `POST /api/admin/animes` (`db.catalogo.obter_ou_criar_anime_id`) — vem
+    # da busca da Home, que já sabe o `format` antes do clique. Usado pra
+    # excluir estas linhas da grade do catálogo (`GET /api/animes`) — só
+    # aparecem no seletor de temporada da franquia (`TemporadaIrmaSaida`, que
+    # já tolera `numero_temporada` nulo e cai no título).
+    formato_midia: Mapped[str | None] = mapped_column(String, nullable=True)
     # Mesma convenção enganosa de `capa_path`: guarda a URL da arte horizontal
     # (`bannerImage` da AniList), não um caminho em disco. Alimenta o hero da
     # página do anime; `capa_cor` (`coverImage.color` da AniList, ex. "#e4a15d")

@@ -64,7 +64,9 @@ async def criar_anime(
     Metadados (capa/sinopse/ids de provedor) persistem direto se vierem no
     payload; se ausentes, `api/servicos/descoberta.py` tenta enriquecer por
     título em best-effort (nunca bloqueia esta criação)."""
-    anime_id = await obter_ou_criar_anime_id(sessionmaker, corpo.titulo, corpo.ano)
+    anime_id = await obter_ou_criar_anime_id(
+        sessionmaker, corpo.titulo, corpo.ano, formato_midia=corpo.formato
+    )
     await servico_descoberta.enriquecer_anime_criado(
         sessionmaker,
         anime_id,
@@ -77,6 +79,7 @@ async def criar_anime(
         capa_cor=corpo.capa_cor,
         generos=corpo.generos,
         titulo_ingles=corpo.titulo_ingles,
+        formato=corpo.formato,
     )
     return await sessao.get(Anime, anime_id)
 
@@ -207,7 +210,12 @@ async def listar_animes(
     sessao: AsyncSession = Depends(obter_sessao),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeSaida]:
-    resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
+    # `formato_midia IS NULL` exclui filme/OVA/ONA/especial: essas linhas se
+    # agrupam no anime original (seletor de temporada, `_agrupar_franquias`/
+    # `_temporadas_e_proxima`) em vez de aparecer como card solto na grade.
+    resultado = await sessao.execute(
+        select(Anime).where(Anime.formato_midia.is_(None)).order_by(Anime.titulo)
+    )
     animes = list(resultado.scalars())
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
@@ -322,6 +330,7 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
         proximo_ep_em=lanc.proximo_ep_em if lanc else None,
         total_episodios=lanc.total_episodios if lanc else None,
         sinopse=item.sinopse,
+        formato=item.formato,
     )
 
 
@@ -479,6 +488,7 @@ async def _agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
                 Anime.status_lancamento,
                 Anime.estreia_em,
                 Anime.ano,
+                Anime.formato_midia,
                 tem_episodio.label("tem_episodios"),
             )
         )
@@ -554,7 +564,10 @@ def _temporadas_e_proxima(
     temporadas = (
         [
             TemporadaIrmaSaida(
-                id=linha.id, numero_temporada=linha.numero_temporada, titulo=linha.titulo
+                id=linha.id,
+                numero_temporada=linha.numero_temporada,
+                titulo=linha.titulo,
+                formato_midia=linha.formato_midia,
             )
             for linha in acessiveis
         ]

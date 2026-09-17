@@ -135,6 +135,12 @@ export function liberarEpisodio(episodioId, { manterVivo } = {}) {
 // best-effort (`api/rotas/animes.py`); qualquer campo de metadado presente no
 // payload faz o backend pular esse enriquecimento (curto-circuito em
 // `CriarAnimeRequest`).
+//
+// `formato` (`format` cru da AniList do item clicado, `AnimeEmAlta.formato`
+// da busca da Home) decide se o anime criado é uma temporada normal (`undefined`,
+// o caso comum) ou filme/OVA/ONA/especial — o backend grava em `Anime.
+// formato_midia` e resolve a franquia por série-mãe em vez do walk normal,
+// pra ele se agrupar no anime original em vez de virar card solto.
 export function criarAnime({
   titulo,
   ano,
@@ -146,6 +152,7 @@ export function criarAnime({
   capaCor,
   generos,
   tituloIngles,
+  formato,
 } = {}) {
   return requisitar('/api/admin/animes', {
     metodo: 'POST',
@@ -160,6 +167,7 @@ export function criarAnime({
       capa_cor: capaCor,
       generos: generos,
       titulo_ingles: tituloIngles,
+      formato,
     },
   }).then((resultado) => {
     invalidar('animes');

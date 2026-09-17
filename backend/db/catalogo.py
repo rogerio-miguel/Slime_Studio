@@ -25,7 +25,20 @@ logger = logging.getLogger(__name__)
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 
-async def obter_ou_criar_anime_id(sessionmaker: _SessionMaker, titulo: str, ano: int | None) -> int:
+async def obter_ou_criar_anime_id(
+    sessionmaker: _SessionMaker,
+    titulo: str,
+    ano: int | None,
+    *,
+    formato_midia: str | None = None,
+) -> int:
+    """Get-or-create por slug. `formato_midia` (`format` cru da AniList —
+    `None` para série TV, "MOVIE"/"OVA"/"ONA"/"SPECIAL" caso contrário) só é
+    aplicado na CRIAÇÃO — um anime já existente não tem seu formato
+    retroativamente alterado (mesma convenção de `ano` acima: só pega no
+    primeiro cadastro). Não-nulo desliga o marcador de temporada do título
+    (`separar_temporada`): filme/OVA/especial não tem posição narrativa
+    numerada, mesmo que o título tenha algo que pareça um marcador."""
     slug = slugificar(titulo)
     async with sessionmaker() as sessao:
         resultado = await sessao.execute(select(Anime.id).where(Anime.slug == slug))
@@ -33,8 +46,14 @@ async def obter_ou_criar_anime_id(sessionmaker: _SessionMaker, titulo: str, ano:
         if anime_id is not None:
             return anime_id
 
-        _, numero_temporada = separar_temporada(titulo)
-        anime = Anime(titulo=titulo, slug=slug, ano=ano, numero_temporada=numero_temporada)
+        numero_temporada = None if formato_midia is not None else separar_temporada(titulo)[1]
+        anime = Anime(
+            titulo=titulo,
+            slug=slug,
+            ano=ano,
+            numero_temporada=numero_temporada,
+            formato_midia=formato_midia,
+        )
         sessao.add(anime)
         try:
             await sessao.commit()

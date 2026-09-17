@@ -1099,6 +1099,54 @@ async def _buscar_relacoes_em_cadeia(
     return None
 
 
+async def _buscar_serie_pai_em_cadeia(
+    capazes: list[ProvedorComRelacoes], anilist_id: int
+) -> NoDeSerie | None:
+    """Mesma semântica de `_buscar_relacoes_em_cadeia` (definida mais abaixo,
+    reaproveitada por `resolver_ancora_de_midia`): primeiro provedor capaz que
+    responde vence, falha de provedor é logada e a cadeia segue."""
+    for provedor in capazes:
+        try:
+            return await _chamar(provedor, provedor.buscar_serie_pai, anilist_id)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de metadados %r falhou ao buscar série-mãe de anilist_id=%s: %s",
+                provedor.nome,
+                anilist_id,
+                excecao,
+            )
+    return None
+
+
+async def resolver_ancora_de_midia(anilist_id: int) -> int | None:
+    """`serie_ancora` de um filme/OVA/ONA/especial (`Anime.formato_midia` não
+    nulo) — o COMPLEMENTO de `resolver_serie`, que só anda o walk `PREQUEL`
+    entre `Media` TV/TV_SHORT e por isso não serve pra esses formatos (a
+    aresta de volta pra série-mãe quase nunca é `PREQUEL`, ver `buscar_
+    serie_pai`).
+
+    Acha o primeiro nó TV/TV_SHORT relacionado (`buscar_serie_pai`) e devolve
+    a ÂNCORA DELE (`resolver_serie` nesse nó — que pode ser ele mesmo, se for
+    a T1, ou subir a cadeia de prequels se não for). `None` quando não há nó
+    TV relacionado, ou o walk a partir dele falha — nunca ancora o filme nele
+    mesmo (isso o transformaria num card de franquia próprio, o problema que
+    esta função existe para evitar).
+
+    Sem cache próprio: `resolver_serie` (chamado aqui) já cacheia por
+    `anilist_id` via `_memo_serie`; esta função só roda uma vez, no
+    enriquecimento best-effort pós-criação (`api/servicos/descoberta.py::
+    _resolver_e_aplicar_serie`), não a cada carregamento de página."""
+    capazes = [p for p in PROVEDORES if isinstance(p, ProvedorComRelacoes)]
+    if not capazes:
+        return None
+    pai = await _buscar_serie_pai_em_cadeia(capazes, anilist_id)
+    if pai is None:
+        return None
+    serie = await resolver_serie(pai.anilist_id)
+    return serie.ancora if serie is not None else None
+
+
 async def resolver_serie(anilist_id: int) -> SerieResolvida | None:
     """`(ancora, ordinal)` de `anilist_id` — a âncora é o `anilist_id` da
     temporada 1 da franquia (== `anilist_id` quando o próprio anime não tem
