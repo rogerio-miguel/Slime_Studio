@@ -171,6 +171,8 @@ async def resolver_e_listar(
             permite_retentativa=True,
         ) from excecao
 
+    episodios = await _recortar_se_fonte_achatada(sessionmaker, anime, episodios)
+
     return FonteComEpisodios(
         dominio=resolvida.dominio,
         identificador=resolvida.identificador,
@@ -222,6 +224,76 @@ async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int
             )
         )
     return int(total or 0)
+
+
+async def _recortar_se_fonte_achatada(
+    sessionmaker: _SessionMaker, anime: Anime, episodios: list[EpisodioRemoto]
+) -> list[EpisodioRemoto]:
+    """Corrige fonte "achatada": quando o adapter não teve sinal próprio de
+    temporada (ex. AnimeFire sem `season` divergente por episódio) e devolveu
+    a série inteira em vez de recortar (`ExtratorDeSite.listar_episodios`,
+    degradação documentada em `extractors/base.py`).
+
+    Detecção: nº de episódios com `numero` distinto excede
+    `anime.total_episodios_anilist` — a temporada pedida não cabe na contagem
+    que a AniList declara pra ela, sinal de que o recorte nativo não rodou.
+    Corte: mesmo offset acumulado de `_offset_de_temporada` (soma de
+    `total_episodios_anilist` das temporadas irmãs anteriores), aplicado como
+    intervalo absoluto sobre `numero` — reaproveita o `numero` cru da fonte
+    (que nesse caso é a numeração contínua da série, não 1-based) sem
+    reescrever `rotulo` (chave de dedup do adapter).
+
+    Sem contagem AniList (`total_episodios_anilist` nulo) ou sem temporada
+    pedida (`numero_temporada` nulo) não há como decidir — devolve `episodios`
+    intacto, mesma degradação segura que o adapter já aplica.
+
+    Episódios com `numero=None` (rótulo não-numérico, ex. "Especial"/"OVA 2")
+    não entram no recorte por número (não têm como ser atribuídos a uma
+    temporada) — preservados sempre, mesmo comportamento de antes desta
+    correção."""
+    total_temporada = anime.total_episodios_anilist
+    if anime.numero_temporada is None or not total_temporada:
+        return episodios
+
+    numeros = {ep.numero for ep in episodios if ep.numero is not None}
+    if len(numeros) <= total_temporada:
+        return episodios
+
+    offset = await _offset_de_temporada(sessionmaker, anime)
+
+    def _no_intervalo(ep: EpisodioRemoto) -> bool:
+        return ep.numero is not None and offset < ep.numero <= offset + total_temporada
+
+    if not any(_no_intervalo(ep) for ep in episodios):
+        logger.warning(
+            "fonte achatada para %r temporada %d (%d episódios distintos > %d "
+            "esperados pela AniList) mas offset acumulado (%d) não cobriu nenhum "
+            "episódio — mantendo lista sem recorte",
+            anime.titulo,
+            anime.numero_temporada,
+            len(numeros),
+            total_temporada,
+            offset,
+        )
+        return episodios
+
+    recortados = [
+        replace(ep, numero=ep.numero - offset) if _no_intervalo(ep) else ep
+        for ep in episodios
+        if ep.numero is None or _no_intervalo(ep)
+    ]
+    logger.info(
+        "fonte achatada para %r temporada %d (%d episódios distintos > %d "
+        "esperados pela AniList) — recortada por offset acumulado (%d) para %d "
+        "episódios",
+        anime.titulo,
+        anime.numero_temporada,
+        len(numeros),
+        total_temporada,
+        offset,
+        len(recortados),
+    )
+    return recortados
 
 
 async def _info_direto_ou_absoluto(
