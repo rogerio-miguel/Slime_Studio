@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
-from core.temporada import conciliar_posicao, separar_temporada
+from core.temporada import PosicaoNaSerie, conciliar_posicao, separar_temporada
 from core.texto import slugificar
 from db.catalogo import (
     aplicar_lancamento_descoberto_por_titulo,
@@ -661,13 +661,22 @@ async def enriquecer_anime_criado(
     capa_cor: str | None,
     generos: list[str] | None,
     titulo_ingles: str | None = None,
+    formato: str | None = None,
 ) -> None:
     """Preenche metadados do anime recém-obtido/criado (`POST
     /api/admin/animes`). Se o request já trouxe algum campo, persiste direto
     — evita rebuscar um provedor externo por um dado que já veio no payload
     (importa pro rate limit do AniList/Kitsu). Senão, tenta enriquecer por
     título em best-effort: falha do provedor vira warning, nunca bloqueia a
-    criação do anime (que já aconteceu antes desta chamada)."""
+    criação do anime (que já aconteceu antes desta chamada).
+
+    `formato` (`format` cru da AniList, já persistido em `Anime.formato_midia`
+    por `db.catalogo.obter_ou_criar_anime_id` na criação) decide o walk de
+    franquia em `_resolver_e_aplicar_serie`: `None`/TV segue o walk normal
+    (`numero_temporada`+`serie_ancora`); filme/OVA/ONA/especial usa a
+    resolução por série-mãe (só `serie_ancora`). Não é conhecido no caminho
+    de enriquecimento por título abaixo (`buscar_por_titulo` não devolve
+    `format`) — fica `None` nesse caminho, tratado como série normal."""
     algum_campo_veio_no_payload = (
         anilist_id is not None
         or kitsu_id is not None
@@ -690,7 +699,9 @@ async def enriquecer_anime_criado(
             titulo_ingles=titulo_ingles,
         )
         await aplicar_metadados(sessionmaker, anime_id, metadados)
-        await _resolver_e_aplicar_serie(sessionmaker, anime_id, titulo, anilist_id)
+        await _resolver_e_aplicar_serie(
+            sessionmaker, anime_id, titulo, anilist_id, formato=formato
+        )
         return
 
     try:
@@ -718,6 +729,8 @@ async def _resolver_e_aplicar_serie(
     anime_id: int,
     titulo: str,
     anilist_id: int | None,
+    *,
+    formato: str | None = None,
 ) -> None:
     """Preenche `numero_temporada` (ordinal narrativo) e `serie_ancora` do anime
     recém-criado: anda o grafo de `relations` da AniList
@@ -725,6 +738,12 @@ async def _resolver_e_aplicar_serie(
     do título (`separar_temporada`/`conciliar_posicao`, D2). Grava via
     `aplicar_posicao_na_serie` (só-quando-NULL — o marcador do título gravado na
     criação nunca é sobrescrito).
+
+    `formato` não-nulo (`Anime.formato_midia` — filme/OVA/ONA/especial) desvia
+    pra `_aplicar_ancora_de_midia`: esses formatos quase nunca têm aresta
+    `PREQUEL` de volta pra série TV (o walk normal ficaria ancorado neles
+    mesmos), então só `serie_ancora` é resolvido (via série-mãe), nunca
+    `numero_temporada` — não têm posição narrativa numerada.
 
     Best-effort de ponta a ponta, mesma filosofia de `_resolver_titulos_
     canonicos`: sem `anilist_id` não há grafo para andar; qualquer falha
@@ -738,6 +757,9 @@ async def _resolver_e_aplicar_serie(
     `scripts/backfill_serie.py`.
     """
     if anilist_id is None:
+        return
+    if formato is not None:
+        await _aplicar_ancora_de_midia(sessionmaker, anime_id, anilist_id)
         return
     try:
         serie = await asyncio.wait_for(
@@ -770,6 +792,35 @@ async def _resolver_e_aplicar_serie(
         logger.warning(
             "resolução de posição na série best-effort falhou para anime_id=%s "
             "anilist_id=%s: %s",
+            anime_id,
+            anilist_id,
+            excecao,
+        )
+
+
+async def _aplicar_ancora_de_midia(
+    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int
+) -> None:
+    """Ramo de `_resolver_e_aplicar_serie` para `Anime.formato_midia` não-nulo
+    (filme/OVA/ONA/especial): resolve só `serie_ancora`
+    (`servico.resolver_ancora_de_midia`, via série-mãe — nunca o walk
+    `PREQUEL` normal, que ancoraria o item nele mesmo). `numero_temporada`
+    nunca é tocado aqui — esses formatos não têm posição narrativa numerada.
+
+    Best-effort, mesma filosofia do ramo TV: qualquer falha (provedor, timeout,
+    banco) vira `warning` e retorna — a criação do anime já aconteceu."""
+    try:
+        ancora = await asyncio.wait_for(
+            servico.resolver_ancora_de_midia(anilist_id), timeout=_TETO_SERIE_S
+        )
+        if ancora is not None:
+            await aplicar_posicao_na_serie(
+                sessionmaker, anime_id, PosicaoNaSerie(numero_temporada=None, serie_ancora=ancora)
+            )
+    except Exception as excecao:
+        logger.warning(
+            "resolução de âncora de mídia relacionada best-effort falhou para "
+            "anime_id=%s anilist_id=%s: %s",
             anime_id,
             anilist_id,
             excecao,

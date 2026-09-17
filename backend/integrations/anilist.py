@@ -90,6 +90,7 @@ query ($busca: String) {
       startDate { year }
       status
       episodes
+      format
       nextAiringEpisode { episode airingAt }
     }
   }
@@ -358,6 +359,27 @@ class AniListProvider(
 
         return RelacoesDeAnime(no=no, prequels=tuple(prequels))
 
+    def buscar_serie_pai(self, anilist_id: int) -> NoDeSerie | None:
+        dados = self._executar(_QUERY_RELACOES, {"id": anilist_id})
+        media = dados.get("Media") if isinstance(dados, dict) else None
+        if not isinstance(media, dict):
+            return None
+
+        relacoes = media.get("relations") or {}
+        arestas = relacoes.get("edges") if isinstance(relacoes, dict) else None
+        for aresta in arestas or []:
+            if not isinstance(aresta, dict):
+                continue
+            node = aresta.get("node")
+            if not isinstance(node, dict) or node.get("type") != "ANIME":
+                continue
+            if node.get("format") not in _FORMATOS_DE_SERIE:
+                continue
+            candidato = _no_de_serie(node)
+            if candidato is not None:
+                return candidato
+        return None
+
     def _executar(self, query: str, variaveis: dict) -> dict:
         resposta = requests.post(
             _URL,
@@ -425,6 +447,7 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
         ),
         lancamento=_extrair_lancamento(item),
         sinopse=_sanitizar_sinopse(item.get("description")),
+        formato=_texto_ou_none(item.get("format")),
     )
 
 

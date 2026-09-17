@@ -9,14 +9,20 @@ import { useNavigate } from 'react-router-dom';
 // a temporada atual em destaque) o distinguem.
 //
 // `temporadas` é `anime.temporadas` (`AnimeDetalheSaida.temporadas`, já
-// ordenada por número, inclui a atual). Trocar de temporada é NAVEGAÇÃO de
-// rota (`/anime/:outroId`) — a página inteira re-chaveia em `animeId` via
-// `useRecurso`, sem estado local novo. Só renderiza com 2+ temporadas
-// catalogadas (o chamador também já checa, este é um segundo guard barato).
+// ordenada por número, inclui a atual). Filme/OVA/ONA/especial da mesma
+// franquia (`Anime.formato_midia` não nulo) entra nesta MESMA lista — se
+// agrupa no anime original em vez de virar card solto no catálogo — só ganha
+// um selo de formato ao lado do título (`formato_midia` por item). Trocar de
+// item é NAVEGAÇÃO de rota (`/anime/:outroId`) — a página inteira re-chaveia
+// em `animeId` via `useRecurso`, sem estado local novo. Só renderiza com 2+
+// itens catalogados (o chamador também já checa, este é um segundo guard
+// barato).
 //
 // Acessibilidade: `<button aria-haspopup="menu" aria-expanded>` + `role="menu"`
 // / `role="menuitem"`; Esc fecha e devolve o foco ao gatilho, ↑/↓ andam pelos
 // itens, Home/End vão pras pontas, clique fora fecha.
+const RÓTULO_FORMATO = { MOVIE: 'Filme', OVA: 'OVA', ONA: 'ONA', SPECIAL: 'Especial' };
+
 export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
   const navigate = useNavigate();
   const [aberto, setAberto] = useState(false);
@@ -146,13 +152,18 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
                 aria-current={atual ? 'true' : undefined}
                 tabIndex={indice === indiceAtivo ? 0 : -1}
                 onClick={() => escolher(temporada)}
-                className={`block w-full px-4 py-2 text-left text-sm outline-none transition-colors focus-visible:bg-white/10 ${
+                className={`flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-sm outline-none transition-colors focus-visible:bg-white/10 ${
                   atual
                     ? 'font-semibold text-white'
                     : 'text-ink-muted hover:bg-white/5 hover:text-white'
                 }`}
               >
-                {rotuloDe(temporada)}
+                <span>{rotuloDe(temporada)}</span>
+                {temporada.formato_midia && (
+                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-ink-muted">
+                    {RÓTULO_FORMATO[temporada.formato_midia] ?? temporada.formato_midia}
+                  </span>
+                )}
               </button>
             );
           })}

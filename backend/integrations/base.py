@@ -127,6 +127,13 @@ class AnimeEmAlta:
     # vezes devolve `null`). A Home usa como fundo do slide do carrossel quando o
     # item não tem arte horizontal (`banner_url`).
     capa_cor: str | None = None
+    # `format` cru da AniList ("TV"/"TV_SHORT"/"MOVIE"/"OVA"/"ONA"/"SPECIAL"/...)
+    # — só `_QUERY_BUSCA_LISTA` traz hoje (a busca livre da Home é o único feed
+    # de onde o usuário materializa filme/OVA/especial, ver `Anime.formato_midia`
+    # em `models/anime.py`); os demais feeds deixam no default `None`. Repassado
+    # cru pro payload de `POST /api/admin/animes` sem tradução (pt-BR é
+    # responsabilidade do frontend, mesma regra de `generos`).
+    formato: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +319,19 @@ class ProvedorComRelacoes(ABC):
         """Vizinhança de `anilist_id` no grafo de `relations`, com os prequels
         já filtrados a `Media` ANIME em formato de temporada (`TV`/`TV_SHORT`);
         `None` quando o provedor não conhece esse id."""
+
+    @abstractmethod
+    def buscar_serie_pai(self, anilist_id: int) -> NoDeSerie | None:
+        """Primeiro nó TV/TV_SHORT relacionado a `anilist_id` no grafo de
+        `relations`, de QUALQUER `relationType` (ao contrário de
+        `buscar_relacoes`, que só anda `PREQUEL`) — um filme/OVA/especial quase
+        nunca tem aresta `PREQUEL` de volta pra série-mãe (a AniList rotula
+        essa ligação como `SIDE_STORY`/`ADAPTATION`/`ALTERNATIVE`/etc.,
+        variável por título). Usado só para resolver a franquia de um item
+        FORA do formato de temporada (`integrations/servico.py::
+        resolver_ancora_de_midia`) — nunca para o walk normal de `resolver_
+        serie`. `None` quando não há nenhum nó TV relacionado ou o provedor
+        não conhece o id."""
 
 
 class ProvedorComFileirasTematicas(ABC):

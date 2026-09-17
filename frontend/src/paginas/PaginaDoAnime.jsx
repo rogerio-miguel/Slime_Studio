@@ -914,7 +914,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                 rota (`/anime/:outroId`), a página re-chaveia em `animeId` via
                 `useRecurso` e a URL fica compartilhável por temporada. Só
                 renderiza com 2+ temporadas catalogadas (guard interno do
-                componente também). */}
+                componente também). Filme/OVA/ONA/especial da franquia entra
+                na MESMA lista (`anime.temporadas`) — se agrupa no anime
+                original, o componente só acrescenta um selo de formato. */}
             {anime?.temporadas && (
               <SeletorDeTemporada temporadas={anime.temporadas} animeIdAtual={animeId} />
             )}
