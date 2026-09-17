@@ -17,17 +17,22 @@
 // os cards têm no wrapper) ou no foco do próprio botão (`focus-visible:`) —
 // nunca via `hidden`/DOM removido, senão ficaria inalcançável por Tab.
 //
+import { CircleMinus } from 'lucide-react';
+
 // Ícone e posição copiados do botão "Remover" do Disney+ (seção "Continue
 // Assistindo", inspecionado ao vivo em 2026-09-13): círculo-menos SEM chip de
 // fundo (só o ícone, branco), ancorado no canto superior direito da capa. O
 // `drop-shadow` é acréscimo nosso — o card lá tem um scrim que já dá contraste
-// e o nosso não. `h-8 w-8` + `strokeWidth="2.5"` (mesmo tamanho/espessura do
-// ícone de `inicio/CartaoDeEstreia.jsx::IconeSalvar` — pedido explícito do
-// usuário pros dois botões saírem do mesmo tamanho). SEM `p-1` ao redor: o
-// svg já mede 32px, igual ao `h-8` do `badgeAssistido` de `AnimeCard.jsx` —
-// qualquer padding aqui infla a caixa além dos 32px e desalinha o centro
-// vertical dos dois (badge exatamente `h-8`, botão viraria `h-8` + `p-1`
-// dobrado = 40px), mesmo os dois começando do mesmo `top-2`.
+// e o nosso não. `CircleMinus` (lucide-react, trocado a pedido do usuário,
+// 2026-09-17, no lugar do SVG desenhado à mão que reproduzia o mesmo
+// círculo-menos — Escada de Minimalismo, CLAUDE.md §4: a lib já tem o glifo
+// pronto). `h-8 w-8` + `strokeWidth={2.5}` (mesmo tamanho/espessura do ícone
+// de `inicio/CartaoDeEstreia.jsx::IconeSalvar` — pedido explícito do usuário
+// pros dois botões saírem do mesmo tamanho). SEM `p-1` ao redor: o svg já
+// mede 32px, igual ao `h-8` do `badgeAssistido` de `AnimeCard.jsx` — qualquer
+// padding aqui infla a caixa além dos 32px e desalinha o centro vertical dos
+// dois (badge exatamente `h-8`, botão viraria `h-8` + `p-1` dobrado = 40px),
+// mesmo os dois começando do mesmo `top-2`.
 export default function BotaoRemoverDoCatalogo({ titulo, aoRemover }) {
   return (
     <button
@@ -40,10 +45,7 @@ export default function BotaoRemoverDoCatalogo({ titulo, aoRemover }) {
       aria-label={`Remover ${titulo} do catálogo`}
       className="absolute right-2 top-2 z-10 rounded-full text-white opacity-0 outline-none drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors duration-200 hover:text-white/80 focus-visible:opacity-100 group-hover/card:opacity-100 cursor-pointer"
     >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="h-8 w-8">
-        <circle cx="12" cy="12" r="9" />
-        <line x1="8" y1="12" x2="16" y2="12" strokeLinecap="round" />
-      </svg>
+      <CircleMinus aria-hidden="true" focusable="false" strokeWidth={2.5} className="h-8 w-8" />
     </button>
   );
 }

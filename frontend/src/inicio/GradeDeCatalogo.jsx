@@ -48,6 +48,11 @@ import { SlotDeCard } from './GradeDeCards.jsx';
 // (desce ~46px abaixo da borda do card) não pode invadir a linha de baixo.
 // `pb-[24px]` dá a folga da última linha; `pt-[22px]` o respiro título->cards.
 //
+// `comAnimacao = false` (paginas/Galeria.jsx, pedido explícito do usuário,
+// 2026-09-17) desliga a animação de entrada "surge do meio" repassando
+// `animada` pro SlotDeCard — cards do catálogo nascem já visíveis. Default
+// `true` preserva o comportamento das duas grades de paginas/Inicio.jsx.
+//
 // API espelha FileiraDeCards: `itens` + `renderItem(item, indice)` +
 // `chaveDoItem(item)` + `tamanho`. O guard de lista vazia mora aqui (retorna
 // `null`), o chamador não repete. NÃO leva `aria-labelledby` — o
@@ -60,6 +65,7 @@ export default function GradeDeCatalogo({
   chaveDoItem,
   tamanho = 'grande',
   comSombra = true,
+  comAnimacao = true,
 }) {
   const lista = itens ?? [];
   if (lista.length === 0) return null;
@@ -84,7 +90,7 @@ export default function GradeDeCatalogo({
               Tailwind v4 não gera sombra de 2 camadas começando pela cor de
               forma confiável. `comSombra=false` pula esse wrapper por completo
               (ver bloco de comentário acima). */}
-          <SlotDeCard indice={indice}>
+          <SlotDeCard indice={indice} animada={comAnimacao}>
             {comSombra ? (
               <div className="rounded-xl" style={{ boxShadow: SOMBRA_SLIDE_ATIVO }}>
                 {renderItem(item, indice)}

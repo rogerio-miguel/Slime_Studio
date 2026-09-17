@@ -78,17 +78,34 @@ export const DURACAO_ENTRADA_MS = 700;
 // toca de novo pra frente — sem depender de dar reload na página. Sem
 // isto, `visivel` só ia de false→true uma vez (no primeiro `ativa=true`) e
 // ficava presa em true pro resto da vida do componente.
-export function SlotDeCard({ indice, ativa = true, children }) {
-  const [visivel, setVisivel] = useState(false);
+// `animada = false` (usado por paginas/Galeria.jsx via GradeDeCatalogo — pedido
+// explícito do usuário, 2026-09-17: catálogo sem a entrada "surge do meio")
+// pula o fade/scale por completo — card nasce já visível, sem
+// `transitionDelay` escalonado nem `requestAnimationFrame`. As fileiras da
+// Home continuam com o default `true`.
+export function SlotDeCard({ indice, ativa = true, animada = true, children }) {
+  const [visivel, setVisivel] = useState(!animada);
 
   useEffect(() => {
+    if (!animada) return undefined;
     if (!ativa) {
       setVisivel(false);
       return undefined;
     }
     const quadro = requestAnimationFrame(() => setVisivel(true));
     return () => cancelAnimationFrame(quadro);
-  }, [ativa]);
+  }, [ativa, animada]);
+
+  if (!animada) {
+    return (
+      <div
+        style={{ maxWidth: 'var(--largura-max-card, 100%)' }}
+        className="mx-auto w-full"
+      >
+        {children}
+      </div>
+    );
+  }
 
   return (
     <div
