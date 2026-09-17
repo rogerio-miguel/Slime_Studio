@@ -213,6 +213,15 @@ _fileiras_por_chave: dict[str, FileiraTematica] = {
 # entre testes (estado de módulo).
 _memo_arte: dict[tuple[str, int | None], tuple[float, ArteDeAnime | None]] = {}
 
+# Memo de processo de `buscar_titulos` (títulos canônicos AniList) — chave é o
+# slug do título cadastrado. Mesma política/TTL de `_memo_arte` (cache
+# negativo incluído, limpa o dict inteiro ao estourar `_LIMITE_MEMO_ARTE`):
+# sem isto, toda visita a `PaginaDoAnime.jsx` paga uma chamada AniList nova
+# pro MESMO anime (`api/servicos/fontes.py::resolver_e_listar` chama
+# `buscar_titulos` a cada requisição, sem cache próprio) — títulos canônicos
+# não mudam na frequência de navegação do usuário.
+_memo_titulos: dict[str, tuple[float, TitulosDeAnime | None]] = {}
+
 # Memo do overlay de still/nome/sinopse de episódio (PLANO_ARTE_TMDB.md
 # Fatia 5/6). Chave de `_memo_info_episodio`: `(slug do título, ano,
 # temporada, numero)`, onde `temporada` é `int` quando o chamador sabe o `n`
@@ -286,6 +295,14 @@ async def buscar_por_titulo(titulo: str) -> MetadadosDeAnime | None:
     return await _com_arte(resultado, titulo=titulo_arte, ano=resultado.ano)
 
 
+def _gravar_memo_titulos(slug: str, titulos: TitulosDeAnime | None) -> None:
+    """Mesma política de `_gravar_memo_arte`: grava inclusive `None` (cache
+    negativo), limpa o dict inteiro ao estourar `_LIMITE_MEMO_ARTE`."""
+    if len(_memo_titulos) >= _LIMITE_MEMO_ARTE:
+        _memo_titulos.clear()
+    _memo_titulos[slug] = (time.monotonic() + _TTL_ARTE_S, titulos)
+
+
 async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
     """Tenta cada provedor de `PROVEDORES_DE_TITULO` (só a AniList — ver o
     comentário da tupla em `registro.py`) em ordem até achar títulos
@@ -297,13 +314,30 @@ async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
     título canônico é enriquecimento best-effort sob teto curto, e a AniList
     fora do ar deve degradar direto (`FalhaDeMetadados` → o chamador segue só
     com o título digitado), sem pagar a latência de timeout do Kitsu instável.
-    Ver `_buscar_em_cadeia` para a semântica de fallback dentro da tupla."""
-    return await _buscar_em_cadeia(
+    Ver `_buscar_em_cadeia` para a semântica de fallback dentro da tupla.
+
+    Cacheado em processo por `_memo_titulos` (TTL `_TTL_ARTE_S`, cache
+    negativo incluído) — chamador típico (`api/servicos/fontes.py::
+    resolver_e_listar`) invoca isto em TODA visita à página do anime; sem o
+    memo, cada visita pagaria uma chamada AniList nova para o mesmo anime.
+    Grava só no caminho de sucesso: uma `FalhaDeMetadados` (todos os
+    provedores fora do ar) propaga sem tocar o memo, deixando a próxima
+    chamada tentar de novo em vez de fixar a falha pelo TTL inteiro."""
+    slug = slugificar(titulo)
+    memo = _memo_titulos.get(slug)
+    if memo is not None:
+        expira_em, titulos_cacheados = memo
+        if time.monotonic() < expira_em:
+            return titulos_cacheados
+
+    resultado = await _buscar_em_cadeia(
         lambda provedor: provedor.buscar_titulos,
         titulo,
         descricao="busca de títulos",
         provedores=PROVEDORES_DE_TITULO,
     )
+    _gravar_memo_titulos(slug, resultado)
+    return resultado
 
 
 async def listar_por_busca(titulo: str) -> list[AnimeEmAlta]:
