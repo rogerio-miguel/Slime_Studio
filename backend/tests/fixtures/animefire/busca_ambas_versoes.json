@@ -2,7 +2,7 @@
   "data": [
     {
       "id": "eU7t5IvcNKU",
-      "title": "Naruto",
+      "titles": {"BR": "Naruto"},
       "audio": "Dublado &amp; Legendado",
       "poster_src": "https://image.tmdb.org/t/p/original/naruto.jpg",
       "status": "completed",
