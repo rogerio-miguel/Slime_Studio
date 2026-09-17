@@ -65,6 +65,12 @@ outra:
   <tr>
     <td colspan="2" align="center"><img src="frontend/src/assets/player2.png" width="600" /></td>
   </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="frontend/src/assets/player3.png" width="600" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="frontend/src/assets/player4.png" width="600" /></td>
+  </tr>
 </table>
 
 ## Arquitetura
@@ -86,11 +92,12 @@ Slime_Studio/
 - **`extractors/`** — um adapter por site de streaming (Strategy Pattern), resolve
   vídeo com cache de sessão, retry e circuit breaker (bypass anti-bot). A resolução
   de fonte tenta os sites em cadeia de fallback (AnimeFire → MeusAnimes → AnimesDrive);
-  `blogger.py` é um helper compartilhado para players do Blogger embutidos.
+  `blogger.py` é um helper compartilhado para players do Blogger embutidos, e o
+  download cai para `yt-dlp` quando a CDN serve manifesto DASH.
 - **`integrations/`** — mesmo padrão, mas para metadados: AniList como provedor
   principal e Kitsu como fallback, com cache em memória do feed "em alta".
 - **`worker/pipeline/`** — encapsula `ffmpeg` como subprocesso para empacotar os
-  episódios capturados em HLS.
+  episódios capturados em HLS e gerar o storyboard de prévia de cena usado no player.
 
 ```
 backend/
@@ -112,8 +119,7 @@ frontend/src/
 ├── paginas/    # Inicio, Galeria, PaginaDoAnime, player (HLS e vídeo local)
 ├── player/     # canvas WebGPU, controles, hooks do Anime4K e do Áudio Cinema
 ├── inicio/     # grade de destaques dirigida pelo feed externo
-├── admin/      # ações de catálogo (materializar/remover)
-├── api/        # cliente HTTP para o backend
+├── api/        # cliente HTTP para o backend (materializar/remover inclusos)
 └── components/ # UI compartilhada (navbar, cards, etc.)
 ```
 
@@ -167,10 +173,10 @@ Depois de subir, acesse `http://localhost:5173`. A API sobe em `http://127.0.0.1
 ## Stack
 
 **Backend:** FastAPI · `asyncio` · SQLAlchemy · SQLite (WAL) · Alembic · `uv` ·
-BeautifulSoup4 · cloudscraper/DrissionPage (bypass anti-bot)
+BeautifulSoup4 · cloudscraper/DrissionPage (bypass anti-bot) · `yt-dlp`
 
 **Frontend:** React 19 · Vite · Tailwind CSS 4 · React Router · `hls.js` ·
-`anime4k-webgpu`
+`anime4k-webgpu` · lucide-react
 
 ---
 
