@@ -334,6 +334,25 @@ class ProvedorComRelacoes(ABC):
         não conhece o id."""
 
 
+class ProvedorComRecomendacoes(ABC):
+    """Capability opcional: só provedores que expõem sugestões de animes
+    parecidos a implementam — hoje só `anilist.py` (o Kitsu não tem
+    `recommendations`). `integrations/servico.py::listar_relacionados` filtra
+    `PROVEDORES` por `isinstance(p, ProvedorComRecomendacoes)` antes de
+    consultar. Síncrona pela mesma razão de `ProvedorDeMetadados` (o
+    `to_thread`/timeout mora só no serviço)."""
+
+    @abstractmethod
+    def buscar_relacionados(self, anilist_id: int) -> list[AnimeEmAlta]:
+        """Animes "relacionados" a `anilist_id` para a seção da página do
+        anime — recomendações da comunidade (`recommendations`) e relações de
+        franquia que NÃO são temporada de TV em sequência direta (`relations`
+        exceto `PREQUEL`/`SEQUEL` de `Media` `TV`/`TV_SHORT`, já cobertas pelo
+        seletor de temporada). `[]` quando o provedor não conhece o id ou não
+        tem nada a sugerir — nunca `None` (não há "reconsultar mais tarde"
+        aqui, ao contrário de `buscar_relacoes`)."""
+
+
 class ProvedorComFileirasTematicas(ABC):
     """Capability opcional: só provedores que expõem busca por tag a
     implementam (hoje só `anilist.py` — Kitsu não tem esse recurso).

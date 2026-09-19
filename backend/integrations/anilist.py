@@ -27,6 +27,7 @@ from integrations.base import (
     NoDeSerie,
     ProvedorComFileirasTematicas,
     ProvedorComLancamento,
+    ProvedorComRecomendacoes,
     ProvedorComRelacoes,
     ProvedorDeMetadados,
     RelacoesDeAnime,
@@ -195,6 +196,57 @@ query ($id: Int) {
 }
 """
 
+# Query única da seção "Relacionados" da página do anime (`integrations/base.py::
+# ProvedorComRecomendacoes`): `relations` (mesmo shape de nó de `_QUERY_RELACOES`,
+# sem `startDate.day`/`relationType` extra — não precisa desempatar data aqui,
+# só filtrar sequência de TV já coberta pelo seletor de temporada) + `recommendations`
+# (sugestão da comunidade, ordenada por `rating`). Os dois blocos de `Media` usam
+# o MESMO formato de campo de `_item_para_anime_em_alta` (coverImage/bannerImage/
+# genres/seasonYear/startDate/status/episodes/nextAiringEpisode/format) — parser
+# reaproveitado sem adaptação.
+_QUERY_RELACIONADOS = """
+query ($id: Int) {
+  Media(id: $id, type: ANIME) {
+    relations {
+      edges {
+        relationType(version: 2)
+        node {
+          id
+          type
+          format
+          title { romaji english }
+          coverImage { extraLarge color }
+          bannerImage
+          genres
+          seasonYear
+          startDate { year }
+          status
+          episodes
+          nextAiringEpisode { episode airingAt }
+        }
+      }
+    }
+    recommendations(sort: RATING_DESC, perPage: 25) {
+      nodes {
+        mediaRecommendation {
+          id
+          format
+          title { romaji english }
+          coverImage { extraLarge color }
+          bannerImage
+          genres
+          seasonYear
+          startDate { year }
+          status
+          episodes
+          nextAiringEpisode { episode airingAt }
+        }
+      }
+    }
+  }
+}
+"""
+
 _QUERY_METADADOS_POR_ID = """
 query ($id: Int) {
   Media(id: $id, type: ANIME) {
@@ -228,12 +280,26 @@ _REGEX_TAG_HTML = re.compile(r"<[^>]+>")
 # entra: série de curtas ainda é temporada numerada (ex. "Yama no Susume").
 _FORMATOS_DE_SERIE = frozenset({"TV", "TV_SHORT"})
 
+# `relationType`s de sequência de TV — já cobertos pelo seletor de temporada
+# (`api/rotas/animes.py::_temporadas_e_proxima`, via o walk de `PREQUEL` de
+# `buscar_relacoes`), então `buscar_relacionados` os descarta pra não duplicar
+# a mesma temporada nas duas UIs. Só quando `node.format` também é de série —
+# um `SEQUEL` fora de `_FORMATOS_DE_SERIE` (ex. um filme recap) não é temporada
+# numerada e fica.
+_RELACOES_DE_SEQUENCIA_TV = frozenset({"PREQUEL", "SEQUEL"})
+
+# Teto de itens de `buscar_relacionados` — soma de `relations` (tipicamente
+# poucos) + `recommendations` (até 25 pedidos à AniList); corta ali pra não
+# estourar a fileira da página do anime com dezenas de cards.
+_LIMITE_RELACIONADOS = 24
+
 
 class AniListProvider(
     ProvedorDeMetadados,
     ProvedorComLancamento,
     ProvedorComFileirasTematicas,
     ProvedorComRelacoes,
+    ProvedorComRecomendacoes,
 ):
     @property
     def nome(self) -> str:
@@ -379,6 +445,58 @@ class AniListProvider(
             if candidato is not None:
                 return candidato
         return None
+
+    def buscar_relacionados(self, anilist_id: int) -> list[AnimeEmAlta]:
+        dados = self._executar(_QUERY_RELACIONADOS, {"id": anilist_id})
+        media = dados.get("Media") if isinstance(dados, dict) else None
+        if not isinstance(media, dict):
+            return []
+
+        vistos: set[int] = {anilist_id}
+        resultado: list[AnimeEmAlta] = []
+
+        relacoes = media.get("relations") or {}
+        arestas = relacoes.get("edges") if isinstance(relacoes, dict) else None
+        for aresta in arestas or []:
+            if not isinstance(aresta, dict):
+                continue
+            node = aresta.get("node")
+            if not isinstance(node, dict) or node.get("type") != "ANIME":
+                continue
+            ident = node.get("id")
+            if not isinstance(ident, int) or ident in vistos:
+                continue
+            # Marca como visto ANTES do filtro de sequência de TV abaixo —
+            # mesmo excluída daqui, a temporada irmã não pode reentrar pela
+            # passada de `recommendations` logo adiante (a AniList também
+            # costuma "recomendar" a temporada anterior/seguinte como
+            # parecida). Sem isto, o `continue` do filtro pulava o `node`
+            # sem nunca registrar o id, e a mesma temporada que o seletor da
+            # página já lista voltava a aparecer em "Relacionados" via
+            # recomendação.
+            vistos.add(ident)
+            if (
+                aresta.get("relationType") in _RELACOES_DE_SEQUENCIA_TV
+                and node.get("format") in _FORMATOS_DE_SERIE
+            ):
+                continue
+            resultado.append(_item_para_anime_em_alta(node))
+
+        recomendacoes = media.get("recommendations") or {}
+        nos = recomendacoes.get("nodes") if isinstance(recomendacoes, dict) else None
+        for item in nos or []:
+            if not isinstance(item, dict):
+                continue
+            recomendado = item.get("mediaRecommendation")
+            if not isinstance(recomendado, dict):
+                continue
+            ident = recomendado.get("id")
+            if not isinstance(ident, int) or ident in vistos:
+                continue
+            vistos.add(ident)
+            resultado.append(_item_para_anime_em_alta(recomendado))
+
+        return resultado[:_LIMITE_RELACIONADOS]
 
     def _executar(self, query: str, variaveis: dict) -> dict:
         resposta = requests.post(

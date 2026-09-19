@@ -461,6 +461,58 @@ async def obter_anime(
     )
 
 
+@router_publico.get("/{anime_id}/relacionados", response_model=list[AnimeEmAltaSaida])
+async def listar_relacionados_do_anime(
+    anime_id: int,
+    sessao: AsyncSession = Depends(obter_sessao),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[AnimeEmAltaSaida]:
+    """Seção "Relacionados" da página do anime — recomendações da comunidade
+    AniList + relações de franquia não sequenciais (spin-off, filme, OVA...);
+    temporadas em sequência direta já aparecem no seletor de temporada
+    (`AnimeDetalheSaida.temporadas`) e são filtradas daqui por `anime_id`
+    (`_ids_do_seletor_de_temporada` abaixo) — não só pelo `relationType` cru
+    da AniList (`integrations.anilist.py::buscar_relacionados`), que só vê a
+    aresta DIRETA desta mídia e não cobre uma temporada irmã sem edge direta
+    mas já unida no seletor pelo union-find de franquia (`_agrupar_franquias`,
+    slug do título base OU `serie_ancora` em comum). Sem `anilist_id`
+    (cadastro manual/enriquecimento ainda não rodou), devolve `[]` — mesmo
+    formato de "sem sugestão" de `integrations.servico.listar_relacionados`,
+    sem 404/erro."""
+    anime = await sessao.get(Anime, anime_id)
+    if anime is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    if anime.anilist_id is None:
+        return []
+    grupos = await _agrupar_franquias(sessao)
+    ids_do_seletor = _ids_do_seletor_de_temporada(anime.id, anime.numero_temporada, grupos)
+    pares = await servico_descoberta.listar_relacionados_com_catalogo(
+        sessionmaker, anime.anilist_id
+    )
+    return [
+        _para_saida_em_alta(item, aid)
+        for item, aid in pares
+        if aid is None or aid not in ids_do_seletor
+    ]
+
+
+def _ids_do_seletor_de_temporada(
+    anime_id: int, numero_temporada: int | None, grupos: dict[int, list[object]]
+) -> set[int]:
+    """`Anime.id` de tudo que `_temporadas_e_proxima` já oferece pra `anime_id`
+    — as irmãs do seletor de temporada MAIS o bookmark de `proxima_temporada`
+    (uma "próxima estreia" que o usuário já salvou não deveria repetir como
+    sugestão) — usado por `listar_relacionados_do_anime` pra não duplicar
+    card entre as duas seções da página."""
+    temporadas, proxima_temporada = _temporadas_e_proxima(
+        anime_id, numero_temporada, grupos[anime_id]
+    )
+    ids = {temporada.id for temporada in temporadas}
+    if proxima_temporada is not None:
+        ids.add(proxima_temporada.id)
+    return ids
+
+
 async def _agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
     """`{anime_id: grupo}` — agrupa o catálogo INTEIRO em componentes conexos de
     franquia (união por `serie_ancora` OU slug do título base, `core/

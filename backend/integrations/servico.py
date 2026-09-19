@@ -50,6 +50,7 @@ from integrations.base import (
     NoDeSerie,
     ProvedorComFileirasTematicas,
     ProvedorComLancamento,
+    ProvedorComRecomendacoes,
     ProvedorComRelacoes,
     ProvedorDeArte,
     ProvedorDeMetadados,
@@ -222,6 +223,15 @@ _memo_arte: dict[tuple[str, int | None], tuple[float, ArteDeAnime | None]] = {}
 # não mudam na frequência de navegação do usuário.
 _memo_titulos: dict[str, tuple[float, TitulosDeAnime | None]] = {}
 
+# Memo de processo de `listar_relacionados` (seção "Relacionados" da página do
+# anime) — chave é `anilist_id`. Mesma política de `_memo_titulos` (TTL frouxo,
+# sem lock: 1 página de detalhe por vez, sem o tráfego concorrente da Home que
+# justifica o double-checked locking de `listar_em_alta`); TTL igual ao de
+# `_memo_arte` (12h) — recomendação/relação da AniList não muda na frequência
+# de navegação do usuário. `tests/test_integrations_metadados.py` tem fixture
+# autouse que zera este memo entre testes junto dos demais.
+_memo_relacionados: dict[int, tuple[float, list[AnimeEmAlta]]] = {}
+
 # Memo do overlay de still/nome/sinopse de episódio (PLANO_ARTE_TMDB.md
 # Fatia 5/6). Chave de `_memo_info_episodio`: `(slug do título, ano,
 # temporada, numero)`, onde `temporada` é `int` quando o chamador sabe o `n`
@@ -338,6 +348,60 @@ async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
     )
     _gravar_memo_titulos(slug, resultado)
     return resultado
+
+
+def _gravar_memo_relacionados(anilist_id: int, itens: list[AnimeEmAlta]) -> None:
+    """Mesma política de `_gravar_memo_arte`: limpa o dict inteiro ao estourar
+    `_LIMITE_MEMO_ARTE` (sem cache negativo aqui — `[]` já É a resposta normal
+    de "sem sugestão", não precisa de tratamento à parte)."""
+    if len(_memo_relacionados) >= _LIMITE_MEMO_ARTE:
+        _memo_relacionados.clear()
+    _memo_relacionados[anilist_id] = (time.monotonic() + _TTL_ARTE_S, itens)
+
+
+async def listar_relacionados(anilist_id: int) -> list[AnimeEmAlta]:
+    """"Relacionados" da página do anime (`GET /api/animes/{id}/relacionados`):
+    recomendações da comunidade + relações de franquia não sequenciais
+    (`ProvedorComRecomendacoes.buscar_relacionados`). Best-effort de ponta a
+    ponta — ao contrário de `_buscar_em_cadeia`/`listar_em_alta`, uma falha
+    (provedor fora do ar, cooldown, ou nenhum provedor com a capability)
+    degrada para `[]` em vez de propagar `FalhaDeMetadados`: esta seção é
+    conteúdo suplementar da página do anime, que já teve seu conteúdo
+    principal carregado por `obter_anime` — não pode derrubar a página por
+    causa dela (CLAUDE.md: erro nunca silencioso É pra falha inesperada, não
+    pra "sem sinal"; aqui `[]` É o resultado normal tanto pra "sem sugestão"
+    quanto pra "provedor fora do ar", e o warning abaixo cobre o segundo caso
+    no log).
+
+    Overlay de arte (TMDB) sobreposto antes de cachear — mesmo padrão de
+    `listar_em_alta`/`_buscar_fileira_tematica_sem_cache`. Cacheado por
+    `_memo_relacionados` (TTL `_TTL_ARTE_S`, sem lock — ver docstring do
+    dict)."""
+    memo = _memo_relacionados.get(anilist_id)
+    if memo is not None:
+        expira_em, itens = memo
+        if time.monotonic() < expira_em:
+            return itens
+
+    capazes = [p for p in PROVEDORES if isinstance(p, ProvedorComRecomendacoes)]
+    for provedor in capazes:
+        try:
+            itens = await _chamar(provedor, provedor.buscar_relacionados, anilist_id)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de metadados %r falhou ao buscar relacionados de anilist_id=%s: %s",
+                provedor.nome,
+                anilist_id,
+                excecao,
+            )
+            continue
+
+        itens = await _sobrepor_arte_em_lote(itens)
+        _gravar_memo_relacionados(anilist_id, itens)
+        return itens
+
+    return []
 
 
 async def listar_por_busca(titulo: str) -> list[AnimeEmAlta]:

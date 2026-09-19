@@ -1736,11 +1736,12 @@ def _limpa_caches_de_feed(monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture(autouse=True)
 def _limpa_overlay_de_arte(monkeypatch: pytest.MonkeyPatch):
     """`integrations.servico._memo_arte`/`._memo_temporadas`/
-    `._memo_info_episodio`/`._memo_titulos` e `._arte_desabilitada_por_auth`
-    são estado de módulo (memo/latch dos overlays de arte — capa/banner e
-    still/nome/sinopse de episódio, PLANO_ARTE_TMDB.md D4 e Fatia 5/6 — mais
-    o memo de títulos canônicos de `buscar_titulos`) — isola cada teste pra
-    não vazar memo/latch de um teste pro outro (mesmo cuidado que
+    `._memo_info_episodio`/`._memo_titulos`/`._memo_relacionados` e
+    `._arte_desabilitada_por_auth` são estado de módulo (memo/latch dos
+    overlays de arte — capa/banner e still/nome/sinopse de episódio,
+    PLANO_ARTE_TMDB.md D4 e Fatia 5/6 — mais os memos de títulos canônicos de
+    `buscar_titulos` e de "Relacionados" da página do anime) — isola cada
+    teste pra não vazar memo/latch de um teste pro outro (mesmo cuidado que
     `conftest.py` já toma com `descoberta._refreshs_de_lancamento_em_voo`).
     `integrations.registro._provedores_de_arte` fica vazio por padrão (D2:
     nunca lido no import) — quem quiser exercitar o overlay faz o próprio
@@ -1750,6 +1751,7 @@ def _limpa_overlay_de_arte(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(servico, "_memo_info_episodio", {})
     monkeypatch.setattr(servico, "_memo_titulos", {})
     monkeypatch.setattr(servico, "_memo_serie", {})
+    monkeypatch.setattr(servico, "_memo_relacionados", {})
     monkeypatch.setattr(servico, "_arte_desabilitada_por_auth", False)
 
 

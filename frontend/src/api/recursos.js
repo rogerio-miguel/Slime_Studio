@@ -40,6 +40,15 @@ export function listarEpisodios(animeId) {
   return requisitar(`/api/animes/${animeId}/episodios`);
 }
 
+// Seção "Relacionados" da página do anime — recomendações da comunidade
+// AniList + relações de franquia não sequenciais (spin-off, filme, OVA...).
+// Mesmo formato de item do feed "em alta"/busca (`{ titulo_romaji, capa_url,
+// anilist_id, anime_id, ... }`); `[]` quando o anime não tem `anilist_id`
+// ainda ou a AniList não tem nada a sugerir — nunca erro.
+export function listarRelacionados(animeId) {
+  return requisitar(`/api/animes/${animeId}/relacionados`);
+}
+
 // `{ dominio, episodios: [{ rotulo, numero }] }` — `dominio` é o site que
 // resolveu a lista (exibido na página do anime pra o usuário notar quando a
 // fonte "errada" foi usada); `numero` é `null` quando `rotulo` não é
