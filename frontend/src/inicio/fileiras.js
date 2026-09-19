@@ -10,7 +10,40 @@ export const GENEROS_EXCLUIDOS = ['Hentai'];
 
 // (A fileira "Próximas estreias" NÃO sai daqui — o feed `em-alta` só lista o
 // que já está no ar. Ela vem do endpoint próprio `GET /api/animes/proxima-
-// temporada` e é consumida direto em paginas/Inicio.jsx.)
+// temporada` e é consumida direto em paginas/Inicio.jsx. `ordenarPorEstreia`
+// abaixo é só a ordenação dela — mora aqui por ser a mesma classe de derivação
+// pura das outras fileiras desta página.)
+
+// Data-chave de ordenação — só os dois sinais de DATA EXATA do texto exibido
+// no card (`inicio/CartaoDeEstreia.jsx::textoDeEstreia`: proximo_ep_em >
+// estreia_em), achatados num timestamp comparável. `ano`/`ano_estreia` sozinho
+// (rótulo genérico "Estreia em 2026") NÃO vira chave de data aqui de propósito
+// — um "1º de janeiro" implícito colocaria esses cards NA FRENTE de itens com
+// data exata mais tarde no mesmo ano (ou em anos seguintes), que é o oposto do
+// pedido: "estreia em <ano>" é a fileira toda que sabe MENOS, não mais cedo —
+// cai no mesmo `Infinity` de quem não tem nenhum sinal, ficando sempre no
+// final junto dos dois.
+function dataChaveDeEstreia(item) {
+  if (item.proximo_ep_em) {
+    const data = new Date(item.proximo_ep_em);
+    if (!Number.isNaN(data.getTime())) return data.getTime();
+  }
+  if (item.estreia_em) {
+    // Sufixo `T00:00:00` pelo mesmo motivo de `textoDeEstreia`: cair na meia-
+    // noite LOCAL, não UTC.
+    const data = new Date(`${item.estreia_em}T00:00:00`);
+    if (!Number.isNaN(data.getTime())) return data.getTime();
+  }
+  return Infinity;
+}
+
+// Ordena a fileira "Próximas estreias" por data crescente; os sem nenhuma data
+// conhecida ficam no final. Reordena sozinha a cada novo `itens` (ex.: o warm
+// de lançamento preenche `proximo_ep_em`/`estreia_em` de um item que antes só
+// tinha o ano) — sem estado próprio, é derivação pura como as outras acima.
+export function ordenarPorEstreia(itens) {
+  return [...(itens ?? [])].sort((a, b) => dataChaveDeEstreia(a) - dataChaveDeEstreia(b));
+}
 
 // Top N da temporada. O feed já chega ordenado por trending/popularidade da
 // AniList — NÃO adicionar sort aqui, é de propósito; só recorta os primeiros n.
