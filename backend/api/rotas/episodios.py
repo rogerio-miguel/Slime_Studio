@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
 from api.esquemas import (
     AtualizarEpisodioRequest,
+    ContinuarAssistindoRespostaSaida,
     ContinuarAssistindoSaida,
     EpisodioSaida,
     SalvarProgressoRequest,
@@ -62,24 +63,33 @@ _LIMIAR_CONCLUSAO_PROGRESSO = 0.9
 # vs. `/{anime_id}`) — sem isso um `{episodio_id}` declarado antes engoliria
 # "continuar-assistindo" como valor de id (`int` typing barra a conversão, mas
 # a ordem aqui segue o mesmo padrão defensivo do resto do arquivo).
-@router.get("/continuar-assistindo", response_model=list[ContinuarAssistindoSaida])
+@router.get("/continuar-assistindo", response_model=ContinuarAssistindoRespostaSaida)
 async def continuar_assistindo(
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
-) -> list[ContinuarAssistindoSaida]:
-    linhas = await servico_progresso.listar_continuar_assistindo(sessionmaker)
-    return [
-        ContinuarAssistindoSaida(
-            episodio_id=linha.episodio_id,
-            anime_id=linha.anime_id,
-            anime_titulo=linha.anime_titulo,
-            thumb=linha.thumb,
-            numero=linha.numero,
-            titulo=linha.titulo,
-            progresso_s=linha.progresso_s,
-            duracao_s=linha.duracao_s,
-        )
-        for linha in linhas
-    ]
+) -> ContinuarAssistindoRespostaSaida:
+    resultado = await servico_progresso.listar_continuar_assistindo(sessionmaker)
+    return ContinuarAssistindoRespostaSaida(
+        itens=[
+            ContinuarAssistindoSaida(
+                anime_id=item.anime_id,
+                anime_titulo=item.anime_titulo,
+                numero=item.numero,
+                variante=item.variante,
+                episodio_id=item.episodio_id,
+                status=item.status,
+                progresso_s=item.progresso_s,
+                duracao_s=item.duracao_s,
+                thumb=item.thumb,
+                titulo=item.titulo,
+                sinopse=item.sinopse,
+                versao=item.versao,
+                episodio_novo=item.episodio_novo,
+                still_pendente=item.still_pendente,
+            )
+            for item in resultado.itens
+        ],
+        sondagem_em_andamento=resultado.sondagem_em_andamento,
+    )
 
 
 @router.get("/{episodio_id}", response_model=EpisodioSaida)

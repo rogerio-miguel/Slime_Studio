@@ -122,8 +122,16 @@ export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
 //   - `tem_episodios`: `true` se QUALQUER temporada tem episódio (decide o card
 //     de estreia inerte).
 //   - `assistido`: `true` quando alguma temporada tem episódio E toda temporada
-//     com episódio está `assistido` pelo backend (terminou de ver — todos os eps
-//     da fonte vistos, sem buraco) — o card ganha a tag "Assistido".
+//     ACESSÍVEL (`temporadaAcessivel` — já lançada, mesmo sem captura local;
+//     `nao_lancado` não conta) está `assistido` pelo backend (terminou de ver —
+//     todos os eps da fonte vistos, sem buraco) — o card ganha a tag
+//     "Assistido". Antes de 2026-09-19 o critério pra "ignorar a temporada"
+//     era só `!tem_episodios` (nenhum episódio CAPTURADO localmente) — bug
+//     real reproduzido: uma T2 já `em_lancamento` (11 eps na fonte) mas nunca
+//     capturada passava vacuamente e a franquia acendia "Assistido" só com a
+//     T1 vista. `temporadaAcessivel` distingue "ainda não lançou" (ok
+//     ignorar, nada pra assistir mesmo) de "já lançou mas eu nunca capturei"
+//     (não pode ignorar).
 //   - `generos`: união dos gêneros de todas as temporadas (filtro por gênero).
 //   - `statusDaFranquia`: todos os `status_lancamento` distintos (filtro por
 //     status — bate se qualquer temporada bate).
@@ -189,10 +197,12 @@ function montarFranquia(temporadas) {
       : representante.titulo,
     episodios_novos: episodiosNovos,
     tem_episodios: temEpisodios,
-    // Franquia "assistida": tem conteúdo e TODA temporada com episódio já foi
+    // Franquia "assistida": tem conteúdo e TODA temporada ACESSÍVEL (já
+    // lançada, com ou sem captura local — `temporadaAcessivel` acima) já foi
     // terminada (o `assistido` do backend já exige "todos os eps da fonte
-    // vistos", então aqui é só o `every`).
-    assistido: temEpisodios && temporadas.every((t) => !t.tem_episodios || t.assistido),
+    // vistos", então aqui é só o `every`). Uma T2 já no ar mas nunca capturada
+    // NÃO é ignorada só por não ter episódio local (ver comentário da função).
+    assistido: temEpisodios && temporadas.every((t) => !temporadaAcessivel(t) || t.assistido),
     generos: [...new Set(temporadas.flatMap((t) => t.generos ?? []))],
     statusDaFranquia: [...new Set(temporadas.map((t) => t.status_lancamento).filter(Boolean))],
     titulosDaFranquia: temporadas.map((t) => t.titulo),

@@ -73,7 +73,7 @@ async def test_listar_continuar_assistindo_inclui_pronto_com_progresso_abaixo_do
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = await listar_continuar_assistindo(sessionmaker_api)
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
     assert [linha.episodio_id for linha in linhas] == [episodio_id]
 
@@ -82,7 +82,7 @@ async def test_listar_continuar_assistindo_exclui_sem_progresso(sessionmaker_api
     anime_id = await _criar_anime(sessionmaker_api, "Anime Sem Progresso")
     await _criar_episodio(sessionmaker_api, anime_id, progresso_s=None)
 
-    linhas = await listar_continuar_assistindo(sessionmaker_api)
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
     assert linhas == []
 
@@ -99,7 +99,7 @@ async def test_listar_continuar_assistindo_exclui_status_diferente_de_pronto(
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = await listar_continuar_assistindo(sessionmaker_api)
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
     assert linhas == []
 
@@ -116,7 +116,7 @@ async def test_listar_continuar_assistindo_exclui_acima_do_limiar_de_90_pct(
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = await listar_continuar_assistindo(sessionmaker_api)
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
     assert linhas == []
 
@@ -133,17 +133,20 @@ async def test_listar_continuar_assistindo_inclui_sem_duracao_conhecida(
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = await listar_continuar_assistindo(sessionmaker_api)
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
     assert [linha.episodio_id for linha in linhas] == [episodio_id]
 
 
-async def test_listar_continuar_assistindo_ordena_por_atualizacao_mais_recente(
+async def test_listar_continuar_assistindo_um_item_por_anime_o_mais_recente(
     sessionmaker_api: _SessionMaker,
 ):
+    """Desenho novo (2026-09-18, extensão do catálogo/página do anime pedida
+    pelo usuário): um card por ANIME, não por episódio — dois episódios do
+    mesmo anime com progresso salvo rendem só o mais recente, nunca os dois."""
     anime_id = await _criar_anime(sessionmaker_api, "Anime Ordenacao")
     agora = datetime.now(UTC)
-    mais_antigo_id = await _criar_episodio(
+    await _criar_episodio(
         sessionmaker_api,
         anime_id,
         numero=1,
@@ -154,9 +157,9 @@ async def test_listar_continuar_assistindo_ordena_por_atualizacao_mais_recente(
         sessionmaker_api, anime_id, numero=2, progresso_s=100, progresso_atualizado_em=agora
     )
 
-    linhas = await listar_continuar_assistindo(sessionmaker_api)
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
-    assert [linha.episodio_id for linha in linhas] == [mais_recente_id, mais_antigo_id]
+    assert [linha.episodio_id for linha in linhas] == [mais_recente_id]
 
 
 # --- GET /api/episodios/continuar-assistindo ---
@@ -178,7 +181,7 @@ async def test_rota_continuar_assistindo_devolve_itens_esperados(
     resposta = await cliente.get("/api/episodios/continuar-assistindo")
 
     assert resposta.status_code == 200
-    corpo = resposta.json()
+    corpo = resposta.json()["itens"]
     assert len(corpo) == 1
     assert corpo[0]["episodio_id"] == episodio_id
     assert corpo[0]["anime_id"] == anime_id
@@ -204,7 +207,7 @@ async def test_rota_continuar_assistindo_thumb_vem_do_episodio_nao_do_anime(
     resposta = await cliente.get("/api/episodios/continuar-assistindo")
 
     assert resposta.status_code == 200
-    corpo = resposta.json()
+    corpo = resposta.json()["itens"]
     assert corpo[0]["thumb"] == "https://img/thumb-do-episodio.jpg"
     assert "capa_path" not in corpo[0]
 

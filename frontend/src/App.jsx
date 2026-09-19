@@ -36,7 +36,7 @@ function Shell() {
       <IndicadorDeAtencao jobs={jobsPrecisandoAtencao} />
       <Toasts jobsPorEpisodio={jobsPorEpisodio} />
       <Routes>
-        <Route path="/" element={<Inicio />} />
+        <Route path="/" element={<Inicio jobsPorEpisodio={jobsPorEpisodio} />} />
         <Route path="/animes" element={<Galeria />} />
         <Route path="/anime/:id" element={<PaginaDoAnime jobsPorEpisodio={jobsPorEpisodio} />} />
         <Route path="/assistir/:episodioId" element={<PaginaDoPlayer />} />
