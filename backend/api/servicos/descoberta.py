@@ -184,6 +184,21 @@ async def listar_busca_com_catalogo(
     return await _cruzar_com_catalogo(sessionmaker, itens)
 
 
+async def listar_relacionados_com_catalogo(
+    sessionmaker: _SessionMaker, anilist_id: int
+) -> list[tuple[AnimeEmAlta, int | None]]:
+    """"Relacionados" da página do anime (`integrations.servico.
+    listar_relacionados`, recomendações + relações de franquia não
+    sequenciais) pareados com `Anime.id` local — mesmo cruzamento de
+    `listar_busca_com_catalogo`. Já degrada para `[]` na própria
+    `integrations.servico` (conteúdo suplementar best-effort, não pode
+    derrubar a página do anime); sem refresh oportunista de lançamento/banner
+    pela mesma razão de `listar_proxima_temporada_com_catalogo` — resultado
+    transitório de detalhe de página, não o feed central da Home."""
+    itens = await servico.listar_relacionados(anilist_id)
+    return await _cruzar_com_catalogo(sessionmaker, itens)
+
+
 async def _cruzar_com_catalogo(
     sessionmaker: _SessionMaker, itens: list[AnimeEmAlta]
 ) -> list[tuple[AnimeEmAlta, int | None]]:

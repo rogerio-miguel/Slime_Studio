@@ -3,14 +3,17 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
 import {
   confirmarFonte,
+  criarAnime,
   criarJobSite,
   listarEpisodios,
   listarEpisodiosRemotos,
+  listarRelacionados,
   marcarTodosAssistidos,
   obterAnime,
   removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
+import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
@@ -25,6 +28,7 @@ import {
   imagemEmAltaResolucao,
   CLASSE_PILL_HERO,
 } from '../inicio/CarrosselDestaques.jsx';
+import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { textoDeProximaTemporada, tituloBaseDeTemporada } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
@@ -145,6 +149,51 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
   // `liberarEpisodio` resolve — inclusive quando disparado por
   // `PaginaDoPlayer.jsx` já desmontada (saída fire-and-forget do player).
   const episodios = useRecurso(() => listarEpisodios(animeId), [animeId], 'episodios');
+
+  // "Relacionados" (seção abaixo da grade de episódios): recomendações da
+  // AniList + relações de franquia não sequenciais. `[]` quando o anime ainda
+  // não tem `anilist_id` — `FileiraDeCards` já não renderiza nada pra lista
+  // vazia, sem precisar de estado de erro/loading explícito aqui (conteúdo
+  // suplementar best-effort, mesmo espírito do backend).
+  const relacionados = useRecurso(() => listarRelacionados(animeId), [animeId]);
+
+  // Ativação de um card de "Relacionados" ainda não catalogado: materializa
+  // no catálogo local (`POST /api/admin/animes`, get-or-create por slug) e
+  // navega pro anime criado — mesmo payload/fluxo de
+  // `paginas/Inicio.jsx::materializarEIrPara`, duplicado aqui de propósito
+  // (a versão de lá fecha sobre estado só da Home — `chaveEmMaterializacao`,
+  // `navigate` da Home — reusar exigiria içar tudo pra um hook compartilhado
+  // por uma única chamada). Item já catalogado (`anime.anime_id` presente)
+  // nem chama isto — `AnimeCard` renderiza `<Link>` direto nesse caso.
+  const [relacionadoEmVoo, setRelacionadoEmVoo] = useState(null);
+  const [erroRelacionado, setErroRelacionado] = useState(null);
+  const materializarRelacionado = useCallback(
+    async (item) => {
+      if (relacionadoEmVoo != null) return;
+      setRelacionadoEmVoo(item.anilist_id);
+      setErroRelacionado(null);
+      try {
+        const criado = await criarAnime({
+          titulo: item.titulo_romaji,
+          tituloIngles: item.titulo_ingles ?? undefined,
+          anilistId: item.anilist_id ?? undefined,
+          capaUrl: item.capa_url ?? item.banner_url ?? undefined,
+          bannerUrl: item.banner_url ?? undefined,
+          capaCor: item.capa_cor ?? undefined,
+          generos: item.generos ?? undefined,
+          sinopse: item.sinopse ?? undefined,
+          formato: item.formato ?? undefined,
+        });
+        navigate(`/anime/${criado.id}`);
+      } catch (erroCapturado) {
+        console.error('falha ao adicionar anime relacionado ao catálogo', erroCapturado);
+        setErroRelacionado('Não foi possível adicionar este anime ao catálogo — tente novamente.');
+      } finally {
+        setRelacionadoEmVoo(null);
+      }
+    },
+    [relacionadoEmVoo, navigate]
+  );
 
   // Guard anti-loop do efeito abaixo: cada par `episodio.id:job.id` cujo job
   // já chegou a `pronto` sem o REST ainda refletir dispara UM `recarregar()`,
@@ -1061,6 +1110,37 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         {linhas.length === 0 && !episodios.carregando && !remotos.carregando && (
           <p className="text-sm text-ink-muted">Nenhum episódio encontrado.</p>
         )}
+        </div>
+
+        {/* "Relacionados", FORA do wrapper `paddingInline: PADDING_TITULO`
+            acima — mesma razão de `paginas/Inicio.jsx`: `FileiraDeCards` já
+            traz seu próprio gutter (`CLASSE_GUTTER`/`PADDING_TITULO` em
+            `inicio/tamanhoDeCard.js`, o MESMO valor), nesting dobraria o
+            respiro lateral. `mt-14` própria (a fileira não tem margem
+            externa) — mesmo respiro entre blocos que `space-y-14` dá na
+            Home. `erroRelacionado` (falha ao materializar um card, não a
+            busca em si — essa já degrada pra `[]` sem erro no backend) sai
+            DENTRO do gutter da fileira, não do wrapper acima. */}
+        <div className="relative z-10 mt-14">
+          <FileiraDeCards
+            titulo="Relacionados"
+            itens={relacionados.dados ?? []}
+            tamanho="pequeno"
+            comSombra={false}
+            chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
+            renderItem={(item) => (
+              <AnimeCard
+                anime={item}
+                aoAtivar={() => materializarRelacionado(item)}
+                desabilitado={relacionadoEmVoo != null && relacionadoEmVoo === item.anilist_id}
+              />
+            )}
+          />
+          {erroRelacionado && (
+            <p role="alert" style={{ paddingInline: PADDING_TITULO }} className="text-sm text-red-400">
+              {erroRelacionado}
+            </p>
+          )}
         </div>
 
         <DialogoDeFonteAmbigua
