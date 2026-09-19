@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ErroDeApi } from '../api/cliente.js';
 import {
   buscarAnimes,
   criarAnime,
+  criarJobSite,
   listarAnimes,
   listarAnimesEmAlta,
   listarContinuarAssistindo,
@@ -67,7 +69,24 @@ import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 // nada de src/player/ (a única ligação com o player é a rota
 // "/assistir/:episodioId", string, não import).
 
-export default function Inicio() {
+// `jobsPorEpisodio` — mesmo Map do WS que `App.jsx` já sobe pro app inteiro
+// (`useEventosDeJobs`), até agora só descido pra `PaginaDoAnime`. A prateleira
+// "Continuar assistindo" ganha o mesmo status ao vivo de captura no ramo
+// `processando` (ver `components/CartaoContinuarAssistindo.jsx`).
+
+// Poll de `still_pendente`/`sondagem_em_andamento` (ver efeito abaixo). O
+// teto (4s x 16 = ~64s) mira o teto comum de sondagem de fonte
+// (`extractors/resiliencia.py::_TETO_ESPERA_S`, 45s) com folga — a busca de
+// still TMDB é bem mais rápida (timeout de 9s, `progresso.py`) e resolve bem
+// antes disso, então o efeito para sozinho cedo nesse caso (dependência vira
+// `false` assim que a pendência resolve, sem esperar o teto). O caminho raro
+// de sondagem via navegador visível (bypass de Turnstile, até 225s,
+// `_TETO_ESPERA_NAVEGADOR_S`) pode passar do teto — nesse caso o episódio só
+// aparece no próximo gatilho de poll (nova pendência) ou reload manual, sem
+// piorar o caso comum de scraping leve.
+const _INTERVALO_POLL_STILL_MS = 4000;
+const _MAX_TENTATIVAS_POLL_STILL = 16;
+export default function Inicio({ jobsPorEpisodio }) {
   const navigate = useNavigate();
   const idResultadosBiblioteca = useId();
 
@@ -77,11 +96,75 @@ export default function Inicio() {
   // item do feed abaixo), sem precisar de um `recarregar()` manual aqui.
   const catalogo = useRecurso(listarAnimes, [], 'animes');
   // Prateleira "Continuar assistindo" — independente do feed `em-alta`
-  // (posição em episódio já capturado). Mesma exibição silenciosa da
-  // Galeria: em carregando/erro/vazio a fileira simplesmente não aparece.
-  // Chave 'episodios': recarrega quando `salvarProgresso`/`marcarAssistido`/
-  // `liberarEpisodio` resolve (ex. saiu do player e voltou pra Home).
+  // (posição em episódio já capturado, ou próximo passo dele — extensão do
+  // catálogo/página do anime, 2026-09-18: um item por ANIME, cobrindo
+  // "continuar", "próximo já pronto", "próximo pra capturar"/"episódio novo").
+  // Mesma exibição silenciosa da Galeria: em carregando/erro/vazio a fileira
+  // simplesmente não aparece. Chave 'episodios': recarrega quando
+  // `salvarProgresso`/`marcarAssistido`/`liberarEpisodio` resolve (ex. saiu do
+  // player e voltou pra Home) — captura disparada aqui (`capturarProximo`
+  // abaixo) não passa por essa chave (mesmo motivo de `PaginaDoAnime.jsx`:
+  // `criarJobSite` não invalida sozinho), por isso chama `continuando.
+  // recarregar()` explicitamente no sucesso.
+  // `GET /continuar-assistindo` devolve um envelope (`{itens, sondagem_em_
+  // andamento}`, não lista crua) desde 2026-09-19 — precisa do nível da
+  // resposta pra `sondagem_em_andamento` (ver comentário do poll abaixo).
   const continuando = useRecurso(listarContinuarAssistindo, [], 'episodios');
+  const itensContinuar = continuando.dados?.itens ?? [];
+  // Poll leve, enquanto (1) algum card `capturavel` está com `still_pendente`
+  // (busca de still/título/sinopse TMDB em segundo plano,
+  // `progresso.py::_aplicar_still_capturavel`) OU (2) o backend sinaliza
+  // `sondagem_em_andamento` — uma sondagem de fonte (`sondagem.
+  // agendar_sondagens`, disparada pelo próprio `listar_continuar_assistindo`
+  // pros animes desta prateleira) ainda rodando em segundo plano. O 2º caso
+  // cobre o que uma flag por item não resolve: um anime cujo próximo episódio
+  // ainda não existe SOME inteiro de `itens` até a sondagem confirmar a
+  // contagem da fonte — não tem item pra pendurar `still_pendente`. Nenhum
+  // dos dois bloqueia a resposta original; sem isso o usuário só via o card
+  // certo (still OU episódio novo capturável) depois de um F5 manual. Para
+  // sozinho assim que as duas pendências resolvem ou ao atingir o teto de
+  // tentativas; sem nenhuma (o caso comum), o efeito nem agenda o timer —
+  // zero custo pro resto da página.
+  const precisaPollDeContinuar =
+    itensContinuar.some((item) => item.still_pendente) ||
+    continuando.dados?.sondagem_em_andamento === true;
+  useEffect(() => {
+    if (!precisaPollDeContinuar) return undefined;
+    let tentativas = 0;
+    const intervalo = setInterval(() => {
+      tentativas += 1;
+      continuando.recarregar();
+      if (tentativas >= _MAX_TENTATIVAS_POLL_STILL) clearInterval(intervalo);
+    }, _INTERVALO_POLL_STILL_MS);
+    return () => clearInterval(intervalo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [precisaPollDeContinuar]);
+  // Mesmo fix de `PaginaDoAnime.jsx` (`jaRecarregadoRef`): sem isto, um card
+  // `processando` cujo job termina fica preso mostrando "Pronto" (texto do
+  // `OverlayDeStatus`, via `job.status` já atualizado pelo WS) sem nunca virar
+  // o ramo `pronto` de fato (ícone de play + link `/assistir/:id`) — só o
+  // ícone É a mudança de variante, que só um `item.variante === 'pronto'` do
+  // REST resolve, e nada aqui força esse refetch quando o job conclui fora da
+  // janela do poll de still/sondagem acima. Guard por `episodio_id:job.id`
+  // evita reagendar `recarregar()` a cada tick de QUALQUER job ativo no app
+  // (`jobsPorEpisodio` é o Map global do WS) uma vez que o par já disparou.
+  const jaRecarregadoContinuarRef = useRef(new Set());
+  useEffect(() => {
+    const naoVistos = itensContinuar.filter((item) => {
+      if (item.variante !== 'processando' || item.episodio_id == null) return false;
+      const job = jobsPorEpisodio?.get(item.episodio_id);
+      if (!job || job.status !== 'pronto') return false;
+      return !jaRecarregadoContinuarRef.current.has(`${item.episodio_id}:${job.id}`);
+    });
+    if (naoVistos.length > 0) {
+      naoVistos.forEach((item) => {
+        const job = jobsPorEpisodio.get(item.episodio_id);
+        jaRecarregadoContinuarRef.current.add(`${item.episodio_id}:${job.id}`);
+      });
+      continuando.recarregar();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobsPorEpisodio, itensContinuar, continuando.recarregar]);
   // "Próximas estreias" — feed próprio da próxima temporada da AniList (não
   // sai do feed `em-alta`, que só lista o que já está no ar). Mesma exibição
   // silenciosa: em carregando/erro/vazio a fileira não aparece.
@@ -92,6 +175,61 @@ export default function Inicio() {
   // gênero — `fileirasPorGenero`, ainda exportada de fileiras.js — saíram da
   // Home; vão pra uma página própria.)
   const top10 = useMemo(() => topDaTemporada(emAlta.dados ?? []), [emAlta.dados]);
+
+  // Captura disparada pelo ramo `capturavel` de `CartaoContinuarAssistindo`
+  // (nunca capturado ou recaptura de `LIBERADO`/`FALHOU`) — mesmo
+  // `criarJobSite` e mesmo tratamento de erro de `PaginaDoAnime.jsx::
+  // capturar`, só sem a UI de troca de fonte/confirmação de ambiguidade:
+  // aqui a fonte já foi resolvida antes (pré-requisito do próprio item
+  // aparecer como `capturavel`, `backend/api/servicos/progresso.py`), então
+  // `fonte_ambigua` é o caso raro de a fonte ter ficado ambígua de novo desde
+  // a última resolução — em vez de duplicar o modal de `DialogoDeFonteAmbigua`
+  // aqui, o aviso linka pra página do anime, que já sabe resolver isso.
+  // `animeIdComFonteAmbigua` guarda só o `id` (não o payload de candidatos)
+  // pro link — a resolução de fato acontece lá, não aqui.
+  const [chaveCapturando, setChaveCapturando] = useState(null);
+  const [erroCaptura, setErroCaptura] = useState(null);
+  const [animeIdComFonteAmbigua, setAnimeIdComFonteAmbigua] = useState(null);
+
+  const chaveDoItemContinuar = (item) => item.anime_id;
+
+  const capturarProximo = useCallback(
+    async (item) => {
+      const chave = chaveDoItemContinuar(item);
+      if (chaveCapturando != null) return;
+      setChaveCapturando(chave);
+      setErroCaptura(null);
+      setAnimeIdComFonteAmbigua(null);
+      try {
+        // Mesmo degrade de `PaginaDoAnime.jsx::capturar`: 'desconhecida' é só
+        // classificação de exibição (fonte não diferencia legendado/dublado),
+        // nunca um pedido válido — o request cai pra 'legendado'.
+        const versaoPedida = item.versao === 'desconhecida' ? 'legendado' : item.versao;
+        await criarJobSite({
+          animeId: item.anime_id,
+          numero: item.numero,
+          tipo: 'regular',
+          versao: versaoPedida,
+        });
+        continuando.recarregar();
+      } catch (erroCapturado) {
+        if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'fonte_ambigua') {
+          setAnimeIdComFonteAmbigua(item.anime_id);
+        } else if (
+          erroCapturado instanceof ErroDeApi &&
+          erroCapturado.detail?.motivo === 'episodio_ja_existe'
+        ) {
+          continuando.recarregar();
+        } else {
+          console.error('falha ao capturar episódio pela Home', erroCapturado);
+          setErroCaptura('Não foi possível capturar este episódio — tente novamente.');
+        }
+      } finally {
+        setChaveCapturando(null);
+      }
+    },
+    [chaveCapturando, continuando]
+  );
 
   const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
   const [erroMaterializacao, setErroMaterializacao] = useState(null);
@@ -322,17 +460,27 @@ export default function Inicio() {
         />
       ),
     },
-    (continuando.dados ?? []).length > 0 && {
+    itensContinuar.length > 0 && {
       chave: 'continuar-assistindo',
+      // `chaveDoItem` por `anime_id` (não mais `episodio_id`, que agora vem
+      // nulo no ramo `capturavel` sem episódio) — um card por anime, ver
+      // `backend/api/servicos/progresso.py`.
       node: (
         <FileiraDeCards
           key="continuar-assistindo"
           titulo="Continuar assistindo"
-          itens={continuando.dados}
+          itens={itensContinuar}
           tamanho="episodio"
           comSombra={false}
-          chaveDoItem={(item) => item.episodio_id}
-          renderItem={(item) => <CartaoContinuarAssistindo item={item} />}
+          chaveDoItem={chaveDoItemContinuar}
+          renderItem={(item) => (
+            <CartaoContinuarAssistindo
+              item={item}
+              job={item.episodio_id != null ? jobsPorEpisodio?.get(item.episodio_id) : null}
+              aoCapturar={capturarProximo}
+              capturando={chaveCapturando === chaveDoItemContinuar(item)}
+            />
+          )}
         />
       ),
     },
@@ -542,6 +690,27 @@ export default function Inicio() {
             {erroMaterializacao && (
               <div role="alert" className="px-4 pb-8 sm:px-6 lg:px-8">
                 <p className="text-sm text-red-400">{erroMaterializacao}</p>
+              </div>
+            )}
+            {erroCaptura && (
+              <div role="alert" className="px-4 pb-8 sm:px-6 lg:px-8">
+                <p className="text-sm text-red-400">{erroCaptura}</p>
+              </div>
+            )}
+            {/* `fonte_ambigua` num clique de "capturar" da prateleira — caso
+                raro (a fonte já tinha sido resolvida antes pra este item
+                aparecer aqui). Em vez de duplicar `DialogoDeFonteAmbigua` sem
+                o contexto de fonte/versão que `PaginaDoAnime.jsx` tem à mão,
+                linka pra lá — a página do anime já sabe resolver. */}
+            {animeIdComFonteAmbigua != null && (
+              <div role="alert" className="px-4 pb-8 sm:px-6 lg:px-8">
+                <p className="text-sm text-red-400">
+                  A fonte deste anime ficou ambígua desde a última captura.{' '}
+                  <Link to={`/anime/${animeIdComFonteAmbigua}`} className="underline">
+                    Resolver na página do anime
+                  </Link>
+                  .
+                </p>
               </div>
             )}
 

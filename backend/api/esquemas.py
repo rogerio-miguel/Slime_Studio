@@ -475,21 +475,75 @@ class SalvarProgressoRequest(BaseModel):
 
 
 class ContinuarAssistindoSaida(BaseModel):
-    """Item da prateleira "Continuar assistindo" da Inicio —
-    `api/servicos/progresso.py::listar_continuar_assistindo` (join
-    `Episodio`+`Anime`, já achatado)."""
+    """Item da prateleira "Continuar assistindo" da Inicio — um por ANIME, não
+    por episódio (`api/servicos/progresso.py::listar_continuar_assistindo`).
 
-    episodio_id: int
+    `variante` decide o ramo que o frontend renderiza (`LinhaDeEpisodio.jsx`,
+    reaproveitado da página do anime):
+    - `'pronto'`: episódio existe e está `PRONTO` — link pro player; barra de
+      progresso só aparece quando `progresso_s` tem valor (largada nova não
+      tem barra, mesmo card).
+    - `'processando'`: episódio existe mas o pipeline ainda não terminou (ou
+      parou num estado neutro) — card estático/status ao vivo, sem clique.
+    - `'capturavel'`: sem episódio `PRONTO` pra este número — clicar dispara a
+      captura (`POST /api/admin/jobs/site`, reaproveita `FonteAnime` já
+      resolvida). Cobre tanto "nunca capturado" quanto recaptura
+      (`LIBERADO`/`FALHOU`) — visualmente idênticos no modo grade, que não
+      exibe o verbo da ação.
+
+    `episodio_id`/`status`/`progresso_s`/`duracao_s` só existem quando já há
+    uma linha de `Episodio` pro slot (variantes `pronto`/`processando`, e
+    `capturavel` no caso de recaptura); `versao` só é necessária pro cliente
+    quando `variante == 'capturavel'` (monta o pedido de captura), mas sempre
+    que presente reflete a fonte já confirmada do anime.
+    """
+
     anime_id: int
     anime_titulo: str
-    # Thumb do EPISÓDIO (`Episodio.capa_path`, não `Anime.capa_path`) — mesma
-    # convenção de URL crua servida via `GET /api/thumb` que `EpisodioSaida.
-    # capa_path`/`EpisodioRemotoSaida.thumb_url` usam.
-    thumb: str | None
     numero: int
-    titulo: str | None
-    progresso_s: int
+    variante: str
+    episodio_id: int | None
+    status: StatusEpisodio | None
+    progresso_s: int | None
     duracao_s: int | None
+    # Thumb do EPISÓDIO quando existe (`Episodio.capa_path`), senão still TMDB
+    # resolvido best-effort pro slot `capturavel` sem episódio ainda, senão a
+    # arte do anime — mesma convenção de URL crua servida via `GET /api/thumb`
+    # que `EpisodioSaida.capa_path`/`EpisodioRemotoSaida.thumb_url` usam.
+    thumb: str | None
+    titulo: str | None
+    sinopse: str | None
+    versao: VersaoEpisodio | None
+    # Badge "Novo ep" (`components/CartaoContinuarAssistindo.jsx::BadgeNovo`)
+    # — só quando `capturavel` E o episódio nunca existiu E o anime está
+    # `EM_LANCAMENTO` E este slot É o episódio mais recente da fonte
+    # (`numero == episodios_na_fonte`, 2026-09-19 — sem isso um anime muito
+    # atrasado acendia a badge no próximo buraco do atraso, não no lançamento
+    # de verdade). Ver docstring completa em `api/servicos/progresso.py`. Um
+    # anime encerrado que o usuário só não terminou de acompanhar chega aqui
+    # como `capturavel` sem a badge.
+    episodio_novo: bool
+    # `True` quando `variante == 'capturavel'` sem `Episodio` ainda e a still/
+    # título/sinopse TMDB deste slot está em busca de segundo plano (cache-miss
+    # em `api/servicos/progresso.py::_aplicar_still_capturavel`) — o card saiu
+    # nesta resposta com o fallback de arte do anime. O frontend usa isto pra
+    # decidir se vale recarregar a prateleira de novo em alguns segundos, sem
+    # precisar de F5 (`paginas/Inicio.jsx`).
+    still_pendente: bool = False
+
+
+class ContinuarAssistindoRespostaSaida(BaseModel):
+    """Corpo de `GET /api/episodios/continuar-assistindo` — envelope em vez de
+    lista crua pra caber `sondagem_em_andamento` (nível da resposta, não por
+    item: um anime cujo próximo episódio ainda não existe some inteiro de
+    `itens` até a sondagem em segundo plano confirmar a contagem da fonte,
+    `api/servicos/progresso.py::listar_continuar_assistindo`). Mesmo papel de
+    `still_pendente` por item, só que pro caso que não tem item pra pendurar a
+    flag — `paginas/Inicio.jsx` usa os dois pra decidir se vale reconsultar a
+    prateleira de novo em alguns segundos."""
+
+    itens: list[ContinuarAssistindoSaida]
+    sondagem_em_andamento: bool
 
 
 # --- sites (api/rotas/sites.py) ---

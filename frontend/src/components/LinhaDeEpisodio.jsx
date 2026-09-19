@@ -237,8 +237,11 @@ export function CartaoDeEpisodio({
 }
 
 // Rótulos em `core/enums.py::StatusJob`/`StatusEpisodio` (backend) — mesmos
-// valores StrEnum, traduzidos aqui pra exibição.
-const ROTULOS_STATUS = {
+// valores StrEnum, traduzidos aqui pra exibição. Exportado (com `tomDoStatus`/
+// `OverlayDeStatus` abaixo): `components/CartaoContinuarAssistindo.jsx`
+// (prateleira cross-anime da Inicio) reusa o mesmo overlay de status pro
+// ramo "processando" em vez de reimplementar o mapa rótulo/spinner.
+export const ROTULOS_STATUS = {
   na_fila: 'Na fila',
   baixando: 'Baixando',
   validando_fonte: 'Validando fonte',
@@ -278,7 +281,7 @@ const STATUS_EM_PROGRESSO = new Set([
 ]);
 const STATUS_DE_ALERTA = new Set(['falhou', 'falhou_extracao', 'aguardando_intervencao']);
 
-function tomDoStatus(status) {
+export function tomDoStatus(status) {
   if (STATUS_EM_PROGRESSO.has(status)) return 'progresso';
   if (STATUS_DE_ALERTA.has(status)) return 'alerta';
   return 'neutro';
@@ -301,7 +304,7 @@ function tomDoStatus(status) {
 //  - 'neutro': nada além do rótulo, em cor esmaecida (`text-ink-muted`).
 // O rótulo carrega o `aria-live="polite"` que no modo lista vive no status
 // inline (trailing da FaixaDeConteudo) do ramo `if (episodio)`.
-function OverlayDeStatus({ rotulo, tom }) {
+export function OverlayDeStatus({ rotulo, tom }) {
   const corDoRotulo =
     tom === 'alerta' ? 'text-amber-300' : tom === 'neutro' ? 'text-ink-muted' : 'text-white';
   return (
@@ -391,7 +394,7 @@ export function RotuloEpisodio({ numero, rotulo, titulo }) {
 // um parágrafo inteiro, cortada com reticências pra não estourar a altura do
 // card/linha; sem sinopse (TMDB não achou ou sem tradução pt-BR), não
 // renderiza nada — nunca um espaço vazio no lugar.
-function SinopseEpisodio({ sinopse }) {
+export function SinopseEpisodio({ sinopse }) {
   if (!sinopse) return null;
   return <p className="line-clamp-2 text-xs text-ink-muted">{sinopse}</p>;
 }

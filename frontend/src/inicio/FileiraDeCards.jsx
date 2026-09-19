@@ -131,8 +131,13 @@ export default function FileiraDeCards({
           `PADDING_TITULO` (./tamanhoDeCard.js) alinha o título com a borda do
           CARD — hoje só o gutter de 3.7%, sem inset a mais: o slot não tem
           mais padding (removido a pedido do usuário, 2026-09-15), então a
-          borda do card já coincide com a do gutter. Vai no `style` pelo mesmo
-          motivo do `flex-basis` abaixo. */}
+          borda do card já coincide com a do gutter. `tamanho="episodio"`
+          continua alinhado com o MESMO `PADDING_TITULO` — o respiro entre
+          cards daquele tamanho vem de um `gap-x` na trilha (ver comentário
+          mais abaixo), não de padding no primeiro/último `<li>`, então as
+          bordas de fora continuam coincidindo com o gutter/título como nos
+          outros tamanhos. Vai no `style` pelo mesmo motivo do `flex-basis`
+          abaixo. */}
       <h2
         id={idTitulo}
         style={{ paddingInline: PADDING_TITULO }}
@@ -160,8 +165,17 @@ export default function FileiraDeCards({
             título -> cards (o h2 não tem `margin-bottom`). Mesma classe de
             armadilha do `py-16 -my-16` de CarrosselDestaques.jsx. Sem classe
             `gap-*` e sem padding no `<li>`: cards colam borda a borda (mesmo
-            tratamento de GradeDeCatalogo.jsx, ver comentário lá). Scrollbar
-            escondida nos dois motores (Firefox / WebKit). `--por-pagina` (via
+            tratamento de GradeDeCatalogo.jsx, ver comentário lá) — EXCETO
+            `tamanho="episodio"` (só "Continuar assistindo", 2026-09-18): os
+            cards de `LinhaDeEpisodio.jsx` em modo grade (`CartaoDeEpisodio`)
+            não têm pôster com bordas arredondadas pra se destacar sozinho
+            contra o vizinho como o `AnimeCard` tem — sem respiro, as caixas
+            16:9 (`bg-surface`, cantos retos) coladas ficavam indistinguíveis.
+            `gap-x-[20px]` (não padding no `<li>`, pedido do usuário: a
+            fileira acompanha o título, não o contrário) insere respiro só
+            ENTRE os slots — a borda de fora do primeiro/último card continua
+            colada no gutter, como os demais tamanhos. Scrollbar escondida nos
+            dois motores (Firefox / WebKit). `--por-pagina` (via
             `CLASSES_POR_PAGINA[tamanho]`) por breakpoint aqui, nunca como prop
             numérica. */}
         <ul
@@ -169,8 +183,8 @@ export default function FileiraDeCards({
           id={idTrilha}
           onScroll={medirLimites}
           className={`flex overflow-x-auto ${CLASSE_GUTTER} pt-[22px] pb-[44px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
-            CLASSES_POR_PAGINA[tamanho] ?? CLASSES_POR_PAGINA.grande
-          }`}
+            tamanho === 'episodio' ? 'gap-x-[20px]' : ''
+          } ${CLASSES_POR_PAGINA[tamanho] ?? CLASSES_POR_PAGINA.grande}`}
         >
           {lista.map((item, indice) => (
             <li

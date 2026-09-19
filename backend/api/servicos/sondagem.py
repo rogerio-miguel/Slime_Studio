@@ -197,6 +197,17 @@ def agendar_sondagens(
         agendadas += 1
 
 
+def sondagem_em_andamento(ids: Iterable[int]) -> bool:
+    """`True` se algum dos `ids` tem uma sondagem em voo agora (peek em
+    `_sondagens_em_voo`, sem I/O) — usado por `api/servicos/progresso.py` pra
+    sinalizar ao frontend que vale reconsultar a prateleira "Continuar
+    assistindo" em alguns segundos em vez de esperar F5 (mesmo padrão de
+    `ItemContinuarAssistindo.still_pendente`). Chamar DEPOIS de
+    `agendar_sondagens` na mesma passada: cobre tanto a sondagem que acabou de
+    ser agendada agora quanto uma já em voo de uma passada anterior."""
+    return any(anime_id in _sondagens_em_voo for anime_id in ids)
+
+
 def _ordem_de_sondagem(anime: Anime) -> tuple[bool, datetime]:
     """Chave de ordenação de `agendar_sondagens`: `fonte_verificada_em` nulo
     primeiro, depois o mais antigo — quem está há mais tempo sem contagem
