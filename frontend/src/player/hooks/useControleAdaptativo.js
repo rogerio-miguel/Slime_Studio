@@ -38,6 +38,7 @@ const JANELAS_BOAS_PARA_SUBIR = 6; // ~18s limpos antes de tentar subir 1 (×pac
 const COOLDOWN_MS = 5000; // > JANELA_MS: a 1ª janela pós-troca já não conta
 const MAX_FALHAS_POR_DEGRAU = 2; // 2 quedas a partir do mesmo degrau travam-no como teto
 const PROBE_COOLDOWN_MS = 120_000; // teto trava, mas não pra sempre: libera 1 sondagem por ciclo após ~2min sem nova falha nele
+const PROBE_COOLDOWN_MAX_MS = 900_000; // teto do backoff exponencial abaixo — não deixa o intervalo crescer pra sempre (~15min)
 const DEDUPE_FALHA_GPU_MS = 1500; // sessão encerrada pode reportar `lost` tardio
 const DROPADOS_PARA_PRESSAO_MAX = 0.08; // fallback: 8% de frames dropados = pressão 1
 
@@ -56,25 +57,31 @@ function clampDegrau(n) {
 }
 
 // Um degrau com >= MAX_FALHAS_POR_DEGRAU fica travado como teto, mas não pro
-// resto da sessão: depois de PROBE_COOLDOWN_MS sem NENHUMA falha nova nele,
-// libera uma sondagem (ainda sujeita à janela de estabilidade normal pra
-// subir). Se falhar de novo, a paciência já cresce (falhasNoAlvo maior),
-// então sondagens repetidas ficam cada vez mais espaçadas na prática. Se a
-// sondagem vingar e o degrau se firmar de novo (JANELAS_BOAS_PARA_ESTAVEL),
-// o histórico de falhas dele é zerado — falhar 2x numa cena pesada não pode
-// virar penalidade permanente pro resto do anime se o degrau já provou de
-// novo que sustenta.
+// resto da sessão: libera uma sondagem por ciclo, com o cooldown em backoff
+// exponencial por falha acumulada nesse degrau (cooldownDeSondagem), até um
+// teto (PROBE_COOLDOWN_MAX_MS). Sem o backoff, um degrau cujo teto é
+// estrutural (não uma cena pesada pontual) sonda, falha e desce num ciclo
+// perfeitamente periódico pra sempre a cada PROBE_COOLDOWN_MS — cada troca é
+// uma recompilação de shader, visível como travadinha (padrão relatado ao
+// vivo num anime sem cena de ação, oscilando entre dois degraus a cada
+// ~2min). Se a sondagem vingar e o degrau se firmar de novo
+// (JANELAS_BOAS_PARA_ESTAVEL), o histórico de falhas dele é zerado — falhar
+// 2x numa cena pesada não pode virar penalidade permanente pro resto do
+// anime se o degrau já provou de novo que sustenta.
 //
 // Falha rápida pós-subida conta em dobro: se a descida acontece antes de o
 // degrau ter provado estabilidade (nunca chegou a JANELAS_BOAS_PARA_ESTAVEL
 // como "lembrado"), a troca 'cima' foi otimista e a GPU já devolveu a
 // resposta na primeira janela — não precisa de uma segunda tentativa pra
-// confirmar. Sem isso, cada teto novo custa 2 ciclos completos de
-// subida-travada-descida (cada troca de degrau é uma recompilação de shader,
-// visível como travadinha) antes de trancar; foi o padrão relatado ao vivo
-// (sobe e desce em janela curta, repetido no episódio).
+// confirmar, e o contador de falhas já entra no mínimo travado
+// (MAX_FALHAS_POR_DEGRAU) em vez de +1 a partir de zero (ver `descer`).
+function cooldownDeSondagem(falhas) {
+  const excedente = Math.max(0, falhas - MAX_FALHAS_POR_DEGRAU);
+  return Math.min(PROBE_COOLDOWN_MS * 2 ** excedente, PROBE_COOLDOWN_MAX_MS);
+}
+
 function bloqueadoParaSubida(falhas, ultimaFalhaEm) {
-  return falhas >= MAX_FALHAS_POR_DEGRAU && Date.now() - ultimaFalhaEm < PROBE_COOLDOWN_MS;
+  return falhas >= MAX_FALHAS_POR_DEGRAU && Date.now() - ultimaFalhaEm < cooldownDeSondagem(falhas);
 }
 
 function lerDegrauDaUrl() {
@@ -119,6 +126,7 @@ export function useControleAdaptativo({
   const cooldownAteRef = useRef(0);
   const janelasRuinsRef = useRef(0);
   const janelasBoasRef = useRef(0);
+  const janelasDesdeTrocaRef = useRef(0); // conta janelas medidas (fora de cooldown) desde a última troca de degrau
   const falhasPorDegrauRef = useRef({}); // { [indice]: contagem }
   const ultimaFalhaPorDegrauRef = useRef({}); // { [indice]: timestamp da última falha } — janela do PROBE_COOLDOWN_MS
   const snapshotRef = useRef(null); // { dropados, total } da amostra anterior
@@ -142,6 +150,7 @@ export function useControleAdaptativo({
     indiceRef.current = alvo;
     janelasRuinsRef.current = 0;
     janelasBoasRef.current = 0;
+    janelasDesdeTrocaRef.current = 0;
     cooldownAteRef.current = Date.now() + COOLDOWN_MS;
     setIndiceDeDegrau(alvo);
     setUltimaTroca({ indice: alvo, direcao, motivo, em: Date.now() });
@@ -156,9 +165,10 @@ export function useControleAdaptativo({
       // trava de cara, como falha de GPU. Origem já era um degrau firmado →
       // mecanismo gentil de 2 tentativas antes de virar teto.
       const falhaRapidaPosSubida = ultimoEstavelRef.current !== origem;
+      const proximaContagem = (falhasPorDegrauRef.current[origem] || 0) + 1;
       falhasPorDegrauRef.current[origem] = falhaRapidaPosSubida
-        ? MAX_FALHAS_POR_DEGRAU
-        : (falhasPorDegrauRef.current[origem] || 0) + 1;
+        ? Math.max(MAX_FALHAS_POR_DEGRAU, proximaContagem)
+        : proximaContagem;
       ultimaFalhaPorDegrauRef.current[origem] = Date.now();
       aplicarDegrau(alvo, 'baixo', motivo);
       return true;
@@ -188,6 +198,7 @@ export function useControleAdaptativo({
     ultimoEstavelRef.current = inicial;
     janelasRuinsRef.current = 0;
     janelasBoasRef.current = 0;
+    janelasDesdeTrocaRef.current = 0;
     falhasPorDegrauRef.current = {};
     ultimaFalhaPorDegrauRef.current = {};
     snapshotRef.current = null;
@@ -278,11 +289,17 @@ export function useControleAdaptativo({
         ultimaFalhaPorDegrauRef.current[indiceRef.current - 1] || 0
       );
 
+      // Usa a pressão desta janela (não `janelasRuinsRef`, que só é incrementado
+      // mais abaixo) — senão a 1ª janela ruim de uma sequência ainda mostra
+      // "teto atingido"/"estável" por um ciclo, escondendo do HUD que o degrau
+      // atual já está apertando bem na hora em que o usuário vê o rótulo.
+      const pressaoRuimNestaJanela = pressao >= LIMIAR_DESCIDA;
+
       let estado;
       if (emCooldown) {
         estado = 'aquecendo';
-      } else if (ativoRef.current && janelasRuinsRef.current > 0 && pressao >= LIMIAR_DESCIDA) {
-        estado = `${janelasRuinsRef.current} janela apertada`;
+      } else if (ativoRef.current && pressaoRuimNestaJanela) {
+        estado = `${janelasRuinsRef.current + 1} janela apertada`;
       } else if (ativoRef.current && noTeto) {
         estado = 'teto atingido';
       } else {
@@ -293,7 +310,18 @@ export function useControleAdaptativo({
 
       if (!ativoRef.current || emCooldown) return;
 
-      if (pressao >= LIMIAR_SALTO_DUPLO) {
+      // 1ª janela medida após qualquer troca de degrau (a troca de shader do
+      // Anime4K recompila pipeline — custo real, não sobrecarga sustentada) não
+      // pode disparar o salto duplo sozinha: cai no caminho normal de baixo,
+      // que exige confirmação em 2 janelas. Sobrecarga de verdade se confirma
+      // na janela seguinte (já com `primeiraJanelaPosTroca` falso) e ainda leva
+      // só +1 janela (~3s) pra reagir. Sem isso, o resíduo do recompile logo
+      // após o cooldown lia como pressão >= 0.4 e travava o degrau recém-subido
+      // na hora — o padrão de "sobe e desce em janela curta" relatado ao vivo.
+      const primeiraJanelaPosTroca = janelasDesdeTrocaRef.current === 0;
+      janelasDesdeTrocaRef.current += 1;
+
+      if (pressao >= LIMIAR_SALTO_DUPLO && !primeiraJanelaPosTroca) {
         descer(2, 'apresentacao');
         return;
       }

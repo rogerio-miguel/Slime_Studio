@@ -8,6 +8,7 @@
 // — `import Anime4K from 'anime4k-webgpu'` chega `undefined` em dev. Import
 // de namespace pega as propriedades nomeadas de qualquer forma.
 import * as Anime4K from 'anime4k-webgpu';
+import { destruirTexturasDoChain } from './motorAnime4k.js';
 
 const {
   ClampHighlights,
@@ -145,14 +146,26 @@ const LABELS = {
 };
 
 // Encadeia os blocos: a saída de textura de um é a entrada do próximo.
-// Devolve o array de Anime4KPipeline que render() espera.
+// Devolve o array de Anime4KPipeline consumido pelo motor (motorAnime4k.js).
 function montarPipeline(blocos, device, inputTexture) {
   const pipelines = [];
   let tex = inputTexture;
-  for (const nome of blocos) {
-    const pipeline = BLOCOS[nome].criar(device, tex);
-    pipelines.push(pipeline);
-    tex = pipeline.getOutputTexture();
+  try {
+    for (const nome of blocos) {
+      const pipeline = BLOCOS[nome].criar(device, tex);
+      pipelines.push(pipeline);
+      tex = pipeline.getOutputTexture();
+    }
+  } catch (err) {
+    // Um bloco NO MEIO da chain falhou ao alocar (ex. createTexture sem
+    // VRAM) — os blocos ANTERIORES a ele já construíram e alocaram texturas
+    // próprias que ninguém mais referencia depois que este erro sobe pra
+    // fora desta função (o array `pipelines` local se perde). Sem limpar
+    // aqui, essas texturas vazam até o navegador reciclar sozinho.
+    // `inputTexture` é a única textura compartilhada por todo bloco do
+    // chain (nunca alocada por um bloco individual) — preservada.
+    destruirTexturasDoChain(pipelines, new Set([inputTexture]));
+    throw err;
   }
   return pipelines;
 }
@@ -218,12 +231,13 @@ export const PRESET_PADRAO = 'aa-vl-deblur';
 //
 // Mira sempre o tamanho equivalente a TELA CHEIA (o maior que o .frame algum
 // dia vai ocupar nesta sessão), não o tamanho atual — de propósito, mesmo em
-// modo janela. Motivo: o bundle real da lib mostra que render() cria um
-// GPUDevice novo e reconfigura o canvas a cada chamada, sem devolver handle
-// pra parar o requestVideoFrameCallback recursivo da chamada anterior —
-// reconstruir o pipeline ao entrar/sair de tela cheia vazaria o device antigo
-// e deixaria dois loops rodando. Miramos o maior caso de uma vez; o blit
-// baixar de uma resolução maior pro tamanho do canvas é seguro (não borra).
+// modo janela. Motivo: o canvas é dimensionado uma única vez por sessão
+// (motorAnime4k.js — trocar de preset em runtime reaproveita device/
+// contexto/canvas, só troca o chain de Anime4KPipeline); redimensionar o
+// canvas no meio da sessão reconfigura o swap chain WebGPU, que é visível
+// como piscada — o mesmo custo que entrar/sair de tela cheia teria se
+// disparasse um resize. Miramos o maior caso de uma vez; o blit baixar de
+// uma resolução maior pro tamanho do canvas é seguro (não borra).
 //
 // Dois tetos sobre esse alvo:
 //  - Resolução CSS da tela, SEM multiplicar por devicePixelRatio. Num painel
@@ -244,14 +258,49 @@ function alvoCssDoAspecto(aspect) {
   return Math.min(screenCssWidth, screenCssHeight * aspect);
 }
 
-// "original" fica de fora: é a referência "fonte pura sem shader".
-export function calcularDimensoesDeSaida(presetId, video) {
-  if (presetId === 'original') {
-    return { width: video.videoWidth, height: video.videoHeight };
-  }
+// Maior `escalaDeSaida` dentre TODOS os presets — teto único usado pra
+// dimensionar o canvas da SESSÃO inteira (ver calcularDimensoesDaSessao
+// abaixo), não mais por preset individual.
+function escalaMaximaDoLeque() {
+  return Object.values(PRESETS).reduce((max, preset) => Math.max(max, escalaDeSaida(preset.blocos)), 1);
+}
+
+// Dimensões do canvas de saída para a SESSÃO inteira (não mais por preset):
+// o canvas agora nunca redimensiona no meio da sessão — redimensionar
+// recria o swap chain WebGPU, o mesmo custo visual (piscada) do problema que
+// esta reescrita resolve (ver motorAnime4k.js). Como o seletor manual
+// permite trocar de preset livremente sem trocar de fonte/vídeo dentro da
+// mesma sessão (SeletorDePreset.jsx / `qualidade` em PlayerAtivo.jsx), as
+// dimensões usam o TETO de escala de todo o leque de presets (hoje 2, só
+// 'a-vl-1x' foge disso com escala 1), não a escala de um preset específico.
+// Mesmos dois tetos que já existiam por preset: resolução CSS da tela sem
+// DPR, e agora a escala máxima do leque inteiro.
+//
+// Efeito colateral esperado e aceitável: rodar um preset de escala 1 (ex.
+// 'a-vl-1x') dentro de um canvas dimensionado pro teto de escala 2 faz o
+// blit final magnificar um pouco o resultado dessa CNN em vez de mostrá-lo
+// 1:1. Em modo automático isso já é evitado por resolverDegrauPorResolucao
+// (só usa 'a-vl-1x' quando a fonte já cobre o alvo, então o blit acaba só
+// reduzindo, nunca magnificando); em modo manual, selecionar 'a-vl-1x' numa
+// fonte pequena por conta própria já era uma escolha explícita do usuário
+// hoje (mesma lacuna preexistente do `object-fit:fill`, só mudando de CSS
+// pra blit).
+//
+// 'original' (escala 1, sem CNN nenhuma) entra nessa mesma conta geral —
+// não tem mais um caso especial de "canvas do tamanho exato do vídeo fonte"
+// como antes. Motivo: o canvas agora é fixo por SESSÃO (não por preset), e
+// o seletor manual deixa trocar pra 'original' e voltar sem trocar de fonte
+// — um caso especial teria que redimensionar o canvas nessa troca, a mesma
+// piscada que esta reescrita elimina para os outros presets. Efeito: o blit
+// final magnifica a imagem "pura, sem shader" pro tamanho fixo do canvas
+// (tipicamente a resolução CSS da tela) em vez de mostrá-la 1:1 — mesma
+// classe de trade-off do 'a-vl-1x' acima, só que sempre presente (não só
+// quando a fonte é pequena), já que 'original' nunca upscala por conta
+// própria.
+export function calcularDimensoesDaSessao(video) {
   const videoAspect = video.videoWidth / video.videoHeight;
   const alvoCss = alvoCssDoAspecto(videoAspect);
-  const escalaMax = escalaDeSaida(PRESETS[presetId]?.blocos ?? []);
+  const escalaMax = escalaMaximaDoLeque();
   const width = Math.round(Math.min(alvoCss, video.videoWidth * escalaMax));
   const height = Math.round(width / videoAspect);
   return { width, height };

@@ -11,7 +11,9 @@
 // (getVideoPlaybackQuality, que não sofre com o shader lento), é o sinal
 // confiável de "a GPU não está dando conta".
 //
-// render() cria um GPUDevice exclusivo por sessão — a fila é só nossa.
+// motorAnime4k.js cria um GPUDevice exclusivo por sessão (agora por vídeo,
+// não mais por preset — trocar de preset reaproveita o mesmo device) — a
+// fila é só nossa.
 
 const MEMORIA_MS = 5000; // buffer de instantes de submit retido
 
