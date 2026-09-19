@@ -25,7 +25,7 @@ import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 // inicio/fileirasTematicas.js, inicio/intercalarDestaques.js,
 // inicio/janelaDeDestaques.js), só não são renderizados/computados por enquanto.
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
-import { topDaTemporada } from '../inicio/fileiras.js';
+import { ordenarPorEstreia, topDaTemporada } from '../inicio/fileiras.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 
@@ -169,6 +169,13 @@ export default function Inicio({ jobsPorEpisodio }) {
   // sai do feed `em-alta`, que só lista o que já está no ar). Mesma exibição
   // silenciosa: em carregando/erro/vazio a fileira não aparece.
   const proximaTemporada = useRecurso(listarProximaTemporada, []);
+  // Ordenada por data de estreia crescente (`ordenarPorEstreia`) — os itens
+  // ainda sem nenhum sinal de data ficam no final da fileira, e a lista
+  // reordena sozinha assim que o warm de lançamento preenche uma data nova.
+  const proximaTemporadaOrdenada = useMemo(
+    () => ordenarPorEstreia(proximaTemporada.dados),
+    [proximaTemporada.dados]
+  );
 
   // "Top 10" — recorte puro do feed `em-alta` (inicio/fileiras.js). `?? []`
   // porque `emAlta.dados` é `null` até a primeira resposta. (As fileiras por
@@ -442,7 +449,7 @@ export default function Inicio({ jobsPorEpisodio }) {
         <FileiraDeCards
           key="proximas-estreias"
           titulo="Próximas estreias"
-          itens={proximaTemporada.dados}
+          itens={proximaTemporadaOrdenada}
           tamanho="pequeno"
           comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
