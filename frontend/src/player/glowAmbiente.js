@@ -2,11 +2,13 @@
 // do canvas de saída do WebGPU: decisão deliberada pra ficar 100% desacoplado
 // do pipeline anime4k-webgpu, que já roda no limite da GPU (RX 580, ver
 // ESPECIFICACAO.md §11/§12). Canvas2D é barato e não disputa device/VRAM com
-// o WebGPU. Usa o rVFC ORIGINAL (parâmetro `rvfc`, não
-// `video.requestVideoFrameCallback` direto) — motorAnime4k.js intercepta
-// esse método por geração (D2) pra matar a cadeia do pipeline Anime4K ao
-// trocar de preset; o glow precisa continuar rodando através dessas trocas,
-// então fica imune ao intercept.
+// o WebGPU. `rvfc` chega por parâmetro (não `video.requestVideoFrameCallback`
+// lido direto aqui dentro) só pra manter este módulo sem depender de um
+// `<video>` real — GlowAmbiente.jsx é quem resolve o método de verdade.
+// Múltiplos rVFC concorrentes sobre o mesmo elemento são suportados
+// nativamente pelo navegador: este loop nunca competiu com o do pipeline
+// Anime4K (cada um é um registro independente), e trocar de preset não
+// afeta este laço — motorAnime4k.js não intercepta mais rVFC nenhum.
 
 // Poucos pixels de propósito: drawImage encolhendo já faz a "média de cor"
 // da cena sem calcular nada na mão, e menos pixels = amostragem mais barata.

@@ -81,10 +81,17 @@ export default function PlayerAtivo({
     ? resolverDegrauPorResolucao(DEGRAUS_ADAPTATIVOS[indiceDeDegrau], dimensoesDaFonte)
     : presetManual;
 
-  // Falha de render()/`device.lost` (via useMotorAnime4k): em modo automático
-  // desce um degrau em vez de matar o player; só propaga como fatal no piso
-  // ou em modo manual. Identidade estável — se dependesse de `presetAtual` o
-  // efeito do motor reconstruiria a sessão a cada troca de degrau.
+  // Falha reportada por useMotorAnime4k (troca de preset que não construiu,
+  // ou sessão inteira perdida — `device.lost`/falha na construção inicial):
+  // em modo automático desce um degrau em vez de matar o player; só propaga
+  // como fatal no piso ou em modo manual. As duas falhas convergem no mesmo
+  // callback de propósito — as duas pedem a mesma decisão aqui (degradar ou
+  // matar); só a falha de sessão INTEIRA pede também recriar a sessão do
+  // zero, e isso já é resolvido dentro de useMotorAnime4k (contador
+  // `geracaoDeSessao`), não precisa de tratamento diferente aqui. Identidade
+  // estável não é mais load-bearing pra evitar reconstrução de sessão (o
+  // hook lê a versão mais recente via ref internamente) — mantido só como
+  // hábito de não recriar a função a cada render.
   const autoRef = useRef(auto);
   useEffect(() => {
     autoRef.current = auto;
@@ -197,12 +204,16 @@ export default function PlayerAtivo({
       <div className="frame" ref={frameRef}>
         {dimensoesDaFonte && <GlowAmbiente videoRef={videoRef} elementoDeMedidaRef={frameRef} />}
         {/* Vídeo invisível (opacity 0 via player.css) — só alimenta o
-            pipeline WebGPU e o áudio. Nunca remonta (D3): createMediaElementSource
+            pipeline WebGPU e o áudio. Nunca remonta: createMediaElementSource
             (áudio cinema) e hls.attachMedia se prendem ao elemento. */}
         <video ref={videoRef} playsInline preload="auto" />
-        {/* Canvas de saída remonta a cada troca de preset (key, D3): cada
-            sessão do pipeline Anime4K precisa de contexto WebGPU virgem. */}
-        <canvas key={presetAtual} ref={canvasRef} id="output-canvas" />
+        {/* Canvas de saída também nunca remonta: a sessão WebGPU inteira
+            (device/contexto/inputTexture, ver motorAnime4k.js) persiste por
+            baixo de trocas de preset — só o chain de Anime4KPipeline troca,
+            via trocarPreset(). Remontar aqui (via `key`, como antes)
+            reconfiguraria o swap chain a cada troca, a mesma piscada que
+            essa sessão persistente existe pra eliminar. */}
+        <canvas ref={canvasRef} id="output-canvas" />
         <HudTelemetria
           visivel={hudVisivel}
           modo={auto ? `Auto · degrau ${indiceDeDegrau + 1}/${DEGRAUS_ADAPTATIVOS.length}` : 'Manual'}
