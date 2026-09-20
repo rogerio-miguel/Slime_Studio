@@ -550,8 +550,20 @@ def _pagina_para_animes_em_alta(dados: dict, contexto: str) -> list[AnimeEmAlta]
 def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
     """Converte um item de `Page.media` num `AnimeEmAlta` — lógica por-item
     extraída de `_pagina_para_animes_em_alta` para reuso isolado (mesmo
-    formato de resposta em `listar_em_alta`, `listar_proxima_temporada` e
-    `listar_fileira_tematica`)."""
+    formato de resposta em `listar_em_alta`, `listar_proxima_temporada`,
+    `listar_fileira_tematica` e `buscar_relacionados`).
+
+    `formato`: `None` para qualquer `Media` de série (`_FORMATOS_DE_SERIE`,
+    "TV"/"TV_SHORT") — o contrato de `AnimeEmAltaSaida.formato`/
+    `CriarAnimeRequest.formato` é "`None` = temporada normal, "MOVIE"/"OVA"/
+    "ONA"/"SPECIAL" = agrupa sob a série-mãe" (`Anime.formato_midia`,
+    `db.catalogo.obter_ou_criar_anime_id`). Repassar o "TV" cru da AniList
+    aqui gravava `formato_midia="TV"` num anime que é uma temporada de
+    verdade — some do catálogo (`listar_animes` filtra `formato_midia IS
+    NULL`) sem se agrupar em nenhuma franquia (bug real, anime id=82 no
+    catálogo local: "Ladies versus Butlers!" virou órfão assim ao ser
+    materializado por "Relacionados")."""
+    formato_bruto = item.get("format")
     return AnimeEmAlta(
         titulo_romaji=(item.get("title") or {}).get("romaji") or "",
         titulo_ingles=(item.get("title") or {}).get("english"),
@@ -565,7 +577,7 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
         ),
         lancamento=_extrair_lancamento(item),
         sinopse=_sanitizar_sinopse(item.get("description")),
-        formato=_texto_ou_none(item.get("format")),
+        formato=None if formato_bruto in _FORMATOS_DE_SERIE else _texto_ou_none(formato_bruto),
     )
 
 
