@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Final
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import VersaoDeFonte, VersaoEpisodio
@@ -632,20 +633,35 @@ async def _gravar_fonte_anime(
                     ),
                 )
             )
-        else:
-            existente.identificador_no_site = identificador
-            existente.prioridade = prioridade
-            # Reconfirmar um domínio já mapeado (ex.: "Trocar fonte" de volta
-            # pra um site usado antes) também é uma escolha manual do
-            # usuário agora — sem bumpar `resolvido_em`, `_resolver_em_mapeadas`
-            # continuaria preferindo outro domínio só por ter sido tocado
-            # mais recentemente por acaso, não por decisão do usuário.
-            # `bump_recencia=False` (só usado pela escrita "de graça" da
-            # OUTRA versão em `_resolver_no_site_que_diferencia`): a linha já
-            # existia com um `resolvido_em` de antes (real ou sentinel) — não
-            # tocar nele preserva o que já estava lá, seja uma confirmação
-            # genuína anterior, seja um sentinel de uma escrita oportunista
-            # anterior. Ver comentário no call site.
-            if bump_recencia:
-                existente.resolvido_em = datetime.now(UTC)
+            try:
+                await sessao.commit()
+                return
+            except IntegrityError:
+                # Corrida: duas chamadas concorrentes pra este mesmo (anime_id,
+                # dominio, versao) — ex. o frontend disparando `episodios-
+                # remotos` duas vezes quase junto (StrictMode/efeito duplicado)
+                # — os dois `get` acima rodaram antes de qualquer `commit`, os
+                # dois viram `None`, e só um `INSERT` vence a constraint
+                # única. Sem isto o perdedor derrubava a request com 500 em
+                # vez de reconfirmar como o ramo `else` abaixo já faz — mesmo
+                # padrão de `db/catalogo.py::obter_ou_criar_anime_id`.
+                await sessao.rollback()
+                existente = await sessao.get(FonteAnime, (anime_id, dominio, versao))
+                if existente is None:
+                    raise
+        existente.identificador_no_site = identificador
+        existente.prioridade = prioridade
+        # Reconfirmar um domínio já mapeado (ex.: "Trocar fonte" de volta
+        # pra um site usado antes) também é uma escolha manual do
+        # usuário agora — sem bumpar `resolvido_em`, `_resolver_em_mapeadas`
+        # continuaria preferindo outro domínio só por ter sido tocado
+        # mais recentemente por acaso, não por decisão do usuário.
+        # `bump_recencia=False` (só usado pela escrita "de graça" da
+        # OUTRA versão em `_resolver_no_site_que_diferencia`): a linha já
+        # existia com um `resolvido_em` de antes (real ou sentinel) — não
+        # tocar nele preserva o que já estava lá, seja uma confirmação
+        # genuína anterior, seja um sentinel de uma escrita oportunista
+        # anterior. Ver comentário no call site.
+        if bump_recencia:
+            existente.resolvido_em = datetime.now(UTC)
         await sessao.commit()
