@@ -8,6 +8,7 @@ traduz para schemas.
 import asyncio
 import logging
 import re
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -514,6 +515,16 @@ def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime
     )
     for anime in por_titulo[:_MAX_BUSCAS_POR_TITULO_POR_LOTE]:
         _agendar_busca_por_titulo(sessionmaker, anime)
+
+
+def refresh_em_andamento(ids: Iterable[int]) -> bool:
+    """`True` se algum dos `ids` tem uma busca lazy de lançamento em voo agora
+    (peek em `_refreshs_de_lancamento_em_voo`, sem I/O) — espelha
+    `api/servicos/sondagem.py::sondagem_em_andamento`. Usado por
+    `GET /api/animes/aquecimento-em-andamento` (`api/rotas/animes.py`) junto
+    com `sondagem_em_andamento` pra sinalizar à Galeria que vale reconsultar o
+    catálogo em alguns segundos em vez de esperar F5."""
+    return any(anime_id in _refreshs_de_lancamento_em_voo for anime_id in ids)
 
 
 def _elegivel_para_aquecimento(anime: Anime, limite: datetime) -> bool:
