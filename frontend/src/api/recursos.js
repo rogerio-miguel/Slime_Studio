@@ -12,6 +12,14 @@ export function listarAnimes({ aquecer = false } = {}) {
   return requisitar(aquecer ? '/api/animes?aquecer=true' : '/api/animes');
 }
 
+// Peek nas cargas fire-and-forget que `?aquecer=true` agenda (sondagem da
+// fonte real + aquecimento de `status_lancamento`) — a Galeria usa isto pra
+// saber se vale reconsultar `listarAnimes` de novo em alguns segundos, mesmo
+// papel de `sondagem_em_andamento` em `listarContinuarAssistindo`.
+export function aquecimentoEmAndamento() {
+  return requisitar('/api/animes/aquecimento-em-andamento');
+}
+
 export function listarAnimesEmAlta() {
   return requisitar('/api/animes/em-alta');
 }

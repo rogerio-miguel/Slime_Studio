@@ -41,7 +41,7 @@ export default function BlocoConteudoHero({
 
       {sinopse && (
         <div className={ocultarSinopseNoMobile ? 'hidden sm:block' : undefined}>
-          <p className="line-clamp-3 max-w-2xl text-sm text-ink-muted sm:text-base">{sinopse}</p>
+          <p className="line-clamp-2 max-w-2xl text-sm font-bold text-ink-muted sm:text-base">{sinopse}</p>
         </div>
       )}
 

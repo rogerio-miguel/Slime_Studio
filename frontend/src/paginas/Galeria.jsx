@@ -1,6 +1,6 @@
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ErroDeApi } from '../api/cliente.js';
-import { listarAnimes, removerAnime } from '../api/recursos.js';
+import { aquecimentoEmAndamento, listarAnimes, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
@@ -29,6 +29,22 @@ const ROTULOS_STATUS_LANCAMENTO = {
 const CLASSE_SELECT =
   'rounded-md border border-border-chrome bg-[#222] px-3 py-1.5 text-sm text-white outline-none transition-colors hover:bg-[#2a2a2a] focus-visible:border-neon';
 const CLASSE_LABEL_FILTRO = 'text-xs font-semibold uppercase tracking-wide text-ink-muted';
+
+// Poll leve pós-carga (`listarAnimes({aquecer:true})`, abaixo): a sondagem da
+// fonte real e o aquecimento de `status_lancamento` que `?aquecer=true`
+// dispara são fire-and-forget — o resultado entra no banco só para a PRÓXIMA
+// leitura do catálogo (`api/rotas/animes.py::listar_animes`), então sem isto
+// as tags (status/dublado-legendado) e "Tn EP.n" só atualizavam num F5
+// manual. Mesmo papel de `sondagem_em_andamento` em `paginas/Inicio.jsx` pra
+// "Continuar assistindo", só que o sinal vem de um endpoint próprio
+// (`aquecimentoEmAndamento`) em vez de vir junto da lista — `GET /api/animes`
+// tem que continuar devolvendo array cru, é o mesmo contrato que a Home usa
+// sem a flag. Cada tick só CHECA a flag; o catálogo só é recarregado UMA vez,
+// no fim (quando a flag vira `false` ou o teto de tentativas é atingido) —
+// pedido explícito do usuário pra os cards não ficarem trocando de tag/
+// contagem repetidas vezes no meio do aquecimento.
+const _INTERVALO_POLL_AQUECIMENTO_MS = 4000;
+const _MAX_TENTATIVAS_POLL_AQUECIMENTO = 16;
 
 // Instante em ms de `proximo_ep_em`, ou `null` quando ausente/inválido —
 // usado só pela ordenação "Próximo episódio" (empurra itens sem valor pro
@@ -97,6 +113,61 @@ export default function Galeria() {
     [],
     'animes'
   );
+
+  // Checagem única, assim que a primeira carga termina: `disparouRef` evita
+  // repetir esta checagem nos ciclos de `carregando` que o PRÓPRIO poll
+  // abaixo produz (cada `recarregar()` alterna `carregando` true->false de
+  // novo). Sem o guard, cada tick do poll re-perguntaria isto à toa.
+  const [aquecendo, setAquecendo] = useState(false);
+  const disparouChecagemDeAquecimentoRef = useRef(false);
+  useEffect(() => {
+    if (carregando || animes == null || disparouChecagemDeAquecimentoRef.current) return undefined;
+    disparouChecagemDeAquecimentoRef.current = true;
+    let cancelado = false;
+    aquecimentoEmAndamento()
+      .then(({ em_andamento }) => {
+        if (!cancelado) setAquecendo(em_andamento);
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carregando]);
+
+  // Enquanto `aquecendo`, só CHECA a flag a cada
+  // `_INTERVALO_POLL_AQUECIMENTO_MS` (sem tocar no catálogo) — `recarregar()`
+  // roda uma ÚNICA vez, no fim, quando a sondagem/aquecimento realmente
+  // terminam (ou ao atingir o teto de tentativas). Pedido explícito do
+  // usuário: os cards devem atualizar DEPOIS que a busca termina, não a cada
+  // tick no meio dela (senão o catálogo troca de tag/contagem várias vezes
+  // seguidas enquanto o usuário olha a tela). Dependência é `aquecendo` (não
+  // `carregando`): isolar a checagem do próprio efeito colateral de
+  // `recarregar()` evita reiniciar o contador de tentativas a cada tick.
+  useEffect(() => {
+    if (!aquecendo) return undefined;
+    let cancelado = false;
+    let tentativas = 0;
+    const intervalo = setInterval(async () => {
+      tentativas += 1;
+      let emAndamento = false;
+      try {
+        ({ em_andamento: emAndamento } = await aquecimentoEmAndamento());
+      } catch {
+        emAndamento = true; // erro de rede: assume que ainda está em voo, tenta de novo
+      }
+      if (cancelado) return;
+      if (!emAndamento || tentativas >= _MAX_TENTATIVAS_POLL_AQUECIMENTO) {
+        setAquecendo(false);
+        recarregar();
+      }
+    }, _INTERVALO_POLL_AQUECIMENTO_MS);
+    return () => {
+      cancelado = true;
+      clearInterval(intervalo);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aquecendo]);
 
   const [statusSelecionado, setStatusSelecionado] = useState('');
   const [ordenacao, setOrdenacao] = useState('titulo');

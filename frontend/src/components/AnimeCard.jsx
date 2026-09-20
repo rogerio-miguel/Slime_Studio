@@ -1,6 +1,6 @@
 import { useId } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Check, Sparkles } from 'lucide-react';
+import { BookmarkCheck, Calendar, Check, Sparkles } from 'lucide-react';
 import { textoDeProximaTemporada } from '../inicio/franquia.js';
 import textoEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
 import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
@@ -41,6 +41,14 @@ import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
 // ocupado/em voo — ex. materialização em andamento — mesmo padrão de
 // `disabled` + `aria-disabled` + `cursor-not-allowed opacity-50` já usado
 // em `components/BarraDeNavegacao.jsx` pros itens "Em breve".
+//
+// `indicarCatalogado` (opcional, default `false`): pill "Já no catálogo"
+// (`pillsSuperiores` abaixo) quando `anime.anime_id` não é `null` — só faz
+// sentido pra item de FEED (`AnimeEmAltaSaida`, nunca tem `.id` próprio) que
+// já bate com o catálogo local, então quem chama precisa optar (pedido
+// explícito do usuário pra "Relacionados" de `paginas/PaginaDoAnime.jsx` —
+// não ligado por padrão pra não repetir o aviso em toda fileira/carrossel da
+// Home que também usa item de feed).
 //
 // `aoRemover` (opcional, sem argumentos — quem chama já sabe qual anime via
 // closure): quando presente, renderiza `<BotaoRemoverDoCatalogo>` DENTRO da
@@ -122,6 +130,7 @@ export default function AnimeCard({
   sobreposicao,
   fonte,
   aviso,
+  indicarCatalogado = false,
 }) {
   const idCatalogado = anime.id ?? anime.anime_id ?? null;
   const capa = anime.capa_path ?? anime.capa_url ?? null;
@@ -155,6 +164,22 @@ export default function AnimeCard({
     </span>
   );
 
+  // "Já no catálogo" — ver `indicarCatalogado` no topo do arquivo. Ícone
+  // diferente de `badgeAssistido` (`BookmarkCheck`, não `Check`) de propósito:
+  // as duas pills nunca coexistem na prática (item de feed não tem
+  // `anime.assistido`), mas usar ícones iguais pra conceitos diferentes
+  // ("já tenho isso" vs. "já vi isso") confundiria se algum dia coexistissem.
+  const idBadgeCatalogado = idBadge + '-catalogado';
+  const jaCatalogado = indicarCatalogado && !semLegenda && anime.anime_id != null;
+  const badgeCatalogado = jaCatalogado && (
+    <span
+      id={idBadgeCatalogado}
+      className="inline-flex h-8 items-center gap-1 whitespace-nowrap bg-black/80 backdrop-blur-md px-2.5 text-xs font-semibold uppercase tracking-wide text-white"
+    >
+      <BookmarkCheck aria-hidden="true" className="h-4 w-4" />
+      Já no catálogo
+    </span>
+  );
 
   // Tag "Tn EP.n" logo abaixo do título — pedido explícito do usuário.
   // `numero_temporada` cai pra 1 quando NULL (anime sem franquia resolvida
@@ -261,10 +286,11 @@ export default function AnimeCard({
   // `relative`) ancora no canto do pôster (`relative` na div da capa) de
   // forma confiável — mesmo raciocínio que já valia pra cada pill isolada
   // antes desta mudança.
-  const pillsSuperiores = (badgeAssistido || badgeAviso) && (
+  const pillsSuperiores = (badgeAssistido || badgeAviso || badgeCatalogado) && (
     <div className="absolute left-2 top-2 z-10 flex flex-col items-start gap-1.5">
       {badgeAssistido}
       {badgeAviso}
+      {badgeCatalogado}
     </div>
   );
 
@@ -363,9 +389,10 @@ export default function AnimeCard({
   }
 
   // Nome acessível da camada de navegação: `aria-labelledby` junta os badges
-  // "Assistido" e de aviso (próxima temporada OU episódio novo, quando
-  // presentes, nessa ordem — mesma ordem visual de cima pra baixo no
-  // empilhamento de `pillsSuperiores`) com o bloco de legenda (título + tags),
+  // "Assistido", de aviso (próxima temporada OU episódio novo) e "Já no
+  // catálogo", quando presentes, nessa ordem — mesma ordem visual de cima pra
+  // baixo no empilhamento de `pillsSuperiores` — com o bloco de legenda
+  // (título + tags),
   // igual ao texto que seria lido se estivesse tudo dentro do próprio
   // Link/button. `semLegenda` nunca ocorre nestes dois ramos na prática (só
   // combina com `estatico`, ver comentário no topo do arquivo), mas o
@@ -373,6 +400,7 @@ export default function AnimeCard({
   const idsRotulo = [
     assistido && idBadge,
     textoBadgeAviso && idBadgeAviso,
+    jaCatalogado && idBadgeCatalogado,
     !semLegenda && idLegenda,
   ]
     .filter(Boolean)

@@ -15,6 +15,7 @@ from api.esquemas import (
     AnimeDetalheSaida,
     AnimeEmAltaSaida,
     AnimeSaida,
+    AquecimentoCatalogoSaida,
     BuscaEmFontesSaida,
     ConfirmarFonteRequest,
     CriarAnimeRequest,
@@ -241,7 +242,33 @@ async def listar_animes(
     # query de versões só alimenta o agendamento, que é síncrono.
     if aquecer:
         versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
-        servico_sondagem.agendar_sondagens(sessionmaker, animes, versoes)
+        # Reparo de fonte perdida (2026-09-15, migração
+        # `26791d90cb31_invalida_fonte_anime_do_animefire_one`): anime com
+        # episódio capturado mas ZERO `FonteAnime` mapeada nunca ganha entrada
+        # em `versoes_de_sondagem_por_anime` (não há fonte pra consultar) e
+        # `agendar_sondagens` o pulava pra sempre — só um `versao_confirmada_
+        # mais_recente` nulo pro badge Dublado/Legendado sumir do card sem
+        # nenhum jeito automático de voltar. Palpite de versão vem do próprio
+        # episódio já capturado; `ignorar_gate_de_status` deixa isto tentar
+        # mesmo pra anime `FINALIZADO` (o gate normal de status não se aplica
+        # aqui — é reparo pontual, não sondagem contínua de contagem).
+        # `ids_fora_de_cooldown_de_reparo` corta quem falhou a varredura cara
+        # (todos os extratores, sem fonte mapeada pra atalhar) há pouco tempo —
+        # sem isto, um anime não encontrado em lugar nenhum repetia a
+        # varredura inteira a cada `?aquecer=true`.
+        ids_sem_fonte_com_episodios = servico_sondagem.ids_fora_de_cooldown_de_reparo(
+            aid for aid in ids if aid in com_episodios and aid not in versoes
+        )
+        versoes_de_reparo = await servico_sondagem.versoes_para_reresolver_fonte_perdida(
+            sessao, ids_sem_fonte_com_episodios
+        )
+        versoes = {**versoes, **versoes_de_reparo}
+        servico_sondagem.agendar_sondagens(
+            sessionmaker,
+            animes,
+            versoes,
+            ignorar_gate_de_status=frozenset(versoes_de_reparo),
+        )
         servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
     # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios`,
@@ -270,6 +297,23 @@ async def listar_animes(
             )
         )
     return resultado_saida
+
+
+# Mesma armadilha de ordem de `/em-alta` abaixo: precisa vir ANTES de
+# `/{anime_id}`, senão casaria com `anime_id="aquecimento-em-andamento"`.
+@router_publico.get("/aquecimento-em-andamento", response_model=AquecimentoCatalogoSaida)
+async def aquecimento_em_andamento(
+    sessao: AsyncSession = Depends(obter_sessao),
+) -> AquecimentoCatalogoSaida:
+    ids = (
+        (await sessao.execute(select(Anime.id).where(Anime.formato_midia.is_(None))))
+        .scalars()
+        .all()
+    )
+    em_andamento = servico_sondagem.sondagem_em_andamento(
+        ids
+    ) or servico_descoberta.refresh_em_andamento(ids)
+    return AquecimentoCatalogoSaida(em_andamento=em_andamento)
 
 
 # `/em-alta` precisa vir ANTES de `/{anime_id}` — um `{anime_id}` declarado
@@ -541,6 +585,7 @@ async def _agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
                 Anime.estreia_em,
                 Anime.ano,
                 Anime.formato_midia,
+                Anime.total_episodios_anilist,
                 tem_episodio.label("tem_episodios"),
             )
         )
@@ -620,6 +665,7 @@ def _temporadas_e_proxima(
                 numero_temporada=linha.numero_temporada,
                 titulo=linha.titulo,
                 formato_midia=linha.formato_midia,
+                total_episodios=linha.total_episodios_anilist,
             )
             for linha in acessiveis
         ]

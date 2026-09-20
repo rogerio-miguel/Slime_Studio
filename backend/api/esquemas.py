@@ -130,6 +130,14 @@ class TemporadaIrmaSaida(BaseModel):
     estreia_em: date | None = None
     ano: int | None = None
     formato_midia: str | None = None
+    # Total declarado pela AniList (`Anime.total_episodios_anilist`, mesma
+    # origem de `AnimeSaida.total_episodios_anilist`/`AnimeEmAltaSaida.
+    # total_episodios`) — NÃO é progresso de captura local
+    # (`AnimeSaida.episodios_atuais`, que mede até onde o usuário já baixou):
+    # uma temporada pode ter só 1 episódio capturado e ainda assim declarar
+    # 12 no total, e é o total que o seletor deve mostrar. `None` quando a
+    # AniList ainda não fechou a contagem (comum em `nao_lancado`).
+    total_episodios: int | None = None
 
 
 class AnimeSaida(BaseModel):
@@ -220,6 +228,20 @@ class AnimeSaida(BaseModel):
     # `estreia_em`/`ano` vêm preenchidos aqui (ver docstring de
     # `TemporadaIrmaSaida`); `None` quando não há irmã `nao_lancado` prevista.
     proxima_temporada: TemporadaIrmaSaida | None = None
+
+
+class AquecimentoCatalogoSaida(BaseModel):
+    """Corpo de `GET /api/animes/aquecimento-em-andamento` — peek síncrono (sem
+    I/O) nas duas cargas fire-and-forget que `?aquecer=true` agenda
+    (`api/servicos/sondagem.py::agendar_sondagens` e `api/servicos/
+    descoberta.py::agendar_refreshs_do_catalogo`). A Galeria
+    (`paginas/Galeria.jsx`) usa esta flag pra saber se vale reconsultar
+    `GET /api/animes` de novo em alguns segundos — mesmo papel de
+    `ContinuarAssistindoRespostaSaida.sondagem_em_andamento`, só que num
+    endpoint próprio (não dá pra pendurar a flag na lista crua de `AnimeSaida`
+    sem quebrar o contrato que a Home também consome sem `?aquecer=true`)."""
+
+    em_andamento: bool
 
 
 class AnimeEmAltaSaida(BaseModel):

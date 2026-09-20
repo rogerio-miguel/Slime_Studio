@@ -58,11 +58,16 @@ import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 // Busca ao vivo (navbar, controlada aqui): digitar substitui inteiramente
 // "Destaques da temporada" por (1) uma grade sobre o catálogo LOCAL
 // (`listarAnimes`, filtro em memória a cada tecla) e (2) "Adicionar da
-// biblioteca" — busca na AniList (`buscarAnimes`, só no Enter), cujos cards
-// materializam o anime no catálogo ao clicar (`materializarEIrPara`, mesmo
-// fluxo dos cards do feed). Sem `aoRemover` nos resultados, de propósito: a
-// gestão do catálogo (remover) fica centralizada em
-// `Galeria.jsx`/`PaginaDoAnime.jsx`, esta página não duplica isso.
+// biblioteca" — busca na AniList (`buscarAnimes`, só no Enter). Item ainda
+// não catalogado materializa ao clicar (`materializarEIrPara`, mesmo fluxo
+// dos cards do feed); item já catalogado (`item.anime_id` presente) passa
+// pro `AnimeCard` como `anime.anime_id` — o próprio card já sabe virar
+// `<Link>` direto pra ele nesse caso (ver topo de `components/AnimeCard.jsx`)
+// em vez de materializar de novo, com a pill "Já no catálogo"
+// (`indicarCatalogado`, pedido explícito do usuário, mesmo padrão do
+// "Relacionados" de `paginas/PaginaDoAnime.jsx`). Sem `aoRemover` nos
+// resultados, de propósito: a gestão do catálogo (remover) fica centralizada
+// em `Galeria.jsx`/`PaginaDoAnime.jsx`, esta página não duplica isso.
 //
 // Fronteira Clean Architecture (D5 do plano): esta página e tudo em
 // src/inicio/ só importam de src/api/, components/ e react-router-dom —
@@ -663,10 +668,14 @@ export default function Inicio({ jobsPorEpisodio }) {
                       const chave = item.anilist_id ?? item.titulo_romaji;
                       return (
                         <AnimeCard
-                          anime={{ titulo: item.titulo_romaji, capa_url: item.capa_url }}
+                          anime={{
+                            titulo: item.titulo_romaji,
+                            capa_url: item.capa_url,
+                            anime_id: item.anime_id,
+                          }}
                           aoAtivar={() => materializarEIrPara(item)}
                           desabilitado={chaveEmMaterializacao === chave}
-                          aviso={item.anime_id != null ? 'Já no catálogo' : undefined}
+                          indicarCatalogado
                         />
                       );
                     }}
@@ -731,19 +740,23 @@ export default function Inicio({ jobsPorEpisodio }) {
               // Sem padding horizontal nem `max-w` de propósito — o carrossel
               // é full-bleed (encosta nas bordas da viewport); os estados de
               // carregando/erro do feed seguem na coluna `max-w-6xl`.
-              // `-mb-32`: puxa a fileira seguinte pra dentro do fade da base do
-              // hero, deixando o título dela + o topo dos cards "espiar" sob o
-              // gradiente (padrão AnimeFire — mais peek que os ~90px do wrapper
-              // deles porque nossa fileira tem título maior + `pt` da trilha).
-              // Pré-requisito pro título não sumir: o <div> das fileiras abaixo
-              // tem `relative z-10` — sem isso o `<h2>` da primeira fileira
-              // (`position:static`) fica ATRÁS do banner/gradiente do slide, que
-              // são `position:absolute` e pintam depois. Com o `z-10` o título
-              // pinta sobre a base escura do hero e fica legível; as bolinhas de
-              // paginação (`lg:bottom-[14.3vh]`) ficam ~8px acima dele. O
-              // gradiente é `pointer-events-none`, então a sobreposição não
-              // rouba clique dos cards. Casado com `pt-0` no <div> das fileiras.
-              <section className="-mt-22 -mb-32">
+              // `-mb-24` (6rem — reduzido de `-mb-32`/8rem a pedido do usuário,
+              // 2026-09-20): puxa a fileira seguinte pra dentro do fade da base
+              // do hero, deixando o título dela + o topo dos cards "espiar" sob
+              // o gradiente (padrão AnimeFire). O valor anterior (8rem) deixava
+              // o título "Próximas estreias" quase colado nas bolinhas de
+              // paginação (`lg:bottom-[14.3vh]`, ~8px de distância) — poluição
+              // visual reportada pelo usuário depois de checar ao vivo no
+              // navegador. 6rem abre mais respiro entre as duas camadas sem
+              // eliminar o peek. Pré-requisito pro título não sumir: o <div>
+              // das fileiras abaixo tem `relative z-10` — sem isso o `<h2>` da
+              // primeira fileira (`position:static`) fica ATRÁS do banner/
+              // gradiente do slide, que são `position:absolute` e pintam
+              // depois. Com o `z-10` o título pinta sobre a base escura do
+              // hero e fica legível. O gradiente é `pointer-events-none`,
+              // então a sobreposição não rouba clique dos cards. Casado com
+              // `pt-0` no <div> das fileiras.
+              <section className="-mt-22 -mb-28">
                 <CarrosselDestaques
                   itens={emAlta.dados}
                   aoMaterializar={materializarEIrPara}
