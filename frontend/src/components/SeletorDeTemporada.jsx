@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ChevronDown } from 'lucide-react';
 
 // Seletor de temporada da página do anime (Fase 5) — vive na barra de ações
 // abaixo do hero (`paginas/PaginaDoAnime.jsx`), como PRIMEIRO controle antes
@@ -12,18 +13,34 @@ import { useNavigate } from 'react-router-dom';
 // ordenada por número, inclui a atual). Filme/OVA/ONA/especial da mesma
 // franquia (`Anime.formato_midia` não nulo) entra nesta MESMA lista — se
 // agrupa no anime original em vez de virar card solto no catálogo — só ganha
-// um selo de formato ao lado do título (`formato_midia` por item). Trocar de
-// item é NAVEGAÇÃO de rota (`/anime/:outroId`) — a página inteira re-chaveia
-// em `animeId` via `useRecurso`, sem estado local novo. Só renderiza com 2+
-// itens catalogados (o chamador também já checa, este é um segundo guard
-// barato).
+// um selo de formato ao lado do título (`formato_midia` por item). Contagem
+// de episódios (`total_episodios`, total DECLARADO pela AniList — não
+// progresso de captura local, que é `AnimeSaida.episodios_atuais`, outro
+// campo) à direita, alinhada — some quando `null` (AniList ainda não fechou a
+// contagem, comum em temporada recém-anunciada) OU quando há `formato_midia`:
+// pra filme/OVA/ONA/especial o selo de formato já basta, "1 Episódio" ao lado
+// de "Filme" é redundante (pedido explícito do usuário). Trocar de item é
+// NAVEGAÇÃO de rota (`/anime/:outroId`) — a página inteira re-chaveia em
+// `animeId` via `useRecurso`, sem estado local novo. `temporadas` vem `[]`
+// quando o anime não tem irmã de franquia (backend só popula a lista com 2+
+// itens) — nesse caso não há nada pra selecionar, mas o rótulo "Temporada N"
+// ainda aparece como texto simples (sem seta, sem virar botão/menu): mantém a
+// barra de ações com a MESMA referência visual em todo anime, catalogado com
+// 1 ou várias temporadas. `numeroTemporadaAtual`/`tituloAtual` (de
+// `anime.numero_temporada`/`anime.titulo`) alimentam só esse rótulo — o
+// seletor com dropdown usa os campos homônimos de cada item de `temporadas`.
 //
 // Acessibilidade: `<button aria-haspopup="menu" aria-expanded>` + `role="menu"`
 // / `role="menuitem"`; Esc fecha e devolve o foco ao gatilho, ↑/↓ andam pelos
 // itens, Home/End vão pras pontas, clique fora fecha.
 const RÓTULO_FORMATO = { MOVIE: 'Filme', OVA: 'OVA', ONA: 'ONA', SPECIAL: 'Especial' };
 
-export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
+export default function SeletorDeTemporada({
+  temporadas,
+  animeIdAtual,
+  numeroTemporadaAtual,
+  tituloAtual,
+}) {
   const navigate = useNavigate();
   const [aberto, setAberto] = useState(false);
   const [indiceAtivo, setIndiceAtivo] = useState(0);
@@ -95,7 +112,13 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
     }
   };
 
-  if (temporadas.length < 2) return null;
+  if (temporadas.length === 0) {
+    return (
+      <span className="inline-flex items-center h-8 text-[18px] text-ink-muted font-semibold">
+        {numeroTemporadaAtual != null ? `Temporada ${numeroTemporadaAtual}` : tituloAtual}
+      </span>
+    );
+  }
 
   return (
     <div ref={containerRef} className="relative">
@@ -112,23 +135,16 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
             setAberto(true);
           }
         }}
-        className="inline-flex items-center gap-2 rounded-md border-2 border-border-chrome px-2.5 h-8 text-xs text-ink-muted font-semibold outline-none transition-colors hover:border-neon hover:text-white"
+        className="inline-flex items-center gap-2 pr-2.5 h-8 text-[18px] text-ink-muted font-semibold outline-none transition-colors hover:border-neon hover:text-white cursor-pointer"
       >
         {rotuloDe(temporadaAtual)}
-        <svg
-          viewBox="0 0 24 24"
-          width="14"
-          height="14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        <ChevronDown
+          width={14}
+          height={14}
           aria-hidden="true"
+          stroke-width="4"
           className={`transition-transform ${aberto ? 'rotate-180' : ''}`}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
+        />
       </button>
 
       {aberto && (
@@ -137,7 +153,7 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
           role="menu"
           aria-label="Temporada"
           onKeyDown={aoTeclarNoMenu}
-          className="absolute left-0 top-full z-10 mt-1 min-w-[12rem] overflow-hidden rounded-md border border-border-chrome bg-[#1c1c22] py-1 shadow-xl shadow-black/50"
+          className="absolute left-0 top-full z-10 mt-1 min-w-[20rem] overflow-hidden border border-border-chrome bg-[#0f0f10] shadow-xl shadow-black/50"
         >
           {temporadas.map((temporada, indice) => {
             const atual = temporada.id === animeIdAtual;
@@ -152,18 +168,23 @@ export default function SeletorDeTemporada({ temporadas, animeIdAtual }) {
                 aria-current={atual ? 'true' : undefined}
                 tabIndex={indice === indiceAtivo ? 0 : -1}
                 onClick={() => escolher(temporada)}
-                className={`flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-sm outline-none transition-colors focus-visible:bg-white/10 ${
-                  atual
-                    ? 'font-semibold text-white'
-                    : 'text-ink-muted hover:bg-white/5 hover:text-white'
+                className={`flex w-full items-center justify-between gap-2 px-4 py-2 text-left text-sm font-semibold outline-none transition-colors hover:bg-white/5 focus-visible:bg-white/10 cursor-pointer ${
+                  atual ? 'text-white' : 'text-ink-muted hover:text-white'
                 }`}
               >
-                <span>{rotuloDe(temporada)}</span>
-                {temporada.formato_midia && (
-                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-ink-muted">
-                    {RÓTULO_FORMATO[temporada.formato_midia] ?? temporada.formato_midia}
-                  </span>
-                )}
+                <span className="truncate">{rotuloDe(temporada)}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  {temporada.total_episodios != null && !temporada.formato_midia && (
+                    <span className="text-[12px] tabular-nums">
+                      {temporada.total_episodios} Episódio{temporada.total_episodios > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {temporada.formato_midia && (
+                    <span className="text-[12px] uppercase tracking-wide">
+                      {RÓTULO_FORMATO[temporada.formato_midia] ?? temporada.formato_midia}
+                    </span>
+                  )}
+                </span>
               </button>
             );
           })}
