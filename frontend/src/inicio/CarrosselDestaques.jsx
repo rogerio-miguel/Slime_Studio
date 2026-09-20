@@ -42,33 +42,27 @@ import BlocoConteudoHero from './BlocoConteudoHero.jsx';
 // grandes).
 //
 // Geometria: a máscara externa é `overflow-hidden`, NÃO scroll do usuário —
-// rolagem manual dessincronizaria o índice. Cada slide ocupa 100% da largura
-// do track (`w-full shrink-0`, sem peek) e o track desliza um slide inteiro
-// por passo via `transform: translateX(-N * 100%)`. A `<section>` NÃO tem
-// `max-w`/`mx-auto`: ocupa toda a largura do `<main>` (full-bleed). As
-// bolinhas de paginação ficam SOBREPOSTAS na imagem, dentro do hero
-// (`absolute bottom-*`), não numa faixa abaixo dele.
+// rolagem manual dessincronizaria o índice. Os slides ficam todos empilhados
+// (`absolute inset-0`) sobre a mesma área — a troca é um CROSSFADE de opacity
+// (não mais slide lateral por `translateX`, trocado a pedido do usuário,
+// 2026-09-20: o movimento lateral em si não agradava, independente de
+// velocidade). A `<section>` NÃO tem `max-w`/`mx-auto`: ocupa toda a largura
+// do `<main>` (full-bleed). As bolinhas de paginação ficam SOBREPOSTAS na
+// imagem, dentro do hero (`absolute bottom-*`), não numa faixa abaixo dele.
 //
-// Loop infinito (estilo Disney+, mantido do layout anterior): a lista base é
-// renderizada 3x concatenada e `pos` — o índice de render do slide ativo
-// dentro dessas cópias — começa na cópia do MEIO. Avançar/voltar mexe `pos`
-// de 1 em 1 com transição; quando `pos` sai da faixa da cópia do meio
-// `[n, 2n)`, depois que a animação assenta (`onTransitionEnd`) ele salta pro
-// ponto equivalente da cópia do meio SEM transição (`semTransicao` tira a
-// classe por 1 frame). Como as três cópias são idênticas, o salto é
-// imperceptível — os dois peeks nunca ficam vazios (não que haja peek visual
-// aqui, mas o mecanismo evita o "rebobinar" do wrap) e o wrap não
-// "rebobina". Sem animação (movimento reduzido, ou clique rápido que empurra
-// `pos` pros extremos das cópias) a normalização acontece direto num efeito,
-// aceitando o corte da animação pra nunca renderizar slot vazio.
+// Loop: com crossfade não existe "rebobinar" pra disfarçar (isso só era
+// problema pra slide lateral) — `indiceAtivo` é só `0..n-1` e avança/volta
+// com módulo (`(i + delta + n) % n`), sem cópias triplicadas da lista nem
+// normalização de posição. Bem mais simples que o mecanismo antigo.
 //
 // A11y: perfil mínimo do padrão "carrossel" do WAI-ARIA APG. Só o slide
-// central é interativo — todos os outros `<li>` (cópias) ficam `inert` (remove
-// foco/tab/clique/árvore de a11y de uma vez), então o botão de CTA e o link do
-// título triplicados no DOM não entram no tab order. Setas e bolinhas têm
-// rótulo e `focus-visible`; a navegação por seta do teclado fica presa à
-// `<section>` (sem listener global). O track tem `aria-live` (silencioso
-// enquanto o auto-avanço roda; `polite` quando parado por hover/foco/
+// ativo é interativo — todos os outros `<li>` ficam `inert` (remove foco/tab/
+// clique/árvore de a11y de uma vez, inclusive hit-testing do crossfade
+// empilhado), então o botão de CTA e o link do título dos slides invisíveis
+// não entram no tab order. Setas e bolinhas têm rótulo e `focus-visible`; a
+// navegação por seta do teclado fica presa à `<section>` (sem listener
+// global). O contêiner de slides tem `aria-live` (silencioso enquanto o
+// auto-avanço roda; `polite` quando parado por hover/foco/
 // `prefers-reduced-motion`) e o auto-avanço reagenda um `setTimeout` por slide
 // — gate por hover/foco e movimento reduzido.
 
@@ -78,7 +72,7 @@ import BlocoConteudoHero from './BlocoConteudoHero.jsx';
 // reproduz o mesmo recorte pra excluí-lo dos "destaques grandes".
 
 // Janela do auto-avanço. `setTimeout` reagendado a cada slide (não
-// `setInterval`): navegação manual muda `pos`, o efeito reexecuta e a
+// `setInterval`): navegação manual muda `indiceAtivo`, o efeito reexecuta e a
 // contagem de 10s reinicia de graça.
 const INTERVALO_MS = 10000;
 
@@ -145,9 +139,12 @@ export function imagemEmAltaResolucao(url) {
 // gradiente que ela devolve): o parser de multi-gradiente de valor arbitrário
 // do Tailwind v4 não é confiável (mesmo motivo de `SOMBRA_SLIDE_ATIVO`).
 // Exportada — fonte única, o hero de paginas/PaginaDoAnime.jsx chama a mesma
-// função com a própria cor.
+// função com a própria cor. Stops em 60/55/70% (subiram de 45/40/60%) —
+// pedido explícito do usuário: o preto sólido precisa aparecer mais cedo,
+// sobrando mais área atrás do bloco de texto em vez de ainda estar sobre a
+// arte quando o texto começa.
 export function gradienteHero(cor) {
-  return `linear-gradient(to top, ${cor}, transparent 45%), linear-gradient(to top, ${cor}, transparent 40%), linear-gradient(77deg, ${cor}, transparent 60%)`;
+  return `linear-gradient(to top, ${cor}, transparent 60%), linear-gradient(to top, ${cor}, transparent 55%), linear-gradient(77deg, ${cor}, transparent 70%)`;
 }
 // Sem arte horizontal (`semBanner`): só o pôster retrato borrado atrás do
 // texto — uma camada extra à esquerda mantém o texto legível sobre ele.
@@ -196,7 +193,6 @@ export function IconeEmAlta(props) {
 export default function CarrosselDestaques({ itens, aoMaterializar, materializando }) {
   const idTitulo = useId();
   const idSlides = useId();
-  const trackRef = useRef(null);
 
   const pool = useMemo(() => itens ?? [], [itens]);
 
@@ -211,8 +207,8 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   // cortado em `TAMANHO_DA_JANELA`. Cada rotação de janela re-embaralha (nova
   // semente) — troca o recorte E a ordem, sem ficar preso nos mesmos destaques
   // nem exibi-los em ordem de ranking. `n` fica fixo em `TAMANHO_DA_JANELA`
-  // sempre que o pool é grande o bastante, então as 3 cópias, as bolinhas e a
-  // normalização não mudam de tamanho quando a janela gira.
+  // sempre que o pool é grande o bastante, então as bolinhas não mudam de
+  // quantidade quando a janela gira.
   const base = useMemo(() => {
     const tamanho = Math.min(TAMANHO_DA_JANELA, pool.length);
     if (tamanho === 0) return [];
@@ -220,70 +216,29 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   }, [pool, blocoDaJanela]);
   const n = base.length;
 
-  // `pos` é o índice DE RENDER do slide ativo dentro das 3 cópias. Já nasce na
-  // cópia do meio (índice `n`): o feed sempre chega preenchido (o pai só monta
-  // o carrossel com `itens.length > 0`), então não há varredura de
-  // posicionamento no mount.
-  const [pos, setPos] = useState(() => {
-    const inicial = Math.min(TAMANHO_DA_JANELA, (itens ?? []).length);
-    return inicial >= 2 ? inicial : 0;
-  });
+  // Índice do slide ativo (0..n-1) — sem cópias, sem posição de render
+  // separada da lógica: com crossfade não há "trilha" pra deslizar.
+  const [indiceAtivo, setIndiceAtivo] = useState(0);
   // Pausa é `useState` (não `useRef` como em GradeRotativa): o valor entra no
-  // gate `autoAvancando`, que também alimenta o `aria-live` do track no render.
+  // gate `autoAvancando`, que também alimenta o `aria-live` do contêiner no
+  // render.
   const [pausado, setPausado] = useState(false);
-  // Liga por 1 frame no salto de normalização: sem a classe de transição o
-  // track pula pra cópia do meio sem animar.
-  const [semTransicao, setSemTransicao] = useState(false);
   const movimentoReduzido = usePrefersReducedMotion();
 
-  // Índice lógico (0..n-1) do slide ativo, invariante às 3 cópias e a `pos`
-  // fora de faixa. Alimenta bolinhas (`aria-current`), o rótulo "X de n" e o
-  // alvo da normalização.
-  const indiceLogico = n > 0 ? ((pos % n) + n) % n : 0;
-
-  // Navegação por passo: move `pos` de 1 em 1 (forma funcional — não depende
-  // de `pos`, `useCallback` estável). A normalização devolve `pos` pra faixa
-  // da cópia do meio depois.
-  const avancar = useCallback((delta) => {
-    setPos((p) => p + delta);
-  }, []);
-
-  // Bolinha: vai pro `indiceLogico === i` pela cópia mais próxima de `pos`,
-  // pra animar o caminho curto em vez de varrer a lista toda.
-  const irParaLogico = useCallback(
-    (i) => {
-      setPos((p) =>
-        [i, i + n, i + 2 * n].reduce((a, b) =>
-          Math.abs(b - p) < Math.abs(a - p) ? b : a,
-        ),
-      );
+  // Navegação por passo, com wrap por módulo — sem cópias, o wrap não precisa
+  // de nenhum truque visual (o crossfade já cobre a troca de qualquer índice
+  // pra qualquer outro).
+  const avancar = useCallback(
+    (delta) => {
+      if (n === 0) return;
+      setIndiceAtivo((i) => ((i + delta) % n + n) % n);
     },
     [n],
   );
 
-  // Normalização (snap back): traz `pos` pra dentro de `[n, 2n)` quando sai.
-  // Só age direto quando não há animação a preservar — movimento reduzido,
-  // logo após um salto (`semTransicao`) ou clique rápido que empurrou `pos`
-  // pros extremos das cópias; o caminho animado normal espera
-  // `onTransitionEnd`.
-  useEffect(() => {
-    if (n < 2) return;
-    if (pos >= n && pos < 2 * n) return;
-    const semAnimacao =
-      movimentoReduzido || semTransicao || pos <= 1 || pos >= 3 * n - 2;
-    if (semAnimacao) {
-      setSemTransicao(true);
-      setPos(indiceLogico + n);
-    }
-  }, [pos, n, movimentoReduzido, semTransicao, indiceLogico]);
-
-  // Religa a transição no frame seguinte ao salto — o `transform` novo já está
-  // pintado, então repor a classe não anima nada.
-  useEffect(() => {
-    if (!semTransicao) return undefined;
-    const id = requestAnimationFrame(() => setSemTransicao(false));
-    return () => cancelAnimationFrame(id);
-  }, [semTransicao]);
+  const irParaIndice = useCallback((i) => {
+    setIndiceAtivo(i);
+  }, []);
 
   // Ref-espelho de `pausado`: o timer de rotação é longo (10 min) e não deve
   // ser recriado a cada hover/foco (recriar reiniciaria a contagem). Mesmo
@@ -304,41 +259,62 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
     return () => clearInterval(id);
   }, [pool.length]);
 
-  // Janela girou: o recorte inteiro trocou de conteúdo. Corta pro começo da
-  // cópia do meio SEM animar (mesmo `semTransicao` da normalização) — um
-  // "pulo" de um slide seria incoerente com 15 itens trocando de uma vez.
-  // `montadoRef` pula o primeiro run (no mount `pos` já nasce em `n`).
+  // Janela girou: o recorte inteiro trocou de conteúdo — volta pro primeiro
+  // slide. `montadoRef` pula o primeiro run (no mount `indiceAtivo` já nasce
+  // em 0).
   const montadoRef = useRef(false);
   useEffect(() => {
     if (!montadoRef.current) {
       montadoRef.current = true;
       return;
     }
-    setSemTransicao(true);
-    setPos(n);
-  }, [blocoDaJanela, n]);
+    setIndiceAtivo(0);
+  }, [blocoDaJanela]);
 
-  // Gate único do auto-avanço, reusado no efeito e no `aria-live` do track:
-  // sem preferência por menos movimento, sem pausa por hover/foco e com mais
-  // de um destaque.
+  // Gate único do auto-avanço, reusado no efeito e no `aria-live` do
+  // contêiner: sem preferência por menos movimento, sem pausa por hover/foco
+  // e com mais de um destaque.
   const autoAvancando = !movimentoReduzido && !pausado && n > 1;
 
-  // Cadeia de timeouts: cada disparo avança 1 slide; ao mudar `pos` (inclusive
-  // por navegação manual) o efeito reexecuta e a janela de 7s reinicia. Fora
-  // do gate não agenda nada.
+  // Contagem regressiva sobrevive à pausa (pedido explícito do usuário,
+  // 2026-09-20): ao pausar por hover/foco, o tempo já decorrido fica
+  // guardado e o retomar continua dali — não reinicia os 10s inteiros do
+  // zero. `duracaoRestanteRef` guarda quanto falta (ms) pro próximo avanço;
+  // `inicioTrechoRef` marca quando o trecho ATUAL (rodando) começou, pra dar
+  // pra calcular o decorrido no cleanup do efeito abaixo.
+  const duracaoRestanteRef = useRef(INTERVALO_MS);
+  const inicioTrechoRef = useRef(0);
+
+  // Slide mudou (manual ou automático): o countdown do PRÓXIMO slide sempre
+  // começa cheio. Declarado ANTES do efeito de timeout logo abaixo — React
+  // roda todas as limpezas de um commit antes de todos os efeitos novos, na
+  // ordem de declaração dos hooks, então este reset entra em vigor antes do
+  // efeito seguinte reler `duracaoRestanteRef` quando `indiceAtivo` muda.
+  useEffect(() => {
+    duracaoRestanteRef.current = INTERVALO_MS;
+  }, [indiceAtivo]);
+
+  // Cadeia de timeouts: agenda só o tempo QUE FALTA (`duracaoRestanteRef`),
+  // não sempre `INTERVALO_MS` inteiro — pausar (autoAvancando vira `false`
+  // sem mexer em `indiceAtivo`) não dispara o efeito de reset acima, então o
+  // cleanup abaixo só desconta do restante o que já rodou desde o último
+  // início, sem zerar. Ao disparar de fato, avança 1 slide (com wrap); o
+  // efeito de reset acima cuida de repor o restante cheio pro próximo trecho.
   useEffect(() => {
     if (!autoAvancando) return undefined;
-    const proximo = pos + 1;
-    const id = setTimeout(() => setPos(proximo), INTERVALO_MS);
-    return () => clearTimeout(id);
-  }, [autoAvancando, pos]);
+    inicioTrechoRef.current = Date.now();
+    const duracao = duracaoRestanteRef.current;
+    const id = setTimeout(() => setIndiceAtivo((i) => (i + 1) % n), duracao);
+    return () => {
+      clearTimeout(id);
+      const decorrido = Date.now() - inicioTrechoRef.current;
+      duracaoRestanteRef.current = Math.max(0, duracaoRestanteRef.current - decorrido);
+    };
+  }, [autoAvancando, indiceAtivo, n]);
 
   if (n === 0) return null;
 
   const mostrarControles = n > 1;
-  const loop = n >= 2;
-  const slides = loop ? [...base, ...base, ...base] : base;
-  const deslocamento = loop ? pos : 0;
 
   const aoTeclar = (evento) => {
     if (!mostrarControles) return;
@@ -360,20 +336,6 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
     if (evento.detail > 0) evento.currentTarget.blur();
   };
 
-  // Depois que a varredura de 1 passo assenta: se `pos` caiu fora da cópia do
-  // meio, salta pro ponto equivalente sem transição. Filtra o `transitionend`
-  // do próprio track (a `transform`), ignorando qualquer transição interna dos
-  // `<li>`.
-  const aoFimDaTransicao = (evento) => {
-    if (!loop) return;
-    if (evento.target !== trackRef.current || evento.propertyName !== 'transform') {
-      return;
-    }
-    if (pos >= n && pos < 2 * n) return;
-    setSemTransicao(true);
-    setPos(indiceLogico + n);
-  };
-
   return (
     <section
       aria-roledescription="carrossel"
@@ -388,21 +350,10 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
         Destaques da temporada
       </h2>
 
-      <div className="group relative overflow-hidden">
-        <ul
-          ref={trackRef}
-          id={idSlides}
-          aria-live={autoAvancando ? 'off' : 'polite'}
-          onTransitionEnd={aoFimDaTransicao}
-          style={{ transform: `translateX(-${deslocamento * 100}%)` }}
-          className={`flex ${
-            semTransicao
-              ? ''
-              : 'transition-transform duration-500 ease-out motion-reduce:transition-none'
-          }`}
-        >
-          {slides.map((item, k) => {
-            const ativo = loop ? k === pos : true;
+      <div className="group relative h-svh min-h-[480px] overflow-hidden">
+        <ul id={idSlides} aria-live={autoAvancando ? 'off' : 'polite'} className="absolute inset-0">
+          {base.map((item, i) => {
+            const ativo = i === indiceAtivo;
             const titulo = item.titulo_romaji || item.titulo_ingles;
             // Título alternativo (o outro idioma) pro subtítulo nativo — só
             // aparece se existir E divergir do exibido.
@@ -413,28 +364,37 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
             const catalogado = item.anime_id != null;
             // Posição no ranking do feed `em-alta` (já vem ordenado). `pool` é
             // o array `itens` original e o item aqui é a MESMA referência de
-            // objeto (janela e cópias não clonam item), então `indexOf` casa.
-            // -1 (não deve acontecer) → sem pill.
+            // objeto (a janela não clona item), então `indexOf` casa. -1 (não
+            // deve acontecer) → sem pill.
             const rank = pool.indexOf(item) + 1;
             // Sem arte horizontal: só temos o pôster retrato pra trabalhar.
             const semBanner = !item.banner_url && Boolean(item.capa_url);
             const fonteImagem = item.banner_url || item.capa_url || null;
-            const primeiroDestaque = k % n === 0;
+            const primeiroDestaque = i === 0;
 
             const proximoEpisodio = textoProximoEpisodio(item);
             const generosTraduzidos = (item.generos ?? [])
               .slice(0, 3)
               .map((g) => traduzirGenero(g));
-            const meta = [item.ano_estreia, generosTraduzidos.join(', ')]
-              .filter(Boolean)
-              .join(' • ');
+            // Fatos rotulados (Ano/Gêneros/Próximo episódio) — MESMO formato
+            // Rótulo/Valor do painel de fatos de paginas/PaginaDoAnime.jsx
+            // (pedido explícito do usuário: alinhar o design do carrossel
+            // com o novo header da página do anime). Substitui a antiga linha
+            // `meta` de texto corrido ("ano • gêneros").
+            const fatos = [
+              item.ano_estreia != null ? { rotulo: 'Ano', valor: String(item.ano_estreia) } : null,
+              generosTraduzidos.length > 0
+                ? { rotulo: 'Gêneros', valor: generosTraduzidos.join(', ') }
+                : null,
+              proximoEpisodio ? { rotulo: 'Próximo episódio', valor: proximoEpisodio } : null,
+            ].filter(Boolean);
 
             return (
               <li
-                key={k}
+                key={item.anilist_id ?? item.titulo_romaji ?? i}
                 role="group"
                 aria-roledescription="slide"
-                aria-label={`${(k % n) + 1} de ${n}: ${titulo}`}
+                aria-label={`${i + 1} de ${n}: ${titulo}`}
                 inert={!ativo}
                 // `semBanner` + cor dominante da capa (AniList `coverImage.color`):
                 // a cor entra como fundo do slide, sob o blur da capa (ver o
@@ -442,11 +402,14 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                 // quando `capa_cor` é null — item do Kitsu, ou `color: null`
                 // da própria AniList.
                 style={semBanner && item.capa_cor ? { backgroundColor: item.capa_cor } : undefined}
-                // Altura = viewport pequena (`h-svh`, medido ao vivo no
-                // AnimeFire: a `<section>` hero deles usa `svh`) — não mais uma
-                // fração dela nem `100vh` (que conta a barra de UI do mobile).
-                // `min-h` só pra não achatar demais em viewports muito baixos.
-                className="relative h-svh min-h-[480px] w-full shrink-0 grow-0 overflow-hidden bg-surface"
+                // Crossfade: todos os slides empilhados na mesma área
+                // (`absolute inset-0`, herdada do `h-svh` do wrapper — ver
+                // acima), só a opacity muda. `pointer-events-none` no inativo
+                // é redundante com `inert` (que já tira do hit-test), mas
+                // documenta a intenção de forma explícita no próprio className.
+                className={`absolute inset-0 overflow-hidden bg-surface transition-opacity duration-700 ease-in-out motion-reduce:transition-none ${
+                  ativo ? 'opacity-100' : 'pointer-events-none opacity-0'
+                }`}
               >
                 {fonteImagem && (
                   <img
@@ -559,13 +522,25 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                   // anime não tem esse limite — o hero dela cresce).
                   sinopse={item.sinopse}
                   ocultarSinopseNoMobile
-                  // Meta (ano • gêneros) + data do próximo episódio ACIMA do
-                  // botão — o AnimeFire não mostra essas linhas no hero, mas o
-                  // usuário quis mantê-las e vê-las nesta posição.
-                  meta={meta}
+                  // Fatos rotulados (Ano/Gêneros/Próximo episódio) ACIMA do
+                  // botão — o AnimeFire não mostra essa linha no hero, mas o
+                  // usuário quis mantê-la e vê-la nesta posição. MESMO
+                  // formato Rótulo/Valor do painel de fatos de
+                  // paginas/PaginaDoAnime.jsx (pedido explícito do usuário).
                   metaExtra={
-                    proximoEpisodio && (
-                      <p className="text-xs text-white/70 sm:text-sm">{proximoEpisodio}</p>
+                    fatos.length > 0 && (
+                      <div className="flex flex-wrap gap-6">
+                        {fatos.map((fato) => (
+                          <div key={fato.rotulo} className="flex flex-col gap-0.5">
+                            <span className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
+                              {fato.rotulo}
+                            </span>
+                            <span className="text-sm font-bold text-white sm:text-base">
+                              {fato.valor}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     )
                   }
                   cta={
@@ -573,7 +548,13 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                       <Link
                         to={`/anime/${item.anime_id}`}
                         aria-label={`${titulo} — assistir agora`}
-                        className={CLASSE_BOTAO_HERO}
+                        // `mt-2` extra (além do `gap-4` do esqueleto entre
+                        // seções) só aqui — pedido explícito do usuário pra
+                        // afastar o CTA dos fatos logo acima. Direto no
+                        // elemento, não em `CLASSE_BOTAO_HERO` (compartilhada
+                        // com inicio/DestaqueGrande.jsx, que não deve ganhar
+                        // esse respiro extra).
+                        className={`${CLASSE_BOTAO_HERO} mt-8`}
                       >
                         <IconePlay width={20} height={20} fill="currentColor" />
                         Assistir agora
@@ -584,7 +565,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                         onClick={() => aoMaterializar(item)}
                         disabled={materializando}
                         aria-label={materializando ? undefined : `Adicionar ${titulo} ao catálogo`}
-                        className={CLASSE_BOTAO_HERO}
+                        className={`${CLASSE_BOTAO_HERO} mt-8`}
                       >
                         <IconePlay width={20} height={20} fill="currentColor" />
                         {materializando ? 'Adicionando…' : 'Adicionar ao Catálogo'}
@@ -627,32 +608,77 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
             {/* Paginação SOBREPOSTA na imagem, dentro do hero (`bottom-[14.3vh]`
                 no desktop, medido no AnimeFire; mais baixo no mobile, onde o
                 bloco de conteúdo fica colado no rodapé e ocuparia essa faixa).
-                Bullet ativo vira PÍLULA por largura (`w-4` + `transition-all`),
-                não por `scale`. Wrappers `<button>` de 24px mantêm o alvo de
-                clique e o rótulo. */}
+                Bullet ativo vira uma barrinha de PROGRESSO enquanto o
+                auto-avanço está rodando — mostra quanto falta pra trocar de
+                slide (`@keyframes preencher-progresso-dot` em index.css,
+                duração casada com `INTERVALO_MS`, anima `transform: scaleX`
+                — NÃO `width`: `width` força recálculo de layout a cada frame
+                durante os 10s inteiros e travava o resto da página, incluindo
+                a troca de slide por seta; `scaleX` só mexe em compositing).
+                Pausar por hover/foco CONGELA a barra onde está (`animation-
+                play-state: paused`, ver comentário no span da barra) — não
+                salta pra cheia nem reinicia do zero ao retomar, pedido
+                explícito do usuário (2026-09-20). Só `prefers-reduced-motion`
+                tira a animação de vez (barra assenta em `scale-x-100`, cheia
+                e parada — respeita a preferência em vez de só pausar).
+                Wrappers `<button>` de 32px
+                (`w-8`, subiu de `w-6` pra caber a barra) mantêm o alvo de
+                clique e o rótulo, uniforme pra todas as bolinhas (sem pulo de
+                layout quando uma vira a ativa). */}
             <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 gap-2 lg:bottom-[14.3vh]">
-              {base.map((item, i) => (
-                <button
-                  key={item.anilist_id ?? item.titulo_romaji ?? i}
-                  type="button"
-                  onClick={(evento) => {
-                    irParaLogico(i);
-                    desfocarSePonteiro(evento);
-                  }}
-                  aria-label={`Ir para o destaque ${i + 1}`}
-                  aria-current={i === indiceLogico ? 'true' : undefined}
-                  className="group/dot flex h-6 w-6 items-center justify-center rounded-full outline-none"
-                >
-                  <span
-                    aria-hidden="true"
-                    className={`block h-2 rounded-full transition-all motion-reduce:transition-none ${
-                      i === indiceLogico
-                        ? 'w-4 bg-white'
-                        : 'w-2 bg-white/25 group-hover/dot:bg-white/50'
-                    }`}
-                  />
-                </button>
-              ))}
+              {base.map((item, i) => {
+                const ehAtiva = i === indiceAtivo;
+                return (
+                  <button
+                    key={item.anilist_id ?? item.titulo_romaji ?? i}
+                    type="button"
+                    onClick={(evento) => {
+                      irParaIndice(i);
+                      desfocarSePonteiro(evento);
+                    }}
+                    aria-label={`Ir para o destaque ${i + 1}`}
+                    aria-current={ehAtiva ? 'true' : undefined}
+                    className="group/dot flex h-6 w-8 items-center justify-center rounded-full outline-none"
+                  >
+                    {/* Track — UMA estrutura única pra bolinha ativa, sem
+                        trocar de árvore JSX quando `autoAvancando` liga/desliga
+                        (hover/foco pausa e retoma): só a barra de preenchimento
+                        (span filho) entra/sai, sempre no mesmo lugar. */}
+                    <span
+                      aria-hidden="true"
+                      className={`relative block h-2 overflow-hidden rounded-full bg-white/25 transition-all duration-300 ease-out motion-reduce:transition-none ${
+                        ehAtiva ? 'w-8' : 'w-2 group-hover/dot:bg-white/50'
+                      }`}
+                    >
+                      {ehAtiva && (
+                        <span
+                          aria-hidden="true"
+                          // PAUSA de verdade (pedido explícito do usuário,
+                          // 2026-09-20), não substituição de estado: a
+                          // animação fica montada o tempo todo (enquanto não
+                          // é `movimentoReduzido`) e só ganha `animation-
+                          // play-state: paused` ao pausar — o navegador
+                          // congela exatamente onde estava e retoma dali, sem
+                          // saltar pra cheia nem reiniciar do zero (mesmo
+                          // espírito do `duracaoRestanteRef` que já faz isso
+                          // pro avanço de verdade, no efeito acima). Sem
+                          // `movimentoReduzido` a barra some de vez, e a
+                          // pílula fica só no `scale-x-100` de repouso —
+                          // respeita a preferência por menos movimento em vez
+                          // de só pausar.
+                          className={`absolute inset-y-0 left-0 block w-full origin-left scale-x-100 rounded-full bg-white ${
+                            movimentoReduzido
+                              ? ''
+                              : `animate-[preencher-progresso-dot_10000ms_linear_forwards] ${
+                                  pausado ? '[animation-play-state:paused]' : ''
+                                }`
+                          }`}
+                        />
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </>
         )}

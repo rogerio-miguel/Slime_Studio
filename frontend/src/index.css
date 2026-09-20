@@ -38,3 +38,23 @@ body {
 html {
   background: #000;
 }
+
+/* Preenchimento da bolinha ativa do carrossel hero (inicio/CarrosselDestaques.jsx)
+   — mostra quanto falta pro auto-avanço trocar de slide. Duração (10000ms) tem
+   que casar com `INTERVALO_MS` de lá; sem link automático entre os dois (CSS
+   não importa constante JS), então mudar um exige lembrar do outro.
+   `transform: scaleX` em vez de `width` (versão anterior, revertida
+   2026-09-20 — usuário reportou travamento visto na animação em si E em
+   tudo mais rodando ao mesmo tempo, incluindo a troca de slide por seta):
+   animar `width` força recálculo de LAYOUT a cada frame durante os 10s
+   inteiros, competindo pela thread principal com o crossfade do hero (que
+   já tem filtro de blur + imagens grandes por cima). `scaleX` só mexe em
+   compositing (GPU), sem custo de layout. */
+@keyframes preencher-progresso-dot {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
