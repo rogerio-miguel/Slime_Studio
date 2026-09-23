@@ -194,6 +194,30 @@ async def marcar_todos_assistidos(
     await servico_jobs.marcar_todos_assistidos(sessionmaker, anime=anime, versao=versao)
 
 
+@router.post(
+    "/{anime_id}/episodios/{numero}/marcar-assistido", status_code=status.HTTP_204_NO_CONTENT
+)
+async def marcar_episodio_assistido(
+    anime_id: int,
+    numero: int,
+    versao: VersaoEpisodio = Query(VersaoEpisodio.LEGENDADO),
+    sessao: AsyncSession = Depends(obter_sessao),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> None:
+    """Item "Marcar como assistido" do menu de
+    `components/CartaoContinuarAssistindo.jsx` (Home) — mesma semântica de
+    `marcar_todos_assistidos` acima, restrita a UM número (pedido explícito
+    do usuário: "Continuar assistindo" mostra só o próximo episódio, marcar o
+    anime inteiro dali surpreende). Detalhe em
+    `api/servicos/jobs.py::marcar_episodio_assistido`."""
+    anime = await sessao.get(Anime, anime_id)
+    if anime is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    await servico_jobs.marcar_episodio_assistido(
+        sessionmaker, anime=anime, numero=numero, versao=versao
+    )
+
+
 @router.delete("/{anime_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remover_anime(
     anime_id: int,
@@ -337,6 +361,16 @@ async def listar_animes_proxima_temporada(
     return [_para_saida_em_alta(item, anime_id) for item, anime_id in pares]
 
 
+# `/novos-lancamentos` — mesma armadilha de ordem de `/em-alta`: precisa vir
+# ANTES de `/{anime_id}`, senão casaria com `anime_id="novos-lancamentos"`.
+@router_publico.get("/novos-lancamentos", response_model=list[AnimeEmAltaSaida])
+async def listar_animes_novos_lancamentos(
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> list[AnimeEmAltaSaida]:
+    pares = await servico_descoberta.listar_novos_lancamentos_com_catalogo(sessionmaker)
+    return [_para_saida_em_alta(item, anime_id) for item, anime_id in pares]
+
+
 # `/fileiras-tematicas` — mesma armadilha de ordem de `/em-alta`/`/proxima-
 # temporada`: precisa vir ANTES de `/{anime_id}`, senão casaria com
 # `anime_id="fileiras-tematicas"`.
@@ -375,6 +409,7 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
         total_episodios=lanc.total_episodios if lanc else None,
         sinopse=item.sinopse,
         formato=item.formato,
+        episodio_lancado=item.episodio_lancado,
     )
 
 

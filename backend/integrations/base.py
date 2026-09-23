@@ -11,6 +11,7 @@ completo precisa vir de `TypeError` na instanciação.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Literal
 
 from core.enums import StatusLancamento
 
@@ -134,15 +135,25 @@ class AnimeEmAlta:
     # cru pro payload de `POST /api/admin/animes` sem tradução (pt-BR é
     # responsabilidade do frontend, mesma regra de `generos`).
     formato: str | None = None
+    # Número do episódio que motivou a entrada no feed "novos lançamentos"
+    # (`AiringSchedule.episode` da AniList, ver `anilist.py::
+    # _agenda_para_animes_em_alta`) — só esse feed preenche; os demais deixam
+    # no default `None`. A Home usa pra rotular o card ("EP.N") sem imagem
+    # específica do episódio (o card usa a capa do anime, não o still).
+    episodio_lancado: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class FileiraTematica:
     """Uma fileira temática da Home (`registro.py::FILEIRAS_TEMATICAS`) — par
-    chave estável / tag crua da AniList."""
+    chave estável / filtro cru da AniList, mais o TIPO de filtro: `tag`
+    (`minimumTagRank`, nicho — ex. "Isekai") ou `genero` (categoria ampla e
+    sempre bem populada — ex. "Action"). `anilist.py::listar_fileira_tematica`
+    escolhe a query certa a partir daqui."""
 
     chave: str  # id estável snake_case, usado na rota da API e no rótulo do frontend
-    tag: str  # nome cru da tag AniList (ex: "Found Family")
+    valor: str  # nome cru da tag/gênero na AniList (ex: "Isekai", "Action")
+    tipo: Literal["tag", "genero"] = "tag"
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +217,14 @@ class ProvedorDeMetadados(ABC):
     def listar_proxima_temporada(self) -> list[AnimeEmAlta]:
         """Lista animes da próxima estação (a maioria ainda `NOT_YET_RELEASED`),
         ordenados por popularidade — mesmo formato de `listar_em_alta`."""
+
+    def listar_novos_lancamentos(self) -> list[AnimeEmAlta]:
+        """Animes com um episódio lançado recentemente (agenda de exibição da
+        AniList), mais recente primeiro — um item por anime (dedup, mantendo só
+        o episódio mais novo de cada um). Capability opcional com implementação
+        PADRÃO `[]` (mesmo padrão de `listar_por_busca`): só `anilist.py` a
+        sobrescreve — o Kitsu não expõe agenda de exibição por episódio."""
+        return []
 
     @abstractmethod
     def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
@@ -363,5 +382,6 @@ class ProvedorComFileirasTematicas(ABC):
 
     @abstractmethod
     def listar_fileira_tematica(self, fileira: FileiraTematica) -> list[AnimeEmAlta]:
-        """Lista animes cuja tag AniList é `fileira.tag`, ordenados por
-        popularidade — mesmo formato de `ProvedorDeMetadados.listar_em_alta`."""
+        """Lista animes cuja tag/gênero AniList é `fileira.valor` (conforme
+        `fileira.tipo`), ordenados por popularidade — mesmo formato de
+        `ProvedorDeMetadados.listar_em_alta`."""

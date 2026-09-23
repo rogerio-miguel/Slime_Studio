@@ -196,41 +196,77 @@ async def marcar_todos_assistidos(
     anime: Anime,
     versao: VersaoEpisodio,
 ) -> None:
-    """Botão "Marcar como assistido" da página do anime
-    (`api/rotas/animes.py`). Dois passos:
+    """Botão "Marcar como assistido" da página do anime (`api/rotas/animes.py`)
+    — marca o anime INTEIRO. Ver docstring de `_marcar_assistidos` pros dois
+    passos; aqui `numero=None` não restringe nenhum dos dois a um episódio só.
+    """
+    await _marcar_assistidos(sessionmaker, anime=anime, versao=versao, numero=None)
+
+
+async def marcar_episodio_assistido(
+    sessionmaker: _SessionMaker,
+    *,
+    anime: Anime,
+    numero: int,
+    versao: VersaoEpisodio,
+) -> None:
+    """Item "Marcar como assistido" do menu de
+    `components/CartaoContinuarAssistindo.jsx` (Home) — mesmos dois passos de
+    `marcar_todos_assistidos` (ver docstring de `_marcar_assistidos`), só que
+    restritos a UM número. Pedido explícito do usuário (2026-09-21): o botão
+    original marca o anime inteiro; "Continuar assistindo" mostra só o
+    PRÓXIMO episódio, então marcar em lote surpreende ali — o usuário queria
+    marcar só o slot que está vendo.
+    """
+    await _marcar_assistidos(sessionmaker, anime=anime, versao=versao, numero=numero)
+
+
+async def _marcar_assistidos(
+    sessionmaker: _SessionMaker,
+    *,
+    anime: Anime,
+    versao: VersaoEpisodio,
+    numero: int | None,
+) -> None:
+    """Núcleo compartilhado por `marcar_todos_assistidos`/
+    `marcar_episodio_assistido` — `numero=None` cobre o anime inteiro,
+    `numero=<n>` restringe os dois passos a um único número. Dois passos:
 
     1. `UPDATE` em lote — marca `assistido_em` (agora) em todo `Episodio` já
-       capturado localmente (qualquer fonte/versão) que ainda não tem a
-       marca; mesma semântica de `POST /episodios/{id}/assistido`, aplicada
-       em lote.
+       capturado localmente (qualquer fonte/versão, restrito a `numero`
+       quando informado) que ainda não tem a marca; mesma semântica de
+       `POST /episodios/{id}/assistido`, aplicada em lote.
     2. Cria uma linha `LIBERADO` + `assistido_em` (`db/catalogo.py::
        criar_episodio_assistido`, sem `Job`) pra cada episódio `REGULAR` que
-       a fonte remota ativa lista e que ainda não tem `Episodio` nenhum aqui
-       — pedido explícito do usuário: o botão marca TODO episódio disponível
-       na fonte como assistido, não só os já baixados. "Capturar"/
-       "Recapturar" seguem disponíveis depois (`criar_job_site` acima já
-       reaproveita `LIBERADO`).
+       a fonte remota ativa lista (restrito a `numero` quando informado) e
+       que ainda não tem `Episodio` nenhum aqui — pedido explícito do
+       usuário: marca TODO episódio disponível na fonte como assistido, não
+       só os já baixados. "Capturar"/"Recapturar" seguem disponíveis depois
+       (`criar_job_site` acima já reaproveita `LIBERADO`).
 
     Mesma resolução de fonte de `criar_job_site` (`resolver_canonico=False`:
-    a página do anime já resolveu/confirmou a `FonteAnime` antes de o botão
-    ficar clicável) — pode levantar `FonteAmbigua`/`VersaoIndisponivelError`/
+    o chamador já resolveu/confirmou a `FonteAnime` antes do botão/menu ficar
+    clicável) — pode levantar `FonteAmbigua`/`VersaoIndisponivelError`/
     `FalhaDeExtracao` pelos mesmos motivos de lá; nesse caso o passo 1 já
     comitou (nenhum episódio já capturado deixa de ser marcado), só o passo 2
     (criar os que faltam) não roda.
 
     Sem `info_de_episodio` aqui (ao contrário de `criar_job_site`): seria uma
     chamada ao TMDB por episódio faltante, e thumb/título/sinopse exibidos na
-    página do anime já vêm de `remotos.dados` (`PaginaDoAnime.jsx`), não de
+    página do anime/Home já vêm de `remotos.dados`/`item.sinopse`, não de
     `Episodio.capa_path`/`titulo`/`sinopse` — não há ganho visual que
-    justifique o custo num "marcar todos" em lote.
+    justifique o custo.
     """
     async with sessionmaker() as sessao:
+        filtro_numero = [Episodio.numero == numero] if numero is not None else []
         locais = (
-            await sessao.execute(select(Episodio).where(Episodio.anime_id == anime.id))
+            await sessao.execute(
+                select(Episodio).where(Episodio.anime_id == anime.id, *filtro_numero)
+            )
         ).scalars().all()
         await sessao.execute(
             update(Episodio)
-            .where(Episodio.anime_id == anime.id, Episodio.assistido_em.is_(None))
+            .where(Episodio.anime_id == anime.id, Episodio.assistido_em.is_(None), *filtro_numero)
             .values(assistido_em=datetime.now(UTC))
         )
         await sessao.commit()
@@ -239,7 +275,7 @@ async def marcar_todos_assistidos(
     versao_do_episodio = versao_episodio_da_fonte(fonte.versao_da_fonte)
     remotos_por_numero: dict[int, list] = defaultdict(list)
     for remoto in filtrar_por_versao(fonte.episodios, versao_do_episodio):
-        if remoto.numero is not None:
+        if remoto.numero is not None and (numero is None or remoto.numero == numero):
             remotos_por_numero[remoto.numero].append(remoto)
 
     numeros_locais = {
@@ -247,15 +283,15 @@ async def marcar_todos_assistidos(
         for ep in locais
         if ep.tipo == TipoEpisodio.REGULAR and ep.versao == versao_do_episodio
     }
-    for numero, candidatos in remotos_por_numero.items():
-        if numero in numeros_locais:
+    for numero_remoto, candidatos in remotos_por_numero.items():
+        if numero_remoto in numeros_locais:
             continue
         if len(candidatos) > 1:
             # Mesma escolha determinística de `criar_job_site` acima.
             logger.warning(
                 "%d episódios remotos com numero=%d em %r (rótulos: %s) — usando o 1º",
                 len(candidatos),
-                numero,
+                numero_remoto,
                 fonte.dominio,
                 [ep.rotulo for ep in candidatos],
             )
@@ -263,15 +299,15 @@ async def marcar_todos_assistidos(
             await catalogo.criar_episodio_assistido(
                 sessionmaker,
                 anime.id,
-                numero=numero,
+                numero=numero_remoto,
                 tipo=TipoEpisodio.REGULAR,
                 versao=versao_do_episodio,
                 url_fonte=candidatos[0].url,
                 site_origem=fonte.dominio,
             )
         except EpisodioJaExiste:
-            # Corrida genuína (dois cliques quase simultâneos do botão) — a
-            # checagem contra `numeros_locais` já é feita com os dados de
+            # Corrida genuína (dois cliques quase simultâneos do botão/menu) —
+            # a checagem contra `numeros_locais` já é feita com os dados de
             # antes do passo 1, então uma criação concorrente aqui é o único
             # jeito de bater no índice único.
             continue

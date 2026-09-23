@@ -11,6 +11,7 @@ este provedor: HTTP >=400 (exceto 404, tratado como "não encontrado") vira
 decide o que fazer com isso (cai para o próximo provedor).
 """
 
+import dataclasses
 import html
 import logging
 import re
@@ -118,12 +119,67 @@ query {
 }
 """
 
+# Feed "Novos lançamentos" da Home — agenda de exibição da AniList
+# (`Page.airingSchedules`), não `Page.media`: cada nó é um EPISÓDIO que já foi
+# ao ar (`airingAt_lesser: $agora`), não um anime. `sort: TIME_DESC` traz o
+# mais recente primeiro; o dedup por anime (mantendo só a 1ª ocorrência = a
+# mais recente) é feito em `_agenda_para_animes_em_alta`, não aqui. Mesmo bloco
+# de campos de `media` que `_item_para_anime_em_alta` já sabe converter.
+_QUERY_NOVOS_LANCAMENTOS = """
+query ($agora: Int) {
+  Page(page: 1, perPage: 50) {
+    airingSchedules(airingAt_lesser: $agora, sort: TIME_DESC) {
+      episode
+      media {
+        id
+        title { romaji english }
+        coverImage { extraLarge color }
+        bannerImage
+        genres
+        seasonYear
+        startDate { year }
+        status
+        episodes
+        format
+        nextAiringEpisode { episode airingAt }
+      }
+    }
+  }
+}
+"""
+
 _QUERY_POR_TAG = """
 query ($tag: String) {
   Page(page: 1, perPage: 50) {
     media(
       tag: $tag
       minimumTagRank: 60
+      isAdult: false
+      type: ANIME
+      sort: POPULARITY_DESC
+    ) {
+      id
+      title { romaji english }
+      coverImage { extraLarge color }
+      bannerImage
+      genres
+      seasonYear
+      startDate { year }
+      status
+      episodes
+      nextAiringEpisode { episode airingAt }
+    }
+  }
+}
+"""
+
+# Variante de `_QUERY_POR_TAG` para fileiras de GÊNERO amplo (ex. "Action") —
+# gênero não tem `minimumTagRank` (esse filtro é só de tag).
+_QUERY_POR_GENERO = """
+query ($genero: String) {
+  Page(page: 1, perPage: 50) {
+    media(
+      genre: $genero
       isAdult: false
       type: ANIME
       sort: POPULARITY_DESC
@@ -293,6 +349,11 @@ _RELACOES_DE_SEQUENCIA_TV = frozenset({"PREQUEL", "SEQUEL"})
 # estourar a fileira da página do anime com dezenas de cards.
 _LIMITE_RELACIONADOS = 24
 
+# Teto da fileira "Novos lançamentos" (Home) — pedido explícito do usuário
+# (2026-09-20). Corta DEPOIS do dedup em `_agenda_para_animes_em_alta`: os 50
+# episódios crus da query viram no máximo este tanto de animes únicos.
+_LIMITE_NOVOS_LANCAMENTOS = 20
+
 
 class AniListProvider(
     ProvedorDeMetadados,
@@ -385,8 +446,16 @@ class AniListProvider(
         dados = self._executar(_QUERY_PROXIMA_TEMPORADA, {"estacao": estacao, "ano": ano})
         return _pagina_para_animes_em_alta(dados, "próxima temporada")
 
+    def listar_novos_lancamentos(self) -> list[AnimeEmAlta]:
+        agora = int(datetime.now(UTC).timestamp())
+        dados = self._executar(_QUERY_NOVOS_LANCAMENTOS, {"agora": agora})
+        return _agenda_para_animes_em_alta(dados)
+
     def listar_fileira_tematica(self, fileira: FileiraTematica) -> list[AnimeEmAlta]:
-        dados = self._executar(_QUERY_POR_TAG, {"tag": fileira.tag})
+        if fileira.tipo == "genero":
+            dados = self._executar(_QUERY_POR_GENERO, {"genero": fileira.valor})
+        else:
+            dados = self._executar(_QUERY_POR_TAG, {"tag": fileira.valor})
         return _pagina_para_animes_em_alta(dados, f"fileira temática {fileira.chave!r}")
 
     def buscar_relacoes(self, anilist_id: int) -> RelacoesDeAnime | None:
@@ -545,6 +614,41 @@ def _pagina_para_animes_em_alta(dados: dict, contexto: str) -> list[AnimeEmAlta]
         for item in itens
         if isinstance(item, dict) and item.get("id") is not None
     ]
+
+
+def _agenda_para_animes_em_alta(dados: dict) -> list[AnimeEmAlta]:
+    """Parser de `Page.airingSchedules` para `listar_novos_lancamentos` — cada
+    nó é um episódio (`{media: {...}}`), não um anime direto como em
+    `_pagina_para_animes_em_alta`. Dedup por `media.id`: a query já vem
+    ordenada `TIME_DESC` (mais recente primeiro), então a 1ª ocorrência de cada
+    anime é sempre a do episódio mais novo — as seguintes (episódios mais
+    antigos do mesmo anime) são descartadas. Corta em `_LIMITE_NOVOS_
+    LANCAMENTOS` assim que atinge o teto (`break`, não `resultado[:limite]`
+    no final) — sem sentido continuar deduplicando episódios mais antigos que
+    nunca vão entrar no resultado."""
+    pagina = dados.get("Page") if isinstance(dados, dict) else None
+    agendas = pagina.get("airingSchedules") if isinstance(pagina, dict) else None
+    if not isinstance(agendas, list):
+        raise RuntimeError("AniList: resposta de 'novos lançamentos' com formato inesperado")
+
+    vistos: set[int] = set()
+    resultado: list[AnimeEmAlta] = []
+    for agenda in agendas:
+        if len(resultado) >= _LIMITE_NOVOS_LANCAMENTOS:
+            break
+        media = agenda.get("media") if isinstance(agenda, dict) else None
+        if not isinstance(media, dict) or media.get("id") is None:
+            continue
+        ident = media["id"]
+        if ident in vistos:
+            continue
+        vistos.add(ident)
+        episodio = agenda.get("episode")
+        item = _item_para_anime_em_alta(media)
+        if isinstance(episodio, int):
+            item = dataclasses.replace(item, episodio_lancado=episodio)
+        resultado.append(item)
+    return resultado
 
 
 def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:

@@ -116,21 +116,38 @@ async def listar_em_alta_com_catalogo(
     return pares
 
 
+async def listar_novos_lancamentos_com_catalogo(
+    sessionmaker: _SessionMaker,
+) -> list[tuple[AnimeEmAlta, int | None]]:
+    """Feed "novos lançamentos" (`integrations.servico.listar_novos_lancamentos`)
+    pareado com `Anime.id` local. Mesmo formato/propagação de erro de
+    `listar_em_alta_com_catalogo` — inclusive o refresh oportunista de
+    lançamento (F4a): cada item aqui É um anime que acabou de ter um episódio
+    ao ar, então o bloco fresco da AniList vale tanto quanto no feed "em alta"."""
+    itens = await servico.listar_novos_lancamentos()
+    pares = await _cruzar_com_catalogo(sessionmaker, itens)
+    await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
+    await _preencher_banner_do_cruzamento(sessionmaker, pares)
+    return pares
+
+
 async def listar_fileiras_tematicas_com_catalogo(
     sessionmaker: _SessionMaker,
 ) -> list[tuple[str, list[tuple[AnimeEmAlta, int | None]]]]:
-    """As 10 fileiras temáticas da Home (`integrations.servico.
-    listar_fileiras_tematicas`) pareadas com `Anime.id` local. Achata os itens
-    de todas as fileiras antes de cruzar (`_cruzar_com_catalogo`) — uma única
-    consulta ao catálogo para as ~10 fileiras, não uma por fileira — e
-    reagrupa de volta na mesma ordem/tamanho original de cada fileira.
+    """As fileiras temáticas da Home (`integrations.servico.
+    listar_fileiras_tematicas`, quantidade e conteúdo vêm de
+    `integrations/registro.py::FILEIRAS_TEMATICAS`) pareadas com `Anime.id`
+    local. Achata os itens de todas as fileiras antes de cruzar
+    (`_cruzar_com_catalogo`) — uma única consulta ao catálogo para todas as
+    fileiras, não uma por fileira — e reagrupa de volta na mesma ordem/tamanho
+    original de cada fileira.
 
     Sem o refresh oportunista de lançamento/banner de
     `listar_em_alta_com_catalogo` (F4a): esse efeito colateral existe porque o
     feed "em alta" traz um bloco de lançamento fresco e o item cruzado costuma
-    estar em lançamento; popularidade histórica por tag não tem essa mesma
-    correlação, e replicar o refresh aqui multiplicaria as escritas por 10
-    fileiras à toa.
+    estar em lançamento; popularidade histórica por tag/gênero não tem essa
+    mesma correlação, e replicar o refresh aqui multiplicaria as escritas à
+    toa.
 
     Propaga `FalhaDeMetadados` só se `listar_fileiras_tematicas` propagar
     (todas as fileiras falharam) — uma fileira isolada que falhou já vem

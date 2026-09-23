@@ -288,6 +288,10 @@ class AnimeEmAltaSaida(BaseModel):
     # (`CriarAnimeRequest.formato`) quando materializa um item clicado —
     # decide se ele vira temporada normal ou filme/OVA/especial agrupado.
     formato: str | None = None
+    # Número do episódio recém-lançado (`integrations.base.AnimeEmAlta.
+    # episodio_lancado`) — só o feed `/novos-lancamentos` preenche; os demais
+    # ficam no default `None`. Frontend usa pra rotular o card ("EP.N").
+    episodio_lancado: int | None = None
 
 
 class FileiraTematicaSaida(BaseModel):

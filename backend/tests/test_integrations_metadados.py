@@ -329,7 +329,7 @@ def test_anilist_listar_fileira_tematica(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("integrations.anilist.requests.post", _post)
 
-    fileira = FileiraTematica(chave="isekai", tag="Isekai")
+    fileira = FileiraTematica(chave="isekai", valor="Isekai", tipo="tag")
     resultado = AniListProvider().listar_fileira_tematica(fileira)
 
     assert capturado["variables"] == {"tag": "Isekai"}
@@ -1727,10 +1727,15 @@ def _limpa_caches_de_feed(monkeypatch: pytest.MonkeyPatch):
     `._cache_fileiras_tematicas` são estado de módulo — isola cada teste para
     não vazar cache de um teste para o outro. `_locks_fileiras_tematicas` não
     precisa ser recriado: são `asyncio.Lock` reusáveis, sempre liberados ao fim
-    de cada `async with` (nenhum teste os deixa presos)."""
+    de cada `async with` (nenhum teste os deixa presos). `_tarefas_de_
+    revalidacao_em_segundo_plano` (stale-while-revalidate) também é estado de
+    módulo — nenhum teste aqui deixa uma cache EXPIRADA (só cache-miss/cache-
+    hit dentro do TTL), então essa `set` já fica vazia na prática; resetada
+    mesmo assim por robustez."""
     monkeypatch.setattr(servico, "_cache_em_alta", None)
     monkeypatch.setattr(servico, "_cache_proxima_temporada", None)
     monkeypatch.setattr(servico, "_cache_fileiras_tematicas", {})
+    monkeypatch.setattr(servico, "_tarefas_de_revalidacao_em_segundo_plano", set())
 
 
 @pytest.fixture(autouse=True)

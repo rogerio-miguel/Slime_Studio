@@ -42,26 +42,29 @@ PROVEDORES_DE_FEED: tuple[ProvedorDeMetadados, ...] = (_anilist,)
 # TÍTULOS para o scraping é que é AniList-only.
 PROVEDORES_DE_TITULO: tuple[ProvedorDeMetadados, ...] = (_anilist,)
 
-# Fileiras temáticas da Home — curadoria por popularidade real por tag na
-# AniList, filtrada por distintividade (cortadas tags genéricas que já se
-# sobrepõem com Gêneros). Repetição de anime entre fileiras é permitida
-# (mesmo comportamento de Netflix/Disney+). Sem filtro de país de origem: o
-# volume por tag já é alto o bastante, filtrar derrubaria coproduções
-# legítimas. Fileira de "adaptado de manhwa" foi cogitada e descartada —
-# `MediaSource` da AniList não tem valor `MANHWA`, só dava pra resolver via
-# query separada pelo lado do mangá + relações `ADAPTATION`, custo não
-# justificado pra esta rodada. Ordem é decisão de produto fechada, não alterar.
+# Fileiras temáticas da Home — refeitas do zero em 2026-09-20 (a lista
+# original acima, por TAG de nicho de romance/drama, foi descartada por
+# inteiro) tomando como referência a curadoria do discover da Crunchyroll
+# (títulos com apelo em vez de nome cru de gênero, cada um mapeando pra um
+# filtro temático só). Mistura GÊNERO amplo (`tipo="genero"`, sempre bem
+# populado) com TAG de nicho (`tipo="tag"`, `minimumTagRank` na query) —
+# `integrations/base.py::FileiraTematica`. As 10 do "mix" aprovado pelo
+# usuário (2026-09-20). ORDEM é decisão de produto: `paginas/Inicio.jsx`
+# fatia esta lista em 3 grupos (3/3/4) pra intercalar com os banners
+# `DestaqueGrande` — não reordenar sem revisar `fileirasTematicasRotuladas`
+# lá. Repetição de anime entre fileiras é permitida (mesmo comportamento de
+# Netflix/Disney+).
 FILEIRAS_TEMATICAS: list[FileiraTematica] = [
-    FileiraTematica(chave="isekai", tag="Isekai"),
-    FileiraTematica(chave="familia_encontrada", tag="Found Family"),
-    FileiraTematica(chave="amor_nao_correspondido", tag="Unrequited Love"),
-    FileiraTematica(chave="batalha_real", tag="Battle Royale"),
-    FileiraTematica(chave="diferenca_de_idade", tag="Age Gap"),
-    FileiraTematica(chave="reencarnacao", tag="Reincarnation"),
-    FileiraTematica(chave="jogos_mortais", tag="Death Game"),
-    FileiraTematica(chave="morando_juntos", tag="Cohabitation"),
-    FileiraTematica(chave="casais_secretos", tag="Fake Relationship"),
-    FileiraTematica(chave="vila_nao_tao_vila", tag="Villainess"),
+    FileiraTematica(chave="acao_sem_parar", valor="Action", tipo="genero"),
+    FileiraTematica(chave="isekai", valor="Isekai", tipo="tag"),
+    FileiraTematica(chave="misterio_pra_desvendar", valor="Mystery", tipo="genero"),
+    FileiraTematica(chave="so_rir_pra_nao_chorar", valor="Comedy", tipo="genero"),
+    FileiraTematica(chave="terror_que_tira_o_sono", valor="Horror", tipo="genero"),
+    FileiraTematica(chave="gigantes_de_aco", valor="Mecha", tipo="genero"),
+    FileiraTematica(chave="adrenalina_no_esporte", valor="Sports", tipo="genero"),
+    FileiraTematica(chave="fantasia_alem_do_real", valor="Fantasy", tipo="genero"),
+    FileiraTematica(chave="vida_cotidiana_sem_pressa", valor="Slice of Life", tipo="genero"),
+    FileiraTematica(chave="prepare_o_lenco", valor="Tragedy", tipo="tag"),
 ]
 
 # Provedores de ARTE (capa/banner) — tupla PRÓPRIA, não a `PROVEDORES` acima:
