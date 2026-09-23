@@ -164,15 +164,19 @@ export default function Galeria() {
     );
   }, [animes]);
 
-  // Opções do dropdown "Filtrar" (SeletorEmMenu) — um único dropdown pra dois
-  // eixos diferentes (status_lancamento × assistido, pedido explícito do
-  // usuário: queria os dois juntos, não dois dropdowns separados), por isso o
-  // `valor` de cada opção carrega um prefixo (`status:`/`assistido:`) que
-  // `animesExibidos` usa pra saber qual filtro aplicar — os dois eixos não se
-  // combinam mais (selecionar um substitui o outro, mesmo dropdown).
+  // Opções do dropdown "Filtrar" (SeletorEmMenu) — um único dropdown pra três
+  // eixos diferentes (status_lancamento × assistido × novos episódios, pedido
+  // explícito do usuário: queria tudo junto, não dropdowns separados), por
+  // isso o `valor` de cada opção carrega um prefixo (`status:`/`assistido:`/
+  // `novos:`) que `animesExibidos` usa pra saber qual filtro aplicar — os
+  // eixos não se combinam entre si (selecionar um substitui o outro, mesmo
+  // dropdown). "Novos episódios" bate no mesmo agregado que acende a
+  // BadgeDeEpisodiosNovos no card (`franquia.episodios_novos > 0`,
+  // inicio/franquia.js) — filtro e badge sempre concordam.
   const opcoesFiltro = useMemo(
     () => [
       { valor: '', rotulo: 'Todos' },
+      { valor: 'novos:sim', rotulo: 'Novos episódios' },
       ...statusDisponiveis.map((status) => ({
         valor: `status:${status}`,
         rotulo: ROTULOS_STATUS_LANCAMENTO[status] ?? status,
@@ -209,6 +213,8 @@ export default function Galeria() {
     } else if (filtroSelecionado.startsWith('assistido:')) {
       const assistido = filtroSelecionado.slice('assistido:'.length) === 'sim';
       lista = lista.filter((franquia) => franquia.assistido === assistido);
+    } else if (filtroSelecionado === 'novos:sim') {
+      lista = lista.filter((franquia) => franquia.episodios_novos > 0);
     }
     return ordenarPorTitulo(lista);
   }, [franquias, termoBuscaNormalizado, filtroSelecionado]);
