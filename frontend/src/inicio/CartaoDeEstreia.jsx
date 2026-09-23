@@ -1,34 +1,5 @@
 import BotaoRemoverDoCatalogo from '../components/BotaoRemoverDoCatalogo.jsx';
-
-// Ícone de "salvar" (fita de marcador) — cópia exata do glifo do botão
-// "Salvar" do Instagram (mesmo `viewBox`/`points`, confirmado direto no SVG
-// renderizado do próprio site, não só no HTML colado). Checado contra
-// `lucide-react` (já instalado, ver `player/Icones.jsx`) antes de desenhar à
-// mão — nenhum ícone de lá bate: o `Bookmark` de lá tem cantos arredondados
-// no topo e um entalhe curvo embaixo (glifo "livro"), não o retângulo de
-// cantos retos + V reto do Instagram. Sem equivalente pronto, mão na massa é
-// o passo certo da Escada de Minimalismo (CLAUDE.md §4, passo 6).
-// `preenchido` alterna entre contorno (ainda não salvo) e sólido (já no
-// catálogo), igual ao toggle de lá.
-// `strokeWidth="2.5"` (mais grosso que o "2" do Instagram, pedido explícito
-// do usuário): no card deles o ícone senta numa barra de ações espaçosa; no
-// nosso ele é um selo pequeno no canto da capa, então precisa de mais peso
-// visual pra não sumir. `h-8 w-8` (32px, maior que o `width="24" height="24"`
-// de lá pelo mesmo motivo — ajustado depois de ver renderizado).
-function IconeSalvar({ preenchido = false }) {
-  return (
-    <svg viewBox="0 0 24 24" className="h-8 w-8" role="img" aria-hidden="true">
-      <polygon
-        points="20 21 12 13.44 4 21 4 3 20 3 20 21"
-        fill={preenchido ? 'currentColor' : 'none'}
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+import IconeSalvar from '../components/IconeSalvar.jsx';
 
 // Card de anime que ainda NÃO estreou. Dois usos:
 //   1. Fileira "Próximas estreias" da Home (paginas/Inicio.jsx) — item do feed
@@ -161,7 +132,7 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
               embaixo em `A`) — ver nota de posição no bloco de comentário do
               topo do arquivo: o wrapper `p-3 -m-3` NÃO é uma referência de
               posição confiável (colapso de margem verticais entre ele e o
-              pai), então ancorar `top-2`/`right-2` nele deixava o ícone
+              pai), então ancorar `top-2`/`left-2` nele deixava o ícone
               flutuando fora da capa. Aqui dentro o pai É a própria capa
               (`relative overflow-hidden`), então a posição é exata e
               qualquer transbordo fica recortado de graça. */}
@@ -172,7 +143,7 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
                 onClick={aoSalvar}
                 disabled={salvando}
                 aria-label={`Remover ${titulo} do catálogo`}
-                className="absolute right-2 top-2 z-10 p-1 text-white outline-none transition duration-200 ease-out hover:brightness-90 hover:scale-110 motion-reduce:transition-none cursor-pointer disabled:opacity-50"
+                className="absolute left-2 top-2 z-10 p-1 text-white outline-none transition duration-200 ease-out hover:brightness-90 hover:scale-110 motion-reduce:transition-none cursor-pointer disabled:opacity-50"
               >
                 <IconeSalvar preenchido />
               </button>
@@ -182,7 +153,7 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
                 onClick={aoSalvar}
                 disabled={salvando}
                 aria-label={`Salvar ${titulo} no catálogo`}
-                className="absolute right-2 top-2 z-10 p-1 text-white outline-none transition duration-200 ease-out hover:brightness-90 hover:scale-110 motion-reduce:transition-none cursor-pointer disabled:opacity-50"
+                className="absolute left-2 top-2 z-10 p-1 text-white outline-none transition duration-200 ease-out hover:brightness-90 hover:scale-110 motion-reduce:transition-none cursor-pointer disabled:opacity-50"
               >
                 <IconeSalvar />
               </button>

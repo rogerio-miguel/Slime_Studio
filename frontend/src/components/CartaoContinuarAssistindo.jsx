@@ -1,4 +1,5 @@
-import { Sparkles } from 'lucide-react';
+import { Check, Info, Sparkles } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import {
   CartaoDeEpisodio,
   FaixaDeConteudo,
@@ -7,9 +8,9 @@ import {
   OverlayDeStatus,
   ROTULOS_STATUS,
   RotuloEpisodio,
-  SinopseEpisodio,
   tomDoStatus,
 } from './LinhaDeEpisodio.jsx';
+import MenuDeAcoes from './MenuDeAcoes.jsx';
 
 // Item da prateleira "Continuar assistindo" (paginas/Inicio.jsx) — um card por
 // ANIME, não por episódio (backend, `api/servicos/progresso.py::
@@ -43,12 +44,68 @@ import {
 // `PaginaDoAnime.jsx` já usa — o card não sabe se é 1ª captura ou recaptura,
 // os dois casos são visualmente idênticos em modo grade, que não mostra o
 // verbo da ação).
-export default function CartaoContinuarAssistindo({ item, job, aoCapturar, capturando }) {
+//
+// `aoMarcarAssistido`/`marcando`: menu de ações (pedido do usuário) com
+// "Marcar como assistido" — ao contrário do botão homônimo de
+// `MenuDeAcoesDoAnime` (que marca o anime INTEIRO), aqui marca só ESTE
+// episódio (`item.numero`; pedido explícito do usuário, 2026-09-21: a
+// prateleira mostra só o PRÓXIMO episódio, marcar em lote a partir dela
+// surpreendia — `paginas/Inicio.jsx` chama `marcarEpisodioAssistido`, que
+// cria sem baixar quando o episódio nunca foi capturado, mesma lógica do
+// botão da página do anime só que restrita a um número). "Ver detalhes do
+// anime" navega pra `/anime/:id`. Gatilho SEMPRE presente nos 3 ramos
+// (`pronto`/`processando`/`capturavel`) — as duas ações valem independente
+// do estado do episódio.
+//
+// `sobreposicao` (prop nova de `CartaoDeEpisodio`, `LinhaDeEpisodio.jsx`,
+// mesmo nome/papel do `sobreposicao` de `AnimeCard.jsx` pro numeral do Top
+// 10): NÃO dá pra passar o menu como `children`/wrapper por fora — o
+// comentário no topo deste arquivo já proíbe um `<div>` extra ao redor de
+// `CartaoDeEpisodio` (quebra o vazamento de 8px entre cards da fileira), e em
+// modo grade o card inteiro era o próprio `<Link>`/`<button>`, então um
+// `<button>` de menu como filho seria HTML inválido (button dentro de
+// button/a). `CartaoDeEpisodio` foi restruturado (stretched-link, mesmo
+// padrão que `AnimeCard.jsx` já usa) pra que o Link/button de navegação vire
+// uma camada `absolute inset-0` IRMÃ do conteúdo visual, deixando `sobreposicao`
+// entrar como outro irmão por cima (`z-10`) sem aninhar em nada — `CartaoDeEpisodio`
+// continua sendo a ÚNICA raiz retornada por cada ramo abaixo.
+export default function CartaoContinuarAssistindo({ item, job, aoCapturar, capturando, aoMarcarAssistido, marcando }) {
+  const navigate = useNavigate();
   const rotulo = (
     <span className="flex min-w-0 flex-col gap-0.5">
       <h3 className="line-clamp-1 text-xs text-ink-muted">{item.anime_titulo}</h3>
       <RotuloEpisodio numero={item.numero} titulo={item.titulo} />
     </span>
+  );
+
+  const menu = (
+    <div className="absolute right-1 top-3 z-10">
+      <MenuDeAcoes
+        rotuloGatilho={`Mais ações para ${item.anime_titulo}`}
+        posicao="lado"
+        itens={[
+          {
+            chave: 'marcar-assistido',
+            rotulo: marcando ? 'Marcando…' : 'Marcar como assistido',
+            Icone: Check,
+            aoClicar: () => aoMarcarAssistido(item),
+            desabilitado: marcando,
+          },
+          {
+            chave: 'ver-detalhes',
+            rotulo: 'Ver detalhes do anime',
+            Icone: Info,
+            aoClicar: () => navigate(`/anime/${item.anime_id}`),
+          },
+        ]}
+        classeGatilho={(aberto) =>
+          `flex h-8 w-8 items-center justify-center rounded-full text-white/80 outline-none transition-colors cursor-pointer drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${
+            aberto ? 'text-white' : 'hover:text-white'
+          }`
+        }
+        tamanhoIcone={24}
+      />
+    </div>
   );
 
   if (item.variante === 'pronto') {
@@ -68,6 +125,8 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
         modo="grade"
         cor="text-white"
         para={`/assistir/${item.episodio_id}`}
+        sobreposicao={menu}
+        rotuloAcessivel={`Assistir episódio ${item.numero} de ${item.anime_titulo}`}
         estadoDeRota={{
           episodio: {
             numero: item.numero,
@@ -80,26 +139,10 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
           <FaixaDeConteudo
             modo="grade"
             rotulo={rotulo}
-            sinopse={<SinopseEpisodio sinopse={item.sinopse} />}
             extra={
-              percentualAssistido != null ? (
-                <span className="flex items-center gap-2">
-                  <span
-                    role="progressbar"
-                    aria-label="progresso de reprodução"
-                    aria-valuenow={percentualAssistido}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    className="h-1 flex-1 overflow-hidden rounded-full bg-border-chrome"
-                  >
-                    <span
-                      style={{ width: `${percentualAssistido}%` }}
-                      className="block h-full rounded-full bg-neon"
-                    />
-                  </span>
-                  <span className="shrink-0 text-xs font-semibold text-ink-muted">
-                    faltam {minutosRestantes} min
-                  </span>
+              minutosRestantes != null ? (
+                <span className="text-xs font-semibold text-ink-muted">
+                  faltam {minutosRestantes} min
                 </span>
               ) : null
             }
@@ -108,6 +151,27 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
       >
         <MiniaturaDoEpisodio thumb={item.thumb} modo="grade" />
         <IndicadorDePlay emGrade temThumb={!!item.thumb} />
+        {/* Barra de progresso estilo Netflix, sobre a própria miniatura
+            (pedido do usuário, 2026-09-21 — antes ficava abaixo, na legenda).
+            `absolute inset-x-0 bottom-0`: cola na borda inferior da caixa
+            recortada 16:9 (mesmo `overflow-hidden` de `classeCaixa` em
+            `LinhaDeEpisodio.jsx::CartaoDeEpisodio` corta a barra se ela
+            tentasse passar da borda, mas `bottom-0` já a mantém dentro). */}
+        {percentualAssistido != null && (
+          <span
+            role="progressbar"
+            aria-label="progresso de reprodução"
+            aria-valuenow={percentualAssistido}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="absolute inset-x-0 bottom-0 z-10 h-1 bg-white/25"
+          >
+            <span
+              style={{ width: `${percentualAssistido}%` }}
+              className="block h-full bg-neon"
+            />
+          </span>
+        )}
       </CartaoDeEpisodio>
     );
   }
@@ -122,13 +186,8 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
       <CartaoDeEpisodio
         modo="grade"
         cor="text-ink-muted"
-        legenda={
-          <FaixaDeConteudo
-            modo="grade"
-            rotulo={rotulo}
-            sinopse={<SinopseEpisodio sinopse={item.sinopse} />}
-          />
-        }
+        sobreposicao={menu}
+        legenda={<FaixaDeConteudo modo="grade" rotulo={rotulo} />}
       >
         <MiniaturaDoEpisodio thumb={item.thumb} modo="grade" />
         <OverlayDeStatus rotulo={rotuloStatus} tom={tomDoStatus(statusAtual)} />
@@ -147,13 +206,8 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
       aoClicar={() => aoCapturar(item)}
       desabilitado={capturando}
       rotuloAcessivel={`Capturar episódio ${item.numero} de ${item.anime_titulo}`}
-      legenda={
-        <FaixaDeConteudo
-          modo="grade"
-          rotulo={rotulo}
-          sinopse={<SinopseEpisodio sinopse={item.sinopse} />}
-        />
-      }
+      sobreposicao={menu}
+      legenda={<FaixaDeConteudo modo="grade" rotulo={rotulo} />}
     >
       <MiniaturaDoEpisodio thumb={item.thumb} modo="grade" />
       {capturando && <OverlayDeStatus rotulo="Capturando…" tom="progresso" />}
@@ -167,10 +221,15 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
 // mesmo visual de pill de `AnimeCard.jsx::badgeAviso` (`Sparkles`, fundo
 // `bg-black/80 backdrop-blur-md`) — a badge "episódio novo" já tem uma
 // linguagem visual estabelecida na Galeria, este card não inventa uma nova.
+// Não usa o MESMO tamanho de lá (`h-8`/`h-5 w-5`): a miniatura aqui é
+// `aspect-[16/9]`, bem mais baixa que o pôster 2:3 do card da Galeria, pill
+// no tamanho cheio ficaria grande demais pra altura disponível. Ajuste
+// pontual (pedido explícito do usuário, 2026-09-21): ícone só um passo maior
+// (`h-3.5` → `h-4`), pill/texto ficam como estavam.
 function BadgeNovo() {
   return (
     <span className="absolute left-2 top-2 z-10 inline-flex h-7 items-center gap-1 whitespace-nowrap bg-black/80 px-2 text-xs font-semibold uppercase tracking-wide text-white backdrop-blur-md">
-      <Sparkles aria-hidden="true" className="h-3.5 w-3.5" />
+      <Sparkles aria-hidden="true" className="h-4 w-4" />
       Novo ep
     </span>
   );

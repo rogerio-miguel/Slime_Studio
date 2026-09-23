@@ -1,13 +1,13 @@
-// Derivação pura: intercala os "destaques grandes" (banner+info,
-// inicio/DestaqueGrande.jsx) na lista de fileiras da home — TODAS elas
-// ("Próximas estreias", "Continuar assistindo", "Top 10" e as temáticas),
-// montada em paginas/Inicio.jsx::fileirasDaHome. Usada só por
-// paginas/Inicio.jsx. Sem React, sem imports de `../api/`: recebe os dois
-// arrays já resolvidos e devolve um array NOVO de blocos prontos pra
-// `.map()` no render (nunca muta as entradas), mesma disciplina de
-// ./fileiras.js e ./fileirasTematicas.js. Cada `fileira` é opaca aqui —
-// só o campo `chave` é lido; o resto (ex. `node`) volta intacto em
-// `bloco.fileira`.
+// Derivação pura: intercala vários "destaques grandes" na lista de fileiras
+// da home. NÃO USADA hoje — `inicio/DestaqueGrande.jsx` virou um banner ÚNICO
+// e fixo (pedido explícito do usuário, 2026-09-20), posicionado direto em
+// `paginas/Inicio.jsx::fileirasDaHome`, sem passar por este módulo. Mantido
+// por completude caso o produto volte a querer vários destaques espalhados.
+// Sem React, sem imports de `../api/`: recebe os dois arrays já resolvidos e
+// devolve um array NOVO de blocos prontos pra `.map()` no render (nunca muta
+// as entradas), mesma disciplina de ./fileiras.js e ./fileirasTematicas.js.
+// Cada `fileira` é opaca aqui — só o campo `chave` é lido; o resto (ex.
+// `node`) volta intacto em `bloco.fileira`.
 //
 // Regra de espaçamento: os destaques não vêm todos juntos nem colados no
 // início/fim — ficam espalhados ao longo das fileiras, a cada `passo`

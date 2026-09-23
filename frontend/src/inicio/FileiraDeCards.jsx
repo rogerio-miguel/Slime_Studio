@@ -9,6 +9,30 @@ import {
 } from './tamanhoDeCard.js';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 
+// Mesmos 4 breakpoints padrão do Tailwind que `--por-pagina`
+// (./tamanhoDeCard.js) usa por classe responsiva — `matchMedia`, não
+// `ResizeObserver` (mesma escolha de `GradeRotativa.jsx::
+// useColunasResponsivas`: a trilha é só o que decide o card por página, é a
+// VIEWPORT que muda o breakpoint, não o elemento em si). Só dispara um
+// recálculo (`medirLimites`) quando a faixa muda — sem guardar quantas
+// colunas cada uma tem, isso já sai medindo a geometria real do DOM.
+const _PONTOS_DE_QUEBRA = [
+  '(min-width: 1280px)',
+  '(min-width: 1024px)',
+  '(min-width: 768px)',
+  '(min-width: 640px)',
+];
+
+// Passo de rolagem = largura visível da trilha menos os dois gutters de
+// 3.7% (medido em `getComputedStyle`, não repetindo "3.7%" aqui) — usado
+// tanto pelas setas (`rolar`) quanto pela paginação em pílulas (`medirLimites`
+// abaixo), por isso extraído: as duas precisam do MESMO valor pra as
+// pílulas baterem com onde as setas realmente param.
+function _passoDaTrilha(trilha) {
+  const paddingInline = Number.parseFloat(getComputedStyle(trilha).paddingInlineStart);
+  return trilha.clientWidth - 2 * paddingInline;
+}
+
 // Fileira horizontal de cards no estilo "prateleira" do Disney+ (título +
 // trilha rolável + setas nos gutters), reutilizável e alimentada por qualquer
 // lista. Diferente dos outros dois blocos da home:
@@ -66,6 +90,12 @@ export default function FileiraDeCards({
   // Começa com as duas nos limites — o efeito de mount corrige assim que mede
   // a trilha; como as setas já são `opacity-0` em repouso, não há flash.
   const [limites, setLimites] = useState({ noInicio: true, noFim: true });
+  // Paginação em pílulas (pedido do usuário, 2026-09-21) — decorativa, só
+  // indicador (não navega, ver `PilulasDePaginacao` abaixo): `total` = quantas
+  // "paradas" de `passo` cabem na trilha, `atual` = a mais próxima da posição
+  // de rolagem corrente. `total: 1` (default, sem pílula nenhuma renderizada,
+  // ver JSX) até a 1ª medição confirmar se há transbordo de verdade.
+  const [paginacao, setPaginacao] = useState({ atual: 0, total: 1 });
 
   const medirLimites = useCallback(() => {
     const trilha = trilhaRef.current;
@@ -78,27 +108,75 @@ export default function FileiraDeCards({
     setLimites((atual) =>
       atual.noInicio === noInicio && atual.noFim === noFim ? atual : { noInicio, noFim },
     );
+
+    const passo = _passoDaTrilha(trilha);
+    if (Number.isFinite(passo) && passo > 0) {
+      // `Math.ceil`, não `Math.round`: a última "página" quase nunca fecha um
+      // passo cheio (sobra menos da metade de um card), e `round` pra baixo
+      // contava uma pílula a menos do que os passos que `rolar()` realmente
+      // precisa pra chegar no fim — sobrava conteúdo atrás da última pílula.
+      // Tolerância de 1px (mesma da checagem de `noFim` acima) só pra não
+      // gerar pílula extra por ruído de ponto flutuante num passo exato.
+      const total = Math.max(1, Math.ceil((scrollWidth - clientWidth - 1) / passo) + 1);
+      // `scrollLeft` no fim de verdade raramente é múltiplo exato de `passo`
+      // (última "página" quase sempre sobra/falta item vs. as demais) — daí
+      // não dar pra confiar só no arredondamento de `scrollLeft / passo`:
+      // ele pode fechar em `total - 2` mesmo com `noFim` true. Trava nos
+      // limites já medidos acima (`noInicio`/`noFim`) antes de arredondar.
+      const atual = noFim
+        ? total - 1
+        : noInicio
+          ? 0
+          : Math.min(Math.max(Math.round(scrollLeft / passo), 0), total - 1);
+      setPaginacao((estado) =>
+        estado.atual === atual && estado.total === total ? estado : { atual, total },
+      );
+    }
   }, []);
 
-  // Uma medição no mount e a cada mudança no tamanho da lista (feed pode
-  // recarregar com mais/menos itens e mudar se há transbordo). Depois disso,
-  // só o `onScroll` da trilha mantém os limites em dia.
+  // Uma medição no mount, a cada mudança no tamanho da lista (feed pode
+  // recarregar com mais/menos itens e mudar se há transbordo) e a cada troca
+  // de breakpoint (`--por-pagina` muda, então `passo`/`total` também mudam
+  // mesmo sem a lista mudar — ver `_PONTOS_DE_QUEBRA` no topo do arquivo).
+  // Depois disso, só o `onScroll` da trilha mantém os dois em dia.
   useEffect(() => {
     medirLimites();
   }, [medirLimites, lista.length]);
 
-  // Rola uma página cheia. Passo = largura visível da trilha menos os dois
-  // gutters de 3.7% (medido: ~1783px em 1920) — lido do estilo computado em
-  // vez de repetir o "3.7%" aqui. `getComputedStyle` só é tocado dentro deste
-  // handler, nunca no corpo do render e nunca antes do ref existir.
+  useEffect(() => {
+    const consultas = _PONTOS_DE_QUEBRA.map((consulta) => window.matchMedia(consulta));
+    consultas.forEach((c) => c.addEventListener('change', medirLimites));
+    return () => consultas.forEach((c) => c.removeEventListener('change', medirLimites));
+  }, [medirLimites]);
+
+  // Rola uma página cheia. `getComputedStyle` (dentro de `_passoDaTrilha`) só
+  // é tocado dentro deste handler, nunca no corpo do render e nunca antes do
+  // ref existir.
   const rolar = (direcao) => {
     const trilha = trilhaRef.current;
     if (!trilha) return;
-    const paddingInline = Number.parseFloat(getComputedStyle(trilha).paddingInlineStart);
-    const passo = trilha.clientWidth - 2 * paddingInline;
+    const passo = _passoDaTrilha(trilha);
     if (!Number.isFinite(passo) || passo <= 0) return;
     trilha.scrollBy({
       left: direcao * passo,
+      behavior: movimentoReduzido ? 'auto' : 'smooth',
+    });
+  };
+
+  // Pílula clicada = ir DIRETO pra página `indice` (não relativo, diferente
+  // de `rolar`): posição absoluta `indice * passo`, `scrollTo` em vez de
+  // `scrollBy`. Trava no `maximo` real da trilha (`scrollWidth - clientWidth`)
+  // — a última página quase nunca é um múltiplo exato de `passo` (mesmo
+  // motivo do `noFim` forçar `atual = total - 1` em `medirLimites`), então
+  // `(total - 1) * passo` estouraria o scroll de verdade.
+  const irParaPagina = (indice) => {
+    const trilha = trilhaRef.current;
+    if (!trilha) return;
+    const passo = _passoDaTrilha(trilha);
+    if (!Number.isFinite(passo) || passo <= 0) return;
+    const maximo = trilha.scrollWidth - trilha.clientWidth;
+    trilha.scrollTo({
+      left: Math.min(indice * passo, maximo),
       behavior: movimentoReduzido ? 'auto' : 'smooth',
     });
   };
@@ -120,7 +198,7 @@ export default function FileiraDeCards({
   // clique full-height no gutter, sem fundo, revelada no hover da fileira, cor
   // trocando no hover do próprio controle.
   const classesSeta =
-    'absolute inset-y-0 z-10 flex w-[3.7%] items-center justify-center ' +
+    'absolute inset-y-0 z-10 flex w-[3.7%] cursor-pointer items-center justify-center ' +
     'text-white/60 outline-none transition-opacity duration-300 hover:text-neon ' +
     'motion-reduce:transition-none opacity-0';
   const classesRevelar = 'group-hover/fileira:opacity-100 focus-visible:opacity-100';
@@ -128,23 +206,30 @@ export default function FileiraDeCards({
   return (
     <section aria-labelledby={idTitulo}>
       {/* Sem `margin-bottom`: o respiro até os cards vem do `pt` da trilha.
-          `PADDING_TITULO` (./tamanhoDeCard.js) alinha o título com a borda do
-          CARD — hoje só o gutter de 3.7%, sem inset a mais: o slot não tem
-          mais padding (removido a pedido do usuário, 2026-09-15), então a
-          borda do card já coincide com a do gutter. `tamanho="episodio"`
-          continua alinhado com o MESMO `PADDING_TITULO` — o respiro entre
-          cards daquele tamanho vem de um `gap-x` na trilha (ver comentário
-          mais abaixo), não de padding no primeiro/último `<li>`, então as
-          bordas de fora continuam coincidindo com o gutter/título como nos
-          outros tamanhos. Vai no `style` pelo mesmo motivo do `flex-basis`
-          abaixo. */}
-      <h2
-        id={idTitulo}
+          `PADDING_TITULO` (./tamanhoDeCard.js) alinha o título (e as pílulas,
+          no extremo oposto da MESMA linha) com a borda do CARD — hoje só o
+          gutter de 3.7%, sem inset a mais: o slot não tem mais padding
+          (removido a pedido do usuário, 2026-09-15), então a borda do card já
+          coincide com a do gutter. `tamanho="episodio"` continua alinhado com
+          o MESMO `PADDING_TITULO` — o respiro entre cards daquele tamanho vem
+          de um `gap-x` na trilha (ver comentário mais abaixo), não de padding
+          no primeiro/último `<li>`, então as bordas de fora continuam
+          coincidindo com o gutter/título como nos outros tamanhos. Vai no
+          `style` pelo mesmo motivo do `flex-basis` abaixo. */}
+      <div
         style={{ paddingInline: PADDING_TITULO }}
-        className="text-[22px] font-bold text-[#dbdcde]"
+        className="flex items-center gap-4"
       >
-        {titulo}
-      </h2>
+        <h2 id={idTitulo} className="text-[22px] font-bold text-[#dbdcde]">
+          {titulo}
+        </h2>
+        <PilulasDePaginacao
+          atual={paginacao.atual}
+          total={paginacao.total}
+          titulo={titulo}
+          aoClicar={irParaPagina}
+        />
+      </div>
 
       {/* `group/fileira relative`: revela as setas no hover/foco e ancora o
           posicionamento absoluto delas. Grupo NOMEADO — os cards dentro têm
@@ -242,5 +327,37 @@ export default function FileiraDeCards({
         </button>
       </div>
     </section>
+  );
+}
+
+// Indicador de "página" da fileira, em pílulas — pedido explícito do usuário
+// (2026-09-21): mesma altura pra todas, só a ATIVA muda de cor (não elonga,
+// ver decisão do usuário sobre o estilo). Também clicável (pedido do mesmo
+// dia): cada pílula é um `<button>` que chama `aoClicar(indice)` (=
+// `irParaPagina` em FileiraDeCards) — por isso `aria-label` próprio por
+// pílula em vez do `aria-hidden` de quando era só decorativo, e
+// `aria-current` na ativa pro mesmo padrão de "página atual" de paginação.
+// `total <= 1` (conteúdo cabe sem rolar) não renderiza nada, nunca uma
+// pílula solitária sem sentido (e sem botão fantasma que não rola nada).
+function PilulasDePaginacao({ atual, total, titulo, aoClicar }) {
+  if (total <= 1) return null;
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      {Array.from({ length: total }, (_, indice) => (
+        <button
+          key={indice}
+          type="button"
+          onClick={(evento) => {
+            aoClicar(indice);
+            if (evento.detail > 0) evento.currentTarget.blur();
+          }}
+          aria-label={`Página ${indice + 1} de ${total}: ${titulo}`}
+          aria-current={indice === atual ? 'true' : undefined}
+          className={`h-2 w-8 cursor-pointer rounded-full outline-none transition-colors duration-300 motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-neon ${
+            indice === atual ? 'bg-neon' : 'bg-white/25 hover:bg-white/40'
+          }`}
+        />
+      ))}
+    </div>
   );
 }

@@ -4,8 +4,9 @@ import { IconePlay } from '../player/Icones.jsx';
 
 // Re-exportado: `src/inicio/` não pode importar de `src/player/` direto
 // (fronteira Clean Architecture documentada em paginas/Inicio.jsx, D5 do
-// plano) — `inicio/DestaqueGrande.jsx` reusa o MESMO ícone do CTA "Assistir
-// agora"/"Continuar assistindo" passando por aqui, não duplicando o SVG.
+// plano) — `inicio/CarrosselDestaques.jsx` reusa o MESMO ícone do CTA
+// "Assistir agora"/"Continuar assistindo" passando por aqui, não duplicando o
+// SVG.
 export { IconePlay };
 
 // Miniatura decorativa do episódio — still TMDB do episódio quando existe,
@@ -72,7 +73,12 @@ const ROTULO_VERSAO = {
 //    borda neon — nada aqui recebe clique nem foco de teclado.
 // A ação/estado do episódio vive só como texto na legenda (FaixaDeConteudo,
 // prop `legenda`) ou como overlay sobre a thumb (OverlayDeStatus, `children`)
-// — nunca num <button>/<Link> aninhado DENTRO do card.
+// — nunca num <button>/<Link> aninhado DENTRO do Link/button de navegação
+// (HTML inválido, button/a dentro de button/a). Modo GRADE tem uma exceção
+// controlada pra isso: `sobreposicao` (opcional — menu de ações sobre a
+// miniatura, `components/CartaoContinuarAssistindo.jsx`) entra como IRMÃO do
+// Link/button, nunca como filho — ver bloco de comentário mais abaixo sobre a
+// estrutura "stretched link" do modo grade.
 //
 // `children` vs `legenda`: `children` é tudo que fica DENTRO da caixa
 // recortada (miniatura + overlays sobre ela); `legenda` é sempre a
@@ -88,16 +94,27 @@ const ROTULO_VERSAO = {
 // mesmo `overflow-hidden`, arredondando subpixel de forma independente).
 // Tirar a legenda de cima da miniatura elimina o degradê inteiro.
 //
-// Hover/foco — modo GRADE (pedido do usuário — sem escala): o alvo
-// interativo (`classe`, Link/button) É a moldura de hover — `p-2 -m-2` soma
-// padding e margem negativa pra não deslocar miniatura+legenda, só revelar
-// `hover:bg-surface-hover` maior que os dois juntos quando o mouse passa por
-// cima de QUALQUER um dos dois. `bordaNeon` mora dentro da miniatura e é só
-// indicador de FOCO por teclado (`group-focus-visible/cartao:border-neon`) —
-// fundo sozinho não tem contraste suficiente pra servir de indicador de foco
-// (~1.1:1 entre `surface`/`surface-hover`, abaixo do 3:1 mínimo — CLAUDE.md
-// §4 não permite cortar acessibilidade). Modo LISTA, linha full-width — sem
-// mudança: a caixa inteira (miniatura+legenda) já era o alvo interativo,
+// Hover/foco — modo GRADE (pedido do usuário — sem escala): desde que
+// `sobreposicao` existe, o Link/button de navegação virou uma camada
+// `absolute inset-0` IRMÃ da moldura visual (miniatura+legenda), não mais o
+// próprio elemento que as envolve — mesma estrutura "stretched link" de
+// `components/AnimeCard.jsx`, necessária pra caber um `<button>` de menu sem
+// aninhar em outro elemento interativo (ver comentário logo acima). `p-2
+// -m-2` na moldura visual soma padding e margem negativa pra não deslocar
+// miniatura+legenda, só revelar `bg-surface-hover` maior que os dois juntos —
+// `group-hover/cartao:` funciona porque `:hover` BORBULHA pra ancestrais
+// (o wrapper com `group/cartao` fica em `:hover` sempre que o mouse está
+// sobre QUALQUER descendente, Link/button incluso). `bordaNeon` mora dentro
+// da miniatura e é só indicador de FOCO por teclado — mas usa
+// `group-has-[:focus-visible]/cartao:border-neon` (não `group-focus-visible`,
+// que exigiria o PRÓPRIO wrapper estar focado): `:focus-visible` NÃO
+// borbulha como `:hover`, só `:has()` enxerga o estado de um descendente a
+// partir do ancestral. Fundo sozinho não tem contraste suficiente pra
+// servir de indicador de foco (~1.1:1 entre `surface`/`surface-hover`, abaixo
+// do 3:1 mínimo — CLAUDE.md §4 não permite cortar acessibilidade). Modo
+// LISTA, linha full-width — sem essa estrutura (nenhum chamador precisa de
+// `sobreposicao` ali, ver comentário da função): a caixa inteira
+// (miniatura+legenda) continua sendo o próprio alvo interativo, como antes —
 // `hover:bg-surface-hover` já cobria tudo; só a borda perdeu o gatilho de
 // hover, mesmo motivo de acessibilidade. O alvo fica `outline-none` (foco vem
 // só da borda). `desabilitado` = captura em voo: bloqueia o clique.
@@ -115,6 +132,7 @@ export function CartaoDeEpisodio({
   desabilitado,
   rotuloAcessivel,
   legenda,
+  sobreposicao,
   children,
 }) {
   const emGrade = modo === 'grade';
@@ -126,23 +144,101 @@ export function CartaoDeEpisodio({
   const classeCaixa = `relative flex w-full overflow-hidden bg-surface text-left text-sm ${cor} ${
     emGrade ? 'aspect-[16/9] ' : ''
   }`;
-  // `cor` repetido aqui: no modo grade a legenda mora FORA da caixa acima,
-  // então precisa da própria herança de cor/peso de fonte (ex. o
-  // `font-semibold` do ramo "nunca capturado" chegando até o aviso de
-  // "rótulo não numérico", que não define peso próprio).
-  const classeRaizGrade = `flex w-full flex-col gap-1.5 text-left text-sm ${cor}`;
 
-  if (!para && !aoClicar) {
-    if (emGrade) {
+  // `sobreposicao` (opcional, só modo grade — pedido do usuário quando
+  // `components/CartaoContinuarAssistindo.jsx` ganhou um menu de ações sobre
+  // a miniatura): nó renderizado como IRMÃO do Link/button de navegação,
+  // nunca como filho — mesmo raciocínio de `components/AnimeCard.jsx`
+  // (`sobreposicao` de lá, pro numeral do Top 10). É por isso que o modo
+  // grade abaixo virou uma estrutura de "stretched link" (Link/button
+  // `absolute inset-0`, camada IRMÃ do conteúdo visual, não mais pai dele):
+  // um `<button>` de menu dentro do Link/button original seria HTML inválido
+  // (button aninhado em button/a) — já documentado no topo do arquivo como
+  // regra ("nunca um <button>/<Link> aninhado DENTRO do card").
+  if (emGrade) {
+    // `cor` repetido aqui: a legenda mora FORA da caixa recortada, então
+    // precisa da própria herança de cor/peso de fonte (ex. o
+    // `font-semibold` do ramo "nunca capturado" chegando até o aviso de
+    // "rótulo não numérico", que não define peso próprio).
+    if (!para && !aoClicar) {
       return (
-        <div className={classeRaizGrade}>
+        <div className="relative">
+          <div className={`flex w-full flex-col gap-1.5 text-left text-sm ${cor}`}>
+            <div className={classeCaixa} style={estilo}>
+              {children}
+            </div>
+            {legenda}
+          </div>
+          {sobreposicao}
+        </div>
+      );
+    }
+
+    // Indicador de FOCO por teclado (ver bloco de comentário no topo do
+    // arquivo, motivo de contraste) — `group-has-[:focus-visible]/cartao`
+    // (não `group-focus-visible/cartao`, que exigiria o PRÓPRIO elemento
+    // `group/cartao` estar focado): o Link/button de navegação agora é IRMÃO
+    // do wrapper `group/cartao`, não o próprio wrapper, e `:focus-visible`
+    // não borbulha pra ancestrais como `:hover` borbulha — só `:has()`
+    // enxerga o estado de um descendente a partir do ancestral.
+    const bordaNeon = (
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-2xl border-4 border-transparent transition-colors duration-300 ease-out group-has-[:focus-visible]/cartao:border-neon motion-reduce:transition-none"
+      />
+    );
+    // Moldura de hover única cobrindo miniatura+legenda — `p-2 -m-2` soma
+    // padding e margem negativa pra não deslocar o conteúdo, só revelar
+    // `bg-surface-hover` maior que os dois juntos quando o hover dispara
+    // (`:hover` SIM borbulha pra ancestrais, então `group-hover/cartao`
+    // funciona normalmente aqui mesmo com o Link/button agora sendo irmão,
+    // não pai). Sem escala (removida a pedido do usuário): só o fundo reage.
+    // `w-[calc(100%+1rem)]` no lugar de `w-full`: com largura EXPLÍCITA
+    // (100%), a margem negativa só EMPURRA a caixa pra esquerda em vez de
+    // esticar ela pros dois lados (isso só aconteceria com `width:auto`, que
+    // o grid estica sozinho) — na última coluna da grade a caixa ficava 8px
+    // curta do fim de verdade, destoando da barra de ações acima. Somando o
+    // `1rem` (as duas margens de 0.5rem) na largura, a caixa volta a
+    // transbordar 8px pros dois lados igualmente (mesmo efeito do
+    // `AnimeCard.jsx`), sem deslocar o conjunto pra esquerda.
+    const classeVisual =
+      `relative flex w-[calc(100%+1rem)] flex-col gap-1.5 text-left text-sm ${cor} ` +
+      'p-2 -m-2 transition-colors duration-300 ease-out group-hover/cartao:bg-surface-hover motion-reduce:transition-none';
+
+    return (
+      <div className="group/cartao relative">
+        <div className={classeVisual}>
           <div className={classeCaixa} style={estilo}>
             {children}
           </div>
           {legenda}
+          {bordaNeon}
         </div>
-      );
-    }
+        {para ? (
+          <Link
+            to={para}
+            state={estadoDeRota}
+            className="absolute inset-0 cursor-pointer outline-none"
+            aria-label={rotuloAcessivel}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={aoClicar}
+            disabled={desabilitado}
+            aria-label={rotuloAcessivel}
+            className="absolute inset-0 cursor-pointer outline-none disabled:cursor-progress"
+          />
+        )}
+        {sobreposicao}
+      </div>
+    );
+  }
+
+  // Lista: sem mudança — a caixa inteira (`classeCaixa`) é o alvo interativo,
+  // `children` e `legenda` entram juntos nela. Sem suporte a `sobreposicao`
+  // (nenhum chamador em modo lista precisa disso hoje).
+  if (!para && !aoClicar) {
     return (
       <div className={classeCaixa} style={estilo}>
         {children}
@@ -156,60 +252,9 @@ export function CartaoDeEpisodio({
   const bordaNeon = (
     <span
       aria-hidden="true"
-      className={`pointer-events-none absolute inset-0 border-transparent transition-colors duration-300 ease-out group-focus-visible/cartao:border-neon motion-reduce:transition-none ${
-        emGrade ? 'rounded-2xl border-4' : 'rounded-lg border-2'
-      }`}
+      className="pointer-events-none absolute inset-0 rounded-lg border-2 border-transparent transition-colors duration-300 ease-out group-focus-visible/cartao:border-neon motion-reduce:transition-none"
     />
   );
-
-  if (emGrade) {
-    // Moldura de hover única cobrindo miniatura+legenda — `p-2 -m-2` soma
-    // padding e margem negativa pra não deslocar o conteúdo, só revelar
-    // `bg-surface-hover` maior que os dois juntos quando o hover dispara. Sem
-    // escala (removida a pedido do usuário): só o fundo reage.
-    // `w-[calc(100%+1rem)]` no lugar do `w-full` de `classeRaizGrade`: com
-    // largura EXPLÍCITA (100%), a margem negativa só EMPURRA a caixa pra
-    // esquerda em vez de esticar ela pros dois lados (isso só aconteceria com
-    // `width:auto`, que o grid estica sozinho) — na última coluna da grade a
-    // caixa ficava 8px curta do fim de verdade, destoando da barra de ações
-    // acima. Somando o `1rem` (as duas margens de 0.5rem) na largura, a caixa
-    // volta a transbordar 8px pros dois lados igualmente (mesmo efeito do
-    // `AnimeCard.jsx`), sem deslocar o conjunto pra esquerda.
-    const classe =
-      `group/cartao relative flex w-[calc(100%+1rem)] flex-col gap-1.5 text-left text-sm ${cor} ` +
-      'cursor-pointer p-2 -m-2 outline-none transition-colors duration-300 ease-out ' +
-      'hover:bg-surface-hover motion-reduce:transition-none';
-    const miolo = (
-      <>
-        <div className={classeCaixa} style={estilo}>
-          {children}
-        </div>
-        {legenda}
-        {bordaNeon}
-      </>
-    );
-    if (para) {
-      return (
-        <Link to={para} state={estadoDeRota} className={classe}>
-          {miolo}
-        </Link>
-      );
-    }
-    return (
-      <button
-        type="button"
-        onClick={aoClicar}
-        disabled={desabilitado}
-        aria-label={rotuloAcessivel}
-        className={`${classe} disabled:cursor-progress`}
-      >
-        {miolo}
-      </button>
-    );
-  }
-
-  // Lista: sem mudança — a caixa inteira (`classeCaixa`) é o alvo interativo,
-  // `children` e `legenda` entram juntos nela.
   const classe = `group/cartao ${classeCaixa} cursor-pointer outline-none transition-colors duration-200 hover:bg-surface-hover`;
   if (para) {
     return (
@@ -607,7 +652,10 @@ export default function LinhaDeEpisodio({
             trailing={!emGrade && episodio.assistido_em ? <BadgeAssistido /> : null}
             sinopse={<SinopseEpisodio sinopse={sinopse} />}
             extra={
-              percentualAssistido != null ? (
+              // Modo lista continua com a barra JUNTO do texto (não há
+              // miniatura recortada pra sobrepor — ver comentário da barra
+              // abaixo, só modo grade).
+              !emGrade && percentualAssistido != null ? (
                 <span className="flex items-center gap-2">
                   <span
                     role="progressbar"
@@ -626,6 +674,10 @@ export default function LinhaDeEpisodio({
                     faltam {minutosRestantes} min
                   </span>
                 </span>
+              ) : emGrade && minutosRestantes != null ? (
+                <span className="text-xs font-semibold text-ink-muted">
+                  faltam {minutosRestantes} min
+                </span>
               ) : null
             }
           />
@@ -635,6 +687,23 @@ export default function LinhaDeEpisodio({
         {emGrade && episodio.assistido_em && <ScrimAssistido />}
         <IndicadorDePlay emGrade={emGrade} temThumb={!!thumb} />
         {emGrade && episodio.assistido_em && <BadgeAssistido flutuante />}
+        {/* Barra de progresso estilo Netflix sobre a própria miniatura — só
+            modo grade (a caixa 16:9 recortada existe só ali, ver
+            `classeCaixa`/`MiniaturaDoEpisodio` acima; modo lista mantém a
+            barra ao lado do texto, no `extra` acima). Mesmo tratamento de
+            `components/CartaoContinuarAssistindo.jsx`, 2026-09-21. */}
+        {emGrade && percentualAssistido != null && (
+          <span
+            role="progressbar"
+            aria-label="progresso de reprodução"
+            aria-valuenow={percentualAssistido}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="absolute inset-x-0 bottom-0 z-10 h-1 bg-white/25"
+          >
+            <span style={{ width: `${percentualAssistido}%` }} className="block h-full bg-neon" />
+          </span>
+        )}
       </CartaoDeEpisodio>
     );
   }

@@ -28,6 +28,10 @@ export function listarProximaTemporada() {
   return requisitar('/api/animes/proxima-temporada');
 }
 
+export function listarNovosLancamentos() {
+  return requisitar('/api/animes/novos-lancamentos');
+}
+
 export function listarFileirasTematicas() {
   return requisitar('/api/animes/fileiras-tematicas');
 }
@@ -97,6 +101,23 @@ export function marcarTodosAssistidos(animeId, versao) {
   return requisitar(`/api/admin/animes/${animeId}/marcar-todos-assistidos${query}`, {
     metodo: 'POST',
   }).then((resultado) => {
+    invalidar('episodios');
+    return resultado;
+  });
+}
+
+// "Marcar como assistido" do menu de `CartaoContinuarAssistindo.jsx` (Home)
+// — mesma semântica de `marcarTodosAssistidos` (cria sem baixar quando o
+// episódio nunca foi capturado, `api/servicos/jobs.py::marcar_episodio_
+// assistido`), restrita a UM número: pedido explícito do usuário
+// (2026-09-21) pra não marcar o anime inteiro a partir do card da Home, que
+// mostra só o próximo episódio.
+export function marcarEpisodioAssistido(animeId, numero, versao) {
+  const query = versao ? `?versao=${encodeURIComponent(versao)}` : '';
+  return requisitar(
+    `/api/admin/animes/${animeId}/episodios/${numero}/marcar-assistido${query}`,
+    { metodo: 'POST' }
+  ).then((resultado) => {
     invalidar('episodios');
     return resultado;
   });
