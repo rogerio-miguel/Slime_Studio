@@ -972,15 +972,14 @@ export default function Inicio({ jobsPorEpisodio }) {
               // Sem padding horizontal nem `max-w` de propósito — o carrossel
               // é full-bleed (encosta nas bordas da viewport); os estados de
               // carregando/erro do feed seguem na coluna `max-w-6xl`.
-              // `-mb-24` (6rem — reduzido de `-mb-32`/8rem a pedido do usuário,
-              // 2026-09-20): puxa a fileira seguinte pra dentro do fade da base
-              // do hero, deixando o título dela + o topo dos cards "espiar" sob
-              // o gradiente (padrão AnimeFire). O valor anterior (8rem) deixava
-              // o título "Próximas estreias" quase colado nas bolinhas de
-              // paginação (`lg:bottom-[14.3vh]`, ~8px de distância) — poluição
-              // visual reportada pelo usuário depois de checar ao vivo no
-              // navegador. 6rem abre mais respiro entre as duas camadas sem
-              // eliminar o peek. Pré-requisito pro título não sumir: o <div>
+              // `-mb-26` (6.5rem — reduzido de `-mb-28`/7rem a pedido do
+              // usuário, 2026-09-23): puxa a fileira seguinte pra dentro do
+              // fade da base do hero, deixando o título dela + o topo dos
+              // cards "espiar" sob o gradiente (padrão AnimeFire), com um
+              // pouco mais de respiro entre as bolinhas de paginação
+              // (`lg:bottom-[14.3vh]`, inalterada) e o título "Próximas
+              // estreias" do que o valor anterior. Pré-requisito pro título
+              // não sumir: o <div>
               // das fileiras abaixo tem `relative z-10` — sem isso o `<h2>` da
               // primeira fileira (`position:static`) fica ATRÁS do banner/
               // gradiente do slide, que são `position:absolute` e pintam
@@ -988,7 +987,7 @@ export default function Inicio({ jobsPorEpisodio }) {
               // hero e fica legível. O gradiente é `pointer-events-none`,
               // então a sobreposição não rouba clique dos cards. Casado com
               // `pt-0` no <div> das fileiras.
-              <section className="-mt-22 -mb-28">
+              <section className="-mt-22 -mb-26">
                 <CarrosselDestaques
                   itens={emAlta.dados}
                   aoMaterializar={materializarEIrPara}
