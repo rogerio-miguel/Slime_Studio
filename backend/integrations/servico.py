@@ -32,7 +32,7 @@ sem introduzir Redis nem um novo padrão de infraestrutura.
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, replace
 
 import requests
@@ -87,6 +87,9 @@ logger = logging.getLogger(__name__)
 # é cancelável pelo `wait_for`).
 _TIMEOUT_POR_PROVEDOR_S: float = 8
 _TTL_EM_ALTA_S = 3600
+# Agenda de exibição muda tão rápido quanto "em alta" (episódio novo a
+# qualquer hora) — mesmo TTL.
+_TTL_NOVOS_LANCAMENTOS_S = 3600
 # Roster de temporada muda devagar (estreias/adiamentos, não trending diário) —
 # TTL mais folgado que o de "em alta".
 _TTL_PROXIMA_TEMPORADA_S = 6 * 3600
@@ -187,6 +190,11 @@ _lock_em_alta = asyncio.Lock()
 
 # `(expira_em_monotonic, itens)` — `None` até o primeiro sucesso. Cache/lock
 # próprios (independentes dos de "em alta"): é outro feed, outro TTL.
+_cache_novos_lancamentos: tuple[float, list[AnimeEmAlta]] | None = None
+_lock_novos_lancamentos = asyncio.Lock()
+
+# `(expira_em_monotonic, itens)` — `None` até o primeiro sucesso. Cache/lock
+# próprios (independentes dos de "em alta"): é outro feed, outro TTL.
 _cache_proxima_temporada: tuple[float, list[AnimeEmAlta]] | None = None
 _lock_proxima_temporada = asyncio.Lock()
 
@@ -204,6 +212,19 @@ _locks_fileiras_tematicas: dict[str, asyncio.Lock] = {
 _fileiras_por_chave: dict[str, FileiraTematica] = {
     fileira.chave: fileira for fileira in FILEIRAS_TEMATICAS
 }
+
+# Referência FORTE às tasks de revalidação em segundo plano (stale-while-
+# revalidate, ver `_servir_feed_com_stale_revalidate` abaixo) — o loop do
+# asyncio só guarda referência FRACA de uma task (`asyncio.create_task`),
+# então sem isto ela pode ser coletada pelo GC no meio da execução (armadilha
+# documentada da stdlib). `add_done_callback` remove sozinho ao terminar.
+_tarefas_de_revalidacao_em_segundo_plano: set[asyncio.Task] = set()
+
+
+def _agendar_revalidacao_em_segundo_plano(corrotina: Coroutine[None, None, None]) -> None:
+    tarefa = asyncio.create_task(corrotina)
+    _tarefas_de_revalidacao_em_segundo_plano.add(tarefa)
+    tarefa.add_done_callback(_tarefas_de_revalidacao_em_segundo_plano.discard)
 
 # Memo de processo do overlay de banner (D4): `(slug do título base, ano) ->
 # (expira_em_monotonic, ArteDeAnime | None)`. Com cache negativo — título que
@@ -565,98 +586,212 @@ async def _buscar_em_cadeia[T](
     ) from ultimo_erro
 
 
-async def listar_em_alta() -> list[AnimeEmAlta]:
-    """Feed "lançamentos em alta", cacheado em memória por `_TTL_EM_ALTA_S`.
-    Percorre só `PROVEDORES_DE_FEED` (AniList; Kitsu de fora — ver o comentário
-    da tupla em `registro.py`). Propaga `FalhaDeMetadados` se todos falharem —
-    nunca devolve `[]` silenciosamente para não confundir "sem lançamentos" com
-    "provedores fora do ar" (CLAUDE.md: erro nunca silencioso).
-
-    Checagem de cache em duas etapas (double-checked locking): a primeira,
-    fora do `_lock_em_alta`, evita contenção no caminho comum de cache-hit;
-    a segunda, já dentro do lock, evita que uma corrotina que esperou o lock
-    refaça uma busca que outra corrotina concorrente acabou de completar.
-    """
-    global _cache_em_alta
-
-    if _cache_em_alta is not None:
-        expira_em, itens = _cache_em_alta
+# --- stale-while-revalidate genérico dos 4 feeds cacheados da Home ---
+#
+# Antes (double-checked locking puro): cache expirado bloqueava a requisição
+# que calhasse de chegar naquele instante até a busca real terminar — na
+# fileira temática (10 queries AniList + overlay TMDB por item) isso podia
+# ser bem lento numa cache fria. Agora: cache expirado devolve o dado ANTIGO
+# na hora e dispara UMA revalidação em segundo plano (guardada pelo próprio
+# lock — `lock.locked()` evita empilhar tasks quando várias requisições
+# chegam juntas logo após o TTL vencer); ninguém mais paga a latência da
+# AniList/TMDB só por calhar de bater a rota nesse instante. Cache-MISS (1ª
+# busca de sempre, sem dado velho pra servir) segue bloqueante — não tem
+# alternativa.
+#
+# Cada um dos 4 feeds mantém seu PRÓPRIO armazenamento (tupla de módulo para
+# em-alta/novos-lançamentos/próxima-temporada, dict por chave para fileiras
+# temáticas — decisão anterior já documentada acima, não migrada pra um cache
+# único); só a MECÂNICA de revalidação é compartilhada aqui via `obter_cache`/
+# `gravar_cache` (closures de quem chama).
+async def _servir_feed_com_stale_revalidate(
+    obter_cache: Callable[[], tuple[float, list[AnimeEmAlta]] | None],
+    gravar_cache: Callable[[list[AnimeEmAlta]], None],
+    lock: asyncio.Lock,
+    buscar_sem_cache: Callable[[], Awaitable[list[AnimeEmAlta]]],
+    descricao: str,
+) -> list[AnimeEmAlta]:
+    entrada = obter_cache()
+    if entrada is not None:
+        expira_em, itens = entrada
         if time.monotonic() < expira_em:
             return itens
-
-    async with _lock_em_alta:
-        if _cache_em_alta is not None:
-            expira_em, itens = _cache_em_alta
-            if time.monotonic() < expira_em:
-                return itens
-
-        ultimo_erro: Exception | None = None
-        for provedor in PROVEDORES_DE_FEED:
-            try:
-                itens = await _chamar(provedor, provedor.listar_em_alta)
-            except _ERROS_DE_PROVEDOR as excecao:
-                logger.log(
-                    _nivel_de_log_de_falha(excecao),
-                    "provedor de metadados %r falhou ao listar 'em alta': %s",
-                    provedor.nome,
-                    excecao,
+        if not lock.locked():
+            _agendar_revalidacao_em_segundo_plano(
+                _revalidar_em_segundo_plano(
+                    obter_cache, gravar_cache, lock, buscar_sem_cache, descricao
                 )
-                ultimo_erro = excecao
-                continue
+            )
+        return itens
 
-            itens = await _sobrepor_arte_em_lote(itens)
-            _cache_em_alta = (time.monotonic() + _TTL_EM_ALTA_S, itens)
-            return itens
+    async with lock:
+        entrada = obter_cache()
+        if entrada is not None and time.monotonic() < entrada[0]:
+            return entrada[1]
+        itens = await buscar_sem_cache()
+        gravar_cache(itens)
+        return itens
 
-        raise FalhaDeMetadados(
-            "todos os provedores de metadados falharam ao listar 'em alta'"
-        ) from ultimo_erro
+
+async def _revalidar_em_segundo_plano(
+    obter_cache: Callable[[], tuple[float, list[AnimeEmAlta]] | None],
+    gravar_cache: Callable[[list[AnimeEmAlta]], None],
+    lock: asyncio.Lock,
+    buscar_sem_cache: Callable[[], Awaitable[list[AnimeEmAlta]]],
+    descricao: str,
+) -> None:
+    async with lock:
+        # Outra revalidação (ou a busca bloqueante de cache-miss) pode ter
+        # corrido enquanto esperávamos o lock — não bate na AniList à toa se
+        # já resolveu.
+        entrada = obter_cache()
+        if entrada is not None and time.monotonic() < entrada[0]:
+            return
+        try:
+            itens = await buscar_sem_cache()
+        except FalhaDeMetadados as excecao:
+            # Falha aqui NUNCA propaga: ninguém está esperando por esta task
+            # (o chamador original já recebeu o dado stale). Mantém o cache
+            # antigo servindo até a próxima tentativa.
+            logger.warning(
+                "revalidação em segundo plano de %r falhou, mantendo cache antigo: %s",
+                descricao,
+                excecao,
+            )
+            return
+        gravar_cache(itens)
+
+
+async def _buscar_em_alta_sem_cache() -> list[AnimeEmAlta]:
+    ultimo_erro: Exception | None = None
+    for provedor in PROVEDORES_DE_FEED:
+        try:
+            itens = await _chamar(provedor, provedor.listar_em_alta)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de metadados %r falhou ao listar 'em alta': %s",
+                provedor.nome,
+                excecao,
+            )
+            ultimo_erro = excecao
+            continue
+        return await _sobrepor_arte_em_lote(itens)
+
+    raise FalhaDeMetadados(
+        "todos os provedores de metadados falharam ao listar 'em alta'"
+    ) from ultimo_erro
+
+
+async def listar_em_alta() -> list[AnimeEmAlta]:
+    """Feed "lançamentos em alta", cacheado em memória por `_TTL_EM_ALTA_S`
+    com stale-while-revalidate (ver `_servir_feed_com_stale_revalidate`
+    acima). Percorre só `PROVEDORES_DE_FEED` (AniList; Kitsu de fora — ver o
+    comentário da tupla em `registro.py`). Propaga `FalhaDeMetadados` só no
+    cache-miss (1ª busca) se todos os provedores falharem — nunca devolve
+    `[]` silenciosamente para não confundir "sem lançamentos" com
+    "provedores fora do ar" (CLAUDE.md: erro nunca silencioso)."""
+
+    def _obter() -> tuple[float, list[AnimeEmAlta]] | None:
+        return _cache_em_alta
+
+    def _gravar(itens: list[AnimeEmAlta]) -> None:
+        global _cache_em_alta
+        _cache_em_alta = (time.monotonic() + _TTL_EM_ALTA_S, itens)
+
+    return await _servir_feed_com_stale_revalidate(
+        _obter, _gravar, _lock_em_alta, _buscar_em_alta_sem_cache, "em alta"
+    )
+
+
+async def _buscar_novos_lancamentos_sem_cache() -> list[AnimeEmAlta]:
+    ultimo_erro: Exception | None = None
+    for provedor in PROVEDORES_DE_FEED:
+        try:
+            itens = await _chamar(provedor, provedor.listar_novos_lancamentos)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de metadados %r falhou ao listar 'novos lançamentos': %s",
+                provedor.nome,
+                excecao,
+            )
+            ultimo_erro = excecao
+            continue
+        return await _sobrepor_arte_em_lote(itens)
+
+    raise FalhaDeMetadados(
+        "todos os provedores de metadados falharam ao listar 'novos lançamentos'"
+    ) from ultimo_erro
+
+
+async def listar_novos_lancamentos() -> list[AnimeEmAlta]:
+    """Feed "novos lançamentos" (um anime por card, o mais recente primeiro),
+    cacheado em memória por `_TTL_NOVOS_LANCAMENTOS_S` com stale-while-
+    revalidate (ver `_servir_feed_com_stale_revalidate`). Propaga
+    `FalhaDeMetadados` só no cache-miss (1ª busca) se todos falharem — nunca
+    devolve `[]` silenciosamente para não confundir "nada saiu ainda" com
+    "provedores fora do ar" (CLAUDE.md: erro nunca silencioso)."""
+
+    def _obter() -> tuple[float, list[AnimeEmAlta]] | None:
+        return _cache_novos_lancamentos
+
+    def _gravar(itens: list[AnimeEmAlta]) -> None:
+        global _cache_novos_lancamentos
+        _cache_novos_lancamentos = (time.monotonic() + _TTL_NOVOS_LANCAMENTOS_S, itens)
+
+    return await _servir_feed_com_stale_revalidate(
+        _obter,
+        _gravar,
+        _lock_novos_lancamentos,
+        _buscar_novos_lancamentos_sem_cache,
+        "novos lançamentos",
+    )
+
+
+async def _buscar_proxima_temporada_sem_cache() -> list[AnimeEmAlta]:
+    ultimo_erro: Exception | None = None
+    for provedor in PROVEDORES_DE_FEED:
+        try:
+            itens = await _chamar(provedor, provedor.listar_proxima_temporada)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de metadados %r falhou ao listar 'próxima temporada': %s",
+                provedor.nome,
+                excecao,
+            )
+            ultimo_erro = excecao
+            continue
+        return await _sobrepor_arte_em_lote(itens)
+
+    raise FalhaDeMetadados(
+        "todos os provedores de metadados falharam ao listar 'próxima temporada'"
+    ) from ultimo_erro
 
 
 async def listar_proxima_temporada() -> list[AnimeEmAlta]:
     """Feed "próxima temporada", cacheado em memória por
-    `_TTL_PROXIMA_TEMPORADA_S`. Mesma mecânica de `listar_em_alta` (cache/lock
-    próprios, double-checked locking, só `PROVEDORES_DE_FEED`): propaga
-    `FalhaDeMetadados` se todos falharem — nunca devolve `[]` silenciosamente
-    para não confundir "temporada ainda sem anúncios" com "provedores fora do
-    ar" (CLAUDE.md: erro nunca silencioso)."""
-    global _cache_proxima_temporada
+    `_TTL_PROXIMA_TEMPORADA_S` com stale-while-revalidate (ver
+    `_servir_feed_com_stale_revalidate`). Propaga `FalhaDeMetadados` só no
+    cache-miss (1ª busca) se todos falharem — nunca devolve `[]`
+    silenciosamente para não confundir "temporada ainda sem anúncios" com
+    "provedores fora do ar" (CLAUDE.md: erro nunca silencioso)."""
 
-    if _cache_proxima_temporada is not None:
-        expira_em, itens = _cache_proxima_temporada
-        if time.monotonic() < expira_em:
-            return itens
+    def _obter() -> tuple[float, list[AnimeEmAlta]] | None:
+        return _cache_proxima_temporada
 
-    async with _lock_proxima_temporada:
-        if _cache_proxima_temporada is not None:
-            expira_em, itens = _cache_proxima_temporada
-            if time.monotonic() < expira_em:
-                return itens
+    def _gravar(itens: list[AnimeEmAlta]) -> None:
+        global _cache_proxima_temporada
+        _cache_proxima_temporada = (time.monotonic() + _TTL_PROXIMA_TEMPORADA_S, itens)
 
-        ultimo_erro: Exception | None = None
-        for provedor in PROVEDORES_DE_FEED:
-            try:
-                itens = await _chamar(provedor, provedor.listar_proxima_temporada)
-            except _ERROS_DE_PROVEDOR as excecao:
-                logger.log(
-                    _nivel_de_log_de_falha(excecao),
-                    "provedor de metadados %r falhou ao listar 'próxima temporada': %s",
-                    provedor.nome,
-                    excecao,
-                )
-                ultimo_erro = excecao
-                continue
-
-            itens = await _sobrepor_arte_em_lote(itens)
-            _cache_proxima_temporada = (
-                time.monotonic() + _TTL_PROXIMA_TEMPORADA_S,
-                itens,
-            )
-            return itens
-
-        raise FalhaDeMetadados(
-            "todos os provedores de metadados falharam ao listar 'próxima temporada'"
-        ) from ultimo_erro
+    return await _servir_feed_com_stale_revalidate(
+        _obter,
+        _gravar,
+        _lock_proxima_temporada,
+        _buscar_proxima_temporada_sem_cache,
+        "próxima temporada",
+    )
 
 
 async def listar_fileira_tematica(chave: str) -> list[AnimeEmAlta]:
@@ -747,30 +882,22 @@ async def _listar_com_cache(
 ) -> list[AnimeEmAlta]:
     """Cache-com-TTL genérico por chave, usado SÓ pelas fileiras temáticas
     (`_cache_fileiras_tematicas`/`_locks_fileiras_tematicas`/
-    `_TTL_FILEIRA_TEMATICA_S`) — `listar_em_alta`/`listar_proxima_temporada`
-    deliberadamente NÃO foram migradas para este helper: são caminho crítico
-    da Home e o risco de regressão não compensa nesta fatia, mesmo que isso
-    duplique um pouco a lógica de cache-com-TTL já escrita ali.
+    `_TTL_FILEIRA_TEMATICA_S`) — mesma mecânica de stale-while-revalidate de
+    `_servir_feed_com_stale_revalidate` (em-alta/novos-lançamentos/próxima-
+    temporada usam a mesma função diretamente; aqui é via este wrapper porque
+    o armazenamento é POR `chave`, não uma tupla de módulo — lock também é
+    por `chave`, então um cache-miss numa fileira nunca bloqueia a busca de
+    outra)."""
 
-    Mesmo double-checked locking dos dois: primeira checagem fora do lock
-    (evita contenção no cache-hit comum), segunda já dentro do lock — mas o
-    lock aqui é POR `chave`, não um lock único do módulo, então um cache-miss
-    numa fileira nunca bloqueia a busca de outra.
-    """
-    if chave in _cache_fileiras_tematicas:
-        expira_em, itens = _cache_fileiras_tematicas[chave]
-        if time.monotonic() < expira_em:
-            return itens
+    def _obter() -> tuple[float, list[AnimeEmAlta]] | None:
+        return _cache_fileiras_tematicas.get(chave)
 
-    async with _locks_fileiras_tematicas[chave]:
-        if chave in _cache_fileiras_tematicas:
-            expira_em, itens = _cache_fileiras_tematicas[chave]
-            if time.monotonic() < expira_em:
-                return itens
-
-        itens = await buscar()
+    def _gravar(itens: list[AnimeEmAlta]) -> None:
         _cache_fileiras_tematicas[chave] = (time.monotonic() + _TTL_FILEIRA_TEMATICA_S, itens)
-        return itens
+
+    return await _servir_feed_com_stale_revalidate(
+        _obter, _gravar, _locks_fileiras_tematicas[chave], buscar, f"fileira temática {chave!r}"
+    )
 
 
 # --- overlay de arte (TMDB, PLANO_ARTE_TMDB.md D4) ---
