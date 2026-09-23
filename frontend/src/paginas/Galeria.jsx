@@ -6,6 +6,7 @@ import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
+import SeletorEmMenu from '../components/SeletorEmMenu.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 import { agruparEmFranquias } from '../inicio/franquia.js';
@@ -24,12 +25,6 @@ const ROTULOS_STATUS_LANCAMENTO = {
   hiato: 'Em hiato',
 };
 
-// Classe compartilhada pelos três <select> do filtro/ordenação — mesmo padrão
-// visual de player/SeletorDePreset.jsx (único <select> já existente no app).
-const CLASSE_SELECT =
-  'rounded-md border border-border-chrome bg-[#222] px-3 py-1.5 text-sm text-white outline-none transition-colors hover:bg-[#2a2a2a] focus-visible:border-neon';
-const CLASSE_LABEL_FILTRO = 'text-xs font-semibold uppercase tracking-wide text-ink-muted';
-
 // Poll leve pós-carga (`listarAnimes({aquecer:true})`, abaixo): a sondagem da
 // fonte real e o aquecimento de `status_lancamento` que `?aquecer=true`
 // dispara são fire-and-forget — o resultado entra no banco só para a PRÓXIMA
@@ -46,30 +41,12 @@ const CLASSE_LABEL_FILTRO = 'text-xs font-semibold uppercase tracking-wide text-
 const _INTERVALO_POLL_AQUECIMENTO_MS = 4000;
 const _MAX_TENTATIVAS_POLL_AQUECIMENTO = 16;
 
-// Instante em ms de `proximo_ep_em`, ou `null` quando ausente/inválido —
-// usado só pela ordenação "Próximo episódio" (empurra itens sem valor pro
-// fim). `Number.isNaN` cobre string ISO malformada sem derrubar o sort.
-function instanteDoProximoEpisodio(anime) {
-  if (!anime.proximo_ep_em) return null;
-  const instante = new Date(anime.proximo_ep_em).getTime();
-  return Number.isNaN(instante) ? null : instante;
-}
-
-function compararPorProximoEpisodio(a, b) {
-  const instanteA = instanteDoProximoEpisodio(a);
-  const instanteB = instanteDoProximoEpisodio(b);
-  if (instanteA == null && instanteB == null) return 0;
-  if (instanteA == null) return 1; // sem valor sempre por último
-  if (instanteB == null) return -1;
-  return instanteA - instanteB; // mais próximo (menor instante) primeiro
-}
-
-// Nunca muta `lista` (mesma convenção de inicio/fileiras.js) — devolve
-// sempre uma cópia nova, mesmo pra `criterio === 'titulo'`.
-function ordenarAnimes(lista, criterio) {
-  const copia = [...lista];
-  if (criterio === 'proximo_episodio') return copia.sort(compararPorProximoEpisodio);
-  return copia.sort((a, b) => a.titulo.localeCompare(b.titulo, 'pt-BR'));
+// Ordem fixa da grade — sem dropdown de ordenação (removido a pedido do
+// usuário: com filtro de status/assistido já cobrindo o caso de uso, o
+// dropdown não agregava nada). Nunca muta `lista` (mesma convenção de
+// inicio/fileiras.js) — devolve sempre uma cópia nova.
+function ordenarPorTitulo(lista) {
+  return [...lista].sort((a, b) => a.titulo.localeCompare(b.titulo, 'pt-BR'));
 }
 
 // Rota "/animes" — catálogo completo. Sem cadastro manual aqui: o catálogo
@@ -97,8 +74,7 @@ function ordenarAnimes(lista, criterio) {
 export default function Galeria() {
   const idMeuCatalogo = useId();
   const idVideosLocais = useId();
-  const idFiltroStatus = useId();
-  const idOrdenacao = useId();
+  const idFiltro = useId();
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
@@ -169,21 +145,43 @@ export default function Galeria() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aquecendo]);
 
-  const [statusSelecionado, setStatusSelecionado] = useState('');
-  const [ordenacao, setOrdenacao] = useState('titulo');
+  const [filtroSelecionado, setFiltroSelecionado] = useState('');
 
   // Opções construídas a partir do catálogo já carregado — nunca hardcoded:
   // um status que não aparece em nenhum anime não vira opção morta no
-  // dropdown. Rótulo ordena as opções (não a chave crua).
+  // dropdown. Rótulo ordena as opções (não a chave crua). `finalizado`
+  // excluído a pedido do usuário — maioria do catálogo cai nesse status, o
+  // filtro quase não filtrava nada.
   const statusDisponiveis = useMemo(() => {
     const encontrados = new Set();
     for (const anime of animes ?? []) {
-      if (anime.status_lancamento) encontrados.add(anime.status_lancamento);
+      if (anime.status_lancamento && anime.status_lancamento !== 'finalizado') {
+        encontrados.add(anime.status_lancamento);
+      }
     }
     return [...encontrados].sort((a, b) =>
       (ROTULOS_STATUS_LANCAMENTO[a] ?? a).localeCompare(ROTULOS_STATUS_LANCAMENTO[b] ?? b, 'pt-BR')
     );
   }, [animes]);
+
+  // Opções do dropdown "Filtrar" (SeletorEmMenu) — um único dropdown pra dois
+  // eixos diferentes (status_lancamento × assistido, pedido explícito do
+  // usuário: queria os dois juntos, não dois dropdowns separados), por isso o
+  // `valor` de cada opção carrega um prefixo (`status:`/`assistido:`) que
+  // `animesExibidos` usa pra saber qual filtro aplicar — os dois eixos não se
+  // combinam mais (selecionar um substitui o outro, mesmo dropdown).
+  const opcoesFiltro = useMemo(
+    () => [
+      { valor: '', rotulo: 'Todos' },
+      ...statusDisponiveis.map((status) => ({
+        valor: `status:${status}`,
+        rotulo: ROTULOS_STATUS_LANCAMENTO[status] ?? status,
+      })),
+      { valor: 'assistido:sim', rotulo: 'Assistidos' },
+      { valor: 'assistido:nao', rotulo: 'Não assistidos' },
+    ],
+    [statusDisponiveis]
+  );
 
   // Agrupamento por franquia (Fase 5): 1 card por `serie_ancora` (fallback slug),
   // representado pela última temporada, com badge/gêneros/status agregados de
@@ -191,9 +189,11 @@ export default function Galeria() {
   // só ganhou `serie_ancora`/`numero_temporada`, a lista é pequena (uso pessoal).
   const franquias = useMemo(() => agruparEmFranquias(animes ?? []), [animes]);
 
-  // Busca -> status -> ordenação, sempre client-side sobre as franquias já
-  // agrupadas (sem chamada de API nova). Cada filtro bate se QUALQUER
-  // temporada da franquia bate.
+  // Busca -> filtro -> ordem fixa por título, sempre client-side sobre as
+  // franquias já agrupadas (sem chamada de API nova). `filtroSelecionado`
+  // decide o eixo pelo prefixo (ver `opcoesFiltro` acima): status bate se
+  // QUALQUER temporada da franquia bate; assistido usa o agregado da
+  // franquia inteira (`franquia.assistido`, inicio/franquia.js).
   const animesExibidos = useMemo(() => {
     let lista = franquias;
     if (termoBuscaNormalizado) {
@@ -203,11 +203,15 @@ export default function Galeria() {
         )
       );
     }
-    if (statusSelecionado) {
-      lista = lista.filter((franquia) => franquia.statusDaFranquia.includes(statusSelecionado));
+    if (filtroSelecionado.startsWith('status:')) {
+      const status = filtroSelecionado.slice('status:'.length);
+      lista = lista.filter((franquia) => franquia.statusDaFranquia.includes(status));
+    } else if (filtroSelecionado.startsWith('assistido:')) {
+      const assistido = filtroSelecionado.slice('assistido:'.length) === 'sim';
+      lista = lista.filter((franquia) => franquia.assistido === assistido);
     }
-    return ordenarAnimes(lista, ordenacao);
-  }, [franquias, termoBuscaNormalizado, statusSelecionado, ordenacao]);
+    return ordenarPorTitulo(lista);
+  }, [franquias, termoBuscaNormalizado, filtroSelecionado]);
 
   const [animeParaRemover, setAnimeParaRemover] = useState(null);
   const [removendo, setRemovendo] = useState(false);
@@ -272,22 +276,39 @@ export default function Galeria() {
           {/* Sem `mb`: o respiro até os cards vem do `pt-[22px]` interno de
               GradeDeCatalogo, igual às fileiras da Home. `paddingInline`
               (não `px` no <main>) alinha o texto com a borda do CARD —
-              gutter 3.7% + os 10px do slot da grade. */}
-          <h1
-            ref={focoTitulo}
-            tabIndex={-1}
-            id={idMeuCatalogo}
+              gutter 3.7% + os 10px do slot da grade. "Filtrar" (SeletorEmMenu
+              — mesmo padrão de dropdown de components/SeletorDeTemporada.jsx)
+              entra na MESMA linha do título, do outro lado do outro (`justify-between`
+              + `items-center`) — pedido explícito do usuário. */}
+          <div
             style={{ paddingInline: PADDING_TITULO_GRADE }}
-            className="text-2xl font-semibold text-white outline-none"
+            className="flex items-center gap-4"
           >
-            Meu Catálogo
-          </h1>
+            <h1
+              ref={focoTitulo}
+              tabIndex={-1}
+              id={idMeuCatalogo}
+              className="text-2xl font-semibold text-white outline-none"
+            >
+              Meu Catálogo
+            </h1>
+            {!carregando && !erro && animes?.length > 0 && (
+              <SeletorEmMenu
+                id={idFiltro}
+                opcoes={opcoesFiltro}
+                valor={filtroSelecionado}
+                aoMudar={setFiltroSelecionado}
+                rotuloAcessivel="Filtrar"
+                prefixo="FILTRAR"
+              />
+            )}
+          </div>
 
           {/* Estados transitórios (carregando / erro / catálogo vazio / sem
-              resultado) + a barra de filtro/ordenação, no mesmo wrapper que só
-              repõe o `paddingInline` que antes vinha do `px` do <main>; cada
-              bloco leva o próprio `mt-[22px]` (mesmo respiro título->conteúdo
-              da grade). Altura zero quando nada aparece. */}
+              resultado), no mesmo wrapper que só repõe o `paddingInline` que
+              antes vinha do `px` do <main>; cada bloco leva o próprio
+              `mt-[22px]` (mesmo respiro título->conteúdo da grade). Altura
+              zero quando nada aparece. */}
           <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
             {carregando && (
               <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
@@ -305,52 +326,6 @@ export default function Galeria() {
             )}
             {!carregando && !erro && animes?.length === 0 && (
               <p className="mt-[22px] text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
-            )}
-
-            {/* Filtro por status + ordenação — <select> nativo (mesmo padrão
-                de player/SeletorDePreset.jsx), sem chamada de API nova: as
-                derivações rodam em memória sobre `animes`. O <select> de
-                status só renderiza se há pelo menos uma opção real (ver
-                `statusDisponiveis` acima) — um dropdown com só "Todos" seria
-                um controle morto. Ordenação sempre aparece: "Título (A-Z)"
-                funciona mesmo sem nenhum dado extra. */}
-            {!carregando && !erro && animes?.length > 0 && (
-              <div className="mt-[22px] flex flex-wrap items-end gap-4">
-                {statusDisponiveis.length > 0 && (
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor={idFiltroStatus} className={CLASSE_LABEL_FILTRO}>
-                      Status
-                    </label>
-                    <select
-                      id={idFiltroStatus}
-                      value={statusSelecionado}
-                      onChange={(event) => setStatusSelecionado(event.target.value)}
-                      className={CLASSE_SELECT}
-                    >
-                      <option value="">Todos os status</option>
-                      {statusDisponiveis.map((status) => (
-                        <option key={status} value={status}>
-                          {ROTULOS_STATUS_LANCAMENTO[status] ?? status}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <div className="flex flex-col gap-1">
-                  <label htmlFor={idOrdenacao} className={CLASSE_LABEL_FILTRO}>
-                    Ordenar por
-                  </label>
-                  <select
-                    id={idOrdenacao}
-                    value={ordenacao}
-                    onChange={(event) => setOrdenacao(event.target.value)}
-                    className={CLASSE_SELECT}
-                  >
-                    <option value="titulo">Título (A-Z)</option>
-                    <option value="proximo_episodio">Próximo episódio</option>
-                  </select>
-                </div>
-              </div>
             )}
 
             {!carregando && !erro && animes?.length > 0 && animesExibidos.length === 0 && (

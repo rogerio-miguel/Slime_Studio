@@ -1,204 +1,218 @@
-import { useId } from 'react';
 import { Link } from 'react-router-dom';
-// Re-exportado por components/LinhaDeEpisodio.jsx — `src/inicio/` não pode
-// importar de `src/player/` direto (fronteira Clean Architecture documentada
-// em paginas/Inicio.jsx, D5 do plano).
 import { IconePlay } from '../components/LinhaDeEpisodio.jsx';
+import BlocoConteudoHero from './BlocoConteudoHero.jsx';
 import {
   CLASSE_BOTAO_HERO,
   CLASSE_PILL_HERO,
+  gradienteHeroTopoEBase,
   IconeEmAlta,
-  SOMBRA_SLIDE_ATIVO,
+  imagemEmAltaResolucao,
   textoProximoEpisodio,
 } from './CarrosselDestaques.jsx';
 import { traduzirGenero } from './generos.js';
-import { PADDING_TITULO } from './tamanhoDeCard.js';
 
-// Card "destaque grande" da Home: banner de um lado, painel de informações do
-// outro. Seção ADICIONAL — não substitui o carrossel hero nem a fileira "Top
-// 10 da semana". Os 2 itens vêm de uma amostra ALEATÓRIA do feed
-// `GET /api/animes/em-alta` INTEIRO (até 50) EXCLUINDO o recorte que o
-// carrossel exibe agora (inicio/janelaDeDestaques.js::recorteVisivelDoCarrossel,
-// cruzado em paginas/Inicio.jsx::destaquesGrandes) — as duas seções não
-// repetem os mesmos animes. Sorteio em `paginas/Inicio.jsx::amostraAleatoria`;
-// os cards ficam intercalados ao longo de TODAS as fileiras da home
-// (`paginas/Inicio.jsx::fileirasDaHome`, não só as temáticas) via
-// ./intercalarDestaques.js.
+// Banner promocional único da Home, logo após "Top 10 em alta"
+// (`paginas/Inicio.jsx::fileirasDaHome`). Era só a imagem, sem nenhum texto
+// (estilo "feed-banner" da Crunchyroll) — pedido explícito do usuário
+// (2026-09-20) trouxe de volta o MESMO bloco de conteúdo do hero
+// (`./BlocoConteudoHero.jsx`, compartilhado com `CarrosselDestaques.jsx` e o
+// header de `paginas/PaginaDoAnime.jsx`) sobreposto à imagem, ancorado à
+// esquerda. Não tem rotação/paginação (é sempre o mesmo item) — por isso não
+// leva setas nem bolinhas, únicas diferenças estruturais pro carrossel.
 //
-// O painel de info espelha o bloco de conteúdo do carrossel hero
-// (CarrosselDestaques.jsx): pills (`#N em alta` / "Anime no Catálogo"), título
-// grande (link pra `/anime/:id` quando catalogado), título alternativo, meta
-// (ano • gêneros), linha do próximo episódio e UM CTA em pílula branca. As
-// classes (`CLASSE_PILL_HERO`, `CLASSE_BOTAO_HERO`), o `IconeEmAlta` e
-// `textoProximoEpisodio` são importados de lá — fonte única. Sem sinopse: o
-// bloco do carrossel também não tem.
+// Geometria: 3ª rodada de "igual ao carrossel" (pedido explícito do usuário,
+// 2026-09-20 — desta vez posição/tamanho/estrutura IDÊNTICOS, "pedaço dos
+// cards aparecendo" incluso, só sem a animação de rotação). 1ª rodada tentou
+// uma caixa mais baixa e própria (`aspect-[67/30] sm:aspect-[3/1]`, medida ao
+// vivo no Crunchyroll) com fade só embaixo; 2ª rodada (fade nas DUAS pontas,
+// `gradienteHeroTopoEBase` — necessário porque este banner fica ENTRE
+// fileiras, não no topo da página) aumentou a caixa pra `aspect-[4/3] sm:
+// aspect-[16/6]` pra sobrar imagem nítida entre os dois fades. Essa 3ª
+// rodada abandona a proporção própria de vez: `h-svh` (idêntico ao
+// carrossel) + o MESMO `pb-10 sm:pb-14 lg:pb-[18vh] xl:pb-[20vh]` do
+// `BlocoConteudoHero` de lá. A `<section>` externa não leva `paddingInline`
+// próprio — full-bleed, igual à do carrossel; o gutter do texto vem de
+// dentro de `BlocoConteudoHero`.
 //
-// Painel de imagem: SEMPRE `aspect-video` (16:9) — mesma proporção do card de
-// "Continuar assistindo" (components/CartaoContinuarAssistindo.jsx →
-// CartaoDeEpisodio modo grade), só maior, não o formato mais wide do
-// billboard (CarrosselDestaques.jsx). Fonte da imagem é o BANNER (paisagem),
-// nunca o pôster (retrato) — quando `banner_url` falta, o fallback é o mesmo
-// do header de PaginaDoAnime.jsx/CarrosselDestaques.jsx: `capa_cor` (cor
-// dominante da AniList) como fundo, com a própria capa borrada/escurecida por
-// cima como textura; sem `capa_cor` também, cai no `bg-surface` do container.
+// Peek do "pedaço dos cards": o carrossel puxa a fileira SEGUINTE pra dentro
+// do próprio fade (`-mb-28` na `<section>` de `CarrosselDestaques.jsx` em
+// `paginas/Inicio.jsx`) — só precisa disso porque é o 1º elemento da página,
+// sem nada ANTES pra espiar por cima. Este banner fica NO MEIO da lista de
+// fileiras (`fileirasDaHome`), com fade nas duas pontas, então replica o
+// mesmo `-mb-28` embaixo e espelha com `-mt-28` em cima, os dois na própria
+// `<section>` — sobrepõe tanto a fileira anterior quanto a seguinte (Tailwind
+// `space-y-10` usa `:where()` com especificidade zero pro `margin-top`
+// injetado entre irmãos, então uma margem negativa aqui, direto na classe,
+// sobrepõe sem conflito). A caixa da imagem (`h-svh` abaixo) leva `-z-10`
+// (mesmo `<div className="relative z-10">` de `paginas/Inicio.jsx` que
+// envolve todas as fileiras) pra ficar atrás de QUALQUER vizinha — sem isso a
+// fileira ANTERIOR (ex. "Top 10", que vem antes no DOM) pintaria ATRÁS deste
+// banner (irmão mais tarde pinta por cima por padrão), escondendo o "pedaço
+// dos cards" em vez de deixá-lo visível por cima do fade.
 //
-// CTA (ChamadaParaAcao): três estados, decididos pelo caller e recebidos já
-// resolvidos —
-//   1. catalogado + entrada em "Continuar assistindo" → <Link> pro player,
-//      "Continuar assistindo" (mesmo `state` que CartaoContinuarAssistindo.jsx
-//      passa: `{ episodio: { numero, animeId, animeTitulo, titulo } }`);
-//   2. catalogado sem entrada → <Link> pra `/anime/:id`, "Assistir agora";
-//   3. não catalogado → <button> que materializa (`aoMaterializar`, mesma
-//      função dos outros cards do feed), desabilitado durante `materializando`
-//      (gate GLOBAL — `chaveEmMaterializacao != null` em Inicio.jsx, não por
-//      item), rótulo "Adicionando…"/"Adicionar ao Catálogo" (mesmo texto do
-//      carrossel).
-// Nos três casos o `IconePlay` acompanha o texto (mesmo tamanho do carrossel).
+// Título/CTA por cima de QUALQUER vizinha: `BlocoConteudoHero` NÃO fica
+// dentro da caixa `-z-10` acima — é irmão dela, direto dentro da `<section>`
+// (que por isso ganhou `relative`, só pra ancorar o `absolute inset-x-0
+// bottom-0` do bloco, sem `z-index` próprio pra não criar um contexto de
+// empilhamento que prendesse o `z-10` do bloco lá dentro). `z-10` explícito
+// no bloco garante que título/CTA ficam clicáveis por cima da fileira de
+// cima E da de baixo, mesmo se uma ponta ou outra invadir a área do texto.
+//
+// `pointer-events-none` na `<section>` inteira (2026-09-21, corrige bug
+// reportado pelo usuário no mesmo dia): a `<section>` É `position: relative`
+// (necessário pra ancorar os filhos acima) — isso sozinho já coloca a caixa
+// INTEIRA (h-svh, vazia ou não) num nível de empilhamento acima de QUALQUER
+// fileira vizinha sem `position` própria, independente de DOM/`-z-10`/`z-10`
+// dos filhos (confirmado com `elementFromPoint` no navegador: o alvo do
+// clique era a própria `<section>`, não o `BlocoConteudoHero`). Antes de
+// pills coladas no título (pedido do usuário, também 2026-09-21), a fileira
+// seguinte só tinha as pílulas de paginação longe do título (`justify-
+// between`), fora da faixa de 45vw do bloco de conteúdo — por isso o roubo
+// de clique nunca tinha sido percebido. `pointer-events-none` aqui deixa
+// clique atravessar por padrão; título e CTA reativam `pointer-events-auto`
+// neles mesmos (únicos alvos de clique deste banner — a imagem é decorativa,
+// `alt=""`).
+//
+// Fonte da imagem: `item.banner_url` — já passa pelo overlay TMDB do backend
+// (`integrations/servico.py::_sobrepor_arte_em_lote`) antes de chegar aqui, e
+// `imagemEmAltaResolucao` sobe um backdrop TMDB de `w1280` pra `original`
+// (mesmo upscale do carrossel). Sem `banner_url`, não renderiza nada
+// (`null`). `object-cover`: testamos `object-fill` (esticar sem cortar) e
+// `object-contain` (sem cortar/esticar, mas sobra barra vazia quando a
+// proporção do banner não bate exata com a da caixa) e o usuário preferiu o
+// corte normal.
+//
+// `rank` (posição no feed `em-alta`, 1-based): calculado por quem chama
+// (`paginas/Inicio.jsx`, mesmo `pool.indexOf(item) + 1` do carrossel) — este
+// componente só recebe o `item` isolado, não o feed inteiro.
+export default function DestaqueGrande({ item, rank, aoAtivar, desabilitado }) {
+  if (!item.banner_url) return null;
 
-function ChamadaParaAcao({ item, titulo, continuarEm, aoMaterializar, materializando }) {
-  if (item.anime_id != null && continuarEm) {
-    return (
-      <Link
-        to={`/assistir/${continuarEm.episodio_id}`}
-        state={{
-          episodio: {
-            numero: continuarEm.numero,
-            animeId: continuarEm.anime_id,
-            animeTitulo: continuarEm.anime_titulo,
-            titulo: continuarEm.titulo,
-          },
-        }}
-        aria-label={`Continuar assistindo ${titulo} — episódio ${continuarEm.numero}`}
-        className={CLASSE_BOTAO_HERO}
-      >
-        <IconePlay width={20} height={20} fill="currentColor" />
-        Continuar assistindo
-      </Link>
-    );
-  }
-
-  if (item.anime_id != null) {
-    return (
-      <Link
-        to={`/anime/${item.anime_id}`}
-        aria-label={`${titulo} — assistir agora`}
-        className={CLASSE_BOTAO_HERO}
-      >
-        <IconePlay width={20} height={20} fill="currentColor" />
-        Assistir agora
-      </Link>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => aoMaterializar(item)}
-      disabled={materializando}
-      aria-label={materializando ? undefined : `Adicionar ${titulo} ao catálogo`}
-      className={CLASSE_BOTAO_HERO}
-    >
-      <IconePlay width={20} height={20} fill="currentColor" />
-      {materializando ? 'Adicionando…' : 'Adicionar ao Catálogo'}
-    </button>
-  );
-}
-
-export default function DestaqueGrande({ item, rank, continuarEm, aoMaterializar, materializando }) {
-  const idTitulo = useId();
   const titulo = item.titulo_romaji || item.titulo_ingles;
-  const catalogado = item.anime_id != null;
   const tituloAlternativo =
     titulo === item.titulo_romaji ? item.titulo_ingles : item.titulo_romaji;
   const mostrarAlternativo = Boolean(tituloAlternativo) && tituloAlternativo !== titulo;
-  const generosTraduzidos = (item.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
-  const meta = [item.ano_estreia, generosTraduzidos.join(', ')].filter(Boolean).join(' • ');
+  const catalogado = item.anime_id != null;
+
   const proximoEpisodio = textoProximoEpisodio(item);
-  const temBanner = Boolean(item.banner_url);
+  const generosTraduzidos = (item.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
+  // Mesmo formato Rótulo/Valor do carrossel/página do anime.
+  const fatos = [
+    item.ano_estreia != null ? { rotulo: 'Ano', valor: String(item.ano_estreia) } : null,
+    generosTraduzidos.length > 0
+      ? { rotulo: 'Gêneros', valor: generosTraduzidos.join(', ') }
+      : null,
+    proximoEpisodio ? { rotulo: 'Próximo episódio', valor: proximoEpisodio } : null,
+  ].filter(Boolean);
 
   return (
-    <section aria-labelledby={idTitulo} style={{ paddingInline: PADDING_TITULO }}>
-      <article
-        className="flex flex-col overflow-hidden rounded-2xl bg-surface sm:flex-row"
-        style={{ boxShadow: SOMBRA_SLIDE_ATIVO }}
-      >
-        <div className="relative aspect-video w-full shrink-0 overflow-hidden bg-surface sm:w-2/5">
-          {temBanner ? (
-            <img
-              src={item.banner_url}
-              alt=""
-              loading="lazy"
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          ) : (
-            <div
-              className="absolute inset-0"
-              style={item.capa_cor ? { backgroundColor: item.capa_cor } : undefined}
-            >
-              {item.capa_url && (
-                <img
-                  src={item.capa_url}
-                  alt=""
-                  loading="lazy"
-                  className="absolute inset-0 h-full w-full object-cover scale-125 blur-lg brightness-[0.5] opacity-70"
-                />
-              )}
-            </div>
-          )}
-        </div>
+    // `-mt-28 -mb-28`: puxa a fileira anterior E a seguinte pra dentro dos
+    // fades desta caixa (mesma técnica/valor do `-mb-28` do carrossel, só
+    // espelhada nos dois lados) — ver comentário "Peek do..." no topo do
+    // arquivo. Substitui o antigo `mb-10 lg:mb-16` (respiro extra, pedido de
+    // uma rodada de design anterior) — a rodada atual quer o pedaço da
+    // fileira vizinha visível, não respiro.
+    <section className="relative -mt-28 -mb-28 pointer-events-none">
+      {/* `-z-10`: fica atrás de QUALQUER fileira vizinha sem z-index próprio
+          (mesmo `<div className="relative z-10">` de `paginas/Inicio.jsx`
+          que envolve todas elas) — sem isso a fileira ANTERIOR (que vem
+          antes no DOM) pintaria atrás deste banner na área de sobreposição,
+          escondendo o "pedaço dos cards" em vez de deixá-lo por cima do
+          fade. Ver comentário "Peek do..." no topo do arquivo. */}
+      <div className="relative -z-10 h-svh min-h-[480px] w-full overflow-hidden bg-surface">
+        <img
+          src={imagemEmAltaResolucao(item.banner_url)}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
 
-        <div className="flex flex-1 flex-col justify-center gap-4 p-6 sm:p-8">
-          {(rank > 0 || catalogado) && (
-            <div className="flex flex-wrap items-center gap-2">
-              {rank > 0 && (
-                <span className={CLASSE_PILL_HERO}>
-                  <IconeEmAlta />
-                  {`#${rank} em alta`}
-                </span>
-              )}
-              {catalogado && <span className={CLASSE_PILL_HERO}>Anime no Catálogo</span>}
-            </div>
-          )}
+        {/* Variante do gradiente do carrossel/header da página do anime com
+            dissolução nas DUAS pontas (topo e base) — cor do `<main>` da Home
+            (`bg-black`, paginas/Inicio.jsx). Ver comentário no topo do
+            arquivo. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ background: gradienteHeroTopoEBase('#000') }}
+        />
+      </div>
 
-          <div>
-            <h2
-              id={idTitulo}
-              className="mb-1 line-clamp-2 text-2xl font-extrabold text-white sm:text-3xl lg:text-4xl"
-            >
-              {catalogado ? (
-                <Link
-                  to={`/anime/${item.anime_id}`}
-                  className="rounded-sm outline-none"
-                >
-                  {titulo}
-                </Link>
-              ) : (
-                titulo
-              )}
-            </h2>
-            {mostrarAlternativo && (
-              <p className="line-clamp-1 text-base font-bold text-ink-muted sm:text-lg">
-                {tituloAlternativo}
-              </p>
+      {/* Irmão da caixa `-z-10` acima, não filho — ver comentário "Título/CTA
+          por cima de..." no topo do arquivo. */}
+      <BlocoConteudoHero
+        className="absolute inset-x-0 bottom-0 z-10 max-w-[90%] pb-10 sm:max-w-[70%] sm:pb-14 lg:max-w-[45vw] lg:pb-[18vh] xl:pb-[20vh]"
+        pills={[
+          rank > 0 && (
+            <span key="rank" className={CLASSE_PILL_HERO}>
+              <IconeEmAlta />
+              {`#${rank} em alta`}
+            </span>
+          ),
+          catalogado && (
+            <span key="catalogado" className={CLASSE_PILL_HERO}>
+              Anime no Catálogo
+            </span>
+          ),
+        ].filter(Boolean)}
+        titulo={
+          <h3 className="mb-1 line-clamp-2 text-2xl font-extrabold text-white sm:text-4xl lg:text-5xl lg:leading-[1.2]">
+            {catalogado ? (
+              <Link
+                to={`/anime/${item.anime_id}`}
+                className="pointer-events-auto rounded-sm outline-none"
+              >
+                {titulo}
+              </Link>
+            ) : (
+              titulo
             )}
-          </div>
-
-          {(meta || proximoEpisodio) && (
-            <div className="flex flex-col items-start gap-1">
-              {meta && <p className="text-xs text-ink-muted sm:text-sm">{meta}</p>}
-              {proximoEpisodio && <p className="text-xs text-white/70 sm:text-sm">{proximoEpisodio}</p>}
+          </h3>
+        }
+        tituloSecundario={
+          mostrarAlternativo && (
+            <p className="line-clamp-1 text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
+              {tituloAlternativo}
+            </p>
+          )
+        }
+        metaExtra={
+          fatos.length > 0 && (
+            <div className="flex flex-wrap gap-6">
+              {fatos.map((fato) => (
+                <div key={fato.rotulo} className="flex flex-col gap-0.5">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
+                    {fato.rotulo}
+                  </span>
+                  <span className="text-sm font-bold text-white sm:text-base">{fato.valor}</span>
+                </div>
+              ))}
             </div>
-          )}
-
-          <ChamadaParaAcao
-            item={item}
-            titulo={titulo}
-            continuarEm={continuarEm}
-            aoMaterializar={aoMaterializar}
-            materializando={materializando}
-          />
-        </div>
-      </article>
+          )
+        }
+        cta={
+          catalogado ? (
+            <Link
+              to={`/anime/${item.anime_id}`}
+              aria-label={`${titulo} — assistir agora`}
+              className={`${CLASSE_BOTAO_HERO} pointer-events-auto`}
+            >
+              <IconePlay width={20} height={20} fill="currentColor" />
+              Assistir agora
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={() => aoAtivar(item)}
+              disabled={desabilitado}
+              aria-label={desabilitado ? undefined : `Adicionar ${titulo} ao catálogo`}
+              className={`${CLASSE_BOTAO_HERO} pointer-events-auto`}
+            >
+              <IconePlay width={20} height={20} fill="currentColor" />
+              {desabilitado ? 'Adicionando…' : 'Adicionar ao Catálogo'}
+            </button>
+          )
+        }
+      />
     </section>
   );
 }

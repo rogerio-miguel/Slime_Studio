@@ -1,5 +1,6 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { Search, X } from 'lucide-react';
 import logo from '../assets/logo2.png';
 
 // Navbar fixa (z-20, sempre acima do conteúdo).
@@ -26,6 +27,24 @@ import logo from '../assets/logo2.png';
 // panorâmica, carrossel — aparece atrás da navbar); ao rolar, ganha um fundo
 // mais escuro que o `<main>` (#17171b) pra manter contraste com o conteúdo
 // que passa por baixo.
+//
+// Busca colapsável: nasce como botão-ícone circular (`w-10`, só a lupa) e
+// expande pra um campo pill largo (`w-96`, borda neon + halo) no foco ou
+// assim que há texto — opção escolhida pelo usuário entre um canvas de 5
+// variantes (2026-09-21). `buscaExpandida = focada || Boolean(termoBusca)`:
+// colapsar exige as DUAS condições falsas, então nunca esconde texto
+// digitado (só recolhe com o campo genuinamente vazio e sem foco). É sempre
+// o MESMO `<input>` nos dois estados (nunca um `<button>` decorativo por
+// cima) — clicar no círculo já foca e edita o campo real, sem elemento
+// duplicado pra sincronizar. O ícone de lupa é um `<span>` irmão, absoluto:
+// centralizado (`inset-x-0 justify-center`) quando colapsado, ancorado à
+// esquerda (`left-3.5`) quando expandido — index. `pointer-events-none` nele
+// pra não bloquear o clique that chega no input por baixo. Botão de limpar
+// (`X`) só quando expandido E com texto; `onMouseDown` com `preventDefault`
+// evita que o clique nele dispare `blur` do input antes do `onClick` (senão
+// o campo colapsaria antes de limpar). Cancelador nativo do
+// `type="search"` (Chrome/Edge) escondido via `[&::-webkit-search-cancel-
+// button]:hidden` — duplicaria o nosso `X`.
 export default function BarraDeNavegacao({
   transparente = false,
   termoBusca,
@@ -33,6 +52,9 @@ export default function BarraDeNavegacao({
   aoSubmeterBusca,
 }) {
   const idBusca = useId();
+  const inputBuscaRef = useRef(null);
+  const [buscaFocada, setBuscaFocada] = useState(false);
+  const buscaExpandida = buscaFocada || Boolean(termoBusca);
   const { pathname } = useLocation();
   const emInicio = pathname === '/';
   const emAnimes = pathname.startsWith('/animes');
@@ -106,19 +128,50 @@ export default function BarraDeNavegacao({
             aoSubmeterBusca?.();
           }}
           role="search"
-          className="flex items-center gap-2"
+          className="flex items-center mr-8"
         >
           <label htmlFor={idBusca} className="sr-only">
             Buscar animes
           </label>
-          <input
-            id={idBusca}
-            type="search"
-            value={termoBusca}
-            onChange={(event) => aoMudarBusca(event.target.value)}
-            placeholder="Buscar…"
-            className="w-60 rounded-md border border-border-chrome bg-surface/80 px-3 py-1.5 text-sm text-white outline-none transition-all focus-visible:border-neon"
-          />
+          <div className="relative flex items-center">
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-y-0 flex items-center text-ink-muted transition-all duration-300 ease-out motion-reduce:transition-none ${
+                buscaExpandida ? 'left-3.5' : 'inset-x-0 justify-center'
+              }`}
+            >
+              <Search strokeWidth={4} className="h-4 w-4" />
+            </span>
+            <input
+              ref={inputBuscaRef}
+              id={idBusca}
+              type="search"
+              value={termoBusca}
+              onChange={(event) => aoMudarBusca(event.target.value)}
+              onFocus={() => setBuscaFocada(true)}
+              onBlur={() => setBuscaFocada(false)}
+              placeholder={buscaExpandida ? 'Buscar animes' : ''}
+              className={`h-10 rounded-full bg-surface/80 text-sm font-bold text-white outline-none transition-all duration-300 ease-out motion-reduce:transition-none [&::-webkit-search-cancel-button]:hidden ${
+                buscaExpandida
+                  ? 'w-96 border-2 border-neon pl-10 pr-9 '
+                  : 'w-10 cursor-pointer border-2 border-border-chrome px-0'
+              }`}
+            />
+            {buscaExpandida && termoBusca && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  aoMudarBusca('');
+                  inputBuscaRef.current?.focus();
+                }}
+                aria-label="Limpar busca"
+                className="absolute right-2 flex h-6 w-6 items-center justify-center rounded-full text-ink-muted outline-none transition-colors hover:text-white cursor-pointer"
+              >
+                <X strokeWidth={4} className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </form>
       )}
     </nav>

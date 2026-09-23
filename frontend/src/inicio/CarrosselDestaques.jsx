@@ -109,7 +109,7 @@ export function textoProximoEpisodio(item) {
   if (Number.isNaN(data.getTime()) || data <= new Date()) return null;
   const quando = relativo(epEm);
   return item.proximo_ep_numero != null
-    ? `Episódio ${item.proximo_ep_numero} ${quando}`
+    ? `Ep.${item.proximo_ep_numero} ${quando}`
     : `Novo episódio ${quando}`;
 }
 
@@ -153,12 +153,75 @@ export function gradienteHeroSemBanner(cor) {
   return `linear-gradient(to right, ${cor}, transparent 60%), ${gradienteHero(cor)}`;
 }
 
+// `#rgb`/`#rrggbb` → `[r, g, b]`. Só pra montar `rgba()` abaixo — os
+// chamadores de `gradienteHero*` sempre passam hex ('#000', '#17171b'),
+// nunca `rgb()`/nome de cor.
+function hexParaRgb(hex) {
+  const digitos = hex.replace('#', '');
+  const seisDigitos = digitos.length === 3 ? digitos.split('').map((c) => c + c).join('') : digitos;
+  const inteiro = parseInt(seisDigitos, 16);
+  return [(inteiro >> 16) & 255, (inteiro >> 8) & 255, inteiro & 255];
+}
+
+// Curva de alfa aproximando um "ease-out" (técnica easing-gradients,
+// larsenwork.com/easing-gradients): um `linear-gradient(cor, transparent)`
+// de 2 stops varia a OPACIDADE de forma linear, mas o olho não percebe
+// opacidade de forma linear — a queda perto da ponta opaca salta à vista
+// muito menos do que a matemática sugere, então o trecho inicial parece uma
+// "prateleira" sólida antes de qualquer coisa acontecer, seguido de uma
+// queda que parece repentina em comparação. Os stops abaixo (alfa explícito
+// via `rgba`, não `color-mix` — a 1ª tentativa usava `color-mix` e não dava
+// pra confirmar render em todo navegador) compensam isso. Tentativa anterior
+// empilhando várias camadas de 2 stops cada (`transparent P%` em paralelo)
+// parecia que ia suavizar, mas multiplicar várias curvas LINEARES perto do
+// zero (`1 - ∏(1-αᵢ)`) cria exatamente essa prateleira plana antes de cair —
+// pior que uma única camada. Só uma camada com os alfas certos em cada stop
+// resolve. Pares [posição 0..1 ao longo do alcance do fade, alfa 0..1].
+const ESTAGIOS_ALFA_SUAVE = [
+  [0, 1],
+  [0.19, 0.85],
+  [0.34, 0.65],
+  [0.47, 0.47],
+  [0.565, 0.32],
+  [0.65, 0.2],
+  [0.73, 0.11],
+  [0.803, 0.05],
+  [0.87, 0.02],
+  [0.925, 0.005],
+  [1, 0],
+];
+
+// Gradiente linear na `direcao` dada, com a curva suave acima em vez de
+// 2 stops crus — `alcance` é até onde (em %) o fade termina transparente.
+function gradienteSuave(direcao, cor, alcance) {
+  const [r, g, b] = hexParaRgb(cor);
+  const stops = ESTAGIOS_ALFA_SUAVE.map(
+    ([posicao, alfa]) => `rgba(${r}, ${g}, ${b}, ${alfa}) ${(posicao * alcance).toFixed(1)}%`
+  ).join(', ');
+  return `linear-gradient(${direcao}, ${stops})`;
+}
+
+// Variante pra banners que ficam ENTRE outras fileiras da Home
+// (inicio/DestaqueGrande.jsx) — ao contrário do carrossel (topo da página,
+// só precisa dissolver embaixo), aqui a fileira anterior encosta direto na
+// borda de CIMA do banner, então a imagem precisa dissolver na cor de fundo
+// nas duas pontas. Pedido explícito do usuário, 2026-09-20: "tornar igual ao
+// do carrossel só que o efeito de se misturar com a cor do fundo ficaria em
+// cima e embaixo". Reusa `gradienteHero` (base, já aprovada e calibrada —
+// não mexer) e soma uma 4ª camada no topo, mesmo alcance (60%) mas com a
+// curva suave acima — duas tentativas anteriores (1 camada crua, depois
+// várias camadas empilhadas) ficaram "brusca"/"ainda não suave" (feedback
+// explícito do usuário, 2026-09-20).
+export function gradienteHeroTopoEBase(cor) {
+  return `${gradienteSuave('to bottom', cor, 60)}, ${gradienteHero(cor)}`;
+}
+
 // Botão primário do hero (pílula clara, texto escuro, ícone play) — geometria
 // medida ao vivo no AnimeFire. Compartilhado entre o `<Link>` (anime já
 // catalogado) e o `<button>` de materialização (item do feed), e reusado por
 // inicio/DestaqueGrande.jsx pro CTA do mesmo painel de info.
 export const CLASSE_BOTAO_HERO =
-  'inline-flex h-11 w-fit items-center gap-3 rounded-xl bg-white px-6 font-bold text-[#17171b] outline-none transition hover:brightness-90 motion-reduce:transition-none disabled:cursor-progress sm:h-12 lg:h-14 lg:text-xl';
+  'inline-flex h-11 w-fit cursor-pointer items-center gap-3 rounded-xl bg-white px-6 font-bold text-[#17171b] outline-none transition hover:brightness-90 motion-reduce:transition-none disabled:cursor-progress sm:h-12 lg:h-14 lg:text-xl';
 
 // Pill do hero — usada pela tag de ranking ("#N em alta") e pela de estado
 // ("Anime no Catálogo"), lado a lado. Mesmo visual pras duas. Compartilhada
@@ -588,7 +651,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
               }}
               aria-label="Destaque anterior"
               aria-controls={idSlides}
-              className="absolute inset-y-0 left-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
+              className="absolute inset-y-0 left-0 z-10 flex w-[3.8vw] min-w-10 cursor-pointer items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
             >
               <IconeSeta direcao="esquerda" />
             </button>
@@ -600,7 +663,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
               }}
               aria-label="Próximo destaque"
               aria-controls={idSlides}
-              className="absolute inset-y-0 right-0 z-10 flex w-[3.8vw] min-w-10 items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
+              className="absolute inset-y-0 right-0 z-10 flex w-[3.8vw] min-w-10 cursor-pointer items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
             >
               <IconeSeta direcao="direita" />
             </button>
@@ -638,7 +701,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                     }}
                     aria-label={`Ir para o destaque ${i + 1}`}
                     aria-current={ehAtiva ? 'true' : undefined}
-                    className="group/dot flex h-6 w-8 items-center justify-center rounded-full outline-none"
+                    className="group/dot flex h-6 w-8 cursor-pointer items-center justify-center rounded-full outline-none"
                   >
                     {/* Track — UMA estrutura única pra bolinha ativa, sem
                         trocar de árvore JSX quando `autoAvancando` liga/desliga
@@ -666,7 +729,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                           // pílula fica só no `scale-x-100` de repouso —
                           // respeita a preferência por menos movimento em vez
                           // de só pausar.
-                          className={`absolute inset-y-0 left-0 block w-full origin-left scale-x-100 rounded-full bg-white ${
+                          className={`absolute inset-y-0 left-0 block w-full origin-left scale-x-100 rounded-full bg-neon ${
                             movimentoReduzido
                               ? ''
                               : `animate-[preencher-progresso-dot_10000ms_linear_forwards] ${

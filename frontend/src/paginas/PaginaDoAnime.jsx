@@ -859,20 +859,23 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
 
           {/* Bloco de conteúdo — esqueleto compartilhado com o carrossel da
               Home (inicio/BlocoConteudoHero.jsx: pills → título/subtítulo →
-              aviso → sinopse → metaExtra). Usa os slots `sinopse` (clamp
-              embutido no componente) e `metaExtra` (fatos rotulados — "Ano"/
-              "Episódios"/"Fonte"/"Versão" — em vez do `meta` de linha única
-              com "•" que o esqueleto também aceita; o rótulo por fato é o
-              formato já adotado no resto da página). `relative` pra pintar
-              acima da arte e do gradiente (ambos `absolute` e antes no DOM).
-              `pt-24` reserva respiro no topo pro gradiente. `pb-10 sm:pb-14
+              sinopse → metaExtra). Usa os slots `sinopse` (clamp embutido no
+              componente) e `metaExtra` (fatos rotulados — "Ano"/"Episódios"/
+              "Fonte"/"Versão" — em vez do `meta` de linha única com "•" que o
+              esqueleto também aceita; o rótulo por fato é o formato já
+              adotado no resto da página). `relative` pra pintar acima da arte
+              e do gradiente (ambos `absolute` e antes no DOM). `pt-24`
+              reserva respiro no topo pro gradiente. `pb-10 sm:pb-14
               lg:pb-[18vh] xl:pb-[20vh]`: viewport-relative de propósito (não
               rem fixo) — cresce com a altura da tela, então acompanha o teto
-              de altura do bloco (título+subtítulo+aviso+sinopse em 3 linhas+
-              fatos) em vez de precisar de um valor mágico por breakpoint.
-              Precisa ficar ACIMA de 8rem (o `-mb-32` do <header>, peek da
-              barra de ações/grade, ver acima) senão o texto fica coberto pelo
-              conteúdo puxado pra cima (bug antigo, já visto com `pb-8`). */}
+              de altura do bloco (título+subtítulo+sinopse em 3 linhas+fatos)
+              em vez de precisar de um valor mágico por breakpoint. Precisa
+              ficar ACIMA de 8rem (o `-mb-32` do <header>, peek da barra de
+              ações/grade, ver acima) senão o texto fica coberto pelo
+              conteúdo puxado pra cima (bug antigo, já visto com `pb-8`). O
+              aviso de estreia da próxima temporada (`avisoProximaTemporada`)
+              SAIU daqui — mora ao lado do seletor de temporada, na barra de
+              controles abaixo (pedido do usuário, 2026-09-21). */}
           <BlocoConteudoHero
             className="relative pb-10 pt-24 sm:pb-14 lg:pb-[18vh] xl:pb-[20vh]"
             // Pills de gênero — ACIMA do título, mesma posição das pills
@@ -902,16 +905,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
               tituloSecundario && (
                 <p className="line-clamp-1 max-w-4xl text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
                   {tituloSecundario}
-                </p>
-              )
-            }
-            // Aviso de estreia da próxima temporada da franquia (quando já tem
-            // data). A irmã `nao_lancado` fica FORA do seletor, então este é o
-            // único lugar que a menciona.
-            extraTitulo={
-              avisoProximaTemporada && (
-                <p className="inline-flex items-center text-sm font-semibold text-neon backdrop-blur-sm">
-                  {avisoProximaTemporada}
                 </p>
               )
             }
@@ -1019,6 +1012,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
                 numeroTemporadaAtual={anime.numero_temporada}
                 tituloAtual={anime.titulo}
               />
+            )}
+            {/* Aviso de estreia da próxima temporada da franquia (quando já
+                tem data) — ao lado do seletor (pedido do usuário,
+                2026-09-21; morava no hero, junto do título). A irmã
+                `nao_lancado` fica FORA do seletor, então este é o único
+                lugar que a menciona. */}
+            {avisoProximaTemporada && (
+              <span className="text-[18px] font-semibold text-neon">{avisoProximaTemporada}</span>
             )}
             {/* A fonte ativa (`remotos.dados.dominio`) e a versão
                 ("Legendado"/"Dublado") já aparecem na linha meta do hero

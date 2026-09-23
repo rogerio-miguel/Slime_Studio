@@ -5,18 +5,19 @@
 
 // Rótulo PT de cada `chave` conhecida (`backend/integrations/registro.py::
 // FILEIRAS_TEMATICAS`). Fonte única de tradução — nada de string solta em
-// paginas/Inicio.jsx.
+// paginas/Inicio.jsx. Refeitos do zero em 2026-09-20, inspirados na curadoria
+// do discover da Crunchyroll (título com apelo em vez do nome cru do gênero).
 export const ROTULOS_DE_FILEIRA = {
-  isekai: 'Isekai',
-  familia_encontrada: 'Família encontrada',
-  amor_nao_correspondido: 'Amor não correspondido',
-  batalha_real: 'Battle royale',
-  diferenca_de_idade: 'Diferença de idade',
-  reencarnacao: 'Reencarnação',
-  jogos_mortais: 'Jogos mortais',
-  morando_juntos: 'Morando juntos',
-  casais_secretos: 'Relacionamento secreto',
-  vila_nao_tao_vila: 'Era pra ser a vilã',
+  acao_sem_parar: 'Ação sem parar',
+  isekai: 'Isekai: outro mundo te espera',
+  misterio_pra_desvendar: 'Mistério pra desvendar',
+  so_rir_pra_nao_chorar: 'Só rir pra não chorar',
+  terror_que_tira_o_sono: 'Terror que tira o sono',
+  gigantes_de_aco: 'Gigantes de aço',
+  adrenalina_no_esporte: 'Adrenalina no esporte',
+  fantasia_alem_do_real: 'Fantasia além do real',
+  vida_cotidiana_sem_pressa: 'Vida cotidiana, sem pressa',
+  prepare_o_lenco: 'Prepare o lenço',
 };
 
 // Traduz e recorta o array cru do endpoint. Duas responsabilidades que só
