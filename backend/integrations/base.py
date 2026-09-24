@@ -175,13 +175,18 @@ class NoDeSerie:
 @dataclass(frozen=True, slots=True)
 class RelacoesDeAnime:
     """Vizinhança de `no` no grafo de `relations`, já reduzida ao que o walk de
-    série usa: só os prequels que são `Media` do tipo ANIME em formato de
+    série usa: só prequels/sequels que são `Media` do tipo ANIME em formato de
     temporada (`TV`/`TV_SHORT`). O adapter (`anilist.py`) aplica esse filtro —
     este módulo é domínio puro e não conhece o vocabulário de `format` da
-    AniList."""
+    AniList.
+
+    `sequels` (para frente) espelha `prequels` (para trás) — usado por
+    `integrations/servico.py::resolver_franquia` para enumerar a franquia
+    inteira a partir da âncora já encontrada pelo walk `PREQUEL`."""
 
     no: NoDeSerie
     prequels: tuple[NoDeSerie, ...]
+    sequels: tuple[NoDeSerie, ...] = ()
 
 
 class ProvedorDeMetadados(ABC):
@@ -232,8 +237,17 @@ class ProvedorDeMetadados(ABC):
         não encontrou nada (mesma convenção de `buscar_por_titulo`)."""
 
     def buscar_metadados_por_anilist_id(self, anilist_id: int) -> MetadadosDeAnime | None:
-        """Metadados (capa, banner, cor dominante, sinopse, títulos) do anime de
-        id AniList `anilist_id`. Capability opcional com implementação PADRÃO
+        """Metadados (capa, banner, cor dominante, sinopse, títulos, bloco de
+        lançamento) do anime de id AniList `anilist_id`. `lancamento` (status,
+        total de episódios, próximo a ir ao ar) é o que permite ao chamador
+        (`api/servicos/descoberta.py::_materializar_temporadas_irmas`) saber
+        quantos episódios uma temporada irmã tem SEM outra chamada — sem isso,
+        `Anime.total_episodios_anilist` fica `NULL` até um refresh de
+        lançamento passar por ela, e o recorte de fonte achatada
+        (`api/servicos/fontes.py::_recortar_se_fonte_achatada`) não tem como
+        calcular o offset entre temporadas nesse intervalo.
+
+        Capability opcional com implementação PADRÃO
         `None` (não abstrata, ao contrário de
         `ProvedorComLancamento.buscar_lancamento_por_anilist_id`): só provedores
         que conhecem o id AniList a sobrescrevem — hoje só `anilist.py`; o Kitsu

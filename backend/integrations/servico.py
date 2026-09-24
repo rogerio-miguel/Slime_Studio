@@ -1269,6 +1269,104 @@ def _escolher_prequel(relacoes: RelacoesDeAnime) -> NoDeSerie | None:
     return max(com_data, key=_chave_de_data)
 
 
+def _escolher_sequel(relacoes: RelacoesDeAnime) -> NoDeSerie | None:
+    """Próximo nó do walk PARA FRENTE (espelho de `_escolher_prequel`): `None`
+    quando `relacoes.no` não tem sequel de TV (é a última temporada conhecida).
+    Com mais de um sequel, escolhe o mais antigo ainda posterior ao nó atual
+    (o sequel mais próximo cronologicamente, não o mais distante); sem nenhum
+    posterior, o mais antigo no geral. Levanta `_SerieAmbigua` quando nenhum
+    candidato tem data — mesma degradação de `_escolher_prequel`."""
+    sequels = relacoes.sequels
+    if not sequels:
+        return None
+    if len(sequels) == 1:
+        return sequels[0]
+
+    com_data = [s for s in sequels if s.ano is not None]
+    if not com_data:
+        raise _SerieAmbigua
+
+    if relacoes.no.ano is not None:
+        limite = (relacoes.no.ano, relacoes.no.mes or 0)
+        posteriores = [s for s in com_data if _chave_de_data(s) > limite]
+        if posteriores:
+            return min(posteriores, key=_chave_de_data)
+    return min(com_data, key=_chave_de_data)
+
+
+async def resolver_franquia(anilist_id: int) -> list[NoDeSerie] | None:
+    """Lista ordenada `[T1, T2, ..., Tn]` de TODA a franquia de `anilist_id`
+    (temporadas de TV/TV_SHORT), usada pela materialização em lote da franquia
+    ao clicar em qualquer uma delas (`api/servicos/descoberta.py::
+    _materializar_temporadas_irmas`).
+
+    Primeiro reusa `resolver_serie` (walk PREQUEL, já memoizado) para achar a
+    âncora (T1); depois anda SEQUEL para frente a partir dela, mesmo teto
+    `_MAX_HOPS_DE_SERIE` e mesma degradação do walk para trás — mas aqui parar
+    no meio do caminho (provedor falhou, ciclo, ambiguidade) devolve o que já
+    foi encontrado até ali em vez de `None`: é enumeração best-effort de
+    VÁRIAS temporadas, não resolução de UMA. `None` só quando nem a âncora foi
+    resolvida (sem grafo para andar).
+
+    Sem memo próprio (ao contrário de `resolver_serie`): chamado só no fluxo
+    raro de materialização por clique, não em hot path como os feeds da Home.
+    """
+    serie = await resolver_serie(anilist_id)
+    if serie is None:
+        return None
+
+    capazes = [p for p in PROVEDORES if isinstance(p, ProvedorComRelacoes)]
+    if not capazes:
+        return None
+
+    caminho: list[NoDeSerie] = []
+    visitados: set[int] = set()
+    id_atual = serie.ancora
+    for _ in range(_MAX_HOPS_DE_SERIE + 1):
+        if id_atual in visitados:
+            logger.warning(
+                "walk de franquia: ciclo em anilist_id=%s (a partir da âncora %s) — "
+                "parando com %d temporada(s) encontrada(s)",
+                anilist_id,
+                serie.ancora,
+                len(caminho),
+            )
+            break
+        visitados.add(id_atual)
+
+        relacoes = await _buscar_relacoes_em_cadeia(capazes, id_atual)
+        if relacoes is None:
+            break
+        caminho.append(relacoes.no)
+
+        try:
+            proximo = _escolher_sequel(relacoes)
+        except _SerieAmbigua:
+            logger.warning(
+                "walk de franquia: anilist_id=%s tem %d sequels de TV e datas "
+                "insuficientes para desempate — parando com %d temporada(s) encontrada(s)",
+                id_atual,
+                len(relacoes.sequels),
+                len(caminho),
+            )
+            break
+
+        if proximo is None:
+            break
+        id_atual = proximo.anilist_id
+    else:
+        logger.warning(
+            "walk de franquia: anilist_id=%s excedeu %d hops a partir da âncora %s — "
+            "parando com %d temporada(s) encontrada(s)",
+            anilist_id,
+            _MAX_HOPS_DE_SERIE,
+            serie.ancora,
+            len(caminho),
+        )
+
+    return caminho
+
+
 async def _buscar_relacoes_em_cadeia(
     capazes: list[ProvedorComRelacoes], anilist_id: int
 ) -> RelacoesDeAnime | None:

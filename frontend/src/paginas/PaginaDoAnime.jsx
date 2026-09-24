@@ -688,11 +688,20 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animeId, versaoPedida, episodios.recarregar]);
 
+  // Remove a franquia INTEIRA: um DELETE por temporada (`anime.temporadas`,
+  // já inclui a própria) — mesmo comportamento de `Galeria.jsx::
+  // confirmarRemocao`, pedido explícito do usuário (2026-09-23) pra não
+  // deixar temporadas irmãs órfãs no catálogo quando a remoção parte da
+  // página de UMA temporada específica. Falha no meio (ex. temporada com
+  // captura em andamento) para o laço e deixa as já removidas removidas.
   const confirmarRemocao = useCallback(async () => {
     setRemovendo(true);
     setErroRemocao(null);
+    const ids = anime?.temporadas?.length ? anime.temporadas.map((t) => t.id) : [animeId];
     try {
-      await removerAnime(animeId);
+      for (const id of ids) {
+        await removerAnime(id);
+      }
       navigate('/animes');
     } catch (erroCapturado) {
       if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
@@ -704,7 +713,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     } finally {
       setRemovendo(false);
     }
-  }, [animeId, navigate]);
+  }, [anime, animeId, navigate]);
 
   // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
   // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior
@@ -1193,7 +1202,11 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
         <DialogoDeConfirmacao
           aberto={confirmandoRemocao}
           titulo="Remover do catálogo"
-          mensagem={`Remover "${anime?.titulo ?? `Anime #${animeId}`}" do catálogo? Episódios e capturas associados serão apagados.`}
+          mensagem={
+            (anime?.temporadas?.length ?? 1) > 1
+              ? `Remover "${tituloExibicao ?? `Anime #${animeId}`}" e suas ${anime.temporadas.length} temporadas do catálogo? Todos os episódios e capturas da franquia serão apagados.`
+              : `Remover "${anime?.titulo ?? `Anime #${animeId}`}" do catálogo? Episódios e capturas associados serão apagados.`
+          }
           erro={erroRemocao}
           aoConfirmar={confirmarRemocao}
           aoFechar={fecharDialogoRemocao}

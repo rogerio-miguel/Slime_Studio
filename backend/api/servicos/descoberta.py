@@ -27,12 +27,13 @@ from db.catalogo import (
     atualizar_lancamentos_em_lote,
     localizar_animes_por_anilist_id,
     localizar_animes_por_slug,
+    obter_ou_criar_anime_id,
     preencher_banner_visual_em_lote,
     sobrescrever_arte,
 )
 from extractors.versao import remover_marcador_de_versao
 from integrations import servico
-from integrations.base import AnimeEmAlta, ArteDeAnime, MetadadosDeAnime
+from integrations.base import AnimeEmAlta, ArteDeAnime, MetadadosDeAnime, NoDeSerie
 from models.anime import Anime
 
 logger = logging.getLogger(__name__)
@@ -466,6 +467,31 @@ def _banner_e_fallback_anilist(banner_path: str | None) -> bool:
     return banner_path is not None and _HOST_BANNER_ANILIST in banner_path
 
 
+async def _aplicar_metadados_por_anilist_id(
+    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int, banner_pendente: bool
+) -> None:
+    """Busca a ficha completa da AniList por `anilist_id` e aplica o que ainda
+    estiver faltando (`aplicar_metadados` é só-quando-nulo). Corpo
+    compartilhado por `agendar_enriquecimento_de_metadados` (fire-and-forget,
+    disparado na abertura da página) e por `enriquecer_anime_criado`
+    (síncrono, na própria criação) — mesma chamada, cada lado decide seu
+    próprio teto/captura de erro."""
+    metadados = await servico.buscar_metadados_por_anilist_id(anilist_id)
+    if metadados is None:
+        return
+    await aplicar_metadados(sessionmaker, anime_id, metadados)
+    # `aplicar_metadados` é só-quando-nulo: nunca troca um banner já
+    # gravado, mesmo sendo o fallback cru da AniList que nunca recebeu o
+    # overlay TMDB. Sobrescrita explícita só nesse caso — mesma escrita
+    # de `scripts/rerresolver_banners.py`, só que em resposta a uma
+    # abertura/criação de página em vez de um lote manual; `sobrescrever_arte`
+    # já não apaga banner existente quando o TMDB não devolve nada.
+    if banner_pendente and metadados.banner_url is not None:
+        await sobrescrever_arte(
+            sessionmaker, anime_id, ArteDeAnime(banner_url=metadados.banner_url)
+        )
+
+
 async def _buscar_metadados_e_persistir(
     sessionmaker: _SessionMaker, anime_id: int, anilist_id: int, banner_pendente: bool
 ) -> None:
@@ -474,20 +500,9 @@ async def _buscar_metadados_e_persistir(
     vira `warning` e morre aqui; `CancelledError` e erros inesperados
     propagam de propósito."""
     try:
-        metadados = await servico.buscar_metadados_por_anilist_id(anilist_id)
-        if metadados is None:
-            return
-        await aplicar_metadados(sessionmaker, anime_id, metadados)
-        # `aplicar_metadados` é só-quando-nulo: nunca troca um banner já
-        # gravado, mesmo sendo o fallback cru da AniList que nunca recebeu o
-        # overlay TMDB. Sobrescrita explícita só nesse caso — mesma escrita
-        # de `scripts/rerresolver_banners.py`, só que em resposta a uma
-        # abertura de página em vez de um lote manual; `sobrescrever_arte` já
-        # não apaga banner existente quando o TMDB não devolve nada.
-        if banner_pendente and metadados.banner_url is not None:
-            await sobrescrever_arte(
-                sessionmaker, anime_id, ArteDeAnime(banner_url=metadados.banner_url)
-            )
+        await _aplicar_metadados_por_anilist_id(
+            sessionmaker, anime_id, anilist_id, banner_pendente
+        )
     except (FalhaDeMetadados, TimeoutError, SQLAlchemyError) as excecao:
         logger.warning(
             "enriquecimento lazy de metadados falhou para anime_id=%s anilist_id=%s: %s",
@@ -742,6 +757,40 @@ async def enriquecer_anime_criado(
             titulo_ingles=titulo_ingles,
         )
         await aplicar_metadados(sessionmaker, anime_id, metadados)
+        if anilist_id is not None and sinopse is None:
+            # Resultado de busca da biblioteca nunca traz sinopse no payload
+            # (só o feed "em alta" a traz — ver `AnimeEmAlta.sinopse`) nem
+            # `ano` (nenhum caminho do frontend manda `ano` na criação). Sem
+            # isto, a página do anime recém-criado nascia incompleta
+            # (sinopse/ano/overlay TMDB de banner ausentes) até a Task
+            # fire-and-forget de `agendar_enriquecimento_de_metadados`
+            # terminar — e nada avisa o front quando isso acontece (sem
+            # WebSocket/polling): a única forma de ver o resultado era
+            # recarregar a página na mão (achado do usuário testando o
+            # clique num item de busca, 2026-09-23). Busca síncrona aqui,
+            # best-effort com o mesmo teto/captura do enriquecimento por
+            # título abaixo — a criação nunca fica bloqueada por uma AniList
+            # fora do ar. Gate em `sinopse is None` (não em todo `anilist_id`
+            # presente) pra não gastar uma chamada AniList extra no caminho
+            # comum do feed "em alta", que já traz tudo no payload.
+            try:
+                await asyncio.wait_for(
+                    _aplicar_metadados_por_anilist_id(
+                        sessionmaker,
+                        anime_id,
+                        anilist_id,
+                        banner_pendente=_banner_e_fallback_anilist(banner_url),
+                    ),
+                    timeout=_TETO_ENRIQUECIMENTO_S,
+                )
+            except (FalhaDeMetadados, TimeoutError, SQLAlchemyError) as excecao:
+                logger.warning(
+                    "completar metadados por anilist_id best-effort falhou na criação"
+                    " para anime_id=%s anilist_id=%s: %s",
+                    anime_id,
+                    anilist_id,
+                    excecao,
+                )
         await _resolver_e_aplicar_serie(
             sessionmaker, anime_id, titulo, anilist_id, formato=formato
         )
@@ -831,6 +880,13 @@ async def _resolver_e_aplicar_serie(
             anilist_id=anilist_id,
         )
         await aplicar_posicao_na_serie(sessionmaker, anime_id, posicao)
+
+        if serie is not None:
+            franquia = await asyncio.wait_for(
+                servico.resolver_franquia(anilist_id), timeout=_TETO_SERIE_S
+            )
+            if franquia:
+                await _materializar_temporadas_irmas(sessionmaker, anilist_id, franquia)
     except Exception as excecao:
         logger.warning(
             "resolução de posição na série best-effort falhou para anime_id=%s "
@@ -839,6 +895,80 @@ async def _resolver_e_aplicar_serie(
             anilist_id,
             excecao,
         )
+
+
+async def _materializar_temporadas_irmas(
+    sessionmaker: _SessionMaker, anilist_id_clicado: int, franquia: list[NoDeSerie]
+) -> None:
+    """Materializa (metadados apenas, sem tocar `extractors/`) toda temporada
+    da `franquia` (`servico.resolver_franquia`, lista ordenada T1..Tn) que
+    ainda não está no catálogo local — o pedido do usuário de agrupar a
+    franquia inteira ao clicar em qualquer uma das temporadas.
+
+    A posição (`numero_temporada`/`serie_ancora`) de cada irmã já é conhecida
+    pela POSIÇÃO da irmã dentro de `franquia` — não rechama `resolver_serie`
+    por irmã (o walk já é 1 caminhada para a franquia inteira, ver docstring
+    de `resolver_franquia`). Mesma conciliação marcador×grafo de
+    `_resolver_e_aplicar_serie` (o marcador do título sempre vence).
+
+    Best-effort por item: uma irmã sem metadados resolvidos (provedor sem
+    ficha, ou instável) é logada e pulada — nunca cria linha só com título/slug
+    (diferente do cadastro manual, aqui não há confirmação do usuário sobre
+    aquele título). Uma falha numa irmã não impede as demais.
+    """
+    ancora = franquia[0].anilist_id
+    async with sessionmaker() as sessao:
+        ja_catalogados = {
+            row[0]
+            for row in (
+                await sessao.execute(
+                    select(Anime.anilist_id).where(
+                        Anime.anilist_id.in_([no.anilist_id for no in franquia])
+                    )
+                )
+            ).all()
+        }
+
+    for ordinal, no in enumerate(franquia, start=1):
+        if no.anilist_id == anilist_id_clicado or no.anilist_id in ja_catalogados:
+            continue
+        try:
+            metadados = await asyncio.wait_for(
+                servico.buscar_metadados_por_anilist_id(no.anilist_id),
+                timeout=_TETO_SERIE_S,
+            )
+            if metadados is None:
+                logger.info(
+                    "agrupamento de franquia: sem metadados para anilist_id=%s "
+                    "(%r, T%d da franquia âncora=%s) — não materializada",
+                    no.anilist_id,
+                    no.titulo,
+                    ordinal,
+                    ancora,
+                )
+                continue
+
+            titulo = metadados.titulo_romaji or no.titulo
+            anime_id_irma = await obter_ou_criar_anime_id(sessionmaker, titulo, metadados.ano)
+            await aplicar_metadados(sessionmaker, anime_id_irma, metadados)
+
+            marcador = separar_temporada(titulo)[1]
+            posicao = conciliar_posicao(
+                marcador=marcador,
+                ordinal_do_grafo=ordinal,
+                ancora_do_grafo=ancora,
+                anilist_id=no.anilist_id,
+            )
+            await aplicar_posicao_na_serie(sessionmaker, anime_id_irma, posicao)
+        except (FalhaDeMetadados, TimeoutError, SQLAlchemyError) as excecao:
+            logger.warning(
+                "agrupamento de franquia: falha ao materializar anilist_id=%s "
+                "(T%d da franquia âncora=%s): %s",
+                no.anilist_id,
+                ordinal,
+                ancora,
+                excecao,
+            )
 
 
 async def _aplicar_ancora_de_midia(
