@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 // Re-exportado por components/LinhaDeEpisodio.jsx — `src/inicio/` não importa
 // de `src/player/` direto (fronteira Clean Architecture, ver paginas/Inicio.jsx).
-// Mesmo ícone do CTA "Assistir agora" que inicio/DestaqueGrande.jsx já reusa.
+// Mesmo ícone do CTA "Assistir agora" que inicio/DestaqueGrande.jsx reusa.
 import { IconePlay } from '../components/LinhaDeEpisodio.jsx';
 import IconeSeta from './IconeSeta.jsx';
 import {
@@ -100,8 +100,7 @@ function relativo(iso) {
 // Texto do próximo episódio a partir de `proximo_ep_em`/`proximo_ep_numero`.
 // Sem data (ausente, ou já no passado/dado inválido — ex. `status_lancamento
 // === 'finalizado'`) retorna null e a linha simplesmente não renderiza, nunca
-// "Invalid Date"/"NaN dias". Compartilhado com inicio/DestaqueGrande.jsx
-// (mesmo painel de info); `relativo`/`rtf` acima continuam locais.
+// "Invalid Date"/"NaN dias". `relativo`/`rtf` acima continuam locais.
 export function textoProximoEpisodio(item) {
   const epEm = item.proximo_ep_em;
   if (!epEm) return null;
@@ -193,7 +192,10 @@ const ESTAGIOS_ALFA_SUAVE = [
 
 // Gradiente linear na `direcao` dada, com a curva suave acima em vez de
 // 2 stops crus — `alcance` é até onde (em %) o fade termina transparente.
-function gradienteSuave(direcao, cor, alcance) {
+// Exportada — inicio/DestaqueGrande.jsx reusa pro próprio overlay (2 stops
+// crus caíam de forma linear, o que o olho percebe como corte brusco perto da
+// ponta opaca; ver ESTAGIOS_ALFA_SUAVE acima).
+export function gradienteSuave(direcao, cor, alcance) {
   const [r, g, b] = hexParaRgb(cor);
   const stops = ESTAGIOS_ALFA_SUAVE.map(
     ([posicao, alfa]) => `rgba(${r}, ${g}, ${b}, ${alfa}) ${(posicao * alcance).toFixed(1)}%`
@@ -224,15 +226,13 @@ export const CLASSE_BOTAO_HERO =
   'inline-flex h-11 w-fit cursor-pointer items-center gap-3 rounded-xl bg-white px-6 font-bold text-[#17171b] outline-none transition hover:brightness-90 motion-reduce:transition-none disabled:cursor-progress sm:h-12 lg:h-14 lg:text-xl';
 
 // Pill do hero — usada pela tag de ranking ("#N em alta") e pela de estado
-// ("Anime no Catálogo"), lado a lado. Mesmo visual pras duas. Compartilhada
-// com inicio/DestaqueGrande.jsx.
+// ("Anime no Catálogo"), lado a lado. Mesmo visual pras duas.
 export const CLASSE_PILL_HERO =
   'inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm';
 
 // Ícone "em alta" (chama) da pill de ranking — inline, sem dependência nova
 // (Escada de Minimalismo, CLAUDE.md §4); mesmo estilo stroke 24×24 de
 // player/Icones.jsx. Decorativo: o texto "#N em alta" já carrega o sentido.
-// Compartilhado com inicio/DestaqueGrande.jsx.
 export function IconeEmAlta(props) {
   return (
     <svg
@@ -625,9 +625,8 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                         // `mt-2` extra (além do `gap-4` do esqueleto entre
                         // seções) só aqui — pedido explícito do usuário pra
                         // afastar o CTA dos fatos logo acima. Direto no
-                        // elemento, não em `CLASSE_BOTAO_HERO` (compartilhada
-                        // com inicio/DestaqueGrande.jsx, que não deve ganhar
-                        // esse respiro extra).
+                        // elemento, não em `CLASSE_BOTAO_HERO`, pra não afetar
+                        // os outros usos da constante.
                         className={`${CLASSE_BOTAO_HERO} mt-8`}
                       >
                         <IconePlay width={20} height={20} fill="currentColor" />

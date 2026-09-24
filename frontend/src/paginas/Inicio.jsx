@@ -282,9 +282,18 @@ export default function Inicio({ jobsPorEpisodio }) {
   // rodar antes dela existir no arquivo.
   const [bannerDestaque, segundoBannerDestaque] = useMemo(() => {
     const chaveItem = (item) => item.anilist_id ?? item.titulo_romaji;
+    // Mesmo filtro de "Hentai" que CarrosselDestaques.jsx aplica antes de
+    // embaralhar (seu `pool`, não `itens` cru) — sem isso o array passado pro
+    // Fisher-Yates tem um tamanho/ordem diferente do que o carrossel de fato
+    // embaralha, e a semente compartilhada deixa de reproduzir a MESMA janela:
+    // o recorte "visível" calculado aqui diverge do real, e um anime que está
+    // no carrossel escapa do `idsExcluidos` e aparece de novo no banner.
+    const semHentai = (emAlta.dados ?? []).filter(
+      (item) => !(item.generos ?? []).includes('Hentai')
+    );
     const idsExcluidos = new Set([
       ...top10.map(chaveItem),
-      ...recorteVisivelDoCarrossel(emAlta.dados ?? []).map(chaveItem),
+      ...recorteVisivelDoCarrossel(semHentai).map(chaveItem),
     ]);
     const candidatos = (emAlta.dados ?? []).filter(
       (item) => !idsExcluidos.has(chaveItem(item)) && item.banner_url
@@ -716,7 +725,6 @@ export default function Inicio({ jobsPorEpisodio }) {
         <DestaqueGrande
           key="banner-destaque"
           item={bannerDestaque}
-          rank={(emAlta.dados ?? []).indexOf(bannerDestaque) + 1}
           aoAtivar={() => materializarEIrPara(bannerDestaque)}
           desabilitado={chaveEmMaterializacao != null}
         />
@@ -751,7 +759,6 @@ export default function Inicio({ jobsPorEpisodio }) {
         <DestaqueGrande
           key="segundo-banner-destaque"
           item={segundoBannerDestaque}
-          rank={(emAlta.dados ?? []).indexOf(segundoBannerDestaque) + 1}
           aoAtivar={() => materializarEIrPara(segundoBannerDestaque)}
           desabilitado={chaveEmMaterializacao != null}
         />
