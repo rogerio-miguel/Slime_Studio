@@ -144,6 +144,12 @@ export default function Inicio({ jobsPorEpisodio }) {
   // "próxima temporada" (ainda não estreou). Mesma exibição silenciosa:
   // carregando/erro/vazio a fileira simplesmente não aparece.
   const novosLancamentos = useRecurso(listarNovosLancamentos, []);
+  // Mesmo filtro de "Hentai" que o carrossel/banner aplicam (ver comentário
+  // em `bannerDestaque` abaixo) — sem isso o feed cru vaza pra fileira.
+  const novosLancamentosSemHentai = useMemo(
+    () => (novosLancamentos.dados ?? []).filter((item) => !(item.generos ?? []).includes('Hentai')),
+    [novosLancamentos.dados]
+  );
   // Chave 'animes' (invalidacao.js): recarrega sozinho quando `criarAnime`/
   // `removerAnime` resolve em qualquer lugar do app (ex. materializar um
   // item do feed abaixo), sem precisar de um `recarregar()` manual aqui.
@@ -730,13 +736,13 @@ export default function Inicio({ jobsPorEpisodio }) {
         />
       ),
     },
-    (novosLancamentos.dados ?? []).length > 0 && {
+    novosLancamentosSemHentai.length > 0 && {
       chave: 'novos-lancamentos',
       node: (
         <FileiraDeCards
           key="novos-lancamentos"
           titulo="Novos lançamentos"
-          itens={novosLancamentos.dados}
+          itens={novosLancamentosSemHentai}
           tamanho="pequeno"
           comSombra={false}
           chaveDoItem={chaveDoItemDoFeed}
