@@ -1,18 +1,63 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { PRESETS, ESCADA_DE_DEGRADACAO } from './presets.js';
+import { ChevronLeft, ChevronRight, X, Sparkles, Keyboard, AudioLines, Activity } from 'lucide-react';
+import { PRESETS } from './presets.js';
 import { IconeEngrenagem } from './Icones.jsx';
 
-// Presets que não entram na escada manual (mudam o *look* da imagem, não só
-// o custo), mas ainda selecionáveis — ESPECIFICACAO.md §11.3 descreve
-// `aa-vl-denoise` como um "knob para fontes com grão".
-const PRESETS_EXTRA = ['aa-vl-denoise'];
+// Ordem de EXIBIÇÃO do dropdown (maior custo de GPU primeiro, pedido do
+// usuário 2026-09-24) — não é a mesma coisa que ESCADA_DE_DEGRADACAO de
+// presets.js: aquela é a escada de DEGRADAÇÃO manual/automática (só os
+// degraus da mesma família visual, ESPECIFICACAO.md §11.3), esta é só a
+// ordenação da lista pro usuário escolher. `aa-vl-denoise` fica fora da
+// escada de degradação (muda o *look*, não só o custo — é o knob pra fontes
+// com grão), mas custa quase o mesmo que `aa-vl-deblur` (mesma base
+// clamp+restoreVL+x2VL+restoreM, só o passe final — deblur ou denoise, ~20
+// de custo cada — muda), então entra logo ao lado dele aqui, não jogado no
+// fim da lista como estava antes.
+const ORDEM_DE_EXIBICAO = ['aa-vl-deblur', 'aa-vl-denoise', 'aa-vl', 'a-vl', 'b-vl', 'c-vl', 'a-vl-1x', 'a-m', 'original'];
 
 const opcoesDeQualidade = [
   { valor: 'auto', rotulo: 'Automático (ajusta à GPU)' },
-  ...ESCADA_DE_DEGRADACAO.map((id) => ({ valor: id, rotulo: PRESETS[id].label })),
-  ...PRESETS_EXTRA.map((id) => ({ valor: id, rotulo: PRESETS[id].label })),
+  ...ORDEM_DE_EXIBICAO.map((id) => ({ valor: id, rotulo: PRESETS[id].label })),
 ];
+
+// Espelha 1:1 os atalhos reais de useAtalhosDeTeclado.js — lista só
+// informativa (tela "Controles" abaixo), sem estado pra selecionar, então
+// não precisa ficar em sincronia automática com o hook; se um atalho novo
+// entrar lá, entra aqui também.
+const ATALHOS_DE_TECLADO = [
+  { tecla: 'Espaço', acao: 'Reproduzir / pausar' },
+  { tecla: '←', acao: 'Retroceder 5 segundos' },
+  { tecla: '→', acao: 'Avançar 5 segundos' },
+  { tecla: '↑', acao: 'Aumentar volume' },
+  { tecla: '↓', acao: 'Diminuir volume' },
+  { tecla: 'F', acao: 'Tela cheia' },
+  { tecla: 'M', acao: 'Mudo' },
+  { tecla: 'C', acao: 'Áudio cinema' },
+  { tecla: 'H', acao: 'Estatísticas' },
+  { tecla: 'P', acao: 'Avançar 1 minuto e 30 segundos' },
+];
+
+// Interruptor visual (pílula + bolinha deslizante) no lugar do texto
+// "Ligado/Desligado" de antes — pedido do usuário 2026-09-24. `aria-hidden`:
+// o estado acessível continua no `aria-checked` do <button
+// role="menuitemcheckbox"> que envolve isto, este span é só a cara do
+// estado, não uma segunda fonte de verdade.
+function Interruptor({ ligado }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+        ligado ? 'bg-neon' : 'bg-white/20'
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+          ligado ? 'translate-x-6' : 'translate-x-1'
+        }`}
+      />
+    </span>
+  );
+}
 
 // Botão pequeno de header (voltar/fechar) — ghost, sem pill de fundo no
 // hover: conferido ao vivo no player real do Disney+ (2026-09-13) que nem
@@ -39,9 +84,14 @@ export default function MenuDeConfiguracoes({
   cinemaHabilitado,
   cinemaFalhou,
   aoAlternarCinema,
+  // HUD (telemetria) — era um botão à parte na barra (Activity, lucide-react),
+  // movido pra cá 2026-09-24 (pedido do usuário): mesmo toggle role=menuitemcheckbox
+  // do "Áudio cinema" abaixo, sem exceção (HUD não tem estado "indisponível").
+  hudVisivel,
+  aoAlternarHud,
 }) {
   const [aberto, setAberto] = useState(false);
-  const [tela, setTela] = useState('raiz'); // 'raiz' | 'qualidade'
+  const [tela, setTela] = useState('raiz'); // 'raiz' | 'qualidade' | 'controles'
   const [indiceAtivo, setIndiceAtivo] = useState(0);
   const idMenu = useId();
   const containerRef = useRef(null);
@@ -50,11 +100,14 @@ export default function MenuDeConfiguracoes({
 
   const opcaoAtual = opcoesDeQualidade.find((opcao) => opcao.valor === presetAtual);
   const rotuloAtual = presetAtual === 'auto' ? 'Automático' : (opcaoAtual?.rotulo ?? presetAtual);
-  // Tela 'raiz' tem 2 itens focáveis ("Qualidade" + "Áudio cinema");
-  // 'qualidade' tem uma linha por opção — o botão de voltar do cabeçalho
-  // fica fora da navegação por seta (mesmo tratamento do botão de fechar),
-  // não entra na contagem.
-  const totalDeItens = tela === 'raiz' ? 2 : opcoesDeQualidade.length;
+  // Tela 'raiz' tem 4 itens focáveis ("Qualidade" + "Áudio cinema" +
+  // "Estatísticas" + "Controles"); 'qualidade' tem uma linha por opção;
+  // 'controles' é só leitura (ATALHOS_DE_TECLADO, sem seleção) — 0 itens
+  // focáveis, a navegação por seta/Home/End não se aplica lá (guarda em
+  // aoTeclarNoMenu abaixo). O botão de voltar do cabeçalho fica fora da
+  // navegação por seta em qualquer sub-tela (mesmo tratamento do botão de
+  // fechar), não entra na contagem.
+  const totalDeItens = tela === 'raiz' ? 4 : tela === 'qualidade' ? opcoesDeQualidade.length : 0;
 
   const fechar = (devolverFoco = true) => {
     setAberto(false);
@@ -90,6 +143,9 @@ export default function MenuDeConfiguracoes({
     if (evento.key === 'Escape') {
       evento.preventDefault();
       fechar();
+    } else if (totalDeItens === 0) {
+      // Tela 'controles': nada focável pra navegar (ver comentário acima) —
+      // só Esc funciona aqui, o resto passa direto.
     } else if (evento.key === 'ArrowDown') {
       evento.preventDefault();
       const proximo = (indiceAtivo + 1) % totalDeItens;
@@ -151,13 +207,13 @@ export default function MenuDeConfiguracoes({
               divisória — assim mesmo no painel real do Disney+. A tela
               "qualidade" acrescenta o voltar à esquerda do título. */}
           <div className="flex items-center gap-3 px-5 py-4">
-            {tela === 'qualidade' && (
+            {tela !== 'raiz' && (
               <button type="button" aria-label="Voltar" onClick={() => setTela('raiz')} className={classeBotaoHeader}>
                 <ChevronLeft width={20} height={20} aria-hidden="true" />
               </button>
             )}
             <h2 className="flex-1 text-left text-lg font-semibold text-white">
-              {tela === 'raiz' ? 'Configurações' : 'Qualidade'}
+              {tela === 'raiz' ? 'Configurações' : tela === 'qualidade' ? 'Qualidade' : 'Controles'}
             </h2>
             <button type="button" aria-label="Fechar" onClick={() => fechar()} className={classeBotaoHeader}>
               <X width={20} height={20} aria-hidden="true" />
@@ -176,11 +232,35 @@ export default function MenuDeConfiguracoes({
                 onClick={() => setTela('qualidade')}
                 className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3.5 text-left text-base text-white outline-none transition-colors focus-visible:bg-white/10 hover:bg-white/10"
               >
-                <span>Qualidade</span>
+                <span className="flex items-center gap-3">
+                  <Sparkles width={18} height={18} aria-hidden="true" className="text-ink-muted" />
+                  <span>Qualidade</span>
+                </span>
                 <span className="flex items-center gap-1 text-ink-muted">
                   {rotuloAtual}
                   <ChevronRight width={16} height={16} aria-hidden="true" />
                 </span>
+              </button>
+              {/* Controles logo após Qualidade — os dois navegam pra
+                  sub-tela (chevron), agrupados antes dos dois toggles
+                  abaixo (Áudio cinema/Estatísticas, sem chevron): pedido do
+                  usuário 2026-09-24, agrupar por tipo de afordância em vez
+                  de intercalar. */}
+              <button
+                ref={(no) => {
+                  itensRef.current[1] = no;
+                }}
+                type="button"
+                role="menuitem"
+                tabIndex={indiceAtivo === 1 ? 0 : -1}
+                onClick={() => setTela('controles')}
+                className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3.5 text-left text-base text-white outline-none transition-colors focus-visible:bg-white/10 hover:bg-white/10"
+              >
+                <span className="flex items-center gap-3">
+                  <Keyboard width={18} height={18} aria-hidden="true" className="text-ink-muted" />
+                  <span>Controles</span>
+                </span>
+                <ChevronRight width={16} height={16} aria-hidden="true" className="text-ink-muted" />
               </button>
               {/* Toggle, não navega pra sub-tela (sem chevron) — por isso
                   role="menuitemcheckbox" (booleano), diferente do
@@ -192,13 +272,13 @@ export default function MenuDeConfiguracoes({
                   continuando alcançável pelo teclado como qualquer item. */}
               <button
                 ref={(no) => {
-                  itensRef.current[1] = no;
+                  itensRef.current[2] = no;
                 }}
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={!cinemaFalhou && cinemaHabilitado}
                 aria-disabled={cinemaFalhou || undefined}
-                tabIndex={indiceAtivo === 1 ? 0 : -1}
+                tabIndex={indiceAtivo === 2 ? 0 : -1}
                 onClick={() => {
                   if (!cinemaFalhou) aoAlternarCinema();
                 }}
@@ -211,11 +291,47 @@ export default function MenuDeConfiguracoes({
                   cinemaFalhou ? 'cursor-not-allowed text-ink-muted opacity-50' : 'text-white'
                 }`}
               >
-                <span>Áudio cinema</span>
-                <span className="text-ink-muted">
-                  {cinemaFalhou ? 'Indisponível' : cinemaHabilitado ? 'Ligado' : 'Desligado'}
+                <span className="flex items-center gap-3">
+                  <AudioLines width={18} height={18} aria-hidden="true" className="text-ink-muted" />
+                  <span>Áudio cinema</span>
                 </span>
+                {cinemaFalhou ? (
+                  <span className="text-ink-muted">Indisponível</span>
+                ) : (
+                  <Interruptor ligado={cinemaHabilitado} />
+                )}
               </button>
+              <button
+                ref={(no) => {
+                  itensRef.current[3] = no;
+                }}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={hudVisivel}
+                tabIndex={indiceAtivo === 3 ? 0 : -1}
+                onClick={aoAlternarHud}
+                className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3.5 text-left text-base text-white outline-none transition-colors focus-visible:bg-white/10 hover:bg-white/10"
+              >
+                <span className="flex items-center gap-3">
+                  <Activity width={18} height={18} aria-hidden="true" className="text-ink-muted" />
+                  <span>Estatísticas</span>
+                </span>
+                <Interruptor ligado={hudVisivel} />
+              </button>
+            </div>
+          ) : tela === 'controles' ? (
+            // Só leitura (ATALHOS_DE_TECLADO acima) — nenhum <button>/role de
+            // item de menu aqui de propósito: não há nada pra clicar ou
+            // selecionar, e a navegação por seta já fica de fora dessa tela
+            // (totalDeItens === 0, ver aoTeclarNoMenu). Sai só pelo Esc ou
+            // pelo botão "Voltar" do cabeçalho, os dois fora da contagem.
+            <div className="max-h-72 overflow-y-auto px-2 pb-2">
+              {ATALHOS_DE_TECLADO.map(({ tecla, acao }) => (
+                <div key={tecla} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-base text-white">
+                  <span>{acao}</span>
+                  <kbd className="rounded-md bg-white/10 px-2 py-1 font-mono text-sm text-ink-muted">{tecla}</kbd>
+                </div>
+              ))}
             </div>
           ) : (
             <div className="max-h-72 overflow-y-auto px-2 pb-2">

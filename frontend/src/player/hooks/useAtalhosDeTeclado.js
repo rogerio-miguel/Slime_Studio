@@ -59,6 +59,9 @@ export function useAtalhosDeTeclado({ videoRef, acoes }) {
         case 'c':
           acoes.alternarCinema();
           break;
+        case 'p':
+          acoes.avancarNoventa();
+          break;
         default:
           break;
       }

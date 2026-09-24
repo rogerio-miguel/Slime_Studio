@@ -6,7 +6,7 @@
 // nenhuma chamada, só a implementação por trás muda. Continua exportando
 // componentes aria-hidden/focusable=false por padrão: o texto acessível vem
 // do aria-label do <button> que os envolve.
-import { Play, Pause, Headphones, Maximize, RotateCcw, RotateCw, Settings } from 'lucide-react';
+import { Play, Pause, Headphones, Maximize, Settings } from 'lucide-react';
 
 const propsBase = {
   width: 18,
@@ -76,40 +76,80 @@ export function IconeEngrenagem(props) {
   return <Settings {...propsBase} {...props} />;
 }
 
-// Seta circular (RotateCcw/RotateCw) com o "10" composto DENTRO do círculo
-// — não mais um <span> empilhado abaixo do ícone (removido a pedido do
-// usuário, 2026-09-17: primeiro pro trio virar o glifo de player só
-// SkipBack/SkipForward, depois revertido pro par de seta circular original,
-// mas com o número sobreposto ao próprio glifo, tipo o "replay 10"/
-// "forward 10" do YouTube). `<span>` wrapper (não <svg> — o número é texto,
-// não caminho vetorial) do tamanho exato de `width`/`height`, com o ícone e
-// o texto empilhados via `absolute inset-0` um sobre o outro; o vão vazio no
-// centro do traço do RotateCcw/RotateCw (a seta só ocupa o anel externo)
-// sobra espaço de sobra pro número sem colidir com o traço.
-export function IconeSkip10({ direcao = 'frente', width = 18, height = 18, ...props }) {
-  const Icone = direcao === 'tras' ? RotateCcw : RotateCw;
+// `d` dos dois <path> que compõem RotateCcw/RotateCw no lucide-react (arco +
+// seta são SEPARADOS) — copiados à mão (mesma exceção deliberada de
+// IconeVolume acima: Escada de Minimalismo, CLAUDE.md §4 passo 6, nada
+// pronto resolve "pintar" só uma parte de um ícone de terceiro) pra poder
+// desenhar uma segunda cópia em neon por cima, com stroke-dasharray.
+const CAMINHOS_SKIP = {
+  tras: { arco: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8', seta: 'M3 3v5h5' },
+  frente: { arco: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8', seta: 'M21 3v5h-5' },
+};
+
+// Proporção do traço TOTAL (arco + seta) que pertence só ao arco — calculada
+// geometricamente uma vez a partir do `d` acima (arco: ~270° de raio 9 +
+// ~44° de raio 9,75 + um segmento reto ≈53 unidades; seta: dois segmentos de
+// 5 ≈10 unidades; total ≈63 → 53/63), não medida em runtime via
+// getTotalLength(): a geometria dos dois ícones é fixa entre renders, medir
+// de novo a cada montagem seria trabalho sem benefício. É o que faz o
+// "pintar" andar na mesma velocidade ao longo do arco e da seta, mesmo os
+// dois sendo <path> separados com pathLength normalizado por igual.
+const FRACAO_ARCO_SKIP = 53 / 63;
+
+// Seta circular (RotateCcw/RotateCw) com o "10"/"90" compostos DENTRO do
+// círculo — não mais um <span> empilhado abaixo do ícone (removido a pedido
+// do usuário, 2026-09-17). `<span>` wrapper (não <svg> — o número é texto,
+// não caminho vetorial) do tamanho exato de `width`/`height`, com o ícone(s)
+// e o texto empilhados via `absolute inset-0` um sobre o outro.
+//
+// `progresso` (0-1, de useSegurarParaPular.js) substitui o anel fino que
+// existia ao redor do botão (AnelDeSegurar, removido de BarraDeControles.jsx,
+// pedido do usuário 2026-09-24): uma SEGUNDA cópia do próprio ícone, em neon,
+// sobreposta à branca, com o traço "pintado" progressivamente do início do
+// arco até a ponta da seta via strokeDasharray/strokeDashoffset.
+// `pathLength="1"` normaliza cada <path> (arco e seta têm comprimento real
+// bem diferente) pra que o dasharray de 0 a 1 funcione igual nos dois; só a
+// PROPORÇÃO do progresso entre eles (FRACAO_ARCO_SKIP) precisa vir de fora.
+// O "10"→"90" faz crossfade contínuo (opacity+scale) junto — mesma técnica
+// de IconeVolume acima, só que ligada a um valor contínuo em vez de um
+// estado de 3 níveis.
+export function IconeSkip10({ direcao = 'frente', width = 18, height = 18, progresso = 0, ...props }) {
+  const { arco, seta } = CAMINHOS_SKIP[direcao];
+  const progressoArco = Math.min(1, progresso / FRACAO_ARCO_SKIP);
+  const progressoSeta = Math.min(1, Math.max(0, (progresso - FRACAO_ARCO_SKIP) / (1 - FRACAO_ARCO_SKIP)));
   return (
     <span
       aria-hidden="true"
       style={{ width, height }}
       className="relative inline-flex shrink-0 items-center justify-center"
     >
-      <Icone {...propsBase} width={width} height={height} {...props} />
+      <svg viewBox="0 0 24 24" {...propsBase} width={width} height={height} {...props}>
+        <path d={arco} />
+        <path d={seta} />
+      </svg>
+      {progresso > 0 && (
+        <svg viewBox="0 0 24 24" {...propsBase} width={width} height={height} {...props} className="absolute inset-0 text-neon">
+          <path d={arco} pathLength="1" strokeDasharray="1" strokeDashoffset={1 - progressoArco} />
+          <path d={seta} pathLength="1" strokeDasharray="1" strokeDashoffset={1 - progressoSeta} />
+        </svg>
+      )}
       <span
         style={{ fontSize: Math.round(Number(width) * 0.34) }}
-        className="absolute inset-0 flex items-center justify-center pt-px font-bold leading-none text-white"
+        className="absolute inset-0 font-bold leading-none text-white"
       >
-        10
+        <span
+          style={{ opacity: 1 - progresso, transform: `scale(${0.7 + 0.3 * (1 - progresso)})` }}
+          className="absolute inset-0 flex items-center justify-center pt-px"
+        >
+          10
+        </span>
+        <span
+          style={{ opacity: progresso, transform: `scale(${0.7 + 0.3 * progresso})` }}
+          className="absolute inset-0 flex items-center justify-center pt-px"
+        >
+          90
+        </span>
       </span>
     </span>
   );
-}
-
-// Mesmo triângulo do botão de play (IconePlay, mesmo componente `Play` da
-// lib) pro botão "Avançar 1m30" (BarraDeControles.jsx, grupo secundário —
-// HUD/config/tela cheia) — pedido explícito do usuário, 2026-09-17, no
-// lugar do glifo SkipForward de antes. `fill="currentColor"`: mesmo
-// triângulo maciço do play, não outline.
-export function IconeAvancarPlayer(props) {
-  return <Play {...propsBase} fill="currentColor" {...props} />;
 }
