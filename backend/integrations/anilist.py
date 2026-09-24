@@ -313,7 +313,10 @@ query ($id: Int) {
     bannerImage
     genres
     seasonYear
-    startDate { year }
+    startDate { year month day }
+    status
+    episodes
+    nextAiringEpisode { episode airingAt }
   }
 }
 """
@@ -412,6 +415,7 @@ class AniListProvider(
             capa_cor=cover.get("color"),
             generos=media.get("genres") or None,
             ano=_extrair_ano(media),
+            lancamento=_extrair_lancamento(media),
             titulo_romaji=_texto_ou_none(titulo_bruto.get("romaji")),
             titulo_ingles=_texto_ou_none(titulo_bruto.get("english")),
         )
@@ -470,29 +474,10 @@ class AniListProvider(
 
         relacoes = media.get("relations") or {}
         arestas = relacoes.get("edges") if isinstance(relacoes, dict) else None
-        prequels: list[NoDeSerie] = []
-        for aresta in arestas or []:
-            if not isinstance(aresta, dict) or aresta.get("relationType") != "PREQUEL":
-                continue
-            node = aresta.get("node")
-            if not isinstance(node, dict) or node.get("type") != "ANIME":
-                continue
-            candidato = _no_de_serie(node)
-            if candidato is None:
-                continue
-            if node.get("format") not in _FORMATOS_DE_SERIE:
-                logger.info(
-                    "walk de série: prequel %r (id=%s, format=%s) de id=%s descartado "
-                    "— não é temporada de TV",
-                    candidato.titulo,
-                    candidato.anilist_id,
-                    node.get("format"),
-                    anilist_id,
-                )
-                continue
-            prequels.append(candidato)
+        prequels = _relacoes_de_serie_por_tipo(arestas or [], "PREQUEL", anilist_id)
+        sequels = _relacoes_de_serie_por_tipo(arestas or [], "SEQUEL", anilist_id)
 
-        return RelacoesDeAnime(no=no, prequels=tuple(prequels))
+        return RelacoesDeAnime(no=no, prequels=tuple(prequels), sequels=tuple(sequels))
 
     def buscar_serie_pai(self, anilist_id: int) -> NoDeSerie | None:
         dados = self._executar(_QUERY_RELACOES, {"id": anilist_id})
@@ -683,6 +668,39 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
         sinopse=_sanitizar_sinopse(item.get("description")),
         formato=None if formato_bruto in _FORMATOS_DE_SERIE else _texto_ou_none(formato_bruto),
     )
+
+
+def _relacoes_de_serie_por_tipo(
+    arestas: list[dict], relation_type: str, anilist_id: int
+) -> list[NoDeSerie]:
+    """Nós de `arestas` (`relations.edges` cru da AniList) com `relationType`
+    igual a `relation_type` ("PREQUEL" ou "SEQUEL") e `Media` ANIME em formato
+    de temporada (`_FORMATOS_DE_SERIE`) — mesmo filtro para os dois sentidos do
+    walk de série (`buscar_relacoes`, usado tanto por `resolver_serie` quanto
+    por `resolver_franquia`)."""
+    resultado: list[NoDeSerie] = []
+    for aresta in arestas:
+        if not isinstance(aresta, dict) or aresta.get("relationType") != relation_type:
+            continue
+        node = aresta.get("node")
+        if not isinstance(node, dict) or node.get("type") != "ANIME":
+            continue
+        candidato = _no_de_serie(node)
+        if candidato is None:
+            continue
+        if node.get("format") not in _FORMATOS_DE_SERIE:
+            logger.info(
+                "walk de série: %s %r (id=%s, format=%s) de id=%s descartado "
+                "— não é temporada de TV",
+                relation_type.lower(),
+                candidato.titulo,
+                candidato.anilist_id,
+                node.get("format"),
+                anilist_id,
+            )
+            continue
+        resultado.append(candidato)
+    return resultado
 
 
 def _no_de_serie(media: dict) -> NoDeSerie | None:

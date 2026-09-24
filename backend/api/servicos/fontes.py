@@ -197,8 +197,42 @@ async def listar_episodios_remotos(
     fonte = await resolver_e_listar(sessionmaker, anime, versao, resolver_canonico=True)
     episodios = filtrar_por_versao(fonte.episodios, versao)
     offset = await _offset_de_temporada(sessionmaker, anime)
-    episodios = await _sobrepor_stills_de_episodios(anime, episodios, offset)
+    episodios = await _sobrepor_stills_de_episodios(sessionmaker, anime, episodios, offset)
     return EpisodiosRemotosResultado(dominio=fonte.dominio, episodios=episodios)
+
+
+async def _titulo_base_da_franquia(sessionmaker: _SessionMaker, anime: Anime) -> str:
+    """Título a usar na busca de arte/still/nome/sinopse do TMDB — o nome BASE
+    da franquia, sem o marcador de temporada, quando ele existir.
+
+    `core/temporada.py::separar_temporada` (usado por dentro de
+    `integrations/servico.py::buscar_arte_por_titulo`) só reconhece marcadores
+    com palavra-chave ("Season 2", "2ª Temporada", "Part 2", "II"/"III"/"IV")
+    — de propósito: um dígito solto no fim é ambíguo demais pra cortar sem
+    contexto (cortaria "86" ou "91 Days"). Mas alguns títulos da própria
+    AniList são exatamente esse caso ambíguo resolvido a favor do anime errado
+    aqui: "Komi-san wa, Komyushou desu. 2" (a T2) não tem NENHUM marcador que a
+    regex reconheça, então o TMDB era consultado com o "2" sobrando, não
+    achava a série, e o still/nome/sinopse de todo episódio da T2 ficava
+    `None` (capa/banner não são afetados — vêm da AniList direto, não do TMDB).
+
+    Em vez de arriscar a regex genérica (afetaria TODOS os títulos, não só os
+    de franquia), usa o dado que já temos com certeza: o título da temporada
+    ÂNCORA (`Anime.serie_ancora`, o `anilist_id` da T1) NUNCA tem marcador de
+    temporada por definição — é a própria T1. Quando a âncora está catalogada
+    localmente, seu título já é a base certa da franquia inteira, sem precisar
+    adivinhar via regex.
+
+    Sem `serie_ancora`, com a âncora sendo o próprio anime (T1 catalogando a
+    si mesma), ou com a âncora ainda não catalogada localmente, degrada para
+    `anime.titulo` — mesmo comportamento de antes desta correção."""
+    if anime.serie_ancora is None or anime.serie_ancora == anime.anilist_id:
+        return anime.titulo
+    async with sessionmaker() as sessao:
+        titulo_ancora = await sessao.scalar(
+            select(Anime.titulo).where(Anime.anilist_id == anime.serie_ancora)
+        )
+    return titulo_ancora if titulo_ancora is not None else anime.titulo
 
 
 async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int:
@@ -297,7 +331,7 @@ async def _recortar_se_fonte_achatada(
 
 
 async def _info_direto_ou_absoluto(
-    anime: Anime, numero: int, offset_de_temporada: int
+    anime: Anime, titulo_base: str, numero: int, offset_de_temporada: int
 ) -> InfoDeEpisodio | None:
     """Still/nome/sinopse TMDB de um episódio: tenta primeiro o par DIRETO
     (`numero` dentro da temporada, `anime.numero_temporada`) — o caso comum,
@@ -316,14 +350,18 @@ async def _info_direto_ou_absoluto(
     mas do lugar errado da série) em vez de vir vazio. Tentar o direto antes
     evita esse erro de atribuição sempre que o TMDB de fato tem a temporada
     separada — só recorre ao absoluto (com o mesmo risco de offset incompleto
-    de sempre) quando o direto genuinamente não encontra a temporada."""
+    de sempre) quando o direto genuinamente não encontra a temporada.
+
+    `titulo_base` (`_titulo_base_da_franquia`) substitui `anime.titulo` nas
+    duas chamadas — título de temporada sem marcador reconhecível (ex.
+    "Nome. 2", número solto) faria o TMDB não achar a série nenhuma vez."""
     info = await servico_metadados.buscar_info_de_episodio(
-        anime.titulo, anime.ano, numero, anime.numero_temporada
+        titulo_base, anime.ano, numero, anime.numero_temporada
     )
     if info is not None or not offset_de_temporada:
         return info
     return await servico_metadados.buscar_info_de_episodio(
-        anime.titulo, anime.ano, offset_de_temporada + numero, None
+        titulo_base, anime.ano, offset_de_temporada + numero, None
     )
 
 
@@ -343,9 +381,10 @@ async def info_de_episodio(
     falha/timeout vira `None` e é logada — a captura não pode travar nem
     falhar por causa de thumb/sinopse."""
     try:
+        titulo_base = await _titulo_base_da_franquia(sessionmaker, anime)
         info = await asyncio.wait_for(
             servico_metadados.buscar_info_de_episodio(
-                anime.titulo, anime.ano, numero, anime.numero_temporada
+                titulo_base, anime.ano, numero, anime.numero_temporada
             ),
             timeout=_TETO_STILL_UNICO_S,
         )
@@ -357,7 +396,7 @@ async def info_de_episodio(
             return None
         return await asyncio.wait_for(
             servico_metadados.buscar_info_de_episodio(
-                anime.titulo, anime.ano, offset + numero, None
+                titulo_base, anime.ano, offset + numero, None
             ),
             timeout=_TETO_STILL_UNICO_S,
         )
@@ -396,7 +435,10 @@ async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
 
 
 async def _sobrepor_stills_de_episodios(
-    anime: Anime, episodios: list[EpisodioRemoto], offset_de_temporada: int = 0
+    sessionmaker: _SessionMaker,
+    anime: Anime,
+    episodios: list[EpisodioRemoto],
+    offset_de_temporada: int = 0,
 ) -> list[EpisodioRemoto]:
     """Overlay best-effort de thumb/nome/sinopse TMDB (Fatia 5/6,
     `PLANO_ARTE_TMDB.md`) sobre `EpisodioRemoto.thumb_url`/`titulo`/`sinopse`.
@@ -432,13 +474,16 @@ async def _sobrepor_stills_de_episodios(
     if not indices_elegiveis:
         return resultado
 
+    titulo_base = await _titulo_base_da_franquia(sessionmaker, anime)
     semaforo = asyncio.Semaphore(_CONCORRENCIA_STILLS)
 
     async def _buscar_um(indice: int) -> tuple[int, InfoDeEpisodio | None]:
         episodio = episodios[indice]
         async with semaforo:
             try:
-                info = await _info_direto_ou_absoluto(anime, episodio.numero, offset_de_temporada)
+                info = await _info_direto_ou_absoluto(
+                    anime, titulo_base, episodio.numero, offset_de_temporada
+                )
             except Exception as excecao:
                 # Captura ampla e intencional (mesmo espírito de
                 # `api/servicos/capas.py::_consultar_um`): este overlay é
