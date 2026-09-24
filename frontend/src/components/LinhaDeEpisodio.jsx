@@ -343,9 +343,9 @@ export function tomDoStatus(status) {
 //    (`aria-hidden`) e some em `motion-reduce` — a preferência de menos
 //    movimento não pode deixar um anel girando pra sempre, e o rótulo já
 //    comunica o estado sem ele.
-//  - 'alerta': ícone "⚠" estático (sem spinner) em âmbar — mesmo tom do
-//    IndicadorDeAtencao, único precedente de "precisa de atenção" no app;
-//    não há token de erro/danger no @theme (index.css).
+//  - 'alerta': ícone "⚠" estático (sem spinner) em âmbar — mesmo tom "precisa
+//    de atenção" usado no rodapé de AnimeCard.jsx; não há token de
+//    erro/danger no @theme (index.css).
 //  - 'neutro': nada além do rótulo, em cor esmaecida (`text-ink-muted`).
 // O rótulo carrega o `aria-live="polite"` que no modo lista vive no status
 // inline (trailing da FaixaDeConteudo) do ramo `if (episodio)`.

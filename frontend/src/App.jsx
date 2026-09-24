@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import SeletorDeFonteDemo from './SeletorDeFonteDemo.jsx';
-import IndicadorDeAtencao from './components/IndicadorDeAtencao.jsx';
 import Toasts from './components/Toasts.jsx';
 import { useEventosDeJobs } from './eventos/useEventosDeJobs.js';
 import Player from './player/Player.jsx';
@@ -22,18 +21,12 @@ export default function App() {
 // Sem gate de autenticação (D5 do plano de remoção — API é de uso
 // pessoal/local, CLAUDE.md): todas as rotas são alcançáveis direto. WS único
 // (`useEventosDeJobs`) sobe aqui, no nível do app, sempre conectado — o Map
-// resultante desce por prop pra quem precisa (grade de episódios, indicador
-// de atenção, toasts).
+// resultante desce por prop pra quem precisa (grade de episódios, toasts).
 function Shell() {
   const jobsPorEpisodio = useEventosDeJobs();
-  const jobsPrecisandoAtencao = useMemo(
-    () => [...jobsPorEpisodio.values()].filter((job) => job.status === 'aguardando_intervencao'),
-    [jobsPorEpisodio]
-  );
 
   return (
     <>
-      <IndicadorDeAtencao jobs={jobsPrecisandoAtencao} />
       <Toasts jobsPorEpisodio={jobsPorEpisodio} />
       <Routes>
         <Route path="/" element={<Inicio jobsPorEpisodio={jobsPorEpisodio} />} />

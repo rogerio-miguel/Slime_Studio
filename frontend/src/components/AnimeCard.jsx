@@ -101,8 +101,8 @@ import IconeSalvar from './IconeSalvar.jsx';
 // tom pensado pra sobreviver em cima de imagem — usa a mesma cor esmaecida do
 // resto do app.
 // `aviso` (opcional, string): kicker curto em âmbar no topo do mesmo bloco de
-// rodapé — mesmo tom "precisa de atenção" de components/IndicadorDeAtencao.jsx e
-// do OverlayDeStatus 'alerta' de components/LinhaDeEpisodio.jsx (não há token de
+// rodapé — mesmo tom "precisa de atenção" do OverlayDeStatus 'alerta' de
+// components/LinhaDeEpisodio.jsx (não há token de
 // erro/danger no @theme). Texto visível, no fluxo de leitura de tela — não um
 // ícone mudo. Usado pelos resultados de "correspondência incerta" da busca de
 // fontes (paginas/Inicio.jsx): o site indexou o anime só sob um título que não
