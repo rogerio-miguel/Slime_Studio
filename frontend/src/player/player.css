@@ -242,14 +242,22 @@ body.pagina-player {
    trava só considera foco alcançado por navegação real (Tab) dentro dos
    controles, e ignora o <h1>.
 
+   `button[aria-expanded="true"]` entra na mesma trava (pedido do usuário,
+   2026-09-24): o painel de MenuDeConfiguracoes.jsx é DESCENDENTE de
+   `.controls`, então sem isso a barra inteira (menu aberto incluso) sumia
+   depois de ATRASO_MS parado, mesmo com o menu ativo — abrir com clique não
+   deixa `:focus-visible` no gatilho na maioria dos navegadores, só o foco
+   comum, então a trava de cima sozinha não cobria esse caso. `aria-expanded`
+   é o mesmo atributo que já marca o gatilho aberto (nenhuma classe nova).
+
    cursor:none no palco, não em .frame nem em <html>: o palco é o alvo do
    requestFullscreen (cobre a tela toda, inclusive as faixas de
    --bar-height) e em janela ocupa a viewport inteira da rota, mas termina
    antes da navbar — fora dele o cursor continua visível, que é o certo. */
-.fullscreen-stage.palco-inativo:not(:has(button:focus-visible, input:focus-visible, select:focus-visible)) {
+.fullscreen-stage.palco-inativo:not(:has(button:focus-visible, input:focus-visible, select:focus-visible, button[aria-expanded='true'])) {
   cursor: none;
 }
-.fullscreen-stage.palco-inativo:not(:has(button:focus-visible, input:focus-visible, select:focus-visible)) .controls {
+.fullscreen-stage.palco-inativo:not(:has(button:focus-visible, input:focus-visible, select:focus-visible, button[aria-expanded='true'])) .controls {
   opacity: 0;
   transform: translateY(var(--deslocamento));
   pointer-events: none;

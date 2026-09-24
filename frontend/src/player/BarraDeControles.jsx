@@ -1,16 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity } from 'lucide-react';
 import MenuDeConfiguracoes from './MenuDeConfiguracoes.jsx';
 import PreviaDeCena, { LARGURA_THUMB } from './PreviaDeCena.jsx';
-import {
-  IconePlay,
-  IconePausa,
-  IconeVolume,
-  IconeTelaCheia,
-  IconeSkip10,
-  IconeAvancarPlayer,
-} from './Icones.jsx';
+import { IconePlay, IconePausa, IconeVolume, IconeTelaCheia, IconeSkip10 } from './Icones.jsx';
 import { usePreferencia } from './hooks/usePreferencia.js';
+import { useSegurarParaPular } from './hooks/useSegurarParaPular.js';
 import { formatarTempo } from './formatarTempo.js';
 
 // Ghost pill (transparente, acende no hover) — a mesma família visual do
@@ -18,11 +11,10 @@ import { formatarTempo } from './formatarTempo.js';
 // substituindo a caixa cinza+borda de antes. Estado "pressionado" (cinema
 // habilitado) usa o accent neon do resto do Slime Studio (--color-neon, ver
 // tailwind.config via @theme em index.css), não mais um verde ad-hoc só
-// deste componente. `min-w-14` (não `w-14` fixo) porque o botão HUD é
-// texto, não ícone. Mesmo tamanho de caixa do trio central (`h-14 min-w-14`,
+// deste componente. Mesmo tamanho de caixa do trio central (`h-14 min-w-14`,
 // pedido explícito do usuário: só o play fica maior, o resto — volume,
-// configurações, tela cheia, HUD — fecha igual a avançar/retroceder).
-// Áudio cinema saiu daqui (virou linha de MenuDeConfiguracoes.jsx).
+// configurações, tela cheia — fecha igual a avançar/retroceder).
+// Áudio cinema e HUD saíram daqui (viraram linhas de MenuDeConfiguracoes.jsx).
 // Cobre os botões periféricos; o trio central usa `classeBotaoTrio` abaixo,
 // que só difere no estilo de hover (sem pill) e no play, com ícone maior.
 const classeBotao =
@@ -40,10 +32,10 @@ const classeBotao =
 // (`min-w-14`, não `w-14` fixo, porque o skip empilha ícone+"10" e pode
 // precisar de um pouco mais de largura que o quadrado mínimo).
 const classeBotaoTrio =
-  'inline-flex h-14 min-w-14 items-center justify-center rounded-full text-white transition ' +
+  'relative inline-flex h-14 min-w-14 items-center justify-center rounded-full text-white transition ' +
   'hover:text-white/70 active:scale-90 ' +
   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2 ' +
-  'motion-reduce:transition-none motion-reduce:active:scale-100';
+  'motion-reduce:transition-none motion-reduce:active:scale-100 touch-none';
 
 // Componente controlado: não guarda a fonte de verdade da reprodução — isso
 // vive no <video> (videoRef, de Player.jsx). Este componente só espelha o
@@ -60,6 +52,7 @@ export default function BarraDeControles({
   aoAlternarMudo,
   aoAlternarTelaCheia,
   aoAlternarHud,
+  hudVisivel,
   aoAlternarCinema,
   cinemaHabilitado,
   cinemaFalhou,
@@ -68,9 +61,11 @@ export default function BarraDeControles({
   // contra um chamador futuro que monte a barra sem passar as duas props.
   aoAvancar,
   aoRetroceder,
-  // Avançar 1m30 (PlayerAtivo.jsx) — botão à parte do trio, vive no grupo de
-  // HUD/config/tela cheia (pedido explícito do usuário, 2026-09-17).
+  // Avançar/retroceder 1m30 (PlayerAtivo.jsx) — não viram botões à parte:
+  // alimentam o gesto de segurar nos próprios botões de skip de 10s do trio
+  // abaixo (useSegurarParaPular.js), pedido do usuário 2026-09-24.
   aoAvancarNoventa,
+  aoRetrocederNoventa,
   // URL do sprite de prévia (PlayerAtivo.jsx, derivada de `fonte`) — `undefined`
   // é um valor válido (PreviaDeCena.jsx só não renderiza nada nesse caso).
   storyboardUrl,
@@ -183,6 +178,12 @@ export default function BarraDeControles({
     video.muted = video.volume === 0;
   }
 
+  // Um hook por lado (não um estado só) — retroceder e avançar podem, em
+  // teoria, ser pressionados em sequência rápida sem que o anel de um
+  // interfira no do outro.
+  const segurarRetroceder = useSegurarParaPular(() => aoRetroceder?.(), () => aoRetrocederNoventa?.());
+  const segurarAvancar = useSegurarParaPular(() => aoAvancar?.(), () => aoAvancarNoventa?.());
+
   // 3 estados pro ícone animado (Icones.jsx::IconeVolume) — mudo cobre tanto
   // o toggle quanto volume zerado por arraste, sem duplicar essa checagem.
   const nivelDeVolume = mudo || volume === 0 ? 'mudo' : volume < 0.5 ? 'baixo' : 'alto';
@@ -248,7 +249,13 @@ export default function BarraDeControles({
       {/* Linha 2: 3 zonas (grid, não flex) — o trio play/skip fica
           matematicamente centralizado independente da largura dos grupos ao
           lado, em vez de seguir o texto/paddings deles como aconteceria com
-          justify-between. */}
+          justify-between.
+
+          Retroceder/avançar (gesto de useSegurarParaPular.js): o anel fino
+          que existia ao redor do botão (AnelDeSegurar) saiu — o próprio
+          `progresso` (0-1) agora vai direto pra IconeSkip10 (Icones.jsx),
+          que pinta o traço do ícone em neon do início do arco até a ponta
+          da seta e faz o "10" virar "90", pedido do usuário 2026-09-24. */}
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <div className="flex items-center gap-3">
           {/* group/volume: o slider nasce recolhido (w-0) e só se revela no
@@ -298,15 +305,21 @@ export default function BarraDeControles({
             player do Disney+ referenciado. O "10" não fica mais empilhado
             embaixo do ícone num <span> à parte (removido a pedido do
             usuário, 2026-09-17) — agora é composto DENTRO do círculo da
-            seta, direto em IconeSkip10 (Icones.jsx), sem mudar nada aqui. */}
+            seta, direto em IconeSkip10 (Icones.jsx), sem mudar nada aqui.
+            Retroceder/avançar ganharam o gesto de segurar (useSegurarParaPular
+            .js, pedido do usuário 2026-09-24): toque rápido continua sendo o
+            skip de 10s de sempre (via `onClick`, embutido em `handlers`);
+            segurar ~600ms pinta o próprio ícone em neon (IconeSkip10,
+            `progresso` abaixo) e, ao completar, salta 1m30 — sem nenhum
+            botão novo na barra. */}
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => aoRetroceder?.()}
-            aria-label="Retroceder 10 segundos"
+            {...segurarRetroceder.handlers}
+            aria-label="Retroceder 10 segundos — segure para retroceder 1 minuto e 30 segundos"
             className={classeBotaoTrio}
           >
-            <IconeSkip10 direcao="tras" width={32} height={32} />
+            <IconeSkip10 direcao="tras" width={32} height={32} progresso={segurarRetroceder.progresso} />
           </button>
           <button
             type="button"
@@ -322,45 +335,36 @@ export default function BarraDeControles({
           </button>
           <button
             type="button"
-            onClick={() => aoAvancar?.()}
-            aria-label="Avançar 10 segundos"
+            {...segurarAvancar.handlers}
+            aria-label="Avançar 10 segundos — segure para avançar 1 minuto e 30 segundos"
             className={classeBotaoTrio}
           >
-            <IconeSkip10 direcao="frente" width={32} height={32} />
+            <IconeSkip10 direcao="frente" width={32} height={32} progresso={segurarAvancar.progresso} />
           </button>
         </div>
 
         {/* `relative` mora aqui (não mais dentro de MenuDeConfiguracoes.jsx)
-            de propósito: o gatilho (engrenagem) fica no meio do grupo — entre
-            HUD e Tela cheia, ordem pedida pelo usuário —, mas o painel que
-            abre (`absolute right-0` em MenuDeConfiguracoes.jsx) ancora no
-            elemento posicionado mais próximo. Sendo ESTE grupo o ancestral
-            posicionado, o painel fica flush com a borda direita do grupo
-            inteiro — a mesma borda onde a linha de progresso acima termina
-            (tempo total) — em vez de flush só com o próprio botão pequeno da
-            engrenagem, que ficaria desalinhado da barra por estar no meio. */}
+            de propósito: o gatilho (engrenagem) fica no meio do grupo, mas o
+            painel que abre (`absolute right-0` em MenuDeConfiguracoes.jsx)
+            ancora no elemento posicionado mais próximo. Sendo ESTE grupo o
+            ancestral posicionado, o painel fica flush com a borda direita do
+            grupo inteiro — a mesma borda onde a linha de progresso acima
+            termina (tempo total) — em vez de flush só com o próprio botão
+            pequeno da engrenagem, que ficaria desalinhado da barra por estar
+            no meio. HUD saiu daqui (virou toggle dentro do próprio menu de
+            configurações) e "Avançar 1m30" nunca teve botão próprio aqui —
+            virou o gesto de segurar nos botões de skip do trio acima
+            (ver `progresso` em IconeSkip10, Icones.jsx) — pedidos do
+            usuário, 2026-09-24. */}
         <div className="relative flex items-center justify-end gap-2">
-          {/* Placeholder visual (ghost pill, mesma classeBotao dos vizinhos)
-              — usuário vai customizar o estilo depois; por ora só ícone+texto
-              funcional, mesmo ícone "frente" do trio central. */}
-          <button
-            type="button"
-            onClick={() => aoAvancarNoventa?.()}
-            aria-label="Avançar 1 minuto e 30 segundos"
-            className={`${classeBotao} gap-2 whitespace-nowrap`}
-          >
-            <IconeAvancarPlayer width={20} height={20} />
-            Avançar 1m30
-          </button>
-          <button type="button" onClick={aoAlternarHud} aria-label="Alternar HUD" className={classeBotao}>
-            <Activity width={22} height={22} />
-          </button>
           <MenuDeConfiguracoes
             presetAtual={presetAtual}
             aoTrocar={aoTrocarPreset}
             cinemaHabilitado={cinemaHabilitado}
             cinemaFalhou={cinemaFalhou}
             aoAlternarCinema={aoAlternarCinema}
+            hudVisivel={hudVisivel}
+            aoAlternarHud={aoAlternarHud}
           />
           <button type="button" onClick={aoAlternarTelaCheia} aria-label="Tela cheia" className={classeBotao}>
             <IconeTelaCheia width={26} height={26} />
