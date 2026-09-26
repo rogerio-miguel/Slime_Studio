@@ -58,3 +58,44 @@ html {
     transform: scaleX(1);
   }
 }
+
+/* "Clap" da lâmina de cima do ícone de claquete na navbar
+   (components/LogoSlimeStudio.jsx, IconeClaquete) — pedido do usuário
+   2026-09-24 ("deixar ele mais vivo"). Só `transform: rotate` num <g>
+   isolado (a base do ícone fica parada), mesma disciplina de performance
+   do preencher-progresso-dot acima: compositor-only, não disputa a thread
+   principal com o resto da navbar (scroll, fade do fundo).
+   Reajustado (pedido do usuário, 2026-09-26: "a lâmina começar alta e
+   bater") — ANTES a lâmina nascia fechada (0deg) e abria sozinha (0%-15%)
+   antes de bater; agora já NASCE aberta (-24deg em 0%), segura um instante
+   (30%) e bate com leve overshoot pra frente (50%), assentando com um
+   pequeno recuo (70%) antes de fechar de vez (100%). Bate JUNTO com a
+   montagem do ícone (sem `animation-delay` — testado com atraso e
+   revertido no mesmo dia, "deixa como estava antes"). Replay controlado
+   pelo componente (classe só entra quando `animar` é true), não um loop
+   `infinite` aqui. */
+@keyframes claquete-clap {
+  0% {
+    transform: rotate(-24deg);
+  }
+  30% {
+    transform: rotate(-24deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+  70% {
+    transform: rotate(-2deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* `claquete-fecha` (flourish de fechamento da lâmina na volta ícone→nome)
+   foi REMOVIDO (pedido do usuário, 2026-09-26): a volta deixou de desmontar
+   o ícone em pedaços/letras — agora é um crossfade simples (ícone inteiro
+   soma/some, palavra aparece por fade, ver `IconeClaquete` e
+   `DURACAO_ICONE_SOME_MS` em `LogoSlimeStudio.jsx`), sem flourish próprio
+   pra essa direção. Histórico da animação removida: `git log -p` neste
+   arquivo. */
