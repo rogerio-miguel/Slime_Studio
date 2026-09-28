@@ -39,6 +39,7 @@ _COLUNAS_JOB = (
     Job.criado_em,
     Job.finalizado_em,
     Job.heartbeat_em,
+    Anime.id.label("anime_id"),
     Anime.titulo.label("anime_titulo"),
     Episodio.numero.label("episodio_numero"),
 )
