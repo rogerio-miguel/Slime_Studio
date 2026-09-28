@@ -18,6 +18,7 @@ import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
+import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
 // só não é renderizado por enquanto.
@@ -45,6 +46,7 @@ import { rotularFileiras } from '../inicio/fileirasTematicas.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { embaralharComSemente, recorteVisivelDoCarrossel } from '../inicio/janelaDeDestaques.js';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
+import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 
 // Rota "/" — interface principal do streaming: navbar + carrossel hero
 // "Destaques da temporada" seguido das fileiras horizontais. A introdução
@@ -113,14 +115,22 @@ import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 // em `Galeria.jsx`/`PaginaDoAnime.jsx`, esta página não duplica isso.
 //
 // Fronteira Clean Architecture (D5 do plano): esta página e tudo em
-// src/inicio/ só importam de src/api/, components/ e react-router-dom —
-// nada de src/player/ (a única ligação com o player é a rota
-// "/assistir/:episodioId", string, não import).
+// src/inicio/ só importam de src/api/, components/, hooks/ e
+// react-router-dom — nada de src/player/ (a única ligação com o player é a
+// rota "/assistir/:episodioId", string, não import). `hooks/
+// useStatusDeCapturaIlha.js` (usado abaixo) não quebra isso: só importa de
+// components/LinhaDeEpisodio.jsx e react-router-dom, sem tocar player/.
 
 // `jobsPorEpisodio` — mesmo Map do WS que `App.jsx` já sobe pro app inteiro
-// (`useEventosDeJobs`), até agora só descido pra `PaginaDoAnime`. A prateleira
-// "Continuar assistindo" ganha o mesmo status ao vivo de captura no ramo
-// `processando` (ver `components/CartaoContinuarAssistindo.jsx`).
+// (`useEventosDeJobs`), descido pra `PaginaDoAnime`, `Galeria` e agora
+// também aqui — a prateleira "Continuar assistindo" ganha o mesmo status ao
+// vivo de captura no ramo `processando` (`components/
+// CartaoContinuarAssistindo.jsx`), e a própria ilha dinâmica da navbar
+// (`statusCapturaIlha`/`capturaProntaIlha`/`erroCapturaIlha`, ver
+// `BarraDeNavegacao` abaixo) passa a existir na Home — pendência do
+// checkpoint anterior ("Home decide depois"), resolvida: como esta página já
+// montava `BarraDeNavegacao`, só faltava ligar o mesmo hook global que
+// Galeria/PaginaDoAnime já usam (`hooks/useStatusDeCapturaIlha.js`).
 
 // Poll de `still_pendente`/`sondagem_em_andamento` (ver efeito abaixo). O
 // teto (4s x 16 = ~64s) mira o teto comum de sondagem de fonte
@@ -134,9 +144,17 @@ import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 // piorar o caso comum de scraping leve.
 const _INTERVALO_POLL_STILL_MS = 4000;
 const _MAX_TENTATIVAS_POLL_STILL = 16;
-export default function Inicio({ jobsPorEpisodio }) {
+export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   const navigate = useNavigate();
   const idResultadosBiblioteca = useId();
+  const {
+    statusCapturaIlha,
+    aoClicarStatusCapturaIlha,
+    capturaProntaIlha,
+    aoClicarCapturaProntaIlha,
+    erroCapturaIlha,
+    aoClicarErroCapturaIlha,
+  } = useStatusDeCapturaIlha(jobsPorEpisodio, snapshotId);
 
   const emAlta = useRecurso(listarAnimesEmAlta, []);
   // "Novos lançamentos" — feed próprio (`GET /api/animes/novos-lancamentos`,
@@ -614,21 +632,96 @@ export default function Inicio({ jobsPorEpisodio }) {
 
   // Entrada de `fileirasDaHome` pra UMA fileira temática já rotulada
   // (`rotularFileiras`) — extraída porque os 3 grupos (`fileirasDaHome`
-  // abaixo) repetem a mesma `FileiraDeCards`.
-  const entradaDeFileiraTematica = (fileira) => ({
-    chave: `tematica-${fileira.chave}`,
-    node: (
-      <FileiraDeCards
-        key={`tematica-${fileira.chave}`}
-        titulo={fileira.rotulo}
-        itens={fileira.itens}
-        tamanho="pequeno"
-        comSombra={false}
-        chaveDoItem={chaveDoItemDoFeed}
-        renderItem={(item) => renderCardDoFeed(item, undefined, false)}
-      />
-    ),
-  });
+  // abaixo) repetem a mesma `FileiraDeCards`. Mesma âncora `ref`/`data-secao`
+  // das 4 fileiras principais (pedido do usuário, 2026-09-28: incluir as
+  // temáticas no seletor de seções também) — `chave` vira a `valor` da opção
+  // no dropdown, `fileira.rotulo` (já traduzido por `rotularFileiras`) vira o
+  // rótulo, sem precisar de um mapa próprio como `ROTULOS_SECAO_NAV` abaixo.
+  const entradaDeFileiraTematica = (fileira) => {
+    const chave = `tematica-${fileira.chave}`;
+    return {
+      chave,
+      // `rotulo` só existe nas entradas temáticas (as principais resolvem
+      // pelo próprio mapa `ROTULOS_SECAO_NAV`, ver `opcoesSecoes` abaixo) —
+      // é o que permite `opcoesSecoes` montar a opção do dropdown sem
+      // precisar de um segundo mapa `chave -> rótulo` pras temáticas.
+      rotulo: fileira.rotulo,
+      node: (
+        <div key={chave} ref={refSecao(chave)} data-secao={chave}>
+          <FileiraDeCards
+            titulo={fileira.rotulo}
+            itens={fileira.itens}
+            tamanho="pequeno"
+            comSombra={false}
+            chaveDoItem={chaveDoItemDoFeed}
+            renderItem={(item) => renderCardDoFeed(item, undefined, false)}
+          />
+        </div>
+      ),
+    };
+  };
+
+  // Navegação por seção na ilha dinâmica — dropdown reaproveitado do filtro
+  // da Galeria (`opcoesSecoes`/`secaoSelecionada`/`aoMudarSecao`, mesmo
+  // contrato de `opcoesFiltro`/`filtroSelecionado`/`aoMudarFiltro`, ver
+  // `BarraDeNavegacao.jsx`), com scroll-spy pra rótulo "atual" e âncoras
+  // `data-secao`/`ref` em TODA fileira com título (as 4 PRINCIPAIS — com
+  // feed próprio, ver `ROTULOS_SECAO_NAV` abaixo — e as ~10 fileiras
+  // TEMÁTICAS por gênero via `entradaDeFileiraTematica`, incluídas a pedido
+  // do usuário 2026-09-28, depois de já existir só as principais). Banners
+  // (`DestaqueGrande`) ficam de fora — não têm título/seção de verdade. Duas
+  // tentativas anteriores de navegação por seção foram revertidas no mesmo
+  // dia — ver o histórico completo em `BarraDeNavegacao.jsx` (topo do
+  // arquivo). Um divisor visual entre principais/temáticas no dropdown foi
+  // tentado e removido a pedido do usuário no mesmo dia (ver
+  // `SeletorEmMenu.jsx`) — por isso não há distinção de "grupo" aqui, só a
+  // ordem de página.
+  //
+  // `refsSecao`: mapa mutável `chave -> elemento` (não `useState`, a lista
+  // de refs não precisa re-renderizar nada por si só) preenchido pelo `ref`
+  // de callback de cada wrapper em `fileirasDaHome` abaixo. `secaoAtual`
+  // (rótulo "atual" no dropdown) é decidido por `IntersectionObserver`: uma
+  // faixa fina logo abaixo da navbar (`rootMargin` negativo no topo) até
+  // 70% da viewport (negativo no fim) — a seção cujo topo está dentro dessa
+  // faixa é a "atual". `intersecoesRef` guarda o estado de intersecção mais
+  // recente de CADA seção (o observer dispara por alvo, não por página
+  // inteira); a cada disparo, a seção atual vira a ÚLTIMA (mais abaixo, na
+  // ordem de RENDER da página, ver `opcoesSecoes` mais abaixo) que ainda
+  // está intersectando — é o mesmo efeito de "em qual seção o topo da
+  // viewport já entrou".
+  //
+  // `ROTULOS_SECAO_NAV`: só as 4 principais têm rótulo fixo aqui (não vem de
+  // `rotularFileiras`) — as temáticas usam o próprio `fileira.rotulo` (já
+  // traduzido, ver `entradaDeFileiraTematica` acima), sem precisar de um
+  // segundo mapa.
+  const ROTULOS_SECAO_NAV = {
+    'proximas-estreias': 'Próximas estreias',
+    'continuar-assistindo': 'Continuar assistindo',
+    'top-10': 'Top 10 em alta',
+    'novos-lancamentos': 'Novos lançamentos',
+  };
+  const refsSecao = useRef({});
+  const refSecao = useCallback(
+    (chave) => (elemento) => {
+      refsSecao.current[chave] = elemento;
+    },
+    []
+  );
+  const intersecoesSecaoRef = useRef(new Map());
+  const [secaoAtual, setSecaoAtual] = useState(null);
+  const movimentoReduzidoSecoes = usePrefersReducedMotion();
+
+  const aoMudarSecao = useCallback(
+    (valor) => {
+      const elemento = refsSecao.current[valor];
+      if (!elemento) return;
+      // Offset fixo (não mede a navbar em runtime): `h-20` (80px) da navbar
+      // + respiro — mesma ordem de grandeza do `pt-22` do `<main>` abaixo.
+      const topo = elemento.getBoundingClientRect().top + window.scrollY - 100;
+      window.scrollTo({ top: topo, behavior: movimentoReduzidoSecoes ? 'auto' : 'smooth' });
+    },
+    [movimentoReduzidoSecoes]
+  );
 
   // Fileiras horizontais da home NA ORDEM em que aparecem, cada uma já como
   // nó pronto (com `key`). Só entram as que de fato vão renderizar (lista não
@@ -638,25 +731,26 @@ export default function Inicio({ jobsPorEpisodio }) {
     (proximaTemporada.dados ?? []).length > 0 && {
       chave: 'proximas-estreias',
       node: (
-        <FileiraDeCards
-          key="proximas-estreias"
-          titulo="Próximas estreias"
-          itens={proximaTemporadaOrdenada}
-          tamanho="pequeno"
-          comSombra={false}
-          chaveDoItem={chaveDoItemDoFeed}
-          renderItem={(item) => {
-            const chave = chaveDoItemDoFeed(item);
-            return (
-              <CartaoDeEstreia
-                item={item}
-                salvo={estreiaEstaSalva(item)}
-                salvando={chaveSalvandoEstreia === chave}
-                aoSalvar={() => alternarEstreiaSalva(item)}
-              />
-            );
-          }}
-        />
+        <div key="proximas-estreias" ref={refSecao('proximas-estreias')} data-secao="proximas-estreias">
+          <FileiraDeCards
+            titulo="Próximas estreias"
+            itens={proximaTemporadaOrdenada}
+            tamanho="pequeno"
+            comSombra={false}
+            chaveDoItem={chaveDoItemDoFeed}
+            renderItem={(item) => {
+              const chave = chaveDoItemDoFeed(item);
+              return (
+                <CartaoDeEstreia
+                  item={item}
+                  salvo={estreiaEstaSalva(item)}
+                  salvando={chaveSalvandoEstreia === chave}
+                  aoSalvar={() => alternarEstreiaSalva(item)}
+                />
+              );
+            }}
+          />
+        </div>
       ),
     },
     itensContinuar.length > 0 && {
@@ -665,63 +759,69 @@ export default function Inicio({ jobsPorEpisodio }) {
       // nulo no ramo `capturavel` sem episódio) — um card por anime, ver
       // `backend/api/servicos/progresso.py`.
       node: (
-        <FileiraDeCards
+        <div
           key="continuar-assistindo"
-          titulo="Continuar assistindo"
-          itens={itensContinuar}
-          tamanho="episodio"
-          comSombra={false}
-          chaveDoItem={chaveDoItemContinuar}
-          renderItem={(item) => (
-            <CartaoContinuarAssistindo
-              item={item}
-              job={item.episodio_id != null ? jobsPorEpisodio?.get(item.episodio_id) : null}
-              aoCapturar={capturarProximo}
-              capturando={chaveCapturando === chaveDoItemContinuar(item)}
-              aoMarcarAssistido={aoMarcarAssistidoDoContinuar}
-              marcando={animeMarcandoAssistido === item.anime_id}
-            />
-          )}
-        />
+          ref={refSecao('continuar-assistindo')}
+          data-secao="continuar-assistindo"
+        >
+          <FileiraDeCards
+            titulo="Continuar assistindo"
+            itens={itensContinuar}
+            tamanho="episodio"
+            comSombra={false}
+            chaveDoItem={chaveDoItemContinuar}
+            renderItem={(item) => (
+              <CartaoContinuarAssistindo
+                item={item}
+                job={item.episodio_id != null ? jobsPorEpisodio?.get(item.episodio_id) : null}
+                aoCapturar={capturarProximo}
+                capturando={chaveCapturando === chaveDoItemContinuar(item)}
+                aoMarcarAssistido={aoMarcarAssistidoDoContinuar}
+                marcando={animeMarcandoAssistido === item.anime_id}
+              />
+            )}
+          />
+        </div>
       ),
     },
     top10.length > 0 && {
       chave: 'top-10',
       node: (
-        <FileiraDeCards
-          key="top-10"
-          titulo="Top 10 em alta"
-          itens={top10}
-          tamanho="pequeno"
-          comSombra={false}
-          chaveDoItem={chaveDoItemDoFeed}
-          // Numeral do Top 10: selo escuro com blur (`bg-black/80
-          // backdrop-blur-md`, mesmo tratamento do badge "Assistido" de
-          // `components/AnimeCard.jsx`) no canto superior esquerdo do pôster
-          // (`z-10`) — substitui a variante anterior de numeral grande
-          // translúcido sangrando pra fora do canto (`-left-6 -top-4`, sem
-          // fundo próprio), que ficava difícil de ler sobre capas claras.
-          // `aria-hidden`/`pointer-events-none`: decorativo, não rouba o
-          // clique. Vai como `sobreposicao` do AnimeCard (irmão do card no
-          // wrapper). `IconeEmAlta` (chama) ao lado do número: mesmo ícone da
-          // pill "#N em alta" do hero (inicio/CarrosselDestaques.jsx).
-          // `h-8`/`h-5 w-5`/`text-sm` (não mais `h-9`/`h-6 w-6`/`text-[18px]`,
-          // pedido explícito do usuário, 2026-09-21): mesmo padrão de tamanho
-          // das pills de `components/AnimeCard.jsx` (Assistido/Já no
-          // catálogo/EP.n/episódio novo).
-          renderItem={(item, indice) =>
-            renderCardDoFeed(
-              item,
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute left-0 top-3 z-10 flex h-8 items-center gap-1 bg-black/80 px-2.5 backdrop-blur-md"
-              >
-                <IconeEmAlta className="h-5 w-5" />
-                <span className="text-sm font-semibold text-white">#{indice + 1}</span>
-              </div>
-            )
-          }
-        />
+        <div key="top-10" ref={refSecao('top-10')} data-secao="top-10">
+          <FileiraDeCards
+            titulo="Top 10 em alta"
+            itens={top10}
+            tamanho="pequeno"
+            comSombra={false}
+            chaveDoItem={chaveDoItemDoFeed}
+            // Numeral do Top 10: selo escuro com blur (`bg-black/80
+            // backdrop-blur-md`, mesmo tratamento do badge "Assistido" de
+            // `components/AnimeCard.jsx`) no canto superior esquerdo do pôster
+            // (`z-10`) — substitui a variante anterior de numeral grande
+            // translúcido sangrando pra fora do canto (`-left-6 -top-4`, sem
+            // fundo próprio), que ficava difícil de ler sobre capas claras.
+            // `aria-hidden`/`pointer-events-none`: decorativo, não rouba o
+            // clique. Vai como `sobreposicao` do AnimeCard (irmão do card no
+            // wrapper). `IconeEmAlta` (chama) ao lado do número: mesmo ícone da
+            // pill "#N em alta" do hero (inicio/CarrosselDestaques.jsx).
+            // `h-8`/`h-5 w-5`/`text-sm` (não mais `h-9`/`h-6 w-6`/`text-[18px]`,
+            // pedido explícito do usuário, 2026-09-21): mesmo padrão de tamanho
+            // das pills de `components/AnimeCard.jsx` (Assistido/Já no
+            // catálogo/EP.n/episódio novo).
+            renderItem={(item, indice) =>
+              renderCardDoFeed(
+                item,
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-0 top-3 z-10 flex h-8 items-center gap-1 bg-black/80 px-2.5 backdrop-blur-md"
+                >
+                  <IconeEmAlta className="h-5 w-5" />
+                  <span className="text-sm font-semibold text-white">#{indice + 1}</span>
+                </div>
+              )
+            }
+          />
+        </div>
       ),
     },
     acaoSemParar && entradaDeFileiraTematica(acaoSemParar),
@@ -739,22 +839,23 @@ export default function Inicio({ jobsPorEpisodio }) {
     novosLancamentosSemHentai.length > 0 && {
       chave: 'novos-lancamentos',
       node: (
-        <FileiraDeCards
-          key="novos-lancamentos"
-          titulo="Novos lançamentos"
-          itens={novosLancamentosSemHentai}
-          tamanho="pequeno"
-          comSombra={false}
-          chaveDoItem={chaveDoItemDoFeed}
-          renderItem={(item) => (
-            <AnimeCard
-              anime={item}
-              aoAtivar={() => materializarEIrPara(item)}
-              desabilitado={chaveEmMaterializacao != null}
-              episodioLancado={item.episodio_lancado}
-            />
-          )}
-        />
+        <div key="novos-lancamentos" ref={refSecao('novos-lancamentos')} data-secao="novos-lancamentos">
+          <FileiraDeCards
+            titulo="Novos lançamentos"
+            itens={novosLancamentosSemHentai}
+            tamanho="pequeno"
+            comSombra={false}
+            chaveDoItem={chaveDoItemDoFeed}
+            renderItem={(item) => (
+              <AnimeCard
+                anime={item}
+                aoAtivar={() => materializarEIrPara(item)}
+                desabilitado={chaveEmMaterializacao != null}
+                episodioLancado={item.episodio_lancado}
+              />
+            )}
+          />
+        </div>
       ),
     },
     ...restoFileirasTematicasGrupo1.map(entradaDeFileiraTematica),
@@ -773,13 +874,75 @@ export default function Inicio({ jobsPorEpisodio }) {
     ...fileirasTematicasGrupo3.map(entradaDeFileiraTematica),
   ].filter(Boolean);
 
+  // `opcoesSecoes`: TODA fileira com título que renderizou nesta carga
+  // (`fileirasDaHome` já filtrou lista vazia), NA MESMA ORDEM de
+  // `fileirasDaHome` — ordem de render = ordem de scroll da página, o que o
+  // dropdown e o scroll-spy abaixo assumem. Rótulo vem de `ROTULOS_SECAO_NAV`
+  // (principais) ou de `fileira.rotulo` (temáticas, ver
+  // `entradaDeFileiraTematica` acima); banners não têm nenhum dos dois e
+  // caem fora no `.filter(Boolean)`.
+  const opcoesSecoes = fileirasDaHome
+    .map((fileira) => {
+      const rotulo = ROTULOS_SECAO_NAV[fileira.chave] ?? fileira.rotulo;
+      return rotulo ? { valor: fileira.chave, rotulo } : null;
+    })
+    .filter(Boolean);
+
+  // Reobserva quando a lista de seções presentes muda (feed carregou/mudou)
+  // — a dep usa a lista de chaves serializada (join) pra não re-rodar o
+  // efeito a cada render sem motivo.
+  const chavesSecaoNavOrdenadas = opcoesSecoes.map((opcao) => opcao.valor);
+  const chavesSecaoNavChave = chavesSecaoNavOrdenadas.join(',');
+  useEffect(() => {
+    const elementos = chavesSecaoNavOrdenadas.map((chave) => refsSecao.current[chave]).filter(Boolean);
+    if (elementos.length === 0) return undefined;
+    const atualizarSecaoAtual = () => {
+      let atual = null;
+      for (const chave of chavesSecaoNavOrdenadas) {
+        if (intersecoesSecaoRef.current.get(chave)) atual = chave;
+      }
+      if (atual) setSecaoAtual(atual);
+    };
+    // `rootMargin`: só conta como "atual" a seção cujo topo está entre 100px
+    // abaixo do topo da viewport (logo abaixo da navbar) e 70% da altura da
+    // tela — faixa fina perto do topo, mesmo espírito de scroll-spy clássico
+    // (Bootstrap/Bulma).
+    const observer = new IntersectionObserver(
+      (entradas) => {
+        entradas.forEach((entrada) => {
+          intersecoesSecaoRef.current.set(entrada.target.dataset.secao, entrada.isIntersecting);
+        });
+        atualizarSecaoAtual();
+      },
+      { rootMargin: '-100px 0px -70% 0px' }
+    );
+    elementos.forEach((elemento) => observer.observe(elemento));
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chavesSecaoNavChave]);
+
   return (
     <>
+      {/* `opcoesSecoes`/`secaoSelecionada`/`aoMudarSecao`: a "ilha dinâmica"
+          da navbar vira seletor de seção da própria Início em vez de filtro
+          de catálogo (ver comentário completo mais acima e em
+          `BarraDeNavegacao.jsx`) — some sozinho durante `buscando` (a
+          busca substitui as fileiras por uma grade, as âncoras não existem
+          nesse branch). */}
       <BarraDeNavegacao
         transparente
         termoBusca={termoBusca}
         aoMudarBusca={setTermoBusca}
         aoSubmeterBusca={submeterBusca}
+        opcoesSecoes={buscando ? undefined : opcoesSecoes}
+        secaoSelecionada={secaoAtual}
+        aoMudarSecao={aoMudarSecao}
+        statusCapturaIlha={statusCapturaIlha}
+        aoClicarStatusCapturaIlha={aoClicarStatusCapturaIlha}
+        capturaProntaIlha={capturaProntaIlha}
+        aoClicarCapturaProntaIlha={aoClicarCapturaProntaIlha}
+        erroCapturaIlha={erroCapturaIlha}
+        aoClicarErroCapturaIlha={aoClicarErroCapturaIlha}
       />
 
       <main

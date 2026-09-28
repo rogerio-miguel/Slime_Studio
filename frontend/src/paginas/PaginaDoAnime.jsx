@@ -23,6 +23,7 @@ import MenuDeAcoesDoAnime from '../components/MenuDeAcoesDoAnime.jsx';
 import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
 import { nomeDaFonte } from '../fontes.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import BlocoConteudoHero from '../inicio/BlocoConteudoHero.jsx';
 import {
   gradienteHero,
@@ -131,7 +132,7 @@ function IconeLista() {
 // de URL, ESPECIFICACAO.md §4): `POST /api/admin/jobs` (modo "site") resolve
 // e cria o job no mesmo request; se o site tiver mais de um resultado
 // possível, `DialogoDeFonteAmbigua` resolve inline e a captura é reenviada.
-export default function PaginaDoAnime({ jobsPorEpisodio }) {
+export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   const { id } = useParams();
   const animeId = Number(id);
   const navigate = useNavigate();
@@ -252,6 +253,25 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
     // aqui rodaria o efeito em todo render, não só quando os dados mudam.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobsPorEpisodio, episodios.dados, episodios.recarregar]);
+
+  // `statusCapturaIlha`/`capturaProntaIlha`/`erroCapturaIlha`: os três
+  // sinais de captura da ilha, GLOBAL (qualquer anime do app, não só este)
+  // — hook compartilhado com Galeria.jsx (hooks/useStatusDeCapturaIlha.js),
+  // substitui os toasts "concluído"/erro que existiam em
+  // components/Toasts.jsx (removido, 2026-09-27 — os dois migraram pra cá).
+  // Antes esta página tinha sua própria versão ESCOPADA a `episodios.dados`
+  // (só este anime) — unificada pra global: mais consistente com a Galeria
+  // (mesmo texto, mesmo comportamento em qualquer página) e mais simples
+  // (sem duplicar a lógica de diffing, sem precisar resetar nada ao trocar
+  // de anime).
+  const {
+    statusCapturaIlha,
+    aoClicarStatusCapturaIlha,
+    capturaProntaIlha,
+    aoClicarCapturaProntaIlha,
+    erroCapturaIlha,
+    aoClicarErroCapturaIlha,
+  } = useStatusDeCapturaIlha(jobsPorEpisodio, snapshotId);
 
   const [numeroCapturando, setNumeroCapturando] = useState(null);
   const [erroCaptura, setErroCaptura] = useState(null);
@@ -779,8 +799,22 @@ export default function PaginaDoAnime({ jobsPorEpisodio }) {
       {/* Sem `termoBusca`/`aoMudarBusca`: esta página não tem uma lista pra
           filtrar, então a caixa de busca nem renderiza (ver
           `components/BarraDeNavegacao.jsx`). `transparente`: sem fundo no topo
-          (deixa a arte do hero aparecer sob a navbar), escurece ao rolar. */}
-      <BarraDeNavegacao transparente />
+          (deixa a arte do hero aparecer sob a navbar), escurece ao rolar.
+          `statusCapturaIlha`/`capturaProntaIlha`/`erroCapturaIlha`: ilha
+          dinâmica mostra o status ao vivo de captura (ou "pronto"/erro por
+          alguns segundos) — GLOBAL (qualquer anime, não só este), mesmo hook
+          de Galeria.jsx (hooks/useStatusDeCapturaIlha.js). Prioridade de qual
+          mensagem a cápsula mostra quando mais de uma está ativa: ver
+          comentário de `mensagemIlha` em BarraDeNavegacao.jsx. */}
+      <BarraDeNavegacao
+        transparente
+        statusCapturaIlha={statusCapturaIlha}
+        aoClicarStatusCapturaIlha={aoClicarStatusCapturaIlha}
+        capturaProntaIlha={capturaProntaIlha}
+        aoClicarCapturaProntaIlha={aoClicarCapturaProntaIlha}
+        erroCapturaIlha={erroCapturaIlha}
+        aoClicarErroCapturaIlha={aoClicarErroCapturaIlha}
+      />
       {/* `bg-black`: mesmo preto sólido de Galeria/Início (pedido explícito do
           usuário — antes esta página ficava em `#17171b`, cor histórica do
           Disney+, porque a grade de episódios em modo grade tem sombra

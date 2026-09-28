@@ -12,9 +12,9 @@ function montarTexto(troca, label) {
 }
 
 // Aviso efêmero quando a degradação automática troca de degrau. Vive dentro
-// do .frame (não no Shell como Toasts.jsx, que é acoplado a jobs de captura e
-// fica fora do fullscreen). role=status + aria-live: anuncia a troca pro
-// leitor de tela sem roubar foco dos controles do player. Sem animação — não
+// do .frame (não no Shell/navbar, que é acoplada a jobs de captura e fica
+// fora do fullscreen). role=status + aria-live: anuncia a troca pro leitor
+// de tela sem roubar foco dos controles do player. Sem animação — não
 // precisa de guarda de prefers-reduced-motion.
 export default function AvisoDeQualidade({ ultimaTroca, label }) {
   const [visivel, setVisivel] = useState(false);

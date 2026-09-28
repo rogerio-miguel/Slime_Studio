@@ -339,16 +339,24 @@ export function tomDoStatus(status) {
 // da caixa recortada da miniatura (ver CartaoDeEpisodio), este overlay nunca
 // disputa espaço com o número/título do episódio — os dois nem se sobrepõem
 // mais. `tom`:
-//  - 'progresso': spinner (anel de borda parcial girando). É decorativo
-//    (`aria-hidden`) e some em `motion-reduce` — a preferência de menos
-//    movimento não pode deixar um anel girando pra sempre, e o rótulo já
-//    comunica o estado sem ele.
+//  - 'progresso': só a animação (anel de borda parcial girando) — SEM texto
+//    visível (pedido do usuário, 2026-09-2x: a ilha dinâmica da navbar já
+//    mostra o rótulo do status por extenso, ver BarraDeNavegacao.jsx/
+//    PaginaDoAnime.jsx::statusCapturaIlha; repetir o texto no card virou
+//    ruído). O rótulo continua no DOM como `sr-only` (não `aria-hidden`) —
+//    quem usa leitor de tela ainda precisa ouvir a transição de status
+//    mesmo sem a pista visual, CLAUDE.md §4 não permite cortar isso. A
+//    animação em si segue decorativa/`aria-hidden` e some em
+//    `motion-reduce` (o texto sr-only já comunica o estado sem ela).
 //  - 'alerta': ícone "⚠" estático (sem spinner) em âmbar — mesmo tom "precisa
 //    de atenção" usado no rodapé de AnimeCard.jsx; não há token de
-//    erro/danger no @theme (index.css).
-//  - 'neutro': nada além do rótulo, em cor esmaecida (`text-ink-muted`).
-// O rótulo carrega o `aria-live="polite"` que no modo lista vive no status
-// inline (trailing da FaixaDeConteudo) do ramo `if (episodio)`.
+//    erro/danger no @theme (index.css). Rótulo continua VISÍVEL aqui: sem
+//    animação nenhuma pra substituir a informação, e "Falhou"/"Precisa de
+//    atenção" não têm um equivalente por extenso na ilha (que só fala de
+//    progresso/conclusão).
+//  - 'neutro': nada além do rótulo, em cor esmaecida (`text-ink-muted`) —
+//    inalterado (cobre cancelado/pausado/somente_720p/pendente, nenhum
+//    pedido do usuário tocou este ramo).
 export function OverlayDeStatus({ rotulo, tom }) {
   const corDoRotulo =
     tom === 'alerta' ? 'text-amber-300' : tom === 'neutro' ? 'text-ink-muted' : 'text-white';
@@ -367,7 +375,9 @@ export function OverlayDeStatus({ rotulo, tom }) {
       )}
       <span
         aria-live="polite"
-        className={`text-xs font-semibold uppercase tracking-wide ${corDoRotulo}`}
+        className={`text-xs font-semibold uppercase tracking-wide ${corDoRotulo} ${
+          tom === 'progresso' ? 'sr-only' : ''
+        }`}
       >
         {rotulo}
       </span>
@@ -794,13 +804,28 @@ export default function LinhaDeEpisodio({
   if (episodio) {
     const statusAtual = job?.status ?? episodio.status;
     const rotuloStatus = ROTULOS_STATUS[statusAtual] ?? statusAtual;
+    // Janela de corrida rara (mesma que `jaRecarregadoRef` de
+    // PaginaDoAnime.jsx existe pra fechar): o WS já reporta `job.status ===
+    // 'pronto'` por um instante ANTES do `episodios.recarregar()` daquele
+    // efeito resolver e este episódio migrar pro ramo `pronto` de verdade
+    // (topo do arquivo, com <Link> pro player). Sem este guard, esse instante
+    // renderizava uma "badge" com o texto "Pronto" (tom 'neutro', sem
+    // animação nenhuma — `tomDoStatus('pronto')` não está em nenhum dos dois
+    // Sets) que o usuário achou redundante/confusa: o episódio ainda não é
+    // clicável nesta linha (seguimos no ramo estático), então "Pronto" aqui
+    // parecia um estado real quando é só transitório — pedido do usuário,
+    // 2026-09-2x, remover. A notificação de conclusão de verdade já vem pela
+    // ilha dinâmica (`statusCapturaIlha`/`capturaProntaIlha`,
+    // BarraDeNavegacao.jsx). Sem substituto visual aqui: por baixo de 1
+    // render depois o `recarregar()` já troca a linha pro ramo `pronto` real.
+    const emTransicaoParaPronto = statusAtual === 'pronto';
     // Ramo não clicável nos dois modos (alvo estático <div>) — comportamento
     // atual mantido. Modo lista: o status fica ao lado do rótulo com
     // `aria-live` pro leitor de tela anunciar cada transição do pipeline sem
     // precisar de foco. Modo grade: esse mesmo status vira overlay central
-    // sobre a thumb (o `aria-live` viaja junto, dentro do OverlayDeStatus) —
-    // spinner nos estados de progresso, "⚠" em falha/intervenção, só o rótulo
-    // nos terminais neutros — e a faixa fica só com o rótulo do episódio.
+    // sobre a thumb (spinner nos estados de progresso — sem texto visível,
+    // ver OverlayDeStatus —, "⚠" + texto em falha/intervenção, só o rótulo
+    // nos terminais neutros) — e a faixa fica só com o rótulo do episódio.
     return (
       <CartaoDeEpisodio
         modo={modo}
@@ -810,7 +835,7 @@ export default function LinhaDeEpisodio({
             modo={modo}
             rotulo={<RotuloEpisodio numero={numero} rotulo={rotulo} titulo={titulo} />}
             trailing={
-              emGrade ? null : (
+              emGrade || emTransicaoParaPronto ? null : (
                 <span aria-live="polite" className="shrink-0">
                   {rotuloStatus}
                 </span>
@@ -821,7 +846,9 @@ export default function LinhaDeEpisodio({
         }
       >
         <MiniaturaDoEpisodio thumb={thumb} modo={modo} />
-        {emGrade && <OverlayDeStatus rotulo={rotuloStatus} tom={tomDoStatus(statusAtual)} />}
+        {emGrade && !emTransicaoParaPronto && (
+          <OverlayDeStatus rotulo={rotuloStatus} tom={tomDoStatus(statusAtual)} />
+        )}
       </CartaoDeEpisodio>
     );
   }
