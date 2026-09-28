@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ErroDeApi } from '../api/cliente.js';
 import { aquecimentoEmAndamento, listarAnimes, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
@@ -6,8 +6,8 @@ import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
-import SeletorEmMenu from '../components/SeletorEmMenu.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 import { agruparEmFranquias } from '../inicio/franquia.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
@@ -25,6 +25,16 @@ const ROTULOS_STATUS_LANCAMENTO = {
   hiato: 'Em hiato',
 };
 
+// Valor especial de `filtroSelecionado` pra "Vídeos locais" (pedido do
+// usuário, 2026-09-28) — não é um EIXO de filtro do catálogo de animes como
+// os outros (sem prefixo `status:`/`assistido:`/`novos:`, `animesExibidos`
+// nem processa isto): é um modo de visualização à parte que TROCA a grade
+// principal pela grade de vídeos locais, mesmo padrão "substitui, não soma"
+// dos demais itens do dropdown. Por isso a seção de vídeos locais deixou de
+// ser sempre visível (era um apêndice fixo embaixo da grade) e passou a só
+// aparecer quando este valor está selecionado.
+const VALOR_FILTRO_VIDEOS_LOCAIS = 'videos-locais';
+
 // Poll leve pós-carga (`listarAnimes({aquecer:true})`, abaixo): a sondagem da
 // fonte real e o aquecimento de `status_lancamento` que `?aquecer=true`
 // dispara são fire-and-forget — o resultado entra no banco só para a PRÓXIMA
@@ -40,6 +50,11 @@ const ROTULOS_STATUS_LANCAMENTO = {
 // contagem repetidas vezes no meio do aquecimento.
 const _INTERVALO_POLL_AQUECIMENTO_MS = 4000;
 const _MAX_TENTATIVAS_POLL_AQUECIMENTO = 16;
+
+// Quanto tempo a notificação "novos episódios" da ilha dinâmica
+// (BarraDeNavegacao.jsx) fica visível antes de sumir sozinha — pedido do
+// usuário, 2026-09-27.
+const DURACAO_NOTIFICACAO_NOVOS_EPS_MS = 5000;
 
 // Ordem fixa da grade — sem dropdown de ordenação (removido a pedido do
 // usuário: com filtro de status/assistido já cobrindo o caso de uso, o
@@ -71,10 +86,22 @@ function ordenarPorTitulo(lista) {
 // o mesmo container. Os títulos e os estados transitórios recuperam o
 // alinhamento via `paddingInline: PADDING_TITULO_GRADE` (só o gutter — o
 // slot da grade não tem padding próprio), não via `px` no `<main>`.
-export default function Galeria() {
+// `jobsPorEpisodio` (App.jsx::Shell -> useEventosDeJobs.js, Map global do WS
+// `episodio_id -> job`, TODOS os animes, não só os exibidos na grade
+// filtrada) — alimenta só a notificação "episódio pronto" da ilha dinâmica
+// (ver useEffect de diffing abaixo); a grade em si não cruza com jobs (isso é
+// só feito em PaginaDoAnime.jsx, que mostra status de captura por episódio).
+export default function Galeria({ jobsPorEpisodio, snapshotId }) {
+  const {
+    statusCapturaIlha,
+    aoClicarStatusCapturaIlha,
+    capturaProntaIlha,
+    aoClicarCapturaProntaIlha,
+    erroCapturaIlha,
+    aoClicarErroCapturaIlha,
+  } = useStatusDeCapturaIlha(jobsPorEpisodio, snapshotId);
   const idMeuCatalogo = useId();
   const idVideosLocais = useId();
-  const idFiltro = useId();
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
@@ -102,7 +129,13 @@ export default function Galeria() {
     let cancelado = false;
     aquecimentoEmAndamento()
       .then(({ em_andamento }) => {
-        if (!cancelado) setAquecendo(em_andamento);
+        if (cancelado) return;
+        setAquecendo(em_andamento);
+        // Nada em andamento já na primeira checagem: não vai ter poll (ver
+        // efeito abaixo), então é AQUI que a verificação "termina" pra
+        // efeito da notificação de novos episódios (useEffect de
+        // `franquias` mais abaixo).
+        if (!em_andamento) verificacaoDeNovosEpsConcluidaRef.current = true;
       })
       .catch(() => {});
     return () => {
@@ -135,6 +168,7 @@ export default function Galeria() {
       if (cancelado) return;
       if (!emAndamento || tentativas >= _MAX_TENTATIVAS_POLL_AQUECIMENTO) {
         setAquecendo(false);
+        verificacaoDeNovosEpsConcluidaRef.current = true;
         recarregar();
       }
     }, _INTERVALO_POLL_AQUECIMENTO_MS);
@@ -146,6 +180,58 @@ export default function Galeria() {
   }, [aquecendo]);
 
   const [filtroSelecionado, setFiltroSelecionado] = useState('');
+
+  // Último scrollY conhecido ANTES da troca de filtro. Não dá pra usar
+  // `window.scrollY` dentro do `useLayoutEffect` abaixo pra decidir se o
+  // navegador ia clampar — nesse ponto o layout novo (lista já filtrada) já
+  // rodou, então se o clamp ia acontecer ele JÁ aconteceu e o valor "de
+  // antes" já se perdeu. Listener passivo (mesmo padrão de scroll de
+  // BarraDeNavegacao.jsx) mantém a referência sempre com o valor de antes do
+  // clique, intocada até o próprio filtro mudar o layout.
+  const ultimoScrollYRef = useRef(0);
+  useEffect(() => {
+    let quadroPendente = false;
+    const atualizar = () => {
+      ultimoScrollYRef.current = window.scrollY;
+      quadroPendente = false;
+    };
+    const aoRolar = () => {
+      if (quadroPendente) return;
+      quadroPendente = true;
+      requestAnimationFrame(atualizar);
+    };
+    ultimoScrollYRef.current = window.scrollY;
+    window.addEventListener('scroll', aoRolar, { passive: true });
+    return () => window.removeEventListener('scroll', aoRolar);
+  }, []);
+
+  // Bug reportado pelo usuário (2026-09-27): trocar o filtro enquanto rolado
+  // (ilha dinâmica ativa) podia deixar a lista bem mais curta que antes —
+  // o navegador então clampava o scroll pro novo `scrollHeight` menor,
+  // "teletransportando" o usuário pra quase o fim da página. Correção
+  // MÍNIMA (pedido explícito do usuário depois de testar um `scrollTo(0)`
+  // incondicional a cada troca — ficava estranho ao lado do crossfade do
+  // rótulo, ver SeletorEmMenu.jsx): só pula pro topo quando a troca
+  // REALMENTE ia clampar (lista nova mais curta que a posição rolada);
+  // senão fica parado onde estava, sem nenhum scroll forçado. `useLayoutEffect`
+  // (não `useEffect`): mede `scrollHeight` depois do DOM já mutado mas ANTES
+  // do paint, então se corrigir, o pulo não chega a ficar visível como dois
+  // saltos (clamp do navegador + nosso `scrollTo`). Ignora a primeira
+  // renderização (`useRef` em vez de checar `filtroSelecionado === ''`, que
+  // também é o valor de "Todos" e dispararia isto de novo ao escolher
+  // "Todos" outra vez).
+  const primeiraRenderizacaoFiltroRef = useRef(true);
+  useLayoutEffect(() => {
+    if (primeiraRenderizacaoFiltroRef.current) {
+      primeiraRenderizacaoFiltroRef.current = false;
+      return;
+    }
+    const alturaMaximaScroll = document.documentElement.scrollHeight - window.innerHeight;
+    if (ultimoScrollYRef.current > alturaMaximaScroll) {
+      window.scrollTo(0, 0);
+      ultimoScrollYRef.current = 0;
+    }
+  }, [filtroSelecionado]);
 
   // Opções construídas a partir do catálogo já carregado — nunca hardcoded:
   // um status que não aparece em nenhum anime não vira opção morta no
@@ -183,6 +269,13 @@ export default function Galeria() {
       })),
       { valor: 'assistido:sim', rotulo: 'Assistidos' },
       { valor: 'assistido:nao', rotulo: 'Não assistidos' },
+      // Último da lista: não é eixo do catálogo de animes, é o modo de
+      // visualização à parte (ver comentário de `VALOR_FILTRO_VIDEOS_LOCAIS`
+      // no topo do arquivo). Guard de `length` aqui também: sem vídeo local
+      // nenhum, nem a opção aparece.
+      ...(VIDEOS_LOCAIS.length > 0
+        ? [{ valor: VALOR_FILTRO_VIDEOS_LOCAIS, rotulo: 'Vídeos locais' }]
+        : []),
     ],
     [statusDisponiveis]
   );
@@ -192,6 +285,82 @@ export default function Galeria() {
   // todas as temporadas — ver `inicio/franquia.js`. Client-side: `GET /api/animes`
   // só ganhou `serie_ancora`/`numero_temporada`, a lista é pequena (uso pessoal).
   const franquias = useMemo(() => agruparEmFranquias(animes ?? []), [animes]);
+
+  // Notificação "novos episódios" na ilha dinâmica (pedido do usuário,
+  // 2026-09-27) — dispara depois que a verificação nos extratores termina
+  // de verdade, não a qualquer recomputo de `franquias`.
+  // `verificacaoDeNovosEpsConcluidaRef` marca esse momento nos DOIS pontos
+  // onde a checagem acima pode "terminar": (1) a checagem inicial já
+  // encontra nada em andamento (nada pra esperar, dado já está fresco) ou
+  // (2) o poll conclui e chama `recarregar()`. Sem esse guard, o efeito
+  // abaixo rodaria assim que `franquias` existisse (ainda na 1ª carga, antes
+  // de qualquer verificação real), soando "novos episódios" pra dados que já
+  // estavam ali há tempo. `disparouNotificacaoRef`: mostra uma ÚNICA vez por
+  // visita à página, mesmo que `franquias` recompute depois por outro
+  // motivo (ex.: `removerAnime`).
+  const [notificacaoNovosEps, setNotificacaoNovosEps] = useState(false);
+  const verificacaoDeNovosEpsConcluidaRef = useRef(false);
+  const disparouNotificacaoRef = useRef(false);
+  useEffect(() => {
+    if (
+      !verificacaoDeNovosEpsConcluidaRef.current ||
+      disparouNotificacaoRef.current ||
+      carregando ||
+      animes == null
+    ) {
+      return;
+    }
+    if (franquias.some((franquia) => franquia.episodios_novos > 0)) {
+      disparouNotificacaoRef.current = true;
+      setNotificacaoNovosEps(true);
+    }
+  }, [franquias, carregando, animes]);
+
+  // Escape hatch SÓ DEV pra testar notificação/verificação sem esperar
+  // aquecimento real terminar nem precisar de um anime com episódio novo de
+  // verdade — `import.meta.env.DEV` é substituído por `false` no build de
+  // produção e o bloco inteiro é eliminado (dead code), não sobra no bundle
+  // publicado. Uso no console do navegador, na rota /animes:
+  //   __testarNotificacaoNovosEps()   -- força aparecer (some sozinha em 5s)
+  //   __testarVerificandoNovosEps()   -- força o status "verificando" por 3s
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    window.__testarNotificacaoNovosEps = () => setNotificacaoNovosEps(true);
+    window.__testarVerificandoNovosEps = () => {
+      setAquecendo(true);
+      setTimeout(() => setAquecendo(false), 3000);
+    };
+    return () => {
+      delete window.__testarNotificacaoNovosEps;
+      delete window.__testarVerificandoNovosEps;
+    };
+  }, []);
+
+  // Some sozinha 5s depois de aparecer (pedido do usuário) — continua
+  // visível mesmo se a pessoa rolar a página nesse meio-tempo (o timer é
+  // quem manda, não o scroll); só ao acabar o tempo é que
+  // `capsulaExpandidaIlha` (BarraDeNavegacao.jsx) volta a decidir sozinha
+  // se mostra o filtro (rolado) ou fecha (não rolado).
+  useEffect(() => {
+    if (!notificacaoNovosEps) return undefined;
+    const tempo = setTimeout(() => setNotificacaoNovosEps(false), DURACAO_NOTIFICACAO_NOVOS_EPS_MS);
+    return () => clearTimeout(tempo);
+  }, [notificacaoNovosEps]);
+
+  // Clicar na notificação (BarraDeNavegacao.jsx) já aplica o filtro "Novos
+  // episódios" e dispensa a notificação na hora — não faz sentido as duas
+  // coisas convivendo (a notificação anunciava exatamente o que o filtro
+  // agora mostra).
+  const aoClicarNotificacaoNovosEps = useCallback(() => {
+    setFiltroSelecionado('novos:sim');
+    setNotificacaoNovosEps(false);
+  }, []);
+
+  // `statusCapturaIlha`/`capturaProntaIlha`/`erroCapturaIlha`: os três sinais
+  // de captura da ilha, GLOBAL (qualquer anime do app) — hook compartilhado
+  // com PaginaDoAnime.jsx (hooks/useStatusDeCapturaIlha.js), substitui os
+  // toasts "concluído"/erro que existiam em components/Toasts.jsx (removido
+  // por completo, 2026-09-27 — os dois migraram pra cá).
 
   // Busca -> filtro -> ordem fixa por título, sempre client-side sobre as
   // franquias já agrupadas (sem chamada de API nova). `filtroSelecionado`
@@ -269,7 +438,41 @@ export default function Galeria() {
 
   return (
     <>
-      <BarraDeNavegacao transparente termoBusca={termoBusca} aoMudarBusca={setTermoBusca} />
+      {/* Ilha dinâmica (BarraDeNavegacao.jsx): ÚNICA via de filtro da página
+          agora (o SeletorEmMenu que ficava na fileira "Meu Catálogo |
+          Filtrar" foi removido, 2026-09-27) — só ativa depois que a página
+          rola além de `LIMIAR_ILHA_PX`, então no topo (scroll 0) o filtro
+          fica indisponível; gap aceito pelo usuário. Só passa os três props
+          de filtro quando o catálogo está carregado e não vazio (mesma
+          guarda do `<GradeDeCatalogo>` abaixo) — sem isso não há o que
+          filtrar. `notificacaoNovosEps`/`verificandoNovosEps`/
+          `statusCapturaIlha`/`capturaProntaIlha`/`erroCapturaIlha` são os
+          únicos props que NÃO seguem essa guarda: os dois primeiros já
+          implicam catálogo carregado (`aquecendo` só liga depois de
+          `!carregando`; `notificacaoNovosEps` só depois que `franquias`
+          existe, ver efeitos acima); os três de captura nem dependem do
+          catálogo — vêm direto do WS global (`jobsPorEpisodio`, App.jsx via
+          hooks/useStatusDeCapturaIlha.js), qualquer anime do app, catálogo
+          carregado ou não. Prioridade de qual mensagem a cápsula mostra
+          quando mais de uma está ativa ao mesmo tempo: ver comentário de
+          `mensagemIlha` em BarraDeNavegacao.jsx. */}
+      <BarraDeNavegacao
+        transparente
+        termoBusca={termoBusca}
+        aoMudarBusca={setTermoBusca}
+        opcoesFiltro={!carregando && !erro && animes?.length > 0 ? opcoesFiltro : undefined}
+        filtroSelecionado={filtroSelecionado}
+        aoMudarFiltro={setFiltroSelecionado}
+        notificacaoNovosEps={notificacaoNovosEps}
+        aoClicarNotificacaoNovosEps={aoClicarNotificacaoNovosEps}
+        verificandoNovosEps={aquecendo}
+        statusCapturaIlha={statusCapturaIlha}
+        aoClicarStatusCapturaIlha={aoClicarStatusCapturaIlha}
+        capturaProntaIlha={capturaProntaIlha}
+        aoClicarCapturaProntaIlha={aoClicarCapturaProntaIlha}
+        erroCapturaIlha={erroCapturaIlha}
+        aoClicarErroCapturaIlha={aoClicarErroCapturaIlha}
+      />
       {/* `bg-black` (não mais `bg-[#17171b]` de paginas/Inicio.jsx): a Galeria
           não leva mais a drop shadow dos cards (`comSombra={false}` nas duas
           `GradeDeCatalogo` abaixo — ela só fazia sentido sobre aquele
@@ -278,102 +481,94 @@ export default function Galeria() {
           do resto do app (`html{background:#000}`, index.css). `min-h-screen`
           evita o fundo não cobrir a viewport quando o catálogo é curto. */}
       <main className="min-h-screen bg-black pb-10 pt-24">
-        <section aria-labelledby={idMeuCatalogo}>
-          {/* Sem `mb`: o respiro até os cards vem do `pt-[22px]` interno de
-              GradeDeCatalogo, igual às fileiras da Home. `paddingInline`
-              (não `px` no <main>) alinha o texto com a borda do CARD —
-              gutter 3.7% + os 10px do slot da grade. "Filtrar" (SeletorEmMenu
-              — mesmo padrão de dropdown de components/SeletorDeTemporada.jsx)
-              entra na MESMA linha do título, do outro lado do outro (`justify-between`
-              + `items-center`) — pedido explícito do usuário. */}
-          <div
-            style={{ paddingInline: PADDING_TITULO_GRADE }}
-            className="flex items-center gap-4"
-          >
-            <h1
-              ref={focoTitulo}
-              tabIndex={-1}
-              id={idMeuCatalogo}
-              className="text-2xl font-semibold text-white outline-none"
-            >
-              Meu Catálogo
-            </h1>
-            {!carregando && !erro && animes?.length > 0 && (
-              <SeletorEmMenu
-                id={idFiltro}
-                opcoes={opcoesFiltro}
-                valor={filtroSelecionado}
-                aoMudar={setFiltroSelecionado}
-                rotuloAcessivel="Filtrar"
-                prefixo="FILTRAR"
-              />
-            )}
-          </div>
+        {/* Escondida quando o filtro está em "Vídeos locais" — esse valor
+            TROCA a grade principal pela grade de vídeos locais (ver
+            `VALOR_FILTRO_VIDEOS_LOCAIS` no topo do arquivo), mesmo padrão
+            "substitui, não soma" dos outros itens do dropdown. O `<h1>`
+            sr-only continua fora dessa guarda: o foco/anúncio de página
+            (`useFocoAoMontar`) não deve depender de qual filtro está ativo. */}
+        <h1 ref={focoTitulo} tabIndex={-1} id={idMeuCatalogo} className="sr-only">
+          Meu Catálogo
+        </h1>
+        {filtroSelecionado !== VALOR_FILTRO_VIDEOS_LOCAIS && (
+          <section aria-labelledby={idMeuCatalogo}>
+            {/* Título "Meu Catálogo" e o filtro (SeletorEmMenu) removidos da
+                tela (pedido do usuário, 2026-09-27): a ilha dinâmica da navbar
+                (BarraDeNavegacao.jsx) já cobre os dois — rotula "Meu Catálogo"
+                e traz o mesmo dropdown de filtro. Ciente do gap: no topo da
+                página (scroll 0, antes de passar de `LIMIAR_ILHA_PX`) não há
+                como filtrar — aceito, decisão explícita do usuário. `<h1>`
+                agora mora fora desta `<section>` (ver comentário logo acima),
+                já que a section some quando o filtro "Vídeos locais" está
+                ativo mas o alvo de foco/anúncio de página não pode sumir
+                junto. */}
 
-          {/* Estados transitórios (carregando / erro / catálogo vazio / sem
-              resultado), no mesmo wrapper que só repõe o `paddingInline` que
-              antes vinha do `px` do <main>; cada bloco leva o próprio
-              `mt-[22px]` (mesmo respiro título->conteúdo da grade). Altura
-              zero quando nada aparece. */}
-          <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
-            {carregando && (
-              <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
-            )}
-            {erro && (
-              <div
-                role="alert"
-                className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-              >
-                Não foi possível carregar o catálogo.{' '}
-                <button type="button" onClick={recarregar} className="underline">
-                  Tentar novamente
-                </button>
-              </div>
-            )}
-            {!carregando && !erro && animes?.length === 0 && (
-              <p className="mt-[22px] text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
-            )}
+            {/* Estados transitórios (carregando / erro / catálogo vazio / sem
+                resultado), no mesmo wrapper que só repõe o `paddingInline` que
+                antes vinha do `px` do <main>; cada bloco leva o próprio
+                `mt-[22px]` (mesmo respiro título->conteúdo da grade). Altura
+                zero quando nada aparece. */}
+            <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
+              {carregando && (
+                <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
+              )}
+              {erro && (
+                <div
+                  role="alert"
+                  className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+                >
+                  Não foi possível carregar o catálogo.{' '}
+                  <button type="button" onClick={recarregar} className="underline">
+                    Tentar novamente
+                  </button>
+                </div>
+              )}
+              {!carregando && !erro && animes?.length === 0 && (
+                <p className="mt-[22px] text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
+              )}
 
-            {!carregando && !erro && animes?.length > 0 && animesExibidos.length === 0 && (
-              <p className="mt-[22px] text-sm text-ink-muted">
-                {termoBusca.trim()
-                  ? `Nenhum anime encontrado para “${termoBusca.trim()}”.`
-                  : 'Nenhum anime encontrado com os filtros selecionados.'}
-              </p>
-            )}
-          </div>
+              {!carregando && !erro && animes?.length > 0 && animesExibidos.length === 0 && (
+                <p className="mt-[22px] text-sm text-ink-muted">
+                  {termoBusca.trim()
+                    ? `Nenhum anime encontrado para “${termoBusca.trim()}”.`
+                    : 'Nenhum anime encontrado com os filtros selecionados.'}
+                </p>
+              )}
+            </div>
 
-          {/* Card inerte de estreia (CartaoDeEstreia) SÓ quando o anime
-              realmente ainda não estreou (`status_lancamento === 'nao_lancado'`)
-              E não tem episódio capturado. Todo o resto — já com episódio, ou
-              já lançado mas sem captura, ou com fonte pendente nas extratoras —
-              usa AnimeCard navegável: um anime já lançado sem captura precisa
-              chegar na PaginaDoAnime pra resolver fonte / enfileirar captura;
-              só o bookmark de "Próximas estreias" é beco sem saída proposital. */}
-          <GradeDeCatalogo
-            itens={animesExibidos}
-            tamanho="pequeno"
-            comSombra={false}
-            comAnimacao={false}
-            chaveDoItem={(anime) => anime.id}
-            renderItem={(anime) =>
-              !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
-                <CartaoDeEstreia item={anime} aoRemover={() => setAnimeParaRemover(anime)} />
-              ) : (
-                <AnimeCard anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
-              )
-            }
-          />
-        </section>
+            {/* Card inerte de estreia (CartaoDeEstreia) SÓ quando o anime
+                realmente ainda não estreou (`status_lancamento === 'nao_lancado'`)
+                E não tem episódio capturado. Todo o resto — já com episódio, ou
+                já lançado mas sem captura, ou com fonte pendente nas extratoras —
+                usa AnimeCard navegável: um anime já lançado sem captura precisa
+                chegar na PaginaDoAnime pra resolver fonte / enfileirar captura;
+                só o bookmark de "Próximas estreias" é beco sem saída proposital. */}
+            <GradeDeCatalogo
+              itens={animesExibidos}
+              tamanho="pequeno"
+              comSombra={false}
+              comAnimacao={false}
+              chaveDoItem={(anime) => anime.id}
+              renderItem={(anime) =>
+                !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
+                  <CartaoDeEstreia item={anime} aoRemover={() => setAnimeParaRemover(anime)} />
+                ) : (
+                  <AnimeCard anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
+                )
+              }
+            />
+          </section>
+        )}
 
         {/* Vídeos locais (videosLocais.js) — arquivos já em disco (public/
             videos-locais/), fora do catálogo/backend por completo: card
             leva direto pro player (`/assistir-local/:slug`), sem passar
-            por materialização/captura. Depois da grade principal — não é
-            catálogo de verdade, é um apêndice de arquivos soltos. Guard
-            `length > 0` aqui na <section> (não só na grade): sem ele a
-            <section>/<h2> apareceriam com a grade vazia. */}
-        {VIDEOS_LOCAIS.length > 0 && (
+            por materialização/captura. Era apêndice sempre visível embaixo
+            da grade principal; virou modo de visualização exclusivo do
+            filtro "Vídeos locais" (pedido do usuário, 2026-09-28) — guard
+            de `filtroSelecionado` além do `length > 0` (sem vídeo local
+            nenhum, a opção nem existe no dropdown pra selecionar). */}
+        {VIDEOS_LOCAIS.length > 0 && filtroSelecionado === VALOR_FILTRO_VIDEOS_LOCAIS && (
           <section aria-labelledby={idVideosLocais} className="mt-10">
             <h2
               id={idVideosLocais}
