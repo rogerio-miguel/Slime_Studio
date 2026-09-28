@@ -8,6 +8,42 @@ import {
 } from './variantesMorphLogo';
 import { PATH_BLOB_TRANSICIONAL } from './logoMorphPaths';
 
+// Loop de `requestAnimationFrame` COMPARTILHADO entre as 6 letras de STUDIO
+// (`LogoSlimeStudio.jsx` monta um `useTransicaoParaIcone` por letra, e com
+// `USA_ENCONTRO` as 6 viajam ao mesmo tempo — ver `variantesMorphLogo.js`).
+// Bug real medido (trace do Performance panel do usuário, 2026-09-27):
+// antes, CADA letra chamava `requestAnimationFrame` recursivamente por
+// conta própria dentro do seu próprio `passo` — 6 chamadas/agendamentos
+// SEPARADOS por frame em vez de 1, medido a ~270 chamadas/segundo no trace
+// (o esperado pra uma única animação é ~60/s). Não é o custo de CADA
+// chamada que pesa (a soma do tempo de função do hook inteiro no trace era
+// só ~57ms), é o VOLUME de agendamentos/despachos de task separados
+// competindo pela main thread bem no mesmo instante em que o usuário rola a
+// página (a animação do wordmark dispara já a 24px de scroll). Um `Set` de
+// callbacks + um ÚNICO `requestAnimationFrame` ativo por vez: cada letra
+// registra seu próprio `passo` (mesma assinatura de sempre, recebe `agora`)
+// e se remove sozinha quando termina (`bruto >= 1`); o laço só re-agenda o
+// próprio `requestAnimationFrame` enquanto o `Set` não estiver vazio.
+const passosAtivos = new Set();
+let idQuadroCompartilhado = null;
+function quadroCompartilhado(agora) {
+  idQuadroCompartilhado = null;
+  // Cópia antes de iterar: um `passo` pode se remover do `Set` (via
+  // `pararPasso`) na própria chamada — mutar o `Set` durante a iteração
+  // dele quebraria o `for...of`.
+  for (const passo of [...passosAtivos]) passo(agora);
+  if (passosAtivos.size > 0) {
+    idQuadroCompartilhado = requestAnimationFrame(quadroCompartilhado);
+  }
+}
+function registrarPasso(passo) {
+  passosAtivos.add(passo);
+  if (idQuadroCompartilhado == null) {
+    idQuadroCompartilhado = requestAnimationFrame(quadroCompartilhado);
+  }
+  return () => passosAtivos.delete(passo);
+}
+
 // Reescrita completa (pedido do usuário, 2026-09-26: o resultado anterior
 // tinha duas animações concorrentes — a cascata de fade+scale "falsa" e o
 // morph de forma real do I/O — e ainda duplicava base/lâmina, porque a
@@ -237,7 +273,7 @@ export default function useTransicaoParaIcone({
     // de commit, o 2º já está depois do paint. O `setTimeout` do morph de
     // forma entra AQUI DENTRO (não fora) pra continuar sincronizado com o
     // instante real em que a transição de posição começa.
-    let frame;
+    let pararPasso;
     let idAtraso;
     let idRaf2;
     const de01 = ativo ? 0 : 1;
@@ -295,9 +331,9 @@ export default function useTransicaoParaIcone({
                 `drop-shadow(${(rastroX * 12).toFixed(1)}px ${(rastroY * 12).toFixed(1)}px 4px ${corComAlpha(velocidade * 0.15)})`,
               ].join(' ');
             }
-            if (bruto < 1) frame = requestAnimationFrame(passo);
+            if (bruto >= 1) pararPasso?.();
           }
-          frame = requestAnimationFrame(passo);
+          pararPasso = registrarPasso(passo);
         }, atrasoMs);
       });
     });
@@ -306,7 +342,7 @@ export default function useTransicaoParaIcone({
       cancelAnimationFrame(idRaf1);
       cancelAnimationFrame(idRaf2);
       clearTimeout(idAtraso);
-      cancelAnimationFrame(frame);
+      pararPasso?.();
     };
   }, [
     ativo,
