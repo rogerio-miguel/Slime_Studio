@@ -14,17 +14,36 @@ mora a fronteira de exceção HTTP e o `to_thread`/timeout externo
 (`integrations/servico.py`).
 """
 
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from io import BytesIO
 
 import requests
+from PIL import Image
 
 from core.temporada import separar_temporada
 from core.texto import slugificar
 from integrations.base import ArteDeAnime, InfoDeEpisodio, ProvedorDeArte
 
+logger = logging.getLogger(__name__)
+
 _URL_BASE = "https://api.themoviedb.org/3"
 _URL_IMAGEM = "https://image.tmdb.org/t/p"
-_TAMANHO_BACKDROP = "w1280"  # equivalente ao bannerImage
+_TAMANHO_BACKDROP = "original"  # hero em tela cheia: w1280 ficava borrado
+_TAMANHO_ANALISE = "w780"  # só pra medir espaço livre; o banner salvo é `original`
+_LADO_DA_ANALISE = 160  # px do maior lado após reduzir (custo O(pixels) em Python puro)
+_FAIXA_ESQUERDA = 0.45  # fração da largura onde o hero põe o bloco de conteúdo
+_ESPESSURA_DE_TARJA = 0.04  # fração da altura/largura inspecionada nas bordas
+_LUMINANCIA_DE_TARJA = 12  # média (0-255) abaixo da qual a borda conta como preta
+_TOPO_MINIMO_RELATIVO = 0.5  # detalhe do topo direito / detalhe da metade direita
+_FINALISTAS_DE_BACKDROP = 6  # candidatos medidos (1 download cada) por anime
+_LARGURA_MINIMA_BACKDROP = 1920
+_LARGURA_ALTA_BACKDROP = 2500  # 4K/quase-4K; abaixo disso, FHD borra em tela grande
+_PROPORCAO_16_9 = 16 / 9
+_TOLERANCIA_DE_PROPORCAO = 0.1
+_NOTA_A_PRIORI = 5.0  # prior bayesiano da nota de backdrop (escala TMDB 0-10)
+_PESO_A_PRIORI = 3  # "votos" fictícios do prior
 _TAMANHO_STILL = "original"  # thumb de episódio (Fatia 5). `still_sizes` do TMDB só
 # tem w92/w185/w300/original (sem w500/w780/w1280, que só existem pra poster/backdrop)
 # — w300 ficava borrado no card grande da grade de episódios/"Continuar assistindo"
@@ -88,6 +107,12 @@ class TmdbNaoAutorizado(RuntimeError):
 class TmdbProvider(ProvedorDeArte):
     def __init__(self, token: str) -> None:
         self._token = token
+        # `id_da_serie -> file_path` do backdrop já MEDIDO (só grava quando ao menos
+        # um finalista foi analisado: falha de rede não congela escolha ruim). A
+        # escolha só depende da série, então as temporadas (que chegam com `ano`
+        # diferente ao memo de `servico.py`) e o feed reaproveitam a mesma medição
+        # em vez de refazer ~6 downloads — e o overlay do feed cabe no timeout de 8s.
+        self._backdrop_medido: dict[int, str] = {}
 
     @property
     def nome(self) -> str:
@@ -116,6 +141,8 @@ class TmdbProvider(ProvedorDeArte):
         por cima) e, entre esses, o de maior `vote_average`. `None` quando o
         endpoint não traz backdrop utilizável — o chamador cai no `backdrop_path`
         default da série."""
+        if id_da_serie in self._backdrop_medido:
+            return self._backdrop_medido[id_da_serie]
         dados = self._executar(
             f"/tv/{id_da_serie}/images", {"include_image_language": "null,en"}
         )
@@ -128,9 +155,52 @@ class TmdbProvider(ProvedorDeArte):
         candidatos = sem_texto or so_dicts
         if not candidatos:
             return None
+        # Sem nenhum backdrop limpo em resolução decente, arte com texto (idioma
+        # en) e alta resolução ganha de arte limpa borrada.
+        if all(_faixa_de_resolucao(b) == 0 for b in candidatos):
+            com_texto_boa = [b for b in so_dicts if _faixa_de_resolucao(b) > 0]
+            candidatos = com_texto_boa or candidatos
 
-        melhor = max(candidatos, key=lambda b: b.get("vote_average") or 0.0)
-        return melhor["file_path"]
+        ordenados = sorted(candidatos, key=_pontuacao_de_backdrop, reverse=True)
+        melhor_faixa = _pontuacao_de_backdrop(ordenados[0])[:2]
+        finalistas = [b for b in ordenados if _pontuacao_de_backdrop(b)[:2] == melhor_faixa]
+        escolhido, medido = self._mais_livre_a_esquerda(finalistas[:_FINALISTAS_DE_BACKDROP])
+        if medido:
+            self._backdrop_medido[id_da_serie] = escolhido["file_path"]
+        return escolhido["file_path"]
+
+    def _mais_livre_a_esquerda(self, finalistas: list[dict]) -> tuple[dict, bool]:
+        """Dos `finalistas` (já em ordem de `_pontuacao_de_backdrop` e todos da
+        mesma faixa de resolução/proporção), o de menor detalhe visual na faixa
+        esquerda — é onde o hero põe o bloco de conteúdo, então arte com
+        personagens à direita e fundo liso à esquerda não briga com o texto.
+        Imagens que `_aproveitavel` recusa (tarja preta, recorte sem o topo do
+        personagem) ficam fora, e falha de download/decodificação também descarta
+        o finalista (logada). Se nenhum sobrar, vence o primeiro pela pontuação. O
+        `bool` diz se algum finalista foi de fato medido (resultado memoizável).
+        Downloads em paralelo: em série, 6 × latência estourava o timeout de 8s do
+        overlay de feed (`integrations/servico.py::_chamar`)."""
+        with ThreadPoolExecutor(max_workers=len(finalistas)) as pool:
+            analises = list(pool.map(lambda b: self._analisar(b["file_path"]), finalistas))
+        medidos = [
+            (analise.detalhe_esquerda, posicao, backdrop)
+            for posicao, (backdrop, analise) in enumerate(zip(finalistas, analises, strict=True))
+            if analise is not None and _aproveitavel(analise)
+        ]
+        if not medidos:
+            return finalistas[0], any(a is not None for a in analises)
+        return min(medidos, key=lambda m: (m[0], m[1]))[2], True
+
+    def _analisar(self, caminho: str) -> "AnaliseDeBackdrop | None":
+        try:
+            resposta = requests.get(
+                f"{_URL_IMAGEM}/{_TAMANHO_ANALISE}{caminho}", timeout=_TIMEOUT_S
+            )
+            resposta.raise_for_status()
+            return analisar_backdrop(resposta.content)
+        except (requests.RequestException, OSError) as erro:
+            logger.warning("TMDB: não foi possível medir o backdrop %s: %s", caminho, erro)
+            return None
 
     def buscar_info_de_episodio(
         self, titulo: str, ano: int | None, numero: int, temporada: int | None
@@ -389,6 +459,92 @@ def _melhor_resultado(resultados: list, titulo: str, ano: int | None) -> dict | 
         return popularidade, proximidade
 
     return max(pool, key=_pontuacao)
+
+
+@dataclass(frozen=True, slots=True)
+class AnaliseDeBackdrop:
+    detalhe_esquerda: float  # gradiente médio (0-255) na faixa do bloco de conteúdo
+    detalhe_direita: float  # idem, metade direita (onde ficam os personagens)
+    detalhe_topo_direita: float  # idem, terço superior da metade direita
+    tem_tarja_preta: bool  # letterbox/pillarbox assado na própria imagem
+
+
+def analisar_backdrop(conteudo: bytes) -> AnaliseDeBackdrop:
+    """Mede o backdrop em miniatura. Pública para teste isolado."""
+    with Image.open(BytesIO(conteudo)) as imagem:
+        cinza = imagem.convert("L")
+        cinza.thumbnail((_LADO_DA_ANALISE, _LADO_DA_ANALISE))
+        largura, altura = cinza.size
+        pixels = cinza.load()
+
+    def gradiente(x0: int, x1: int, y0: int, y1: int) -> float:
+        soma = 0
+        for y in range(y0, min(y1, altura - 1)):
+            for x in range(x0, min(x1, largura - 1)):
+                atual = pixels[x, y]
+                soma += abs(atual - pixels[x + 1, y]) + abs(atual - pixels[x, y + 1])
+        area = max(1, (min(x1, largura - 1) - x0) * (min(y1, altura - 1) - y0))
+        return soma / area
+
+    def luminancia(x0: int, x1: int, y0: int, y1: int) -> float:
+        valores = [pixels[x, y] for y in range(y0, y1) for x in range(x0, x1)]
+        return sum(valores) / len(valores)
+
+    corte = max(2, int(largura * _FAIXA_ESQUERDA))
+    terco = altura // 3
+    borda_v = max(1, int(altura * _ESPESSURA_DE_TARJA))
+    borda_h = max(1, int(largura * _ESPESSURA_DE_TARJA))
+    tarja_vertical = (
+        luminancia(0, largura, 0, borda_v) < _LUMINANCIA_DE_TARJA
+        and luminancia(0, largura, altura - borda_v, altura) < _LUMINANCIA_DE_TARJA
+    )
+    tarja_horizontal = (
+        luminancia(0, borda_h, 0, altura) < _LUMINANCIA_DE_TARJA
+        and luminancia(largura - borda_h, largura, 0, altura) < _LUMINANCIA_DE_TARJA
+    )
+    return AnaliseDeBackdrop(
+        detalhe_esquerda=gradiente(0, corte, 0, altura),
+        detalhe_direita=gradiente(largura // 2, largura, 0, altura),
+        detalhe_topo_direita=gradiente(largura // 2, largura, 0, terco),
+        tem_tarja_preta=tarja_vertical or tarja_horizontal,
+    )
+
+
+def _aproveitavel(analise: AnaliseDeBackdrop) -> bool:
+    """Recusa tarja preta assada na imagem e recortes sem o topo do personagem
+    (ex.: só as pernas): o terço superior da metade direita precisa ter uma
+    fração mínima do detalhe da metade direita inteira."""
+    if analise.tem_tarja_preta:
+        return False
+    return analise.detalhe_topo_direita >= analise.detalhe_direita * _TOPO_MINIMO_RELATIVO
+
+
+def _faixa_de_resolucao(backdrop: dict) -> int:
+    """2 = alta (>= `_LARGURA_ALTA_BACKDROP`), 1 = aceitável (>= mínima), 0 = baixa."""
+    largura = backdrop.get("width") or 0
+    if largura >= _LARGURA_ALTA_BACKDROP:
+        return 2
+    return 1 if largura >= _LARGURA_MINIMA_BACKDROP else 0
+
+
+def _pontuacao_de_backdrop(backdrop: dict) -> tuple[int, bool, float]:
+    """Chave de ordenação de um backdrop de `/tv/{id}/images` (maior vence):
+
+    1. faixa de resolução (`_faixa_de_resolucao`) — o hero renderiza em tela
+       cheia, arte pequena fica borrada mesmo bem votada;
+    2. proporção próxima de 16:9 — fora disso o `object-cover` corta o
+       enquadramento;
+    3. nota média com prior bayesiano — `vote_average` cru deixa um backdrop
+       com 1 voto 10.0 vencer um com 40 votos 8.0."""
+    proporcao = backdrop.get("aspect_ratio") or 0.0
+    votos = backdrop.get("vote_count") or 0
+    nota = backdrop.get("vote_average") or 0.0
+    nota_bayesiana = (nota * votos + _NOTA_A_PRIORI * _PESO_A_PRIORI) / (votos + _PESO_A_PRIORI)
+    return (
+        _faixa_de_resolucao(backdrop),
+        abs(proporcao - _PROPORCAO_16_9) <= _TOLERANCIA_DE_PROPORCAO,
+        nota_bayesiana,
+    )
 
 
 def _distancia_do_ano(item: dict, ano: int) -> int:
