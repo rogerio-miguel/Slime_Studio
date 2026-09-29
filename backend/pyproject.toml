@@ -9,6 +9,7 @@ dependencies = [
     "cloudscraper>=1.2.71",
     "drissionpage>=4.1.1.4",
     "fastapi>=0.120",
+    "pillow>=12.3.0",
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "sqlalchemy[asyncio]>=2.0.52",

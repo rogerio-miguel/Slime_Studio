@@ -525,7 +525,7 @@ async def obter_anime(
         slug=anime.slug,
         ano=anime.ano,
         capa_path=anime.capa_path,
-        banner_path=anime.banner_path,
+        banner_path=_banner_da_franquia(anime.banner_path, grupos[anime.id]),
         capa_cor=anime.capa_cor,
         generos=anime.generos or [],
         sinopse=anime.sinopse,
@@ -621,6 +621,7 @@ async def _agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
                 Anime.ano,
                 Anime.formato_midia,
                 Anime.total_episodios_anilist,
+                Anime.banner_path,
                 tem_episodio.label("tem_episodios"),
             )
         )
@@ -660,6 +661,13 @@ async def _agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
         )
 
     return {linha.id: grupos_por_raiz[acha(("id", linha.id))] for linha in linhas}
+
+
+def _banner_da_franquia(banner_proprio: str | None, grupo: list[object]) -> str | None:
+    """Banner único da franquia: o da primeira temporada (`grupo` já ordenado por
+    `numero_temporada`) que tem um, pra trocar de temporada no seletor não
+    trocar a arte do hero. Cai no banner próprio quando nenhuma irmã tem."""
+    return next((linha.banner_path for linha in grupo if linha.banner_path), banner_proprio)
 
 
 def _temporadas_e_proxima(

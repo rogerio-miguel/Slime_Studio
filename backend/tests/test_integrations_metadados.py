@@ -1341,7 +1341,7 @@ def test_tmdb_buscar_arte_por_titulo_match_exato_prefixa_url_de_imagem(
 
     resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime", None)
 
-    assert resultado == ArteDeAnime(banner_url="https://image.tmdb.org/t/p/w1280/backdrop.jpg")
+    assert resultado == ArteDeAnime(banner_url="https://image.tmdb.org/t/p/original/backdrop.jpg")
 
 
 def test_tmdb_desempate_por_ano_entre_dois_candidatos(monkeypatch: pytest.MonkeyPatch):
