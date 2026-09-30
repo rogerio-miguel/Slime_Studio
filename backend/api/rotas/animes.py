@@ -113,8 +113,12 @@ async def confirmar_fonte_do_anime(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
 
     extrator = next((e for e in EXTRATORES if e.dominio == corpo.dominio), None)
+    if extrator is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="domínio de fonte desconhecido"
+        )
     versao_servidor: VersaoEpisodio | None = None
-    if extrator is not None and extrator.diferencia_versao:
+    if extrator.diferencia_versao:
         versao_inferida = inferir_versao(corpo.titulo_exibicao, corpo.identificador)
         if versao_inferida is not None:
             versao_servidor = versao_inferida

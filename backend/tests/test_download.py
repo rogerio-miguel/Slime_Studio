@@ -48,6 +48,8 @@ def test_montar_comando_ordem_dos_argumentos():
         "-nostdin",
         "-hide_banner",
         "-y",
+        "-protocol_whitelist",
+        "http,https,tcp,tls,crypto",
         "-headers",
         "Referer: r\r\n",
         "-reconnect",
@@ -66,6 +68,65 @@ def test_montar_comando_ordem_dos_argumentos():
         "matroska",
         str(destino),
     ]
+
+
+def test_montar_comando_remoto_restringe_protocolos_antes_do_input():
+    link = LinkDeMidia(url="https://cdn.exemplo/video.mp4", cabecalhos={})
+
+    argumentos = download._montar_comando("ffmpeg", link, Path("/tmp/destino.mkv.part"))
+
+    indice = argumentos.index("-protocol_whitelist")
+    assert argumentos[indice + 1] == "http,https,tcp,tls,crypto"
+    assert indice < argumentos.index("-i")
+
+
+def test_montar_comando_local_nao_restringe_protocolos():
+    link = LinkDeMidia(url="/caminho/local.mp4", cabecalhos={})
+
+    argumentos = download._montar_comando("ffmpeg", link, Path("/tmp/destino.mkv.part"))
+
+    assert "-protocol_whitelist" not in argumentos
+
+
+def test_montar_comando_ytdl_ignora_config_e_plugins_do_ambiente():
+    link = LinkDeMidia(url="https://cdn.exemplo/m.jpg", cabecalhos={}, formato=FormatoDeMidia.HLS)
+
+    argumentos = download._montar_comando_ytdl(link, "/tmp/video.%(ext)s", "ffmpeg")
+
+    assert "--ignore-config" in argumentos
+    assert "--no-plugin-dirs" in argumentos
+    assert argumentos[-2:] == ["--", link.url]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "/etc/passwd",
+        "gopher://cdn.exemplo/x",
+        "https:///sem-host",
+        "http://localhost:8000/x",
+        "http://api.localhost/x",
+        "http://127.0.0.1/x",
+        "http://[::1]/x",
+        "http://[::ffff:127.0.0.1]/x",
+        "http://10.0.0.5/x",
+        "http://192.168.1.10/x",
+        "http://169.254.169.254/latest/meta-data",
+    ],
+)
+def test_exigir_url_de_midia_segura_rejeita_destino_nao_externo(url: str):
+    with pytest.raises(FalhaDeExtracao) as erro:
+        download.exigir_url_de_midia_segura(url)
+
+    assert erro.value.permite_retentativa is False
+
+
+@pytest.mark.parametrize(
+    "url", ["https://cdn.exemplo/video.mp4", "http://cdn.exemplo:8080/m.m3u8", "https://93.184.216.34/x"]
+)
+def test_exigir_url_de_midia_segura_aceita_destino_externo(url: str):
+    download.exigir_url_de_midia_segura(url)
 
 
 def test_montar_comando_sem_cabecalhos_omite_flag_headers():

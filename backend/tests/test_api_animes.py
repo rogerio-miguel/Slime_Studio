@@ -1050,6 +1050,45 @@ async def test_obter_anime_sem_linha_em_fonte_anime_nao_agenda_sondagem(
     assert sondagem._sondagens_em_voo == {}
 
 
+async def test_confirmar_fonte_dominio_desconhecido_422(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Dominio Estranho")
+
+    resposta = await cliente.post(
+        f"/api/admin/animes/{anime_id}/fontes/confirmar",
+        json={
+            "dominio": "evil.example",
+            "identificador": "42",
+            "titulo_exibicao": "X",
+            "url": "https://evil.example/anime/42",
+        },
+    )
+
+    assert resposta.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "identificador", ["../admin", "42?ep=1", "42#x", "a b", "a\\b", "x/../y", "..", "42\n"]
+)
+async def test_confirmar_fonte_identificador_com_caracteres_de_url_422(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, identificador: str
+):
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Identificador Estranho")
+
+    resposta = await cliente.post(
+        f"/api/admin/animes/{anime_id}/fontes/confirmar",
+        json={
+            "dominio": "animefire.one",
+            "identificador": identificador,
+            "titulo_exibicao": "X",
+            "url": "https://animefire.one/anime/42",
+        },
+    )
+
+    assert resposta.status_code == 422
+
+
 async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):

@@ -3,12 +3,15 @@
 Clean Architecture, CLAUDE.md §1).
 """
 
+import re
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, NonNegativeInt
+from pydantic import BaseModel, ConfigDict, NonNegativeInt, field_validator
 
 from core.enums import StatusEpisodio, StatusJob, StatusLancamento, TipoEpisodio, VersaoEpisodio
+
+_IDENTIFICADOR_PROIBIDO = re.compile(r"[?#\\\s\x00-\x1f]|(^|/)\.\.(/|$)")
 
 # --- jobs (api/rotas/jobs.py) ---
 
@@ -348,7 +351,19 @@ class ConfirmarFonteRequest(BaseModel):
     dominio: str
     identificador: str
     titulo_exibicao: str
+    # Só round-trip do candidato da busca: o servidor NÃO grava nem requisita esta
+    # URL (`extractors/resolucao.py::confirmar_fonte` persiste `dominio` + `identificador`).
     url: str
+
+    @field_validator("identificador")
+    @classmethod
+    def _identificador_nao_desvia_a_url_do_extrator(cls, valor: str) -> str:
+        """Os adapters interpolam `identificador` em `{BASE_URL}/anime/{identificador}`:
+        `?`, `#`, `\\`, espaço/controle ou segmento `..` reescreveriam o caminho
+        requisitado dentro do próprio site."""
+        if _IDENTIFICADOR_PROIBIDO.search(valor):
+            raise ValueError("identificador com caracteres de URL não permitidos")
+        return valor
     # Round-trip do `versao` que o frontend recebeu em `ResultadoBuscaFonteSaida`
     # pro candidato escolhido — o servidor rederiva via
     # `extractors.versao.inferir_versao` (e loga divergência) quando o site
