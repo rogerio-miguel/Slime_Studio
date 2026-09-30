@@ -117,7 +117,7 @@ async def baixar_episodio(
             # (`extractors/base.py`), busca e listagem não.
             exigir_navegador=extrator.exige_navegador_para_midia,
         )
-        download.exigir_url_de_midia_segura(link.url)
+        await asyncio.to_thread(download.exigir_url_de_midia_segura, link.url)
         await _conferir_link_de_midia(link)
         return link
 

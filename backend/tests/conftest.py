@@ -20,6 +20,7 @@ from api.main import criar_app
 from api.servicos import descoberta, sondagem
 from core.config import Config
 from db.engine import criar_engine
+from extractors import rede_segura
 from integrations import servico as servico_metadados
 from models.base import Base
 
@@ -147,6 +148,13 @@ class ClienteFalso:
 
     def fechar(self) -> None:
         """Sem recurso a liberar — existe só para completar `ClienteDeSite`."""
+
+
+@pytest.fixture(autouse=True)
+def _dns_publico_por_padrao(monkeypatch):
+    """Nenhum teste faz DNS real: todo nome resolve pra um IP público. Os testes de
+    `rede_segura` sobrescrevem isto pra simular nome que resolve pra IP interno."""
+    monkeypatch.setattr(rede_segura, "resolver_dns", lambda hostname: ["93.184.216.34"])
 
 
 @pytest.fixture
