@@ -1050,6 +1050,16 @@ async def test_obter_anime_sem_linha_em_fonte_anime_nao_agenda_sondagem(
     assert sondagem._sondagens_em_voo == {}
 
 
+@pytest.mark.parametrize("campo", ["capa_url", "banner_url"])
+@pytest.mark.parametrize("url", ["javascript:alert(1)", "data:text/html;base64,AAAA", "file:///etc/passwd"])
+async def test_criar_anime_com_url_de_imagem_fora_de_http_422(
+    cliente: AsyncClient, campo: str, url: str
+):
+    resposta = await cliente.post("/api/admin/animes", json={"titulo": "Anime X", campo: url})
+
+    assert resposta.status_code == 422
+
+
 async def test_confirmar_fonte_dominio_desconhecido_422(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):

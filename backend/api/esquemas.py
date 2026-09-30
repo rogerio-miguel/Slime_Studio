@@ -6,6 +6,7 @@ Clean Architecture, CLAUDE.md §1).
 import re
 from datetime import date, datetime
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, NonNegativeInt, field_validator
 
@@ -91,6 +92,14 @@ class CriarAnimeRequest(BaseModel):
     # `serie_ancora`, nunca `numero_temporada`) — o item se agrupa no anime
     # original em vez de virar card solto no catálogo.
     formato: str | None = None
+
+    @field_validator("capa_url", "banner_url")
+    @classmethod
+    def _url_de_imagem_e_http(cls, valor: str | None) -> str | None:
+        """Vão para `<img src>`; `javascript:`/`data:`/`file:` nunca são imagem de provedor."""
+        if valor and urlparse(valor).scheme not in ("http", "https"):
+            raise ValueError("URL de imagem deve ser http(s)")
+        return valor
 
 
 class TemporadaIrmaSaida(BaseModel):

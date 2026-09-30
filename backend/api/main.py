@@ -73,9 +73,11 @@ def criar_app(config: Config) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_ORIGENS_PERMITIDAS,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        # Sem cookie nem auth (o front usa `credentials: 'same-origin'`); `Range` é do
+        # `hls.js` cross-origin, `Content-Type` do JSON das escritas.
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "Range"],
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_HOSTS_PERMITIDOS)
 
@@ -153,11 +155,19 @@ def _registrar_handlers_de_excecao(app: FastAPI) -> None:
 
     @app.exception_handler(FalhaDeExtracao)
     async def _falha_de_extracao(request: Request, excecao: FalhaDeExtracao) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(excecao)})
+        # A mensagem crua traz URL, caminho temporário e cauda de stderr: fica no log.
+        logger.warning("falha de extração na API: %s", excecao, exc_info=excecao)
+        onde = f" em {excecao.dominio}" if excecao.dominio else ""
+        return JSONResponse(
+            status_code=502, content={"detail": f"falha ao extrair de fonte externa{onde}"}
+        )
 
     @app.exception_handler(FalhaDeMetadados)
     async def _falha_de_metadados(request: Request, excecao: FalhaDeMetadados) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(excecao)})
+        logger.warning("falha de metadados na API: %s", excecao, exc_info=excecao)
+        return JSONResponse(
+            status_code=502, content={"detail": "falha ao consultar provedores de metadados"}
+        )
 
     @app.exception_handler(ErroSlimeStudio)
     async def _erro_generico(request: Request, excecao: ErroSlimeStudio) -> JSONResponse:

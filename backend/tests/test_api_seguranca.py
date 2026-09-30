@@ -3,6 +3,7 @@
 from httpx import AsyncClient
 
 from api.seguranca import ProtecaoDeOrigem
+from core.erros import FalhaDeExtracao, FalhaDeMetadados
 
 _ORIGEM_DO_FRONTEND = "http://localhost:5173"
 _ORIGEM_ESTRANHA = "http://evil.example"
@@ -93,3 +94,58 @@ async def test_websocket_com_origem_do_frontend_chega_ao_app():
     resultado = await _handshake_websocket(_ORIGEM_DO_FRONTEND)
 
     assert resultado == [{"chamado": True}]
+
+
+async def test_preflight_do_frontend_nao_libera_credenciais(cliente: AsyncClient):
+    resposta = await cliente.options(
+        _ESCRITA,
+        headers={
+            "Origin": _ORIGEM_DO_FRONTEND,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.headers["access-control-allow-origin"] == _ORIGEM_DO_FRONTEND
+    assert "access-control-allow-credentials" not in resposta.headers
+
+
+async def test_preflight_com_header_fora_da_lista_e_recusado(cliente: AsyncClient):
+    resposta = await cliente.options(
+        _ESCRITA,
+        headers={
+            "Origin": _ORIGEM_DO_FRONTEND,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "x-outro-header",
+        },
+    )
+
+    assert resposta.status_code == 400
+
+
+async def test_502_de_extracao_nao_vaza_detalhe_interno(app_pronto, cliente: AsyncClient):
+    async def _falha():
+        raise FalhaDeExtracao(
+            "yt-dlp falhou em /tmp/.ytdl-x — stderr: token=segredo", dominio="animefire.one"
+        )
+
+    app_pronto.add_api_route("/_teste/falha-de-extracao", _falha)
+
+    resposta = await cliente.get("/_teste/falha-de-extracao")
+
+    assert resposta.status_code == 502
+    assert resposta.json() == {"detail": "falha ao extrair de fonte externa em animefire.one"}
+    assert "segredo" not in resposta.text
+
+
+async def test_502_de_metadados_nao_vaza_detalhe_interno(app_pronto, cliente: AsyncClient):
+    async def _falha():
+        raise FalhaDeMetadados("AniList: HTTP 500 em https://graphql.anilist.co?key=segredo")
+
+    app_pronto.add_api_route("/_teste/falha-de-metadados", _falha)
+
+    resposta = await cliente.get("/_teste/falha-de-metadados")
+
+    assert resposta.status_code == 502
+    assert resposta.json() == {"detail": "falha ao consultar provedores de metadados"}

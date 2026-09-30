@@ -15,7 +15,8 @@ from core.config import Config
 
 
 def criar_engine(config: Config) -> AsyncEngine:
-    engine = create_async_engine(config.database_url)
+    # `hide_parameters`: um erro de SQL não despeja os valores dos parâmetros no log/traceback.
+    engine = create_async_engine(config.database_url, hide_parameters=True)
 
     @event.listens_for(engine.sync_engine, "connect")
     def _fixar_pragmas(conexao_dbapi: sqlite3.Connection, _registro) -> None:
@@ -24,6 +25,10 @@ def criar_engine(config: Config) -> AsyncEngine:
         cursor.execute("PRAGMA busy_timeout=5000")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA foreign_keys=ON")
+        # Schema de banco alterado por outro processo não executa função/trigger; e página
+        # corrompida vira erro em vez de leitura fora dos limites (sqlite.org/security).
+        cursor.execute("PRAGMA trusted_schema=OFF")
+        cursor.execute("PRAGMA cell_size_check=ON")
         cursor.close()
 
     return engine
