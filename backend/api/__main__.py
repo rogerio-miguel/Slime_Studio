@@ -4,6 +4,7 @@ uvicorn. Processo separado do worker — comunicam só via a tabela `Job`.
 """
 
 import logging
+import os
 
 import uvicorn
 
@@ -15,8 +16,10 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    # Banco, mídia e logs criados por este processo ficam legíveis só pelo dono.
+    os.umask(0o077)
     app = criar_app(carregar_config())
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000, server_header=False)
 
 
 if __name__ == "__main__":
