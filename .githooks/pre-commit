@@ -1,0 +1,8 @@
+#!/bin/sh
+# Barra commit com segredo em stage (gitleaks). Ativar uma vez por clone:
+#   git config core.hooksPath .githooks
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks não instalado, varredura de segredos PULADA" >&2
+  exit 0
+fi
+exec gitleaks git --pre-commit --staged --redact --no-banner

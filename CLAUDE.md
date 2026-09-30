@@ -52,8 +52,8 @@ Baseline de fundamentos; para revisão e endurecimento use a skill `security`.
 - **Frontend:** nunca renderize HTML não sanitizado (sinopse/título vindos de provedor são entrada de terceiros); sem segredo no bundle.
 - **URLs de terceiros:** URL vinda de scraping ou provedor (AniList/Kitsu/TMDB) e repassada a `ffmpeg`/`yt-dlp`/`requests` passa por allowlist de destino (evita SSRF); mídia passa por `exigir_url_de_midia_segura` e os GETs por `get_validando_redirects` (`extractors/rede_segura.py`), que barram IP interno, nome que resolve pra IP interno e redirect pra destino interno; resta a janela de DNS rebinding entre verificar e usar (ffmpeg/yt-dlp resolvem por conta própria). Nunca interpole em shell — subprocesso sempre com lista de argumentos. O modo `local` não existe na API: arquivo local só via `scripts/enfileirar_local.py`.
 - **Caminhos e nomes de arquivo:** título/episódio vindo de scraping ou provedor que vira caminho em disco (`media/`, chunks do `ffmpeg`) usa nome gerado ou slug sanitizado; nunca aceite `..` nem caminho absoluto de fora.
-- **Segredos:** chaves de API (ex. TMDB) só em `.env` fora do git, nunca no repositório nem no bundle do frontend; se vazou, rotacione.
-- **Dependências:** lockfiles (`uv.lock`, `package-lock.json`) versionados; auditoria periódica (`pip-audit`/`osv-scanner` no backend, `npm audit` no frontend), atenção especial a `yt-dlp`, `cloudscraper` e `drissionpage`.
+- **Segredos:** chaves de API (ex. TMDB) só em `.env` fora do git, nunca no repositório nem no bundle do frontend; se vazou, rotacione. O hook `.githooks/pre-commit` roda `gitleaks` nos arquivos em stage (ativar por clone: `git config core.hooksPath .githooks`).
+- **Dependências:** lockfiles (`uv.lock`, `package-lock.json`) versionados; auditoria periódica (`pip-audit`/`osv-scanner` no backend, `npm audit` no frontend), atenção especial a `yt-dlp` (o worker loga a versão no start e avisa acima de 90 dias), `cloudscraper` e `drissionpage`. `ruff` roda com a regra `S` (bandit; `tests/` ignora S101/S105/S108) e `frontend/.npmrc` usa `ignore-scripts=true`.
 
 ---
 
