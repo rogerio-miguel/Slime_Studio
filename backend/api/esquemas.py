@@ -4,32 +4,19 @@ Clean Architecture, CLAUDE.md §1).
 """
 
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
+from pydantic import BaseModel, ConfigDict, NonNegativeInt
 
 from core.enums import StatusEpisodio, StatusJob, StatusLancamento, TipoEpisodio, VersaoEpisodio
 
 # --- jobs (api/rotas/jobs.py) ---
 
 
-class CriarJobLocalRequest(BaseModel):
-    modo: Literal["local"]
-    anime: str
-    numero: int
-    tipo: TipoEpisodio
-    versao: VersaoEpisodio = VersaoEpisodio.LEGENDADO
-    # Sem validação de existência/formato aqui (mesmo comportamento de
-    # `scripts/enfileirar_local.py` hoje) — o worker é quem valida o arquivo de
-    # fato (`worker/pipeline/validacao.py::sondar`, levanta `FonteInvalida`).
-    # Aceitável porque o app é local-only por natureza (uso pessoal, sem
-    # múltiplos usuários), não input de usuário final não confiável.
-    caminho_local: str
-    titulo_episodio: str | None = None
-    ano: int | None = None
-    duracao_esperada_s: int | None = None
-
-
+# Só o modo `site` existe na API. O modo `local` (caminho de arquivo arbitrário do
+# host, sem allowlist) foi removido: quem enfileira arquivo local usa
+# `scripts/enfileirar_local.py`, que fala direto com o catálogo e não é alcançável
+# por HTTP.
 class CriarJobSiteRequest(BaseModel):
     modo: Literal["site"]
     anime_id: int
@@ -37,11 +24,6 @@ class CriarJobSiteRequest(BaseModel):
     tipo: TipoEpisodio
     versao: VersaoEpisodio = VersaoEpisodio.LEGENDADO
     duracao_esperada_s: int | None = None
-
-
-CriarJobRequest = Annotated[
-    CriarJobLocalRequest | CriarJobSiteRequest, Field(discriminator="modo")
-]
 
 
 class JobCriadoSaida(BaseModel):
