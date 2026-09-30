@@ -1,7 +1,8 @@
-"""Criação de job nos dois modos (`local`, `site` — ESPECIFICACAO.md §5, Passo 4
-do plano da Fase 3). Cancelamento/retry não têm serviço próprio: são uma
-chamada só para `db/fila.py` (que já concentra toda a regra de verdade), então
-`api/rotas/jobs.py` chama `db.fila` direto — "não criar serviço pass-through".
+"""Criação de job (modo `site` — ESPECIFICACAO.md §5, Passo 4 do plano da Fase 3;
+o modo `local` só existe via `scripts/enfileirar_local.py`, não pela API).
+Cancelamento/retry não têm serviço próprio: são uma chamada só para `db/fila.py`
+(que já concentra toda a regra de verdade), então `api/rotas/jobs.py` chama
+`db.fila` direto — "não criar serviço pass-through".
 
 Não importa `fastapi`: devolve o `job_id` ou levanta erro de `core/erros.py`;
 `api/rotas/jobs.py` traduz para `HTTPException`/schemas.
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.servicos.catalogo import job_ativo_do_episodio, remover_arquivos_do_episodio
 from api.servicos.fontes import info_de_episodio, resolver_e_listar
 from core.config import Config
-from core.enums import SITE_LOCAL, StatusEpisodio, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
+from core.enums import StatusEpisodio, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import (
     EpisodioJaExiste,
     ErroSlimeStudio,
@@ -33,32 +34,6 @@ from models.episodio import Episodio
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 logger = logging.getLogger(__name__)
-
-
-async def criar_job_local(
-    sessionmaker: _SessionMaker,
-    *,
-    anime: str,
-    numero: int,
-    tipo: TipoEpisodio,
-    versao: VersaoEpisodio,
-    caminho_local: str,
-    titulo_episodio: str | None,
-    ano: int | None,
-    duracao_esperada_s: int | None,
-) -> int:
-    anime_id = await catalogo.obter_ou_criar_anime_id(sessionmaker, anime, ano)
-    return await catalogo.criar_episodio_e_job(
-        sessionmaker,
-        anime_id,
-        numero=numero,
-        tipo=tipo,
-        versao=versao,
-        url_fonte=caminho_local,
-        site_origem=SITE_LOCAL,
-        titulo_episodio=titulo_episodio,
-        duracao_esperada_s=duracao_esperada_s,
-    )
 
 
 async def criar_job_site(

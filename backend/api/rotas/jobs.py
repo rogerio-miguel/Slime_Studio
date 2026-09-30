@@ -8,8 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
 from api.esquemas import (
     CancelarJobSaida,
-    CriarJobLocalRequest,
-    CriarJobRequest,
+    CriarJobSiteRequest,
     JobCriadoSaida,
     JobSaida,
     RetryJobSaida,
@@ -28,38 +27,23 @@ router = APIRouter(prefix="/api/admin", tags=["admin-jobs"])
 
 @router.post("/jobs", response_model=JobCriadoSaida, status_code=status.HTTP_201_CREATED)
 async def criar_job(
-    corpo: CriarJobRequest,
+    corpo: CriarJobSiteRequest,
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
     sessao: AsyncSession = Depends(obter_sessao),
     config: Config = Depends(obter_config),
 ) -> JobCriadoSaida:
-    if isinstance(corpo, CriarJobLocalRequest):
-        job_id = await servico_jobs.criar_job_local(
-            sessionmaker,
-            anime=corpo.anime,
-            numero=corpo.numero,
-            tipo=corpo.tipo,
-            versao=corpo.versao,
-            caminho_local=corpo.caminho_local,
-            titulo_episodio=corpo.titulo_episodio,
-            ano=corpo.ano,
-            duracao_esperada_s=corpo.duracao_esperada_s,
-        )
-    else:
-        anime = await sessao.get(Anime, corpo.anime_id)
-        if anime is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado"
-            )
-        job_id = await servico_jobs.criar_job_site(
-            sessionmaker,
-            config,
-            anime=anime,
-            numero=corpo.numero,
-            tipo=corpo.tipo,
-            versao=corpo.versao,
-            duracao_esperada_s=corpo.duracao_esperada_s,
-        )
+    anime = await sessao.get(Anime, corpo.anime_id)
+    if anime is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    job_id = await servico_jobs.criar_job_site(
+        sessionmaker,
+        config,
+        anime=anime,
+        numero=corpo.numero,
+        tipo=corpo.tipo,
+        versao=corpo.versao,
+        duracao_esperada_s=corpo.duracao_esperada_s,
+    )
     return JobCriadoSaida(job_id=job_id)
 
 

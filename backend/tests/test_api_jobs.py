@@ -87,7 +87,8 @@ async def _criar_episodio_existente(
         return episodio.id
 
 
-async def test_criar_job_modo_local(cliente: AsyncClient):
+async def test_criar_job_modo_local_nao_existe_na_api(cliente: AsyncClient):
+    """Caminho de arquivo arbitrário do host não pode ser enfileirado por HTTP."""
     resposta = await cliente.post(
         "/api/admin/jobs",
         json={
@@ -95,28 +96,11 @@ async def test_criar_job_modo_local(cliente: AsyncClient):
             "anime": "Anime Local",
             "numero": 1,
             "tipo": "regular",
-            "caminho_local": "/caminho/qualquer.mkv",
+            "caminho_local": "/etc/passwd",
         },
     )
 
-    assert resposta.status_code == 201
-    assert isinstance(resposta.json()["job_id"], int)
-
-
-async def test_criar_job_modo_local_episodio_duplicado_409(cliente: AsyncClient):
-    corpo = {
-        "modo": "local",
-        "anime": "Anime Duplicado",
-        "numero": 1,
-        "tipo": "regular",
-        "caminho_local": "/caminho/qualquer.mkv",
-    }
-    primeira = await cliente.post("/api/admin/jobs", json=corpo)
-    assert primeira.status_code == 201
-
-    segunda = await cliente.post("/api/admin/jobs", json=corpo)
-    assert segunda.status_code == 409
-    assert segunda.json()["detail"]["motivo"] == "episodio_ja_existe"
+    assert resposta.status_code == 422
 
 
 async def test_criar_job_modo_site_anime_id_inexistente_404(cliente: AsyncClient):
