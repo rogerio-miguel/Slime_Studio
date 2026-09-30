@@ -35,6 +35,7 @@ from db.fila import (
 )
 from worker.bloqueio import BloqueioDeInstancia
 from worker.executor import processar
+from worker.pipeline.ferramentas import registrar_versao_do_ytdlp
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ _INTERVALO_HEARTBEAT_S = 15
 
 async def principal(config: Config) -> int:
     with BloqueioDeInstancia(config.caminho_lock):
+        registrar_versao_do_ytdlp()
         worker_id = f"{socket.gethostname()}:{os.getpid()}"
         engine = criar_engine(config)
         sessionmaker = criar_sessionmaker(engine)
