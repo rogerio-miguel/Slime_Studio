@@ -5,10 +5,10 @@ Clean Architecture, CLAUDE.md §1).
 
 import re
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, NonNegativeInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, field_validator
 
 from core.enums import StatusEpisodio, StatusJob, StatusLancamento, TipoEpisodio, VersaoEpisodio
 
@@ -22,6 +22,8 @@ _IDENTIFICADOR_PROIBIDO = re.compile(r"[?#\\\s\x00-\x1f]|(^|/)\.\.(/|$)")
 # `scripts/enfileirar_local.py`, que fala direto com o catálogo e não é alcançável
 # por HTTP.
 class CriarJobSiteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     modo: Literal["site"]
     anime_id: int
     numero: int
@@ -63,27 +65,31 @@ class RetryJobSaida(BaseModel):
 
 
 class CriarAnimeRequest(BaseModel):
-    titulo: str
+    # `extra="forbid"` e tetos de tamanho: o corpo vem de um cliente que não controlamos
+    # (o front monta exatamente estes campos; nada além deles é aceito).
+    model_config = ConfigDict(extra="forbid")
+
+    titulo: str = Field(max_length=300)
     ano: int | None = None
     # Metadados de provedor externo (AniList/Kitsu) — opcionais: se vierem
     # preenchidos, persistem direto; se ausentes, `api/servicos/descoberta.py`
     # tenta enriquecer por título em best-effort (ver `api/rotas/animes.py`).
     anilist_id: int | None = None
     kitsu_id: int | None = None
-    capa_url: str | None = None
-    sinopse: str | None = None
+    capa_url: str | None = Field(default=None, max_length=2048)
+    sinopse: str | None = Field(default=None, max_length=20000)
     # Arte horizontal (`bannerImage` da AniList) e cor dominante da capa
     # (`coverImage.color`) do item do feed da Home — persistem direto quando
     # vêm no payload (mesmo caminho de `capa_url`).
-    banner_url: str | None = None
-    capa_cor: str | None = None
+    banner_url: str | None = Field(default=None, max_length=2048)
+    capa_cor: str | None = Field(default=None, max_length=32)
     # Gêneros crus (`genres` da AniList) do item do feed "em alta" — a
     # materialização repassa e persiste direto (mesmo curto-circuito de
     # `capa_url`/`banner_url`); tradução pt-BR é no frontend.
-    generos: list[str] | None = None
+    generos: list[Annotated[str, Field(max_length=60)]] | None = Field(default=None, max_length=50)
     # Título em inglês (`title.english` da AniList) do item do feed — persiste
     # em `Anime.titulo_ingles` (só exibição, nunca substitui `Anime.titulo`).
-    titulo_ingles: str | None = None
+    titulo_ingles: str | None = Field(default=None, max_length=300)
     # `format` cru da AniList do item clicado na busca da Home
     # (`AnimeEmAltaSaida.formato` abaixo) — `None` (padrão, série TV) segue o
     # cadastro de sempre; "MOVIE"/"OVA"/"ONA"/"SPECIAL" grava em `Anime.
@@ -91,7 +97,7 @@ class CriarAnimeRequest(BaseModel):
     # desvia a resolução de franquia pra `_aplicar_ancora_de_midia` (só
     # `serie_ancora`, nunca `numero_temporada`) — o item se agrupa no anime
     # original em vez de virar card solto no catálogo.
-    formato: str | None = None
+    formato: str | None = Field(default=None, max_length=32)
 
     @field_validator("capa_url", "banner_url")
     @classmethod
@@ -357,12 +363,14 @@ class AnimeDetalheSaida(BaseModel):
 
 
 class ConfirmarFonteRequest(BaseModel):
-    dominio: str
-    identificador: str
-    titulo_exibicao: str
+    model_config = ConfigDict(extra="forbid")
+
+    dominio: str = Field(max_length=100)
+    identificador: str = Field(max_length=300)
+    titulo_exibicao: str = Field(max_length=300)
     # Só round-trip do candidato da busca: o servidor NÃO grava nem requisita esta
     # URL (`extractors/resolucao.py::confirmar_fonte` persiste `dominio` + `identificador`).
-    url: str
+    url: str = Field(max_length=2048)
 
     @field_validator("identificador")
     @classmethod

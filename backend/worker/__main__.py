@@ -169,6 +169,8 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    # Mídia e parciais criados pelo worker (e pelo ffmpeg/yt-dlp filhos) só do dono.
+    os.umask(0o077)
     codigo_saida = asyncio.run(principal(carregar_config()))
     raise SystemExit(codigo_saida)
 

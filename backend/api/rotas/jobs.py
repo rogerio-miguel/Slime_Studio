@@ -13,6 +13,7 @@ from api.esquemas import (
     JobSaida,
     RetryJobSaida,
 )
+from api.seguranca import limitar
 from api.servicos import jobs as servico_jobs
 from core.config import Config
 from core.enums import StatusJob
@@ -25,7 +26,12 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 router = APIRouter(prefix="/api/admin", tags=["admin-jobs"])
 
 
-@router.post("/jobs", response_model=JobCriadoSaida, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/jobs",
+    response_model=JobCriadoSaida,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[limitar("criar-job", maximo=20)],
+)
 async def criar_job(
     corpo: CriarJobSiteRequest,
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),

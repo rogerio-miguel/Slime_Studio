@@ -13,6 +13,9 @@ export default defineConfig({
     include: ['anime4k-webgpu'],
   },
   server: {
+    // Sem isto o Vite cai pra 5174 quando a 5173 está ocupada, e a API (allowlist de `Origin`
+    // em `api/main.py::_ORIGENS_PERMITIDAS`) passa a responder 403 às escritas.
+    strictPort: true,
     // Same-origin (dev server e API sob a mesma origem) — o cookie HttpOnly
     // de sessão viaja em qualquer request, inclusive o manifesto/segmentos
     // HLS que `player/fonteHls.js` carrega via hls.js (que roda com
