@@ -34,13 +34,16 @@ target-version = "py312"
 extend-exclude = ["db/migrations/versions"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 # B008 (function-call-in-default-argument) marca falso-positivo em `api/`: `Depends(...)`
 # como default de parâmetro é o padrão de injeção de dependência do próprio FastAPI, não
 # uma chamada acidental — ver https://fastapi.tiangolo.com/tutorial/dependencies/.
 "api/**/*.py" = ["B008"]
+# Testes: `assert` é o próprio teste (S101), e caminhos/tokens literais são dublês, não segredo
+# nem arquivo temporário real (S105, S108). O código de aplicação segue sem exceção.
+"tests/**/*.py" = ["S101", "S105", "S108"]
 
 [dependency-groups]
 dev = [
