@@ -193,7 +193,8 @@ async def app_pronto(config_api: Config):
 @pytest.fixture
 async def cliente(app_pronto):
     transporte = ASGITransport(app=app_pronto)
-    async with AsyncClient(transport=transporte, base_url="http://test") as client:
+    # `localhost`: o `TrustedHostMiddleware` da API rejeita `Host: test`.
+    async with AsyncClient(transport=transporte, base_url="http://localhost") as client:
         yield client
 
 

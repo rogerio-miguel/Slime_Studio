@@ -196,8 +196,10 @@ def _preparar_config(tmp_path: Path) -> Config:
 def test_ws_admin_recebe_snapshot(tmp_path: Path):
     app = criar_app(_preparar_config(tmp_path))
 
+    # `Host: localhost` explícito: o `TrustedHostMiddleware` rejeita o `testserver`, e
+    # `websocket_connect` monta a URL com `ws://testserver` fixo (ignora o `base_url`).
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/admin") as websocket:
+        with client.websocket_connect("/ws/admin", headers={"host": "localhost"}) as websocket:
             mensagem = websocket.receive_json()
 
     assert mensagem == {"tipo": "snapshot", "jobs": []}

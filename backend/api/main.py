@@ -11,10 +11,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
 from api.eventos import Assinantes, MonitorDeFila
 from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
+from api.seguranca import ProtecaoDeOrigem
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
@@ -38,6 +40,9 @@ logger = logging.getLogger(__name__)
 # `crossOrigin='anonymous'` (D1 de sessão anterior) exige que a origem esteja
 # na allowlist de CORS para o browser completar o request cross-origin.
 _ORIGENS_PERMITIDAS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# `Host` sem porta (o `TrustedHostMiddleware` a descarta). Com o proxy do Vite sem
+# `changeOrigin`, o `Host` que chega aqui é o do navegador (`localhost:5173`).
+_HOSTS_PERMITIDOS = ["localhost", "127.0.0.1"]
 
 
 def criar_app(config: Config) -> FastAPI:
@@ -62,6 +67,9 @@ def criar_app(config: Config) -> FastAPI:
 
     app = FastAPI(title="Slime Studio API", lifespan=lifespan)
 
+    # Ordem de `add_middleware`: o último adicionado é o mais externo. `Host` é
+    # checado primeiro (DNS rebinding), depois o CORS, depois a origem das escritas.
+    app.add_middleware(ProtecaoDeOrigem, origens_permitidas=_ORIGENS_PERMITIDAS)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_ORIGENS_PERMITIDAS,
@@ -69,6 +77,7 @@ def criar_app(config: Config) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_HOSTS_PERMITIDOS)
 
     app.include_router(saude.router_publico)
     app.include_router(saude.router_admin)
