@@ -270,7 +270,7 @@ export default function SeletorEmMenu({
             width={14}
             height={14}
             aria-hidden="true"
-            stroke-width="4"
+            strokeWidth="4"
             className={`shrink-0 transition-transform ${aberto ? 'rotate-180' : ''}`}
           />
         )}
