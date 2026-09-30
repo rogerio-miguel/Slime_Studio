@@ -20,13 +20,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import sondagem
-from api.servicos.fontes import EpisodiosRemotosResultado
+from api.servicos.fontes import FonteComEpisodios
 from core.enums import StatusLancamento, VersaoDeFonte
 from core.erros import FalhaDeMetadados
 from core.texto import slugificar
 from integrations.base import AnimeEmAlta, LancamentoDeAnime, MetadadosDeAnime
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
+
+
+def _fonte(dominio: str, episodios: list) -> FonteComEpisodios:
+    """Retorno de `resolver_e_listar` com o mínimo que a sondagem lê."""
+    return FonteComEpisodios(
+        dominio=dominio,
+        identificador="stub",
+        versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        episodios=episodios,
+    )
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -47,10 +57,10 @@ def _sondagem_da_fonte_sem_rede(monkeypatch: pytest.MonkeyPatch):
     a `Task` nunca tocar extractor/rede. Testes que precisam espiar a chamada
     re-`setattr`am por cima."""
 
-    async def _fake(sessionmaker, anime, versao):
-        return EpisodiosRemotosResultado(dominio="stub.io", episodios=[])
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+        return _fonte(dominio="stub.io", episodios=[])
 
-    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
 
 
 async def _drenar_refreshs_de_lancamento() -> None:
@@ -141,6 +151,8 @@ async def test_em_alta_cruza_com_anime_existente_no_catalogo_local(
         "proximo_ep_numero": 55,
         "total_episodios": 100,
         "sinopse": None,
+        "formato": None,
+        "episodio_lancado": None,
     }
 
 
@@ -1095,14 +1107,14 @@ async def test_obter_anime_agenda_sondagem_de_fonte_sem_regredir_refresh_de_lanc
         lancamentos.append(anilist_id)
         return None
 
-    async def _sondar_fake(sessionmaker, anime, versao):
+    async def _sondar_fake(sessionmaker, anime, versao, *, resolver_canonico):
         sondagens.append(anime.id)
-        return EpisodiosRemotosResultado(dominio="stub.io", episodios=[])
+        return _fonte(dominio="stub.io", episodios=[])
 
     monkeypatch.setattr(
         "integrations.servico.buscar_lancamento_por_anilist_id", _buscar_lancamento_fake
     )
-    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _sondar_fake)
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _sondar_fake)
 
     anime_id = await _criar_anime(
         sessionmaker_api,

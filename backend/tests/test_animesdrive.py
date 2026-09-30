@@ -197,7 +197,7 @@ def test_listar_episodios_deduplica_ordena_e_inclui_rotulo_nao_numerico(extrator
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: _ler_fixture("episodios.html")})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert episodios == [
         EpisodioRemoto(
@@ -247,7 +247,7 @@ def test_listar_episodios_rotulos_com_zero_a_esquerda_nao_colapsam(extrator, cli
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert [(ep.rotulo, ep.numero) for ep in episodios] == [("7", 7), ("07", 7)]
 
@@ -262,7 +262,7 @@ def test_listar_episodios_aceita_url_com_barra_final(extrator, cliente_falso):
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert episodios == [
         EpisodioRemoto(
@@ -279,7 +279,7 @@ def test_listar_episodios_vazio_levanta_estrutura_do_site_mudou(extrator, client
     cliente = cliente_falso(html_por_url={url_anime: "<html><body></body></html>"})
 
     with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador)
+        extrator.listar_episodios(cliente, identificador, None)
 
 
 
@@ -300,7 +300,7 @@ def test_listar_episodios_aceita_slug_de_episodio_diferente_do_identificador(
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert [(ep.rotulo, ep.numero) for ep in episodios] == [("1", 1), ("2", 2)]
 
@@ -313,7 +313,7 @@ def test_listar_episodios_ignora_link_de_episodio_fora_do_box(extrator, cliente_
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: _ler_fixture("episodios.html")})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert all("outro-anime" not in episodio.url for episodio in episodios)
 
@@ -335,7 +335,7 @@ def test_listar_episodios_com_duas_versoes_relacionadas_devolve_ambas_rotuladas(
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert episodios == [
         EpisodioRemoto(
@@ -383,7 +383,7 @@ def test_listar_episodios_com_dois_slugs_nao_relacionados_por_versao_fica_com_a_
     url_anime = f"{extrator.BASE_URL}/anime/{identificador}"
     cliente = cliente_falso(html_por_url={url_anime: html})
 
-    episodios = extrator.listar_episodios(cliente, identificador)
+    episodios = extrator.listar_episodios(cliente, identificador, None)
 
     assert [episodio.url for episodio in episodios] == [
         "https://animesdrive.cloud/episodio/tensei-shitara-slime-datta-ken-ova-episodio-1",

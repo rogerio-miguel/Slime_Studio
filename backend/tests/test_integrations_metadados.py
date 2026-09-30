@@ -2388,8 +2388,20 @@ async def test_servico_info_memo_evita_repescar_temporada_pro_proximo_episodio(
             return _RespostaFalsa(
                 corpo={
                     "episodes": [
-                        {"episode_number": 1, "still_path": "/ep1.jpg"},
-                        {"episode_number": 2, "still_path": "/ep2.jpg"},
+                        # name/overview presentes: sem eles o TMDB provider faz o GET extra
+                        # de fallback en-US, que não é o que este teste mede.
+                        {
+                            "episode_number": 1,
+                            "still_path": "/ep1.jpg",
+                            "name": "A",
+                            "overview": "a",
+                        },
+                        {
+                            "episode_number": 2,
+                            "still_path": "/ep2.jpg",
+                            "name": "B",
+                            "overview": "b",
+                        },
                     ]
                 }
             )
