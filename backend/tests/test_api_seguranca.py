@@ -1,8 +1,11 @@
 """Testes de `api/seguranca.py` e da allowlist de `Host` em `api/main.py`."""
 
+import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
 
-from api.seguranca import ProtecaoDeOrigem
+from api import seguranca
+from api.seguranca import LimitesDeTaxa, ProtecaoDeOrigem, limitar
 from core.erros import FalhaDeExtracao, FalhaDeMetadados
 
 _ORIGEM_DO_FRONTEND = "http://localhost:5173"
@@ -149,3 +152,58 @@ async def test_502_de_metadados_nao_vaza_detalhe_interno(app_pronto, cliente: As
 
     assert resposta.status_code == 502
     assert resposta.json() == {"detail": "falha ao consultar provedores de metadados"}
+
+
+async def test_respostas_levam_nosniff_e_referrer_policy(cliente: AsyncClient):
+    resposta = await cliente.get("/api/health")
+
+    assert resposta.headers["x-content-type-options"] == "nosniff"
+    assert resposta.headers["referrer-policy"] == "no-referrer"
+
+
+async def test_resposta_barrada_pela_origem_tambem_leva_os_cabecalhos(cliente: AsyncClient):
+    resposta = await cliente.post(_ESCRITA, json={}, headers={"Origin": _ORIGEM_ESTRANHA})
+
+    assert resposta.status_code == 403
+    assert resposta.headers["x-content-type-options"] == "nosniff"
+
+
+def test_limite_de_taxa_barra_acima_do_maximo_com_retry_after():
+    limites = LimitesDeTaxa()
+    limites.verificar("rota", 2, 60.0)
+    limites.verificar("rota", 2, 60.0)
+
+    with pytest.raises(HTTPException) as erro:
+        limites.verificar("rota", 2, 60.0)
+
+    assert erro.value.status_code == 429
+    assert int(erro.value.headers["Retry-After"]) >= 1
+
+
+def test_limite_de_taxa_libera_de_novo_depois_da_janela(monkeypatch):
+    agora = [1000.0]
+    monkeypatch.setattr(seguranca.time, "monotonic", lambda: agora[0])
+    limites = LimitesDeTaxa()
+    limites.verificar("rota", 1, 60.0)
+
+    agora[0] += 61.0
+
+    limites.verificar("rota", 1, 60.0)
+
+
+def test_limite_de_taxa_tem_balde_por_rota():
+    limites = LimitesDeTaxa()
+    limites.verificar("a", 1, 60.0)
+
+    limites.verificar("b", 1, 60.0)
+
+
+async def test_rota_com_limitar_responde_429_no_excesso(app_pronto, cliente: AsyncClient):
+    async def _rota():
+        return {"ok": True}
+
+    app_pronto.add_api_route("/_teste/limitada", _rota, dependencies=[limitar("t", maximo=2)])
+
+    respostas = [await cliente.get("/_teste/limitada") for _ in range(3)]
+
+    assert [r.status_code for r in respostas] == [200, 200, 429]

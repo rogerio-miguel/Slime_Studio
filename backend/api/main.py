@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from api.eventos import Assinantes, MonitorDeFila
 from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
-from api.seguranca import ProtecaoDeOrigem
+from api.seguranca import CabecalhosDeSeguranca, LimitesDeTaxa, ProtecaoDeOrigem
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
@@ -57,6 +57,7 @@ def criar_app(config: Config) -> FastAPI:
         app.state.config = config
         app.state.sessionmaker = sessionmaker
         app.state.assinantes = assinantes
+        app.state.limites = LimitesDeTaxa()
         app.state.monitor = monitor
 
         try:
@@ -70,6 +71,7 @@ def criar_app(config: Config) -> FastAPI:
     # Ordem de `add_middleware`: o último adicionado é o mais externo. `Host` é
     # checado primeiro (DNS rebinding), depois o CORS, depois a origem das escritas.
     app.add_middleware(ProtecaoDeOrigem, origens_permitidas=_ORIGENS_PERMITIDAS)
+    app.add_middleware(CabecalhosDeSeguranca)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_ORIGENS_PERMITIDAS,

@@ -27,6 +27,7 @@ from api.esquemas import (
     ResultadoBuscaFonteSaida,
     TemporadaIrmaSaida,
 )
+from api.seguranca import limitar
 from api.servicos import busca as servico_busca
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
@@ -55,7 +56,7 @@ router = APIRouter(prefix="/api/admin/animes", tags=["admin-animes"])
 router_publico = APIRouter(prefix="/api/animes", tags=["animes"])
 
 
-@router.post("", response_model=AnimeSaida)
+@router.post("", response_model=AnimeSaida, dependencies=[limitar("criar-anime", maximo=30)])
 async def criar_anime(
     corpo: CriarAnimeRequest,
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
@@ -143,7 +144,11 @@ async def confirmar_fonte_do_anime(
     return {"status": "ok"}
 
 
-@router.get("/{anime_id}/episodios-remotos", response_model=EpisodiosRemotosSaida)
+@router.get(
+    "/{anime_id}/episodios-remotos",
+    response_model=EpisodiosRemotosSaida,
+    dependencies=[limitar("episodios-remotos", maximo=30)],
+)
 async def listar_episodios_remotos_do_anime(
     anime_id: int,
     versao: VersaoEpisodio = Query(VersaoEpisodio.LEGENDADO),
@@ -419,7 +424,11 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
 
 # `/buscar` precisa vir ANTES de `/{anime_id}` — mesma armadilha de `/em-alta`:
 # um `{anime_id}` declarado primeiro casaria com `anime_id="buscar"`.
-@router_publico.get("/buscar", response_model=list[AnimeEmAltaSaida])
+@router_publico.get(
+    "/buscar",
+    response_model=list[AnimeEmAltaSaida],
+    dependencies=[limitar("buscar-provedor", maximo=60)],
+)
 async def buscar_animes(
     titulo: str = Query(..., max_length=200),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
@@ -438,7 +447,11 @@ async def buscar_animes(
 # `/buscar-fontes` precisa vir ANTES de `/{anime_id}` — mesma armadilha de
 # `/em-alta` acima: um `{anime_id}` declarado primeiro casaria com
 # `anime_id="buscar-fontes"`.
-@router_publico.get("/buscar-fontes", response_model=BuscaEmFontesSaida)
+@router_publico.get(
+    "/buscar-fontes",
+    response_model=BuscaEmFontesSaida,
+    dependencies=[limitar("buscar-fontes", maximo=30)],
+)
 async def buscar_animes_em_fontes(
     titulo: str = Query(..., max_length=200),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
