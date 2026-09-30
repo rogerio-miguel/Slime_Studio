@@ -13,7 +13,6 @@ agnóstico de site), a checagem faz sua própria requisição HTTP curta com
 """
 
 import asyncio
-import ipaddress
 import os
 import re
 import sys
@@ -27,6 +26,7 @@ import requests
 
 from core.enums import TipoEpisodio, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FalhaDeFerramenta
+from extractors import rede_segura
 from extractors.base import FormatoDeMidia, LinkDeMidia
 from worker.pipeline.ferramentas import executar
 
@@ -108,33 +108,12 @@ _PROTOCOLOS_FFMPEG_REMOTO = "http,https,tcp,tls,crypto"
 
 
 def exigir_url_de_midia_segura(url: str) -> None:
-    """Barra, antes de qualquer requisição/`ffmpeg`/`yt-dlp`, URL de mídia que veio de
-    scraping mas não é um destino externo: esquema fora de http(s), sem host, ou host
-    que é `localhost`/IP literal não público (loopback, RFC1918, link-local, metadata
-    de nuvem). NÃO resolve DNS: um nome público que aponta pra IP interno passa
-    (resolver e fixar o IP na conexão é o fechamento completo, ainda não feito).
-    Falha definitiva (`permite_retentativa=False`): repetir não muda a URL."""
-    partes = urllib.parse.urlparse(url)
-    if partes.scheme not in ("http", "https") or not partes.hostname:
-        raise FalhaDeExtracao(
-            f"URL de mídia com esquema ou host inválido: {url}", permite_retentativa=False
-        )
-    if _eh_host_interno(partes.hostname):
-        raise FalhaDeExtracao(
-            f"URL de mídia aponta para host interno: {url}", permite_retentativa=False
-        )
-
-
-def _eh_host_interno(hostname: str) -> bool:
-    if hostname == "localhost" or hostname.endswith(".localhost"):
-        return True
-    try:
-        endereco = ipaddress.ip_address(hostname)
-    except ValueError:
-        return False  # nome DNS: não resolvido aqui
-    if isinstance(endereco, ipaddress.IPv6Address) and endereco.ipv4_mapped is not None:
-        endereco = endereco.ipv4_mapped
-    return not endereco.is_global
+    """Barra, antes de qualquer requisição/`ffmpeg`/`yt-dlp`, URL de mídia vinda de scraping
+    que não é um destino externo (`rede_segura.validar_destino`): esquema fora de http(s),
+    sem host, `localhost`, IP não público ou nome que resolve pra IP não público. Faz DNS
+    bloqueante: de código `async`, chame via `asyncio.to_thread`. Falha definitiva
+    (`permite_retentativa=False`)."""
+    rede_segura.validar_destino(url)
 
 
 def conferir_link_de_midia(link: LinkDeMidia, *, timeout_s: int = _TIMEOUT_S) -> None:
@@ -191,7 +170,9 @@ def _baixar_amostra(url: str, cabecalhos: dict[str, str], timeout_s: int) -> tup
     """Isolado do resto de `conferir_link_de_midia` para ser substituído por
     `monkeypatch` em teste, sem tocar rede real."""
     try:
-        with requests.get(url, headers=cabecalhos, timeout=timeout_s, stream=True) as resposta:
+        with rede_segura.get_validando_redirects(
+            url, headers=cabecalhos, timeout=timeout_s, stream=True
+        ) as resposta:
             resposta.raise_for_status()
             content_type = resposta.headers.get("Content-Type", "")
             amostra = next(resposta.iter_content(chunk_size=_TAMANHO_AMOSTRA_BYTES), b"")
@@ -386,10 +367,12 @@ def _duracao_do_manifesto_dash(link: LinkDeMidia) -> float | None:
     não declara duração ou não pôde ser rebaixado. Isolado (como `_baixar_amostra`)
     para `monkeypatch` em teste."""
     try:
-        with requests.get(link.url, headers=link.cabecalhos, timeout=_TIMEOUT_S) as resposta:
+        with rede_segura.get_validando_redirects(
+            link.url, headers=link.cabecalhos, timeout=_TIMEOUT_S
+        ) as resposta:
             resposta.raise_for_status()
             corpo = resposta.text
-    except requests.RequestException:
+    except (requests.RequestException, rede_segura.DestinoNaoPermitido):
         return None
     correspondencia = _RE_MPD_DURACAO.search(corpo)
     if correspondencia is None:
@@ -704,7 +687,9 @@ def _get_bloco(url: str, cabecalhos: dict[str, str], timeout_s: int) -> requests
     """Isolado (como `_baixar_amostra`) para ser substituído por `monkeypatch` em
     teste, sem tocar rede real. `stream=True` para não puxar o corpo antes de o
     chamador checar o status."""
-    return requests.get(url, headers=cabecalhos, timeout=timeout_s, stream=True)
+    return rede_segura.get_validando_redirects(
+        url, headers=cabecalhos, timeout=timeout_s, stream=True
+    )
 
 
 def _parse_content_range(cabecalho: str, url: str) -> tuple[int, int, int | None]:

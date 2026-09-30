@@ -28,6 +28,7 @@ import cloudscraper
 import requests
 
 from core.erros import FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
+from extractors import rede_segura
 
 logger = logging.getLogger(__name__)
 
@@ -653,14 +654,14 @@ def responde(url: str, cabecalhos: dict[str, str]) -> bool:
     `cliente`).
     """
     try:
-        with requests.get(
+        with rede_segura.get_validando_redirects(
             url,
             headers={**cabecalhos, "Range": "bytes=0-0"},
             stream=True,
             timeout=_TIMEOUT_CONFERENCIA_S,
         ) as resposta:
             return resposta.ok
-    except requests.RequestException as excecao:
+    except (requests.RequestException, rede_segura.DestinoNaoPermitido) as excecao:
         logger.info("conferência de %s falhou: %s", url, excecao)
         return False
 
