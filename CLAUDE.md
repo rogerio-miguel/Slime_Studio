@@ -62,12 +62,12 @@ Baseline de fundamentos; para revisão e endurecimento use a skill `security`.
 - **Conciso:** não explique conceitos básicos a menos que peçam; entregue código funcional e direto.
 - **Dependências:** ao instalar ou atualizar pacotes, respeite as versões dos manifestos do projeto.
 - **Commit:** a skill `commit` não se auto-invoca. Ao fechar cada unidade de trabalho — antes de começar a próxima —, sugira-a em uma linha (assunto fechado, `git status` acumulando, código estável); se o usuário adiar, siga sem insistir.
-- **Terminal:** é ESTRITAMENTE PROIBIDO executar bash, rodar testes ou iniciar servidores por conta própria. Peça permissão explícita antes de qualquer comando, inclusive testes. Ao terminar uma alteração, entregue o código e pergunte: "Deseja que eu rode os testes agora?". Vale em dobro aqui: comandos podem envolver scraping/bypass anti-bot ou jobs de GPU de longa duração (upscaling) — nunca dispare isso sem confirmação explícita.
+- **Terminal:** é ESTRITAMENTE PROIBIDO executar bash, rodar testes ou iniciar servidores por conta própria. Peça permissão explícita antes de qualquer comando, inclusive testes. Ao terminar uma alteração, entregue o código e pergunte: "Deseja que eu rode os testes agora?". Vale em dobro aqui: comandos podem envolver scraping/bypass anti-bot ou jobs de GPU de longa duração (upscaling) — nunca dispare isso sem confirmação explícita. Única exceção: `uv run ruff check` e `npm run lint` (análise estática, sem `--fix` nem efeito colateral, já liberados no `.claude/settings.json`) rodam sem pedir.
 
 ---
 
 ## 7. Comandos de Validação
-Lidos pela skill `checkpoint`; só rodam mediante permissão (ver Comportamento do Agente).
+Lidos pela skill `checkpoint`. Testes e build só rodam mediante permissão; o lint é a única exceção (ver Comportamento do Agente).
 
 | Escopo | Comando |
 |---|---|
