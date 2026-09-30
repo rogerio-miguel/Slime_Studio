@@ -7,9 +7,9 @@
       "Bash(git log:*)",
       "Bash(gh pr view:*)",
       "Bash(gh pr create:*)",
-      "Bash(gh pr merge:*)",
       "Bash(gh issue list:*)",
       "Bash(uv run ruff check:*)",
+      "Bash(uv run pytest:*)",
       "Bash(npm run lint:*)"
     ],
     "deny": [

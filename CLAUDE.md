@@ -62,12 +62,12 @@ Baseline de fundamentos; para revisão e endurecimento use a skill `security`.
 - **Conciso:** não explique conceitos básicos a menos que peçam; entregue código funcional e direto.
 - **Dependências:** ao instalar ou atualizar pacotes, respeite as versões dos manifestos do projeto.
 - **Commit:** a skill `commit` não se auto-invoca. Ao fechar cada unidade de trabalho — antes de começar a próxima —, sugira-a em uma linha (assunto fechado, `git status` acumulando, código estável); se o usuário adiar, siga sem insistir.
-- **Terminal:** é ESTRITAMENTE PROIBIDO executar bash, rodar testes ou iniciar servidores por conta própria. Peça permissão explícita antes de qualquer comando, inclusive testes. Ao terminar uma alteração, entregue o código e pergunte: "Deseja que eu rode os testes agora?". Vale em dobro aqui: comandos podem envolver scraping/bypass anti-bot ou jobs de GPU de longa duração (upscaling) — nunca dispare isso sem confirmação explícita. Única exceção: `uv run ruff check` e `npm run lint` (análise estática, sem `--fix` nem efeito colateral, já liberados no `.claude/settings.json`) rodam sem pedir.
+- **Terminal:** é ESTRITAMENTE PROIBIDO executar bash, rodar testes ou iniciar servidores por conta própria. Peça permissão explícita antes de qualquer comando, inclusive testes. Ao terminar uma alteração, entregue o código e pergunte: "Deseja que eu rode os testes agora?". Vale em dobro aqui: comandos podem envolver scraping/bypass anti-bot ou jobs de GPU de longa duração (upscaling) — nunca dispare isso sem confirmação explícita. Exceções, já liberadas no `.claude/settings.json`: `uv run ruff check` e `npm run lint` (análise estática, sem `--fix` nem efeito colateral) e `uv run pytest` (suíte offline, ~16 s; o `addopts` do `pyproject.toml` já exclui `-m rede`). O `settings.json` não consegue travar os argumentos, então rodar pytest com `-m rede` (scraping real) ou `-m integracao` (ffmpeg em subprocesso) continua exigindo permissão explícita — isto é regra de texto. `gh pr merge` também pede confirmação: só mescle depois do "pode mesclar" do usuário no chat.
 
 ---
 
 ## 7. Comandos de Validação
-Lidos pela skill `checkpoint`. Testes e build só rodam mediante permissão; o lint é a única exceção (ver Comportamento do Agente).
+Lidos pela skill `checkpoint`. O build só roda mediante permissão; lint e `uv run pytest` são as exceções (ver Comportamento do Agente).
 
 | Escopo | Comando |
 |---|---|
