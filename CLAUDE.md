@@ -1,6 +1,6 @@
-# Projeto Slime Studio - Diretrizes de Desenvolvimento
+# Projeto Slime Studio — Diretrizes de Desenvolvimento
 
-Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga estas regras rigorosamente para otimizar o consumo de tokens e manter a consistência do código.
+Guia de contexto e regras para o Claude Code neste projeto.
 
 > **Nome do projeto**: Slime Studio (repositório `Slime_Studio`, decidido em 2026-08-10). O nome de trabalho "novo-projeto-anime4k" foi aposentado junto com os dois documentos de spec antigos, consolidados em `ESPECIFICACAO.md`.
 >
@@ -8,11 +8,11 @@ Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga
 >
 > **Gatilho de hardware**: a GPU atual é uma Radeon RX 580 (8GB) e várias decisões do projeto existem só por causa dela (ramo GAN excluído, presets mais leves, pipeline em lote adiado, chunks pequenos por VRAM). Se o usuário mencionar em qualquer conversa que trocou de GPU — RTX 5060 Ti ou qualquer RTX 50xx/superior —, **pare e trate isso como gatilho de replanejamento de arquitetura**: leia a seção 12 de `ESPECIFICACAO.md` e siga o procedimento de lá antes de seguir com a tarefa em curso.
 
-## 1. Arquitetura do Sistema
+## 1. Arquitetura
 - **Estrutura:** Monorepo com dois escopos principais: `backend/` (Python + FastAPI para a API, worker `asyncio` nativo como **processo separado**, SQLAlchemy + SQLite em modo WAL, `uv` como gerenciador de pacotes) e `frontend/` (React + Vite + Tailwind). Estrutura de pastas completa proposta na seção 10.1 do documento de especificação. **Onde mora a qualidade de imagem hoje:** no frontend (Anime4K/WebGPU por frame, seção 3E) — o backend é baixador, empacotador HLS, catálogo e agregador de metadados de provedor externo (capa/sinopse/lançamentos via `integrations/`, seção 2). O upscaling em lote no worker só entra depois do gatilho de hardware (seção 12).
 - **Duas famílias de adapter, não confunda:** `extractors/` resolve **vídeo** em sites de streaming (scraping, bypass anti-bot, sessão/cookie, circuit breaker) e alimenta o pipeline de captura. `integrations/` resolve **metadados** (capa, sinopse, lançamentos) em APIs JSON públicas (AniList, Kitsu) e alimenta a home/catálogo. Mesmo Strategy Pattern nos dois, infraestrutura de resiliência bem diferente — ver seção 2.
-- **Escopo Base:** Ao receber uma tarefa, opere estritamente dentro do escopo correspondente (backend, frontend). Não misture contextos ou faça buscas globais desnecessárias.
-- **Clean Architecture (regra de dependência):** código de domínio/regras de negócio não importa nada de framework, banco de dados, UI ou I/O externo — esses detalhes dependem do domínio, nunca o contrário. Antes de adicionar um import ou acoplar uma camada a outra, confirme de que lado da fronteira cada uma está.
+- **Escopo:** trabalhe estritamente dentro do escopo da tarefa (backend, frontend); não misture contextos nem faça buscas globais desnecessárias.
+- **Regra de dependência (Clean Architecture):** código de domínio/regras de negócio não importa nada de framework, banco de dados, UI ou I/O externo — esses detalhes dependem do domínio, nunca o contrário. Antes de adicionar um import ou acoplar uma camada a outra, confirme de que lado da fronteira cada uma está.
 
 ---
 
@@ -36,19 +36,38 @@ Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga
 
 ---
 
-## 4. Regras de Comportamento para o Agente (Claude Code)
-- **Foco Cirúrgico:** Sempre que for criar ou alterar código, use a referência exata do arquivo utilizando `@nome_do_arquivo` para evitar varrer pastas completas.
-- **Modo Silencioso de Token:** Não explique conceitos básicos de programação ou arquitetura a menos que explicitamente solicitado. Foque em entregar código funcional, limpo e direto ao ponto.
-- **Não quebre o Ecossistema:** Ao instalar ou atualizar pacotes, respeite as versões/dependências já estabelecidas nos arquivos de manifesto do projeto.
-- **Clean Code:** nomes que revelam intenção, funções pequenas com responsabilidade única, sem duplicação, tratamento de erro explícito (nunca silencioso), comentários só onde o código não consegue falar por si.
-- **Escada de Minimalismo (código mínimo, nunca menos que o correto):** Antes de escrever qualquer código novo, percorra em ordem: (1) isso precisa existir? — se não, não escreva; (2) já existe algo no projeto que resolve? — reutilize; (3) a stdlib da linguagem resolve? — use; (4) uma dependência já instalada resolve? — use; (5) cabe em uma linha clara? — uma linha; (6) só então escreva o mínimo necessário. Esta regra reduz código e tokens, mas **nunca** justifica cortar validação de entrada, tratamento de erro, segurança ou acessibilidade.
-- **Timing de commit:** a skill `commit` não se auto-invoca (`disable-model-invocation`), então só quem pode notar o momento certo de rodá-la é você, aqui, com o contexto vivo. Ao terminar cada unidade de trabalho — antes de começar a próxima — avalie se é hora de sugerir `commit`: assunto fechado, `git status` acumulando arquivos, ou trecho de código chegando a um estado estável. Anuncie a sugestão em uma linha; se o usuário preferir adiar, siga para o próximo passo sem insistir.
-- **Controle Rígido de Testes e Terminal:** É ESTRITAMENTE PROIBIDO executar ferramentas de bash, rodar testes ou iniciar servidores de validação por conta própria. Ao finalizar a escrita ou alteração de um código, NUNCA enfileire comandos no terminal sem a permissão explícita do usuário. Apenas entregue o código e pergunte: "Deseja que eu rode os testes agora?". Isso vale em dobro aqui: comandos podem envolver scraping/bypass anti-bot ou jobs de GPU de longa duração (upscaling), nunca dispare isso sem confirmação explícita.
+## 4. Padrões de Código
+- **Nomes e funções:** nomes que revelam intenção; funções pequenas, de responsabilidade única.
+- **Sem redundância:** ao notar o mesmo trecho pela 2ª vez, sinalize; na 3ª, extraia. Antes de escrever código novo, percorra a Escada de Minimalismo: precisa existir? → já existe no projeto? → a stdlib resolve? → uma dependência já instalada resolve? → cabe em uma linha clara? → só então o mínimo necessário.
+- **Erros:** explícitos, nunca silenciosos. Valide entrada nas fronteiras do sistema.
+- **Comentários:** só o porquê (decisão, restrição, armadilha), nunca o que o código já diz.
+- **Mínimo não é menos que o correto:** economia de código nunca justifica cortar validação de entrada, tratamento de erro, segurança ou acessibilidade.
 
 ---
 
-## 5. Comandos de Validação
-A skill `checkpoint` lê esta seção para saber o que rodar ao gerar um checkpoint.
+## 5. Segurança
+Baseline de fundamentos; para revisão e endurecimento use a skill `security`.
+- **API HTTP:** valide entrada na fronteira com schema (Pydantic); não vaze stack trace nem detalhe interno em erros; a ausência de auth em `/api/admin/*` é decisão de uso local (seção 2) — se a API for exposta além do localhost, auth e CORS restrito vêm antes.
+- **Banco:** SQLAlchemy/consulta parametrizada, nunca concatenar entrada em SQL.
+- **Frontend:** nunca renderize HTML não sanitizado (sinopse/título vindos de provedor são entrada de terceiros); sem segredo no bundle.
+- **URLs de terceiros:** URL vinda de scraping ou provedor (AniList/Kitsu/TMDB) e repassada a `ffmpeg`/`yt-dlp`/`requests` passa por allowlist de destino (evita SSRF); nunca interpole em shell — subprocesso sempre com lista de argumentos.
+- **Caminhos e nomes de arquivo:** título/episódio vindo de scraping ou provedor que vira caminho em disco (`media/`, chunks do `ffmpeg`) usa nome gerado ou slug sanitizado; nunca aceite `..` nem caminho absoluto de fora.
+- **Segredos:** chaves de API (ex. TMDB) só em `.env` fora do git, nunca no repositório nem no bundle do frontend; se vazou, rotacione.
+- **Dependências:** lockfiles (`uv.lock`, `package-lock.json`) versionados; auditoria periódica (`pip-audit`/`osv-scanner` no backend, `npm audit` no frontend), atenção especial a `yt-dlp`, `cloudscraper` e `drissionpage`.
+
+---
+
+## 6. Comportamento do Agente
+- **Foco cirúrgico:** use `@arquivo` em vez de varrer pastas.
+- **Conciso:** não explique conceitos básicos a menos que peçam; entregue código funcional e direto.
+- **Dependências:** ao instalar ou atualizar pacotes, respeite as versões dos manifestos do projeto.
+- **Commit:** a skill `commit` não se auto-invoca. Ao fechar cada unidade de trabalho — antes de começar a próxima —, sugira-a em uma linha (assunto fechado, `git status` acumulando, código estável); se o usuário adiar, siga sem insistir.
+- **Terminal:** é ESTRITAMENTE PROIBIDO executar bash, rodar testes ou iniciar servidores por conta própria. Peça permissão explícita antes de qualquer comando, inclusive testes. Ao terminar uma alteração, entregue o código e pergunte: "Deseja que eu rode os testes agora?". Vale em dobro aqui: comandos podem envolver scraping/bypass anti-bot ou jobs de GPU de longa duração (upscaling) — nunca dispare isso sem confirmação explícita.
+
+---
+
+## 7. Comandos de Validação
+Lidos pela skill `checkpoint`; só rodam mediante permissão (ver Comportamento do Agente).
 
 | Escopo | Comando |
 |---|---|
@@ -59,78 +78,25 @@ A skill `checkpoint` lê esta seção para saber o que rodar ao gerar um checkpo
 
 ---
 
-## 6. Orquestração (Custo/Desempenho)
+## 8. Orquestração
+**Execute você mesmo (padrão).** Delegar abre um contexto frio que recarrega tudo do zero; só compensa quando o subagente lê muito e devolve pouco. Delegue apenas nestes casos:
+- **`explorer`** — responder exigiria muitas leituras/buscas que virariam ruído no seu contexto (mapear convenção espalhada, achar todos os usos, entender subsistema desconhecido). Paralelize escopos independentes; se a informação já está na conversa, não delegue.
+- **`implementer`** — trabalho em vários arquivos ou refactor definido, grande demais para fazer inline. Passe a lista de arquivos e o plano (ele não re-explora). Bugfix pontual e mudança de 1-2 arquivos: faça direto.
+- **`architect`** (Opus, o mais caro) — só se um critério do próprio agente bater e depois de uma tentativa direta que falhou.
 
-**O executor padrão é a sessão principal.** Delegar a subagente é a exceção, não a regra —
-cada delegação abre um contexto frio que recarrega tudo do zero, e a medição mostrou que
-delegar por padrão saía mais caro (em tokens e em tempo) do que executar direto. Ao receber
-um pedido, execute-o você mesmo se consegue enxergar a mudança inteira e o padrão a seguir.
-Só saia desse caminho pelos gatilhos objetivos abaixo.
+Correção depois de um subagente concluído: faça direto ou abra um novo, estreito; não o retome via `SendMessage` (recarrega o histórico inteiro). Ambiguidade de design sinalizada por subagente vai ao `architect`. Sem `reviewer` separado: o `implementer` autorrevisa o diff, e no caminho direto essa revisão é sua.
 
-### Princípio de custo (o que decide tudo abaixo)
-Duas coisas custam, e uma não anula a outra:
-- **Contexto grande na sessão principal** — cobrado em todo turno seguinte. Ler 20 arquivos
-  inline para uma decisão pontual infla o custo de toda a sessão dali para frente.
-- **Cada hop de subagente** — recarrega contexto frio, o subagente re-deriva o que você já
-  sabia, e o resultado ainda volta para você conferir.
-
-Delegar só vale quando o subagente **lê muito e devolve pouco**. É o caso do `explorer`:
-varre 20 arquivos, devolve um resumo de 200 linhas. Não é o caso de mandar um subagente
-fazer uma edição de 2 arquivos que você mesmo faria em 3 turnos.
-
-### Caminho direto (padrão)
-A sessão principal executa, sem `explorer` e sem `architect`. Use sempre que:
-- Você consegue enxergar a mudança inteira e o padrão que ela segue — mesmo que toque
-  vários arquivos, contanto que seja mecânico/repetitivo.
-- O contexto necessário já está na conversa, ou dá para obter com poucas leituras
-  direcionadas (`@arquivo`, um `grep`, abrir 2-3 arquivos).
-- É um bugfix pontual, um ajuste localizado, uma feature pequena que segue padrão existente.
-
-### Quando delegar (exceção)
-- **`explorer`** — quando responder ao pedido exigiria muitas leituras/buscas (mapear uma
-  convenção espalhada, achar todos os usos de algo, entender um subsistema que você não
-  conhece) e esse material vira ruído no contexto depois. Paralelize escopos independentes
-  (um `explorer` cada, na mesma leva). Se a informação já está na conversa, não delegue.
-- **`implementer`** — só para trabalho que toca **vários arquivos** ou é um **refactor/feature
-  definido** grande o bastante para inflar demais o seu contexto se feito inline. Passe a ele
-  a lista de arquivos e o plano — ele não deve re-explorar. Bugfix pontual e mudança de 1-2
-  arquivos **não** vão para o `implementer`: é mais barato no caminho direto.
-- **`architect`** — só quando um critério objetivo do próprio agente bate (mais de uma camada
-  sem padrão para replicar, decisão de design nova, ou bug sem causa óbvia **após** uma
-  tentativa direta que falhou). É o agente mais caro do kit (Opus, ~2,05x Sonnet). Escopo já
-  claro nunca passa por aqui. Na dúvida, o loop principal tenta direto primeiro.
-
-Sem `reviewer` separado: o `implementer` autorrevisa o próprio diff (edge cases, segurança,
-validação de entrada) antes de reportar. No caminho direto, essa revisão cética do diff é
-sua.
-
-### Fatiamento e reentrada
-- Um `implementer` com escopo grande demais ("implemente a Fase X inteira") acumula contexto
-  turno a turno como o loop principal faria (medido neste projeto: 354 turnos / 53M numa
-  cadeia; o `maxTurns` do frontmatter **não** corta isso — bug conhecido do Claude Code).
-  Fatie por unidade natural (arquivo, rota, endpoint, componente), uma chamada por fatia.
-- Rodada de correção depois de um subagente concluído → abra um `implementer` novo focado só
-  no achado, ou faça no caminho direto. Não retome o agente antigo via `SendMessage`:
-  recarrega o histórico inteiro a cada vez.
-- Subagente sinalizou ambiguidade de design → `architect`, não improvise.
+Fatie o trabalho do `implementer` por unidade natural (arquivo, rota, endpoint, componente), uma chamada por fatia: escopo grande ("a Fase X inteira") acumula contexto turno a turno (medido aqui: 354 turnos / 53M numa cadeia) e o `maxTurns` do frontmatter não corta isso (bug conhecido do Claude Code).
 
 ---
 
-## 7. Integração com Chrome (Debug Visual)
-A integração `claude-in-chrome` só deve ser usada para inspeção/depuração visual pontual. Cada screenshot ou frame de GIF é imagem e custa muito mais tokens que texto — trate o navegador como recurso caro, não como reflexo automático.
-- **Dois gatilhos, não um:**
-  1. **Manual:** só abra o navegador quando solicitado explicitamente ("testa no navegador", "abre no chrome", "verifica visualmente", "vê se ficou bom").
-  2. **Automático por esgotamento:** se o problema for de natureza visual/frontend e já houve 2-3 tentativas de correção via código sem resolver, pode abrir o navegador por conta própria para inspecionar — avise que está fazendo isso porque tentativas anteriores não resolveram, antes de agir.
-- **Uma tarefa, uma navegação:** vá direto para a URL/rota do componente em questão.
-- **Reuse de aba:** mantenha a mesma aba/sessão aberta durante toda a tarefa de verificação.
-- **Prefira texto a imagem quando possível:** para erros de JS, leia o console via DevTools em vez de tirar screenshot.
-- **Sem GIF por padrão:** nunca grave GIF de interação a menos que solicitado explicitamente.
-- **Sem loop de verificação:** no máximo uma rodada de checagem por ativação.
-- **Login/CAPTCHA:** se a integração pausar pedindo login ou CAPTCHA, pare e avise — não insista tentando contornar.
+## 9. Debug Visual (Chrome)
+`claude-in-chrome` só para inspeção visual pontual: cada screenshot ou frame de GIF custa muito mais tokens que texto.
+- **Quando abrir:** a pedido explícito ("testa no navegador", "abre no chrome", "verifica visualmente"), ou se o problema for visual e 2-3 correções por código falharam (avise antes de abrir).
+- **Uma tarefa, uma navegação:** vá direto à rota do componente e reuse a mesma aba.
+- **Texto antes de imagem:** para erro de JS, leia o console em vez de tirar screenshot. Sem GIF por padrão; no máximo uma rodada de checagem por ativação.
+- **Login/CAPTCHA:** pare e avise; não tente contornar.
 
 ---
 
-_Gerado pela skill `bootstrap` do kit `claude-toolkit` (versão 0.3.0) em 2026-08-10.
-Seção 6 (Orquestração) atualizada manualmente em 2026-08-25 para o pipeline sem `reviewer`
-separado (fundido ao `implementer` na v0.7.0 do kit), e em 2026-09-07 para a doutrina da
-v0.9.0 — caminho direto vira o padrão, delegar é exceção por gatilho objetivo._
+_Gerado pela skill `bootstrap` do kit `claude-toolkit` (versão 0.16.0) em 2026-09-30, atualizando o CLAUDE.md gerado na versão 0.3.0 em 2026-08-10._

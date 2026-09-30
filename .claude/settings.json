@@ -11,6 +11,15 @@
       "Bash(gh issue list:*)",
       "Bash(uv run ruff check:*)",
       "Bash(npm run lint:*)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(!.env.example)",
+      "Read(!.env.sample)",
+      "Read(*.pem)",
+      "Read(*.key)",
+      "Read(secrets/**)"
     ]
   }
 }
