@@ -13,6 +13,7 @@ agnóstico de site), a checagem faz sua própria requisição HTTP curta com
 """
 
 import asyncio
+import ipaddress
 import os
 import re
 import sys
@@ -98,6 +99,42 @@ def caminho_raw(
 ) -> Path:
     nome_arquivo = f"{numero:03d}-{tipo.value}-{versao.value}.mkv"
     return media_root / "raw" / anime_slug / nome_arquivo
+
+
+# O ffmpeg abre qualquer protocolo que a URL ou um manifesto HLS/DASH pedir (`file:`,
+# `concat:`, `subfile:`...) e não filtra IP. Numa entrada remota só o necessário
+# pra http(s) simples ou criptografado.
+_PROTOCOLOS_FFMPEG_REMOTO = "http,https,tcp,tls,crypto"
+
+
+def exigir_url_de_midia_segura(url: str) -> None:
+    """Barra, antes de qualquer requisição/`ffmpeg`/`yt-dlp`, URL de mídia que veio de
+    scraping mas não é um destino externo: esquema fora de http(s), sem host, ou host
+    que é `localhost`/IP literal não público (loopback, RFC1918, link-local, metadata
+    de nuvem). NÃO resolve DNS: um nome público que aponta pra IP interno passa
+    (resolver e fixar o IP na conexão é o fechamento completo, ainda não feito).
+    Falha definitiva (`permite_retentativa=False`): repetir não muda a URL."""
+    partes = urllib.parse.urlparse(url)
+    if partes.scheme not in ("http", "https") or not partes.hostname:
+        raise FalhaDeExtracao(
+            f"URL de mídia com esquema ou host inválido: {url}", permite_retentativa=False
+        )
+    if _eh_host_interno(partes.hostname):
+        raise FalhaDeExtracao(
+            f"URL de mídia aponta para host interno: {url}", permite_retentativa=False
+        )
+
+
+def _eh_host_interno(hostname: str) -> bool:
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return True
+    try:
+        endereco = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False  # nome DNS: não resolvido aqui
+    if isinstance(endereco, ipaddress.IPv6Address) and endereco.ipv4_mapped is not None:
+        endereco = endereco.ipv4_mapped
+    return not endereco.is_global
 
 
 def conferir_link_de_midia(link: LinkDeMidia, *, timeout_s: int = _TIMEOUT_S) -> None:
@@ -284,6 +321,8 @@ def _montar_comando_ytdl(link: LinkDeMidia, saida_modelo: str, ffmpeg_bin: str) 
         sys.executable,
         "-m",
         "yt_dlp",
+        "--ignore-config",
+        "--no-plugin-dirs",
         "--no-warnings",
         "--no-progress",
         "--no-playlist",
@@ -424,6 +463,8 @@ def _montar_comando(ffmpeg_bin: str, link: LinkDeMidia, destino_parcial: Path) -
     `ffmpeg` infere o muxer pela extensão do arquivo de saída, e `.part` não é
     reconhecida (`Unable to choose an output format for '...part'`)."""
     argumentos = [ffmpeg_bin, "-nostdin", "-hide_banner", "-y"]
+    if urllib.parse.urlparse(link.url).scheme in ("http", "https"):
+        argumentos += ["-protocol_whitelist", _PROTOCOLOS_FFMPEG_REMOTO]
     if link.cabecalhos:
         cabecalhos = "".join(f"{chave}: {valor}\r\n" for chave, valor in link.cabecalhos.items())
         argumentos += ["-headers", cabecalhos]
