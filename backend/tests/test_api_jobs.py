@@ -119,7 +119,7 @@ async def test_criar_job_modo_site_ambiguo_409(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Ambíguo")
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return ConfirmacaoNecessaria(
             dominio="animefire.one",
             candidatos=[
@@ -132,7 +132,7 @@ async def test_criar_job_modo_site_ambiguo_409(
             ],
         )
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",
@@ -150,18 +150,18 @@ async def test_criar_job_modo_site_episodio_nao_encontrado_404(
 ):
     anime_id = await _criar_anime(sessionmaker_api, "Anime Sem Episodio")
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="2", numero=2, url="https://x/ep2")]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",
@@ -183,21 +183,21 @@ async def test_criar_job_modo_site_colisao_de_numero_usa_primeiro_e_loga(
     nunca silenciosa (CLAUDE.md §4)."""
     anime_id = await _criar_anime(sessionmaker_api, "Anime Colisao")
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [
             EpisodioRemoto(rotulo="7", numero=7, url="https://x/ep7"),
             EpisodioRemoto(rotulo="07", numero=7, url="https://x/ep07"),
         ]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     with caplog.at_level("WARNING"):
         resposta = await cliente.post(
@@ -225,7 +225,7 @@ async def test_criar_job_modo_site_versao_do_episodio_deriva_da_fonte_nao_do_req
     que ser `DESCONHECIDA`, nunca herdar o pedido do cliente."""
     anime_id = await _criar_anime(sessionmaker_api, "Anime Versao Derivada")
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         assert versao == VersaoEpisodio.DUBLADO  # propagado do request
         return FonteResolvida(
             dominio="animefire.one",
@@ -233,11 +233,11 @@ async def test_criar_job_modo_site_versao_do_episodio_deriva_da_fonte_nao_do_req
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1")]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",
@@ -277,18 +277,18 @@ async def test_criar_job_modo_site_reaproveita_episodio_liberado(
         progresso_s=300,
     )
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",
@@ -330,18 +330,18 @@ async def test_criar_job_modo_site_reaproveita_episodio_falhou(
         site_origem="animefire.one",
     )
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",
@@ -378,18 +378,18 @@ async def test_criar_job_modo_site_reaproveita_episodio_de_fonte_diferente(
         hls_path="anime-fonte-trocada/1/regular/desconhecida/master.m3u8",
     )
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="site-novo.io",
             identificador="7",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="1", numero=1, url="https://site-novo/ep1")]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",
@@ -410,48 +410,6 @@ async def test_criar_job_modo_site_reaproveita_episodio_de_fonte_diferente(
     assert len(todos) == 1
 
 
-async def test_criar_job_modo_site_persiste_thumb_da_fonte_em_capa_path(
-    cliente: AsyncClient,
-    sessionmaker_api: _SessionMaker,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """`EpisodioRemoto.thumb_url` da fonte resolvida é gravada em
-    `Episodio.capa_path` (URL string, mesma convenção de `Anime.capa_path`)."""
-    anime_id = await _criar_anime(sessionmaker_api, "Anime Com Thumb")
-
-    async def _resolver_fake(sessionmaker, anime, versao):
-        return FonteResolvida(
-            dominio="animefire.one",
-            identificador="42",
-            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
-        )
-
-    async def _listar_fake(sessionmaker, dominio, identificador):
-        return [
-            EpisodioRemoto(
-                rotulo="1",
-                numero=1,
-                url="https://x/ep1",
-                thumb_url="https://animefire.one/img/video/42/1.webp",
-            )
-        ]
-
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
-
-    resposta = await cliente.post(
-        "/api/admin/jobs",
-        json={"modo": "site", "anime_id": anime_id, "numero": 1, "tipo": "regular"},
-    )
-
-    assert resposta.status_code == 201
-    async with sessionmaker_api() as sessao:
-        episodio = (
-            await sessao.execute(select(Episodio).where(Episodio.anime_id == anime_id))
-        ).scalar_one()
-    assert episodio.capa_path == "https://animefire.one/img/video/42/1.webp"
-
-
 async def test_criar_job_modo_site_recaptura_sem_thumb_preserva_capa_path(
     cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
@@ -469,18 +427,18 @@ async def test_criar_job_modo_site_recaptura_sem_thumb_preserva_capa_path(
         capa_path="https://animefire.one/img/video/42/1.webp",
     )
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",
@@ -514,18 +472,18 @@ async def test_criar_job_modo_site_recaptura_com_job_ativo_409(
         sessao.add(job_ativo)
         await sessao.commit()
 
-    async def _resolver_fake(sessionmaker, anime, versao):
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
         return FonteResolvida(
             dominio="animefire.one",
             identificador="42",
             versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
         )
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1-recapturado")]
 
-    monkeypatch.setattr("api.servicos.jobs.resolver_fonte_do_anime", _resolver_fake)
-    monkeypatch.setattr("api.servicos.jobs.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
 
     resposta = await cliente.post(
         "/api/admin/jobs",

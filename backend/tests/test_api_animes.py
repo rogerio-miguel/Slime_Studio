@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import sondagem
 from api.servicos.catalogo import ids_com_episodios
-from api.servicos.fontes import EpisodiosRemotosResultado
+from api.servicos.fontes import FonteComEpisodios
 from api.servicos.lancamentos import episodios_novos, maior_numero_capturado_por_anime
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao
@@ -868,6 +868,8 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
         "proximo_ep_em": None,
         "total_episodios": None,
         "sinopse": None,
+        "formato": None,
+        "episodio_lancado": None,
     }
 
 
@@ -886,7 +888,7 @@ async def test_listar_animes_so_agenda_carona_de_aquecimento_com_a_flag(
     refreshs: list[int] = []
     monkeypatch.setattr(
         "api.servicos.sondagem.agendar_sondagens",
-        lambda sessionmaker, animes, versoes: sondagens.append(len(animes)),
+        lambda sessionmaker, animes, versoes, **_: sondagens.append(len(animes)),
     )
     monkeypatch.setattr(
         "api.servicos.descoberta.agendar_refreshs_do_catalogo",
@@ -916,18 +918,23 @@ def _espiar_sondagem(
     dominio: str = "animefire.one",
     erro: Exception | None = None,
 ) -> list[tuple[int, VersaoEpisodio]]:
-    """Troca `sondagem.listar_episodios_remotos` por um espião: registra
+    """Troca `sondagem.resolver_e_listar` por um espião: registra
     `(anime.id, versao)` e devolve um resultado fixo (ou levanta `erro`) — nunca
     toca extractor/rede real."""
     chamadas: list[tuple[int, VersaoEpisodio]] = []
 
-    async def _fake(sessionmaker, anime, versao):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
         chamadas.append((anime.id, versao))
         if erro is not None:
             raise erro
-        return EpisodiosRemotosResultado(dominio=dominio, episodios=episodios or [])
+        return FonteComEpisodios(
+            dominio=dominio,
+            identificador="stub",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+            episodios=episodios or [],
+        )
 
-    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
     return chamadas
 
 

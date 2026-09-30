@@ -1,7 +1,7 @@
 """Testes de `api/servicos/sondagem.py` — sondagem fire-and-forget da fonte
 real (site) de um anime em lançamento para contar episódios disponíveis.
 
-`api.servicos.sondagem.listar_episodios_remotos` (o nome importado no módulo) é
+`api.servicos.sondagem.resolver_e_listar` (o nome importado no módulo) é
 monkeypatchado em todos os testes — nunca toca extractor/rede real. As `Task`
 disparadas por `agendar_sondagens` rodam contra o banco de teste
 (`sessionmaker_api`); a drenagem via `gather` sem `return_exceptions` garante
@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import sondagem
-from api.servicos.fontes import EpisodiosRemotosResultado
+from api.servicos.fontes import FonteComEpisodios
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua
 from extractors.base import EpisodioRemoto
@@ -25,6 +25,17 @@ from models.fonte_anime import FonteAnime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 _LEG = VersaoEpisodio.LEGENDADO
+
+
+def _fonte(dominio: str, episodios: list) -> FonteComEpisodios:
+    """Retorno de `resolver_e_listar` com o mínimo que a sondagem lê."""
+    return FonteComEpisodios(
+        dominio=dominio,
+        identificador="stub",
+        versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        episodios=episodios,
+    )
+
 
 # `sondagem._sondagens_em_voo`/`_semaforo_de_sondagem` são isolados por
 # `_isola_sondagens_de_fonte` (autouse) em `tests/conftest.py`.
@@ -85,15 +96,15 @@ def _ep(rotulo: str, numero: int | None) -> EpisodioRemoto:
 def _espiar_sondagem(
     monkeypatch: pytest.MonkeyPatch, *, episodios: list[EpisodioRemoto] | None = None
 ) -> list[tuple[int, VersaoEpisodio]]:
-    """Substitui `listar_episodios_remotos` por um espião que registra
+    """Substitui `resolver_e_listar` por um espião que registra
     `(anime.id, versao)` e devolve um resultado fixo."""
     chamadas: list[tuple[int, VersaoEpisodio]] = []
 
-    async def _fake(sessionmaker, anime, versao):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
         chamadas.append((anime.id, versao))
-        return EpisodiosRemotosResultado(dominio="site.io", episodios=episodios or [])
+        return _fonte(dominio="site.io", episodios=episodios or [])
 
-    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
     return chamadas
 
 
@@ -348,12 +359,12 @@ async def test_contagem_descarta_none_e_deduplica(
 async def test_sondagem_bem_sucedida_persiste_as_tres_colunas(
     sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _fake(sessionmaker, anime, versao):
-        return EpisodiosRemotosResultado(
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+        return _fonte(
             dominio="animefire.one", episodios=[_ep("1", 1), _ep("2", 2), _ep("3", 3)]
         )
 
-    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
     anime_id = await _criar_anime(
         sessionmaker_api, "persiste", status_lancamento=StatusLancamento.EM_LANCAMENTO
     )
@@ -386,10 +397,10 @@ async def test_sondagem_falha_nao_toca_colunas_nem_propaga(
     caplog: pytest.LogCaptureFixture,
     erro: Exception,
 ):
-    async def _fake(sessionmaker, anime, versao):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
         raise erro
 
-    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
     anime_id = await _criar_anime(
         sessionmaker_api,
         "falha",
@@ -425,7 +436,7 @@ async def test_semaforo_serializa_sondagens(
     ativos = 0
     pico = 0
 
-    async def _fake(sessionmaker, anime, versao):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
         nonlocal ativos, pico
         ativos += 1
         pico = max(pico, ativos)
@@ -434,9 +445,9 @@ async def test_semaforo_serializa_sondagens(
         await asyncio.sleep(0)
         eventos.append(f"sai-{anime.id}")
         ativos -= 1
-        return EpisodiosRemotosResultado(dominio="site.io", episodios=[])
+        return _fonte(dominio="site.io", episodios=[])
 
-    monkeypatch.setattr("api.servicos.sondagem.listar_episodios_remotos", _fake)
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
 
     await asyncio.gather(
         sondagem._sondar_e_persistir(sessionmaker_api, a1, _LEG),

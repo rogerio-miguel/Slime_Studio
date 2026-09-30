@@ -128,7 +128,7 @@ async def test_proximo_com_episodio_colisao_de_numero_escolhe_primeiro_e_loga(
         EpisodioRemoto(rotulo="07", numero=7, url="https://x/ep07"),
     ]
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return colidentes
 
     monkeypatch.setattr(servico, "listar_episodios_em", _listar_fake)
@@ -166,7 +166,7 @@ async def test_proximo_com_episodio_sem_colisao_nao_loga(sessionmaker, monkeypat
         )
         await sessao.commit()
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="7", numero=7, url="https://x/ep7")]
 
     monkeypatch.setattr(servico, "listar_episodios_em", _listar_fake)
@@ -212,7 +212,7 @@ async def test_proximo_com_episodio_prefere_versao_pedida_quando_listagem_rotula
         )
         await sessao.commit()
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [
             EpisodioRemoto(
                 rotulo="7", numero=7, url="https://x/ep7-leg", versao=VersaoEpisodio.LEGENDADO
@@ -310,7 +310,7 @@ async def test_baixar_com_fallback_de_site_conta_sites_tentados_apos_fallback(
     )
     destino = tmp_path / "saida.mp4"
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [EpisodioRemoto(rotulo="1", numero=1, url="https://animesdrive.online/ep1")]
 
     monkeypatch.setattr(servico, "listar_episodios_em", _listar_fake)
@@ -431,7 +431,7 @@ async def test_baixar_com_fallback_de_site_deadline_estourado_nao_tenta_proximo_
     # Rede de segurança: se por algum motivo a listagem chegar a rodar (não
     # deveria, ver docstring), este fake garante que o teste não faz rede de
     # verdade em vez de mascarar uma regressão de timing com uma chamada real.
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         return [
             EpisodioRemoto(rotulo="1", numero=1, url="https://animesdrive.online/segredo-2/ep1")
         ]
@@ -536,7 +536,7 @@ async def test_baixar_com_fallback_de_site_deadline_estoura_entre_listar_e_baixa
 
     buscas: list[str] = []
 
-    async def _listar_fake(sessionmaker, dominio, identificador):
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
         nonlocal deslocamento_s
         buscas.append(dominio)
         # Desloca o relógio pra além do orçamento SÓ AGORA — depois deste
@@ -918,7 +918,13 @@ async def test_buscar_em_com_variantes_descarta_candidato_que_nao_corresponde_a_
     monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
 
     resultado, variante_vencedora = await servico_busca.buscar_em_com_variantes(
-        sessionmaker, "site-falso.io", ["Anime X: Sub", "Anime X"], referencias=["Anime X"]
+        sessionmaker,
+        "site-falso.io",
+        ["Anime X: Sub", "Anime X"],
+        # Variantes são só prefixos da referência: nenhuma é nome canônico completo
+        # (`e_nome_do_anime`), então o card órfão é descartado em vez de virar
+        # "correspondência incerta".
+        referencias=["Anime X Completo"],
     )
 
     assert resultado.candidatos == []
