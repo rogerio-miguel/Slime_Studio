@@ -2,6 +2,29 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
+// CSP só em Report-Only: a violação aparece no console do navegador ("[Report Only] Refused
+// to ..."), nada é bloqueado. Quando o console estiver limpo no uso real, trocar o nome do
+// header para `Content-Security-Policy` (enforce). `frame-ancestors` e `object-src 'none'`
+// valem mesmo sem script; `img-src https:` porque os CDNs de capa variam por provedor
+// (AniList/TMDB/Kitsu); `blob:` em `media-src`/`worker-src` é do hls.js (MediaSource e worker).
+// No dev o Vite injeta o preâmbulo do React Refresh como script inline, então só lá entra
+// `'unsafe-inline'` em `script-src`.
+const politicaCsp = (dev) =>
+  [
+    "default-src 'self'",
+    `script-src 'self'${dev ? " 'unsafe-inline'" : ''}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob:",
+    "connect-src 'self'",
+    "worker-src 'self' blob:",
+    "font-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // anime4k-webgpu é CJS (ver comentário em player/presets.js sobre o
@@ -12,7 +35,12 @@ export default defineConfig({
   optimizeDeps: {
     include: ['anime4k-webgpu'],
   },
+  // Build servido por `vite preview`: sem o `'unsafe-inline'` de script do dev.
+  preview: {
+    headers: { 'Content-Security-Policy-Report-Only': politicaCsp(false) },
+  },
   server: {
+    headers: { 'Content-Security-Policy-Report-Only': politicaCsp(true) },
     // Sem isto o Vite cai pra 5174 quando a 5173 está ocupada, e a API (allowlist de `Origin`
     // em `api/main.py::_ORIGENS_PERMITIDAS`) passa a responder 403 às escritas.
     strictPort: true,
