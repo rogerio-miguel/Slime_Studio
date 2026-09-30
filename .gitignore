@@ -21,8 +21,11 @@ media/**
 
 # Segredos
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
 
 # Sandbox de teste do harness Anime4K (teste/) — mídia local e log de telemetria
 frontend/test/*.mp4
