@@ -146,3 +146,67 @@ async def maior_numero_capturado_por_anime(
         .group_by(Episodio.anime_id)
     )
     return {anime_id: maior for anime_id, maior in resultado.all()}
+
+
+def temporadas_novas_apos_concluida(
+    grupos: dict[int, list[object]], concluidos: set[int]
+) -> dict[int, int]:
+    """`{anime_id da temporada nova: anime_id da temporada anterior}` — temporada
+    de TV já no catálogo, SEM nenhum episódio local, cuja temporada imediatamente
+    anterior na franquia o usuário TERMINOU (`concluidos`, de
+    `ids_totalmente_assistidos`). É a continuação natural do que ele já acompanhou:
+    alimenta o badge "Novo ep" e a prateleira "Continuar assistindo", que sem
+    isto só enxergavam animes com episódio local (o usuário teria de abrir a
+    página da temporada nova e capturar o 1º episódio pra ela aparecer).
+
+    Só a imediatamente anterior conta: com T1 concluída, T2 e T3 no catálogo e
+    nenhuma com episódio, só a T2 é "nova" — a T3 espera o usuário alcançar a T2.
+    Filme/OVA/ONA (`formato_midia`), temporada sem `numero_temporada` (posição
+    desconhecida) e `NAO_LANCADO` (nada a capturar ainda) ficam de fora.
+    `grupos` é o dict de `catalogo.agrupar_franquias` (listas compartilhadas por
+    membro — dedupe por identidade). Sem I/O."""
+    resultado: dict[int, int] = {}
+    vistos: set[int] = set()
+    for grupo in grupos.values():
+        if id(grupo) in vistos:
+            continue
+        vistos.add(id(grupo))
+        temporadas = [
+            linha
+            for linha in grupo
+            if linha.formato_midia is None and linha.numero_temporada is not None
+        ]
+        for anterior, atual in zip(temporadas, temporadas[1:], strict=False):
+            if (
+                atual.numero_temporada > anterior.numero_temporada
+                and anterior.id in concluidos
+                and not atual.tem_episodios
+                and atual.status_lancamento is not StatusLancamento.NAO_LANCADO
+            ):
+                resultado[atual.id] = anterior.id
+    return resultado
+
+
+async def temporadas_novas(
+    sessao: AsyncSession, grupos: dict[int, list[object]]
+) -> dict[int, int]:
+    """Versão com I/O de `temporadas_novas_apos_concluida`: descobre quais
+    temporadas com episódio local estão concluídas (uma query de `Anime` + a
+    agregada de `ids_totalmente_assistidos`) e cruza com as franquias de
+    `catalogo.agrupar_franquias`. Só consulta franquias com 2+ membros."""
+    ids_com_episodio = {
+        linha.id
+        for grupo in grupos.values()
+        if len(grupo) > 1
+        for linha in grupo
+        if linha.tem_episodios
+    }
+    if not ids_com_episodio:
+        return {}
+    animes = (
+        (await sessao.execute(select(Anime).where(Anime.id.in_(ids_com_episodio))))
+        .scalars()
+        .all()
+    )
+    concluidos = await ids_totalmente_assistidos(sessao, animes)
+    return temporadas_novas_apos_concluida(grupos, concluidos)

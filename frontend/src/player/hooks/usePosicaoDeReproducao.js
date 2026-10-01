@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react';
 
 const _LIMIAR_CONCLUSAO = 0.9;
-const _POSICAO_MINIMA_S = 30;
+// Piso baixo de propósito: com 30s quem assistia só o começo e saía não virava
+// "continuar assistindo" (nada era salvo antes disso). 5s filtra só o play
+// acidental.
+const _POSICAO_MINIMA_S = 5;
+// Margem do fim (créditos): retomar a menos disso do final não vale a pena.
+const _MARGEM_FINAL_S = 30;
 const _THROTTLE_MS = 10000;
 
 // Feature "continuar assistindo": restaura a posição salva ao carregar o
@@ -18,7 +23,7 @@ const _THROTTLE_MS = 10000;
 // evento nativo, dispara uma vez só — e a retomada nunca aconteceria; por
 // isso o check síncrono de `readyState` logo após registrar o listener.
 //
-// Fora da janela [30s, 90% da duração) a posição não é salva (início/fim do
+// Fora da janela [5s, 90% da duração) a posição não é salva (início/fim do
 // episódio não vale a pena retomar — o fim já é coberto pela Feature "liberar
 // arquivo ao terminar"/usePontoDeAssistido.js). Fire-and-forget: erro dentro
 // de `aoSalvar()` nunca deve interromper playback (CLAUDE.md §4, nunca em
@@ -39,7 +44,7 @@ export function usePosicaoDeReproducao(videoRef, aoSalvar, retomarDe) {
       if (
         retomarDe != null &&
         retomarDe > _POSICAO_MINIMA_S &&
-        retomarDe < video.duration - _POSICAO_MINIMA_S
+        retomarDe < video.duration - _MARGEM_FINAL_S
       ) {
         jaRetomouRef.current = true;
         video.currentTime = retomarDe;
