@@ -1126,7 +1126,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
                 // colunas (4 no desktop). Mais notável depois que o card de
                 // episódio perdeu a sombra que preenchia parte desse espaço
                 // (ver comentário de `estilo` em components/LinhaDeEpisodio.jsx).
-                'grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4'
+                // `isolate`: o glow do hover (`-z-10`, BrilhoDaCapa) fica preso a este
+                // contexto — sem ele iria parar atrás do fundo de um ancestral.
+                'isolate grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4'
               : 'flex flex-col gap-2'
           }
         >

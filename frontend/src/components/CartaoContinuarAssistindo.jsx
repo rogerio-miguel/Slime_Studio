@@ -79,7 +79,10 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
   );
 
   const menu = (
-    <div className="absolute right-1 top-3 z-10">
+    // `top-1.5` + gatilho `h-8`: o centro do botão (22px do topo) coincide
+    // com o da tag `BadgeNovo` (`top-2` + `h-7`), e o ícone de 24px dentro do
+    // `w-8` deixa a borda a 8px da direita, espelhando o `left-2` da tag.
+    <div className="absolute right-1 top-1.5 z-10">
       <MenuDeAcoes
         rotuloGatilho={`Mais ações para ${item.anime_titulo}`}
         posicao="lado"
@@ -126,6 +129,7 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
         cor="text-white"
         para={`/assistir/${item.episodio_id}`}
         sobreposicao={menu}
+        brilho={item.thumb ?? null}
         rotuloAcessivel={`Assistir episódio ${item.numero} de ${item.anime_titulo}`}
         estadoDeRota={{
           episodio: {
@@ -187,6 +191,7 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
         modo="grade"
         cor="text-ink-muted"
         sobreposicao={menu}
+        brilho={item.thumb ?? null}
         legenda={<FaixaDeConteudo modo="grade" rotulo={rotulo} />}
       >
         <MiniaturaDoEpisodio thumb={item.thumb} modo="grade" />
@@ -207,6 +212,7 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
       desabilitado={capturando}
       rotuloAcessivel={`Capturar episódio ${item.numero} de ${item.anime_titulo}`}
       sobreposicao={menu}
+      brilho={item.thumb ?? null}
       legenda={<FaixaDeConteudo modo="grade" rotulo={rotulo} />}
     >
       <MiniaturaDoEpisodio thumb={item.thumb} modo="grade" />
@@ -228,7 +234,7 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
 // (`h-3.5` → `h-4`), pill/texto ficam como estavam.
 function BadgeNovo() {
   return (
-    <span className="absolute left-2 top-2 z-10 inline-flex h-7 items-center gap-1 whitespace-nowrap bg-black/80 px-2 text-xs font-semibold uppercase tracking-wide text-white backdrop-blur-md">
+    <span className="absolute left-2 top-2 z-10 inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-2xl bg-black/80 px-2 text-xs font-semibold uppercase tracking-wide text-white backdrop-blur-md">
       <Sparkles aria-hidden="true" className="h-4 w-4" />
       Novo ep
     </span>
