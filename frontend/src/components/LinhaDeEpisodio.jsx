@@ -399,7 +399,7 @@ export function OverlayDeStatus({ rotulo, tom }) {
 
 // Pista de "pronto pra assistir" no ramo `pronto` — o mesmo `IconePlay` do
 // player (player/Icones.jsx), reaproveitado em vez de redesenhar o triângulo,
-// num disco translúcido centralizado sobre a thumb. `fill="currentColor"`:
+// sem disco de fundo (só o glifo, com `drop-shadow` pra manter contraste sobre qualquer thumb), centralizado sobre a thumb. `fill="currentColor"`:
 // por padrão o ícone é só contorno (`propsBase` de Icones.jsx); preenchido é
 // o MESMO ajuste que o botão "Assistir agora"/"Continuar assistindo" do
 // carrossel já usa (`inicio/CarrosselDestaques.jsx`) — os dois ficam
@@ -422,15 +422,15 @@ export function IndicadorDePlay({ emGrade, temThumb }) {
   return (
     <span className={`pointer-events-none flex items-center justify-center ${posicao}`}>
       <span
-        className={`flex items-center justify-center rounded-full bg-white text-black transition duration-200 ease-out group-hover/cartao:brightness-90 group-hover/cartao:scale-110 motion-reduce:transition-none ${
-          emGrade ? 'h-12 w-12' : 'h-9 w-9'
+        className={`flex items-center justify-center text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)] transition duration-200 ease-out group-hover/cartao:brightness-90 group-hover/cartao:scale-110 motion-reduce:transition-none ${
+          emGrade ? 'h-[52px] w-[52px]' : 'h-10 w-10'
         }`}
       >
         <IconePlay
-          width={undefined}
-          height={undefined}
+          width={emGrade ? 52 : 27}
+          height={emGrade ? 52 : 27}
           fill="currentColor"
-          className={emGrade ? 'h-6 w-6 translate-x-0.5' : 'h-4 w-4 translate-x-px'}
+          strokeWidth={3}
         />
       </span>
     </span>

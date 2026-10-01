@@ -33,7 +33,7 @@ const classeBotao =
 // precisar de um pouco mais de largura que o quadrado mínimo).
 const classeBotaoTrio =
   'relative inline-flex h-14 min-w-14 items-center justify-center rounded-full text-white transition ' +
-  'hover:text-white/70 active:scale-90 ' +
+  'hover:opacity-70 active:scale-90 ' +
   'focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2 ' +
   'motion-reduce:transition-none motion-reduce:active:scale-100 touch-none';
 
@@ -328,9 +328,9 @@ export default function BarraDeControles({
             className={classeBotaoTrio}
           >
             {tocando ? (
-              <IconePausa fill="currentColor" stroke="none" width={62} height={62} />
+              <IconePausa fill="currentColor" strokeWidth={2} width={52} height={52} />
             ) : (
-              <IconePlay fill="currentColor" stroke="none" width={62} height={62} />
+              <IconePlay fill="currentColor" strokeWidth={3} width={52} height={52} />
             )}
           </button>
           <button
