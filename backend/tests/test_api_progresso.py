@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import progresso as servico_progresso
-from api.servicos.lancamentos import temporadas_novas_apos_concluida
+from api.servicos.lancamentos import primeiras_em_lancamento, temporadas_novas_apos_concluida
 from api.servicos.progresso import listar_continuar_assistindo
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from models.anime import Anime
@@ -239,6 +239,95 @@ def test_temporada_nova_ignora_nao_lancada_com_episodio_e_midia_avulsa():
 
     filme = _linha_de_franquia(2, None, formato_midia="MOVIE")
     assert temporadas_novas_apos_concluida(_grupos(t1, filme), {1}) == {}
+
+
+def test_primeira_em_lancamento_so_a_primeira_tv_sem_episodio_local():
+    solo = _linha_de_franquia(1, 1)
+    assert primeiras_em_lancamento(_grupos(solo)) == {1}
+
+    t1 = _linha_de_franquia(1, 1)
+    t2 = _linha_de_franquia(2, 2)
+    assert primeiras_em_lancamento(_grupos(t1, t2)) == {1}
+
+    com_episodio = _linha_de_franquia(1, 1, tem_episodios=True)
+    assert primeiras_em_lancamento(_grupos(com_episodio, t2)) == set()
+
+    finalizada = _linha_de_franquia(1, 1, status_lancamento=StatusLancamento.FINALIZADO)
+    assert primeiras_em_lancamento(_grupos(finalizada)) == set()
+
+    nao_lancada = _linha_de_franquia(1, 1, status_lancamento=StatusLancamento.NAO_LANCADO)
+    assert primeiras_em_lancamento(_grupos(nao_lancada)) == set()
+
+    filme = _linha_de_franquia(1, None, formato_midia="MOVIE")
+    assert primeiras_em_lancamento(_grupos(filme)) == set()
+
+
+async def test_listar_continuar_assistindo_inclui_primeira_temporada_em_lancamento(
+    sessionmaker_api: _SessionMaker,
+):
+    agora = datetime.now(UTC)
+    async with sessionmaker_api() as sessao:
+        anime = Anime(
+            titulo="Recem Estreado", slug="recem-estreado", numero_temporada=1,
+            episodios_na_fonte=1, fonte_verificada_em=agora,
+            status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        )
+        sessao.add(anime)
+        await sessao.flush()
+        sessao.add(
+            FonteAnime(
+                anime_id=anime.id, site_dominio="exemplo.com", versao=VersaoDeFonte.LEGENDADO,
+                identificador_no_site="recem", resolvido_em=agora,
+            )
+        )
+        await sessao.commit()
+        anime_id = anime.id
+
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+
+    assert [
+        (linha.anime_id, linha.numero, linha.variante, linha.episodio_id, linha.episodio_novo)
+        for linha in linhas
+    ] == [(anime_id, 1, "capturavel", None, True)]
+
+
+async def test_primeira_em_lancamento_ordena_pela_fonte_confirmada_nao_pela_criacao(
+    sessionmaker_api: _SessionMaker,
+):
+    agora = datetime.now(UTC)
+    async with sessionmaker_api() as sessao:
+        antigo = Anime(
+            titulo="Adicionado Faz Tempo", slug="adicionado-faz-tempo", numero_temporada=1,
+            episodios_na_fonte=1, fonte_verificada_em=agora,
+            criado_em=agora - timedelta(days=30),
+            status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        )
+        em_andamento = Anime(
+            titulo="Em Andamento", slug="em-andamento", numero_temporada=1,
+            status_lancamento=StatusLancamento.FINALIZADO,
+        )
+        sessao.add_all([antigo, em_andamento])
+        await sessao.flush()
+        sessao.add(
+            FonteAnime(
+                anime_id=antigo.id, site_dominio="exemplo.com", versao=VersaoDeFonte.LEGENDADO,
+                identificador_no_site="antigo", resolvido_em=agora,
+            )
+        )
+        sessao.add(
+            Episodio(
+                anime_id=em_andamento.id, numero=1, tipo=TipoEpisodio.REGULAR,
+                versao=VersaoEpisodio.LEGENDADO, url_fonte="/y.mkv", site_origem="local",
+                status=StatusEpisodio.PRONTO, hls_path="y/master.m3u8", duracao_s=1200,
+                progresso_s=300, progresso_atualizado_em=agora - timedelta(days=1),
+            )
+        )
+        await sessao.commit()
+        antigo_id, em_andamento_id = antigo.id, em_andamento.id
+
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+
+    assert [linha.anime_id for linha in linhas] == [antigo_id, em_andamento_id]
 
 
 async def _criar_franquia_com_t1_concluida(
