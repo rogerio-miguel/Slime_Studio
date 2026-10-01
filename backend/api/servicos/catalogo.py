@@ -10,12 +10,13 @@ como as leituras agregadas de `lancamentos.py`/`sondagem.py`.
 import shutil
 from collections.abc import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
 from core.enums import ESTADOS_EM_EXECUCAO, StatusEpisodio
 from core.erros import JobEmExecucao
+from core.franquia import slug_de_franquia
 from core.midia import diretorio_do_episodio, podar_diretorios_do_anime
 from extractors.download import caminho_raw
 from models.anime import Anime
@@ -199,3 +200,74 @@ def remover_arquivos_do_episodio(config: Config, anime_slug: str, episodio: Epis
     caminho_bruto.unlink(missing_ok=True)
 
     podar_diretorios_do_anime(config.media_root, anime_slug)
+
+
+async def agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
+    """`{anime_id: grupo}` — agrupa o catálogo INTEIRO em componentes conexos de
+    franquia (união por `serie_ancora` OU slug do título base, `core/
+    franquia.py` — o segundo sinal cobre o walk de `relations` que erra com
+    OVA/ONA/split-cour no meio, Fase 6), uma query só. `grupo` é a lista
+    ordenada por `numero_temporada` (NULL por último) de TODAS as linhas da
+    franquia — mesma lista (referência compartilhada) pra cada `anime_id`
+    membro dela, então indexar o dict não duplica dado. Espelha o agrupamento
+    de `frontend/src/inicio/franquia.js`.
+
+    A parte cara de `_temporadas_e_proxima`: varrer o catálogo inteiro (dezenas
+    de linhas, uso pessoal — barato o bastante pra não justificar índice) só
+    UMA VEZ por request, não por anime. `obter_anime` chama isto pro grupo de 1
+    anime; `listar_animes` reaproveita o mesmo dict pra cada card da grade —
+    sem isso, calcular `proxima_temporada` pro catálogo inteiro escanearia o
+    catálogo inteiro de novo a cada anime (O(N²))."""
+    tem_episodio = exists().where(Episodio.anime_id == Anime.id)
+    linhas = (
+        await sessao.execute(
+            select(
+                Anime.id,
+                Anime.numero_temporada,
+                Anime.titulo,
+                Anime.serie_ancora,
+                Anime.status_lancamento,
+                Anime.estreia_em,
+                Anime.ano,
+                Anime.formato_midia,
+                Anime.total_episodios_anilist,
+                Anime.banner_path,
+                tem_episodio.label("tem_episodios"),
+            )
+        )
+    ).all()
+
+    pai: dict[object, object] = {}
+
+    def acha(no: object) -> object:
+        pai.setdefault(no, no)
+        while pai[no] != no:
+            pai[no] = pai[pai[no]]
+            no = pai[no]
+        return no
+
+    def une(a: object, b: object) -> None:
+        pai[acha(a)] = acha(b)
+
+    for linha in linhas:
+        no = ("id", linha.id)
+        acha(no)
+        slug = slug_de_franquia(linha.titulo)
+        if slug:
+            une(no, ("slug", slug))
+        if linha.serie_ancora is not None:
+            une(no, ("anc", linha.serie_ancora))
+
+    grupos_por_raiz: dict[object, list[object]] = {}
+    for linha in linhas:
+        grupos_por_raiz.setdefault(acha(("id", linha.id)), []).append(linha)
+    for grupo in grupos_por_raiz.values():
+        grupo.sort(
+            key=lambda linha: (
+                linha.numero_temporada is None,
+                linha.numero_temporada or 0,
+                linha.id,
+            )
+        )
+
+    return {linha.id: grupos_por_raiz[acha(("id", linha.id))] for linha in linhas}

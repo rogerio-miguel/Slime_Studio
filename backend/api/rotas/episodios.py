@@ -73,6 +73,7 @@ async def continuar_assistindo(
             ContinuarAssistindoSaida(
                 anime_id=item.anime_id,
                 anime_titulo=item.anime_titulo,
+                numero_temporada=item.numero_temporada,
                 numero=item.numero,
                 variante=item.variante,
                 episodio_id=item.episodio_id,

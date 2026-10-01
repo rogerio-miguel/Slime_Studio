@@ -223,7 +223,7 @@ class AnimeSaida(BaseModel):
     versao_confirmada_mais_recente: VersaoEpisodio | None = None
     # Aviso "Nª temporada estreia em ..." no card do catálogo — derivado,
     # injetado na rota a partir do mesmo agrupamento de franquia usado no hero
-    # da página do anime (`api/rotas/animes.py::_agrupar_franquias` +
+    # da página do anime (`api/servicos/catalogo.py::agrupar_franquias` +
     # `_temporadas_e_proxima`, reaproveitado por `obter_anime` abaixo).
     # `estreia_em`/`ano` vêm preenchidos aqui (ver docstring de
     # `TemporadaIrmaSaida`); `None` quando não há irmã `nao_lancado` prevista.
@@ -540,6 +540,9 @@ class ContinuarAssistindoSaida(BaseModel):
 
     anime_id: int
     anime_titulo: str
+    # Ordinal da temporada (`Anime.numero_temporada`) — o card mostra "T2 ·
+    # EP.1"; `None` quando a posição na franquia é desconhecida.
+    numero_temporada: int | None
     numero: int
     variante: str
     episodio_id: int | None

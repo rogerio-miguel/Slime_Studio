@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencias import obter_config, obter_sessao, obter_sessionmaker
@@ -37,7 +37,6 @@ from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
 from core.config import Config
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
-from core.franquia import slug_de_franquia
 from db.catalogo import obter_ou_criar_anime_id
 from extractors.base import ResultadoBusca
 from extractors.registro import EXTRATORES
@@ -245,7 +244,7 @@ async def listar_animes(
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeSaida]:
     # `formato_midia IS NULL` exclui filme/OVA/ONA/especial: essas linhas se
-    # agrupam no anime original (seletor de temporada, `_agrupar_franquias`/
+    # agrupam no anime original (seletor de temporada, `agrupar_franquias`/
     # `_temporadas_e_proxima`) em vez de aparecer como card solto na grade.
     resultado = await sessao.execute(
         select(Anime).where(Anime.formato_midia.is_(None)).order_by(Anime.titulo)
@@ -258,12 +257,12 @@ async def listar_animes(
     # Badge "Dublado"/"Legendado" (uma query batched, não uma por card — ver
     # docstring de `versoes_confirmadas_mais_recentes_por_anime`) e aviso
     # "Nª temporada estreia em ..." (agrupamento de franquia rodado uma vez,
-    # `_agrupar_franquias`, reaproveitado por card — ver docstring de
+    # `agrupar_franquias`, reaproveitado por card — ver docstring de
     # `_temporadas_e_proxima`).
     versoes_confirmadas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
         sessao, ids
     )
-    grupos_de_franquia = await _agrupar_franquias(sessao)
+    grupos_de_franquia = await servico_catalogo.agrupar_franquias(sessao)
     # Aquecimento opt-in via `?aquecer=true`: carona fire-and-forget que sonda a
     # fonte real (scraping) dos animes em lançamento com contagem velha/ausente e
     # aquece o `status_lancamento` (filtro do badge) via AniList/Kitsu. Só a
@@ -295,6 +294,14 @@ async def listar_animes(
         versoes_de_reparo = await servico_sondagem.versoes_para_reresolver_fonte_perdida(
             sessao, ids_sem_fonte_com_episodios
         )
+        # Temporada nova de franquia que o usuário terminou: sem episódio local
+        # não há fonte mapeada, então o badge nunca acenderia sozinho — mesmo
+        # reparo acima, com palpite de versão herdado da temporada anterior.
+        novas = await servico_lancamentos.temporadas_novas(sessao, grupos_de_franquia)
+        versoes_de_temporadas_novas = await servico_sondagem.versoes_de_reparo_de_temporadas_novas(
+            sessao, novas, versoes
+        )
+        versoes_de_reparo = {**versoes_de_reparo, **versoes_de_temporadas_novas}
         versoes = {**versoes, **versoes_de_reparo}
         servico_sondagem.agendar_sondagens(
             sessionmaker,
@@ -531,7 +538,7 @@ async def obter_anime(
         else {}
     )
     servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
-    grupos = await _agrupar_franquias(sessao)
+    grupos = await servico_catalogo.agrupar_franquias(sessao)
     temporadas, proxima_temporada = _temporadas_e_proxima(
         anime.id, anime.numero_temporada, grupos[anime.id]
     )
@@ -570,7 +577,7 @@ async def listar_relacionados_do_anime(
     (`_ids_do_seletor_de_temporada` abaixo) — não só pelo `relationType` cru
     da AniList (`integrations.anilist.py::buscar_relacionados`), que só vê a
     aresta DIRETA desta mídia e não cobre uma temporada irmã sem edge direta
-    mas já unida no seletor pelo union-find de franquia (`_agrupar_franquias`,
+    mas já unida no seletor pelo union-find de franquia (`agrupar_franquias`,
     slug do título base OU `serie_ancora` em comum). Sem `anilist_id`
     (cadastro manual/enriquecimento ainda não rodou), devolve `[]` — mesmo
     formato de "sem sugestão" de `integrations.servico.listar_relacionados`,
@@ -580,7 +587,7 @@ async def listar_relacionados_do_anime(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
     if anime.anilist_id is None:
         return []
-    grupos = await _agrupar_franquias(sessao)
+    grupos = await servico_catalogo.agrupar_franquias(sessao)
     ids_do_seletor = _ids_do_seletor_de_temporada(anime.id, anime.numero_temporada, grupos)
     pares = await servico_descoberta.listar_relacionados_com_catalogo(
         sessionmaker, anime.anilist_id
@@ -609,77 +616,6 @@ def _ids_do_seletor_de_temporada(
     return ids
 
 
-async def _agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
-    """`{anime_id: grupo}` — agrupa o catálogo INTEIRO em componentes conexos de
-    franquia (união por `serie_ancora` OU slug do título base, `core/
-    franquia.py` — o segundo sinal cobre o walk de `relations` que erra com
-    OVA/ONA/split-cour no meio, Fase 6), uma query só. `grupo` é a lista
-    ordenada por `numero_temporada` (NULL por último) de TODAS as linhas da
-    franquia — mesma lista (referência compartilhada) pra cada `anime_id`
-    membro dela, então indexar o dict não duplica dado. Espelha o agrupamento
-    de `frontend/src/inicio/franquia.js`.
-
-    A parte cara de `_temporadas_e_proxima`: varrer o catálogo inteiro (dezenas
-    de linhas, uso pessoal — barato o bastante pra não justificar índice) só
-    UMA VEZ por request, não por anime. `obter_anime` chama isto pro grupo de 1
-    anime; `listar_animes` reaproveita o mesmo dict pra cada card da grade —
-    sem isso, calcular `proxima_temporada` pro catálogo inteiro escanearia o
-    catálogo inteiro de novo a cada anime (O(N²))."""
-    tem_episodio = exists().where(Episodio.anime_id == Anime.id)
-    linhas = (
-        await sessao.execute(
-            select(
-                Anime.id,
-                Anime.numero_temporada,
-                Anime.titulo,
-                Anime.serie_ancora,
-                Anime.status_lancamento,
-                Anime.estreia_em,
-                Anime.ano,
-                Anime.formato_midia,
-                Anime.total_episodios_anilist,
-                Anime.banner_path,
-                tem_episodio.label("tem_episodios"),
-            )
-        )
-    ).all()
-
-    pai: dict[object, object] = {}
-
-    def acha(no: object) -> object:
-        pai.setdefault(no, no)
-        while pai[no] != no:
-            pai[no] = pai[pai[no]]
-            no = pai[no]
-        return no
-
-    def une(a: object, b: object) -> None:
-        pai[acha(a)] = acha(b)
-
-    for linha in linhas:
-        no = ("id", linha.id)
-        acha(no)
-        slug = slug_de_franquia(linha.titulo)
-        if slug:
-            une(no, ("slug", slug))
-        if linha.serie_ancora is not None:
-            une(no, ("anc", linha.serie_ancora))
-
-    grupos_por_raiz: dict[object, list[object]] = {}
-    for linha in linhas:
-        grupos_por_raiz.setdefault(acha(("id", linha.id)), []).append(linha)
-    for grupo in grupos_por_raiz.values():
-        grupo.sort(
-            key=lambda linha: (
-                linha.numero_temporada is None,
-                linha.numero_temporada or 0,
-                linha.id,
-            )
-        )
-
-    return {linha.id: grupos_por_raiz[acha(("id", linha.id))] for linha in linhas}
-
-
 def _banner_da_franquia(banner_proprio: str | None, grupo: list[object]) -> str | None:
     """Banner único da franquia: o da primeira temporada (`grupo` já ordenado por
     `numero_temporada`) que tem um, pra trocar de temporada no seletor não
@@ -691,7 +627,7 @@ def _temporadas_e_proxima(
     anime_id: int, numero_temporada_atual: int | None, grupo: list[object]
 ) -> tuple[list[TemporadaIrmaSaida], TemporadaIrmaSaida | None]:
     """`(temporadas_do_seletor, proxima_temporada_prevista)` do anime `anime_id`
-    dentro do `grupo` (de `_agrupar_franquias`) da sua franquia. Sem I/O — só a
+    dentro do `grupo` (de `agrupar_franquias`) da sua franquia. Sem I/O — só a
     lógica pura, reaproveitada por anime tanto em `obter_anime` (grupo de 1
     anime) quanto em `listar_animes` (mesmo grupo, uma vez por franquia,
     reaproveitado pra cada membro que aparece na grade).

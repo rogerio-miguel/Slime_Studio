@@ -436,10 +436,13 @@ export function IndicadorDePlay({ emGrade, temThumb }) {
 // MESMO rótulo "EP.N - Título" em vez de reimplementar o formato à mão —
 // mesmo `titulo` (TMDB) que `ContinuarAssistindoSaida.titulo` já traz do
 // backend (backend/api/esquemas.py).
-export function RotuloEpisodio({ numero, rotulo, titulo }) {
+// `temporada` (opcional, só a prateleira "Continuar assistindo" passa): prefixo
+// "T2 · " — lá o card de cada anime não tem seletor de temporada por perto.
+export function RotuloEpisodio({ numero, rotulo, titulo, temporada }) {
+  const prefixo = temporada != null ? `T${temporada} ` : '';
   return (
     <span className="line-clamp-2 text-sm font-semibold text-white">
-      {numero == null ? rotulo : `EP.${numero}${titulo ? ` - ${titulo}` : ''}`}
+      {numero == null ? rotulo : `${prefixo}EP.${numero}${titulo ? ` - ${titulo}` : ''}`}
     </span>
   );
 }

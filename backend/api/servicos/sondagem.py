@@ -221,6 +221,32 @@ async def versoes_para_reresolver_fonte_perdida(
     }
 
 
+async def versoes_de_reparo_de_temporadas_novas(
+    sessao: AsyncSession,
+    novas: dict[int, int],
+    versoes_existentes: dict[int, VersaoEpisodio],
+) -> dict[int, VersaoEpisodio]:
+    """`{anime_id da temporada nova: versão a PEDIR}` pras temporadas de
+    `lancamentos.temporadas_novas` que ainda não têm `FonteAnime` (temporada
+    nunca capturada → nunca resolveu fonte → `agendar_sondagens` a pularia pra
+    sempre e o badge/prateleira nunca saberiam que ela já estreou). O palpite
+    de versão herda a da temporada anterior (`versoes_para_reresolver_fonte_
+    perdida` sobre ela); mesma semântica de reparo — varredura cara, por isso
+    respeita `ids_fora_de_cooldown_de_reparo` e quem chama passa o resultado em
+    `ignorar_gate_de_status`."""
+    sem_fonte = ids_fora_de_cooldown_de_reparo(
+        anime_id for anime_id in novas if anime_id not in versoes_existentes
+    )
+    palpites = await versoes_para_reresolver_fonte_perdida(
+        sessao, {novas[anime_id] for anime_id in sem_fonte}
+    )
+    return {
+        anime_id: palpites[novas[anime_id]]
+        for anime_id in sem_fonte
+        if novas[anime_id] in palpites
+    }
+
+
 def agendar_sondagens(
     sessionmaker: _SessionMaker,
     animes: list[Anime],

@@ -74,7 +74,7 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
   const rotulo = (
     <span className="flex min-w-0 flex-col gap-0.5">
       <h3 className="line-clamp-1 text-xs text-ink-muted">{item.anime_titulo}</h3>
-      <RotuloEpisodio numero={item.numero} titulo={item.titulo} />
+      <RotuloEpisodio numero={item.numero} titulo={item.titulo} temporada={item.numero_temporada} />
     </span>
   );
 

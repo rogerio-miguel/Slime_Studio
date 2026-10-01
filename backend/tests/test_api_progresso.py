@@ -4,14 +4,18 @@
 `POST /api/episodios/{id}/progresso` (`api/rotas/episodios.py`)."""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from api.servicos import progresso as servico_progresso
+from api.servicos.lancamentos import temporadas_novas_apos_concluida
 from api.servicos.progresso import listar_continuar_assistindo
-from core.enums import StatusEpisodio, TipoEpisodio, VersaoEpisodio
+from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
+from models.fonte_anime import FonteAnime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -78,13 +82,42 @@ async def test_listar_continuar_assistindo_inclui_pronto_com_progresso_abaixo_do
     assert [linha.episodio_id for linha in linhas] == [episodio_id]
 
 
-async def test_listar_continuar_assistindo_exclui_sem_progresso(sessionmaker_api: _SessionMaker):
-    anime_id = await _criar_anime(sessionmaker_api, "Anime Sem Progresso")
-    await _criar_episodio(sessionmaker_api, anime_id, progresso_s=None)
+async def test_listar_continuar_assistindo_inclui_capturado_pronto_sem_progresso(
+    sessionmaker_api: _SessionMaker,
+):
+    # Captura concluída e ainda nem assistida: a prateleira é extensão da página
+    # do anime, então o episódio pronto já aparece (sem barra de progresso).
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Recem Capturado")
+    episodio_id = await _criar_episodio(sessionmaker_api, anime_id, progresso_s=None)
 
     linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
-    assert linhas == []
+    assert [(linha.episodio_id, linha.variante, linha.progresso_s) for linha in linhas] == [
+        (episodio_id, "pronto", None)
+    ]
+
+
+async def test_listar_continuar_assistindo_inclui_captura_em_andamento_como_processando(
+    sessionmaker_api: _SessionMaker,
+):
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Capturando")
+    await _criar_episodio(sessionmaker_api, anime_id, status=StatusEpisodio.PENDENTE)
+
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+
+    assert [linha.variante for linha in linhas] == ["processando"]
+
+
+async def test_listar_continuar_assistindo_sem_assistido_usa_o_menor_numero_disponivel(
+    sessionmaker_api: _SessionMaker,
+):
+    anime_id = await _criar_anime(sessionmaker_api, "Anime Varios Capturados")
+    await _criar_episodio(sessionmaker_api, anime_id, numero=3)
+    primeiro_id = await _criar_episodio(sessionmaker_api, anime_id, numero=2)
+
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+
+    assert [(linha.numero, linha.episodio_id) for linha in linhas] == [(2, primeiro_id)]
 
 
 async def test_listar_continuar_assistindo_exclui_status_diferente_de_pronto(
@@ -160,6 +193,121 @@ async def test_listar_continuar_assistindo_um_item_por_anime_o_mais_recente(
     linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
 
     assert [linha.episodio_id for linha in linhas] == [mais_recente_id]
+
+
+# --- temporada nova de franquia (continuação) ---
+
+
+def _linha_de_franquia(id_: int, numero_temporada: int | None, **extra) -> SimpleNamespace:
+    base = dict(
+        id=id_,
+        numero_temporada=numero_temporada,
+        formato_midia=None,
+        tem_episodios=False,
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+    )
+    return SimpleNamespace(**{**base, **extra})
+
+
+def _grupos(*linhas: SimpleNamespace) -> dict[int, list]:
+    grupo = list(linhas)
+    return {linha.id: grupo for linha in linhas}
+
+
+def test_temporada_nova_so_a_imediatamente_posterior_a_concluida():
+    t1 = _linha_de_franquia(1, 1, tem_episodios=True)
+    t2 = _linha_de_franquia(2, 2)
+    t3 = _linha_de_franquia(3, 3)
+
+    assert temporadas_novas_apos_concluida(_grupos(t1, t2, t3), {1}) == {2: 1}
+
+
+def test_temporada_nova_exige_anterior_concluida():
+    t1 = _linha_de_franquia(1, 1, tem_episodios=True)
+    t2 = _linha_de_franquia(2, 2)
+
+    assert temporadas_novas_apos_concluida(_grupos(t1, t2), set()) == {}
+
+
+def test_temporada_nova_ignora_nao_lancada_com_episodio_e_midia_avulsa():
+    t1 = _linha_de_franquia(1, 1, tem_episodios=True)
+    nao_lancada = _linha_de_franquia(2, 2, status_lancamento=StatusLancamento.NAO_LANCADO)
+    assert temporadas_novas_apos_concluida(_grupos(t1, nao_lancada), {1}) == {}
+
+    ja_capturada = _linha_de_franquia(2, 2, tem_episodios=True)
+    assert temporadas_novas_apos_concluida(_grupos(t1, ja_capturada), {1}) == {}
+
+    filme = _linha_de_franquia(2, None, formato_midia="MOVIE")
+    assert temporadas_novas_apos_concluida(_grupos(t1, filme), {1}) == {}
+
+
+async def _criar_franquia_com_t1_concluida(
+    sessionmaker: _SessionMaker, *, com_fonte_na_t2: bool
+) -> tuple[int, int]:
+    agora = datetime.now(UTC)
+    async with sessionmaker() as sessao:
+        t1 = Anime(
+            titulo="Serie", slug="serie", serie_ancora=100, numero_temporada=1,
+            episodios_na_fonte=1, status_lancamento=StatusLancamento.FINALIZADO,
+        )
+        t2 = Anime(
+            titulo="Serie Continuacao", slug="serie-continuacao", serie_ancora=100,
+            numero_temporada=2, episodios_na_fonte=3, fonte_verificada_em=agora,
+            status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        )
+        sessao.add_all([t1, t2])
+        await sessao.flush()
+        if com_fonte_na_t2:
+            sessao.add(
+                FonteAnime(
+                    anime_id=t2.id, site_dominio="exemplo.com", versao=VersaoDeFonte.LEGENDADO,
+                    identificador_no_site="serie-2", resolvido_em=agora,
+                )
+            )
+        sessao.add(
+            Episodio(
+                anime_id=t1.id, numero=1, tipo=TipoEpisodio.REGULAR,
+                versao=VersaoEpisodio.LEGENDADO, url_fonte="/x.mkv", site_origem="local",
+                status=StatusEpisodio.PRONTO, hls_path="x/master.m3u8", duracao_s=1200,
+                assistido_em=agora,
+            )
+        )
+        await sessao.commit()
+        return t1.id, t2.id
+
+
+async def test_listar_continuar_assistindo_inclui_temporada_nova_da_franquia_concluida(
+    sessionmaker_api: _SessionMaker,
+):
+    _, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=True)
+
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+
+    assert [
+        (linha.anime_id, linha.numero, linha.variante, linha.episodio_id, linha.episodio_novo)
+        for linha in linhas
+    ] == [(t2_id, 1, "capturavel", None, True)]
+
+
+async def test_listar_continuar_assistindo_agenda_reparo_de_fonte_da_temporada_nova(
+    sessionmaker_api: _SessionMaker, monkeypatch
+):
+    _, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=False)
+    chamadas = []
+    monkeypatch.setattr(
+        servico_progresso.servico_sondagem,
+        "agendar_sondagens",
+        lambda *args, **kwargs: chamadas.append((args, kwargs)),
+    )
+
+    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+
+    # Sem fonte mapeada ainda: não vira card, mas a sondagem de reparo é pedida
+    # (com palpite de versão herdado da T1) para a próxima leitura já achar.
+    assert linhas == []
+    (args, kwargs), = chamadas
+    assert args[2][t2_id] == VersaoEpisodio.LEGENDADO
+    assert kwargs["ignorar_gate_de_status"] == frozenset({t2_id})
 
 
 # --- GET /api/episodios/continuar-assistindo ---
