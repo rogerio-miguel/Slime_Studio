@@ -187,6 +187,32 @@ def temporadas_novas_apos_concluida(
     return resultado
 
 
+def primeiras_em_lancamento(grupos: dict[int, list[object]]) -> set[int]:
+    """`anime_id` da PRIMEIRA temporada de TV de cada franquia quando ela está
+    `EM_LANCAMENTO` e sem nenhum episódio local — anime recém-estreado que o
+    usuário acompanha desde o início. Sem anterior na franquia, não há
+    "temporada concluída" que a promova (`temporadas_novas_apos_concluida`), então
+    esta é a outra porta do slot 1 da prateleira "Continuar assistindo".
+
+    Só a primeira do grupo (já ordenado por `numero_temporada`, NULL por último):
+    uma T2 em lançamento com T1 no catálogo espera a T1 ser concluída, não entra
+    por aqui. Filme/OVA/ONA (`formato_midia`) ficam de fora. Sem I/O."""
+    resultado: set[int] = set()
+    vistos: set[int] = set()
+    for grupo in grupos.values():
+        if id(grupo) in vistos:
+            continue
+        vistos.add(id(grupo))
+        primeira = next((linha for linha in grupo if linha.formato_midia is None), None)
+        if (
+            primeira is not None
+            and not primeira.tem_episodios
+            and primeira.status_lancamento is StatusLancamento.EM_LANCAMENTO
+        ):
+            resultado.add(primeira.id)
+    return resultado
+
+
 async def temporadas_novas(
     sessao: AsyncSession, grupos: dict[int, list[object]]
 ) -> dict[int, int]:

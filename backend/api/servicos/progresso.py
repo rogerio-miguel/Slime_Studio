@@ -34,9 +34,13 @@ ainda, o slot é o menor número não-`LIBERADO` (`pronto`/`processando`/
 do catálogo SEM episódio local cuja anterior na franquia o usuário terminou vira
 o slot 1 `capturavel` (`_slot_de_temporada_nova`), com badge "Novo ep" enquanto
 `EM_LANCAMENTO`, mesmo que a fonte já tenha mais de um episódio (é início de
-temporada, não atraso). Sem `FonteAnime` ainda, a temporada só vira card depois
-que a sondagem de reparo (`sondagem.versoes_de_reparo_de_temporadas_novas`)
-resolver a fonte em segundo plano.
+temporada, não atraso). Mesmo slot pra `lancamentos.primeiras_em_lancamento`:
+primeira temporada `EM_LANCAMENTO` sem episódio local (anime recém-estreado,
+sem anterior na franquia) — entra assim que a fonte é resolvida (abrir a página
+do anime) e a sondagem preenche `episodios_na_fonte`. Já a temporada nova de
+franquia, sem `FonteAnime` ainda, só vira card depois que a sondagem de reparo
+(`sondagem.versoes_de_reparo_de_temporadas_novas`) resolver a fonte em segundo
+plano.
 
 `episodio_novo` (badge "Novo ep", `components/CartaoContinuarAssistindo.jsx::
 BadgeNovo`) é `capturavel` + episódio nunca existiu + anime `EM_LANCAMENTO` +
@@ -105,7 +109,7 @@ from models.episodio import Episodio
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
-_LIMITE_PADRAO = 12
+_LIMITE_PADRAO = 20
 # Mesmo limiar de "assistido" usado no player (`usePontoDeAssistido.js`) — um
 # episódio que já passou disso deveria ter sido liberado (`liberar_episodio`)
 # em vez de continuar aparecendo como "em progresso"; serve duplamente aqui
@@ -307,7 +311,10 @@ def _escolher_slot(
 def _slot_de_temporada_nova(
     anime: Anime, episodios_da_anterior: Sequence[Episodio], versao_ativa: VersaoEpisodio | None
 ) -> _Candidato | None:
-    """Episódio 1 de uma temporada nova (`lancamentos.temporadas_novas`) —
+    """Episódio 1 de uma temporada nova (`lancamentos.temporadas_novas`) ou da
+    primeira temporada em lançamento (`lancamentos.primeiras_em_lancamento`,
+    `episodios_da_anterior` vazio → atividade = `fonte_verificada_em`, o momento
+    em que a fonte foi confirmada ao abrir o anime; `criado_em` só de reserva) —
     sempre `capturavel` sem `Episodio`, e só quando a fonte já mapeada expõe
     algum episódio. A atividade herda a da anterior pra ordenar a prateleira
     junto do que o usuário acabou de ver."""
@@ -318,7 +325,7 @@ def _slot_de_temporada_nova(
             episodio.assistido_em or episodio.progresso_atualizado_em or episodio.criado_em
             for episodio in episodios_da_anterior
         ),
-        default=anime.criado_em,
+        default=anime.fonte_verificada_em or anime.criado_em,
     )
     return _Candidato(
         anime=anime,
@@ -404,7 +411,9 @@ async def listar_continuar_assistindo(
         grupos = await servico_catalogo.agrupar_franquias(sessao)
         novas = await servico_lancamentos.temporadas_novas(sessao, grupos)
 
-        ids_ativos = [*ids_com_episodio, *novas]
+        primeiras = servico_lancamentos.primeiras_em_lancamento(grupos)
+
+        ids_ativos = [*ids_com_episodio, *novas, *primeiras]
         if not ids_ativos:
             return ResultadoContinuarAssistindo(itens=[], sondagem_em_andamento=False)
 
@@ -460,6 +469,13 @@ async def listar_continuar_assistindo(
             animes_por_id[anime_id],
             episodios_por_anime.get(anterior_id, []),
             versoes_ativas.get(anime_id),
+        )
+        if candidato is not None:
+            candidatos.append(candidato)
+
+    for anime_id in primeiras:
+        candidato = _slot_de_temporada_nova(
+            animes_por_id[anime_id], [], versoes_ativas.get(anime_id)
         )
         if candidato is not None:
             candidatos.append(candidato)
