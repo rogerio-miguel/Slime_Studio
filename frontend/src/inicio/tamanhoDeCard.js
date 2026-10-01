@@ -6,12 +6,14 @@
 //
 // Geometria medida ao vivo no Disney+ (viewport 1920): pôster 2:3, dois
 // tamanhos — `tamanho="grande"` ~336×502 / `"pequeno"` ~277×414 (ver
-// `CLASSES_POR_PAGINA`). Slot do `<li>` SEM padding e trilha/grade SEM `gap`
-// (pedido explícito do usuário, 2026-09-15 — removido o `p-[10px]` que cada
-// slot tinha antes): cards colam borda a borda, maximizando o pôster; gutter
-// de 3.7% de cada lado (onde a fileira ancora as setas). O título alinha
-// direto com o gutter — a borda do CARD e a borda do SLOT são a mesma coisa
-// agora, sem inset a mais pra somar.
+// `CLASSES_POR_PAGINA`). Slot do `<li>` SEM padding (pedido explícito do
+// usuário, 2026-09-15 — removido o `p-[10px]` que cada slot tinha antes);
+// gutter de 3.7% de cada lado (onde a fileira ancora as setas). O título
+// alinha direto com o gutter — a borda do CARD e a borda do SLOT são a mesma
+// coisa, sem inset a mais pra somar. O respiro entre pôsteres (16px, pedido
+// do usuário: colados, o glow do hover de components/AnimeCard.jsx não tinha
+// onde aparecer) vem de `gap-x-4` na trilha/grade, só ENTRE os slots — as
+// bordas de fora seguem coladas no gutter (ver `CLASSE_RESPIRO_POSTER`).
 //
 // `--por-pagina` mora nas CLASSES (um valor por breakpoint), nunca numa prop
 // numérica: prop viraria classe interpolada e o Tailwind não extrai valor
@@ -48,6 +50,15 @@ export const CLASSES_POR_PAGINA = {
 // `--por-pagina`. Vai no `style` inline — a `/` colide com o modificador de
 // opacidade do Tailwind v4.
 export const FLEX_BASIS_SLOT = 'calc(100% / var(--por-pagina))';
+
+// Respiro horizontal entre pôsteres (`gap-x-4` = 1rem) e o `flex-basis` que o
+// desconta pra continuar cabendo exatamente `--por-pagina` cards por linha/
+// página: sem descontar, `flex-wrap` da grade derrubava um card por linha e a
+// fileira deixava o último cortado. `tamanho="episodio"` fica fora (tem o
+// próprio `gap-x-[20px]` e `FLEX_BASIS_SLOT`).
+export const CLASSE_RESPIRO_POSTER = 'gap-x-4';
+export const FLEX_BASIS_SLOT_COM_RESPIRO =
+  'calc((100% - (var(--por-pagina) - 1) * 1rem) / var(--por-pagina))';
 
 // Gutter de 3.7% de cada lado da trilha/grade (onde a fileira ancora as setas).
 export const CLASSE_GUTTER = 'px-[3.7%]';

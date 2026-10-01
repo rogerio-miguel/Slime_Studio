@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, LibraryBig, Search, Tags, X } from 'lucide-react';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
@@ -83,6 +83,108 @@ import SeletorEmMenu from './SeletorEmMenu';
 // gatilhos da cápsula independentes do scroll — ver comentário de
 // `capsulaExpandidaIlha` abaixo pra coreografia e prioridade entre os cinco.
 
+// Gerenciar (`gerenciar`, opcional — só `paginas/Galeria.jsx` passa): botão
+// sem fundo dentro da ilha, depois do dropdown de filtro e de um divisor (só
+// aparece com a ilha aberta, ou seja, rolado — mesma regra do filtro), que
+// liga o modo de seleção do catálogo. Com o modo ligado a ilha
+// abre e troca o conteúdo do dropdown por uma barra de gerenciamento
+// (`ConteudoGerenciarIlha`): contagem, selecionar todos, remover em lote com a
+// confirmação dentro da própria ilha, e o resultado/erro da remoção. Enquanto
+// `gerenciar.fase !== 'inativo'` ele tem prioridade sobre qualquer mensagem da
+// ilha (captura/novos episódios): o dropdown e as mensagens não são
+// renderizados; os sinais contínuos voltam sozinhos ao sair, mas um
+// transitório (pronto/erro de captura) pode expirar escondido nesse intervalo
+// — perda aceita, mesmo trade-off da fila de um slot só descrita em
+// `mensagemIlha`. A ilha mora no `<ul>` central, que some abaixo de `sm`: em
+// tela de celular o modo não tem controles (o app é desktop-first).
+// Contrato de `gerenciar`: { fase: 'inativo' | 'selecionando' | 'confirmando'
+// | 'removendo' | 'concluido' | 'erro', qtdSelecionados, textoConfirmacao,
+// resultado, aoAlternar, aoSelecionarTodos, aoPedirRemocao,
+// aoCancelarRemocao, aoConfirmarRemocao, aoSair }.
+// Mesmo padrão tipográfico do gatilho do `SeletorEmMenu` (18px semibold,
+// `ink-muted` → branco no hover, sem fundo), separado dos vizinhos pelo mesmo
+// divisor `h-4 w-px bg-white/15` da cápsula.
+function DivisorDaIlha() {
+  return <span aria-hidden="true" className="h-4 w-px shrink-0 bg-white/15" />;
+}
+
+function BotaoDaIlha({ children, perigo = false, ...props }) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap text-[18px] font-semibold outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none ${
+        perigo
+          ? 'text-red-400 hover:text-red-300 focus-visible:text-red-300'
+          : 'text-ink-muted hover:text-white focus-visible:text-white'
+      }`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ConteudoGerenciarIlha({ gerenciar }) {
+  const { fase, qtdSelecionados, textoConfirmacao, resultado } = gerenciar;
+  const plural = qtdSelecionados === 1 ? 'selecionado' : 'selecionados';
+  const classeTexto = 'whitespace-nowrap text-[18px] font-semibold';
+  if (fase === 'confirmando') {
+    return (
+      <>
+        <span role="alert" className={`${classeTexto} text-white`}>
+          {textoConfirmacao}
+        </span>
+        <DivisorDaIlha />
+        <BotaoDaIlha perigo onClick={gerenciar.aoConfirmarRemocao}>
+          Remover
+        </BotaoDaIlha>
+        <DivisorDaIlha />
+        <BotaoDaIlha onClick={gerenciar.aoCancelarRemocao}>Cancelar</BotaoDaIlha>
+      </>
+    );
+  }
+  if (fase === 'removendo') {
+    return (
+      <span role="status" className={`${classeTexto} text-ink-muted`}>
+        Removendo…
+      </span>
+    );
+  }
+  if (fase === 'concluido' || fase === 'erro') {
+    return (
+      <>
+        <span
+          role={fase === 'erro' ? 'alert' : 'status'}
+          className={`${classeTexto} ${fase === 'erro' ? 'text-amber-300' : 'text-white'}`}
+        >
+          {resultado}
+        </span>
+        {fase === 'erro' && (
+          <>
+            <DivisorDaIlha />
+            <BotaoDaIlha onClick={gerenciar.aoSair}>Fechar</BotaoDaIlha>
+          </>
+        )}
+      </>
+    );
+  }
+  return (
+    <>
+      <span role="status" className={`${classeTexto} text-white`}>
+        {qtdSelecionados} <span className="text-ink-muted">{plural}</span>
+      </span>
+      <DivisorDaIlha />
+      <BotaoDaIlha onClick={gerenciar.aoSelecionarTodos}>Selecionar todos</BotaoDaIlha>
+      <DivisorDaIlha />
+      <BotaoDaIlha perigo disabled={qtdSelecionados === 0} onClick={gerenciar.aoPedirRemocao}>
+        {qtdSelecionados > 0 ? `Remover (${qtdSelecionados})` : 'Remover'}
+      </BotaoDaIlha>
+      <DivisorDaIlha />
+      <BotaoDaIlha onClick={gerenciar.aoSair}>Cancelar</BotaoDaIlha>
+    </>
+  );
+}
+
 export default function BarraDeNavegacao({
   transparente = false,
   termoBusca,
@@ -103,6 +205,7 @@ export default function BarraDeNavegacao({
   opcoesSecoes,
   secaoSelecionada,
   aoMudarSecao,
+  gerenciar,
   notificacaoNovosEps = false,
   aoClicarNotificacaoNovosEps,
   verificandoNovosEps = false,
@@ -141,8 +244,10 @@ export default function BarraDeNavegacao({
   // `temConteudoNaIlha &&`) — deliberadamente ESTÁVEL (presença dos
   // callbacks, não o valor transiente de cada sinal) — ver bug corrigido no
   // comentário do próprio wrapper mais abaixo.
+  const gerenciando = Boolean(gerenciar) && gerenciar.fase !== 'inativo';
   const temConteudoNaIlha = Boolean(
-    aoMudarFiltro ||
+    gerenciar ||
+      aoMudarFiltro ||
       aoMudarSecao ||
       aoClicarNotificacaoNovosEps ||
       aoClicarCapturaProntaIlha ||
@@ -150,6 +255,29 @@ export default function BarraDeNavegacao({
       aoClicarErroCapturaIlha
   );
   const inputBuscaRef = useRef(null);
+  // Largura NATURAL do conteúdo da ilha (divisor + filtro/gerenciar), medida
+  // por ResizeObserver. A cápsula anima `width` até esse valor em vez de um
+  // `max-width` fixo: com teto genérico (460/580/680px) o crescimento visível
+  // acabava assim que o teto passava da largura real, e o resto da duração
+  // ficava parado (a "trepidação"); e trocar filtro↔gerenciar pulava de uma
+  // largura pra outra sem transição, porque max-width não muda com o conteúdo.
+  const [larguraConteudoIlha, setLarguraConteudoIlha] = useState(0);
+  const observadorConteudoIlhaRef = useRef(null);
+  // Ref por CALLBACK (não `useRef` + efeito): a cápsula é desmontada e
+  // remontada quando Início/Catálogo trocam de posição (`linksTrocados`: são
+  // slots diferentes, `key` não vale fora de array). Um efeito amarrado ao
+  // primeiro nó ficaria observando um elemento morto e a largura congelaria
+  // num valor velho — o seletor de seções da Início sumia/cortava.
+  const medidorConteudoIlhaRef = useCallback((no) => {
+    observadorConteudoIlhaRef.current?.disconnect();
+    observadorConteudoIlhaRef.current = null;
+    if (!no) return;
+    const medir = () => setLarguraConteudoIlha(Math.ceil(no.getBoundingClientRect().width));
+    medir();
+    const observador = new ResizeObserver(medir);
+    observador.observe(no);
+    observadorConteudoIlhaRef.current = observador;
+  }, []);
   const { pathname } = useLocation();
   const movimentoReduzido = usePrefersReducedMotion();
   const emInicio = pathname === '/';
@@ -240,6 +368,7 @@ export default function BarraDeNavegacao({
   // abaixo (forma + conteúdo): os dois usam exatamente a mesma
   // abertura/fechamento que o filtro já usava, só troca o que aparece DENTRO.
   const capsulaExpandidaIlha =
+    gerenciando ||
     ((temFiltroNaIlha || temSecoesNaIlha) && ilhaAtiva) ||
     notificacaoNovosEps ||
     verificandoNovosEps ||
@@ -479,34 +608,75 @@ export default function BarraDeNavegacao({
         {temConteudoNaIlha && (
           <div
             // Ver comentário completo desta coreografia (gate de montagem
-            // estável, `inert`, teto de largura) na versão original deste
-            // wrapper — inalterado, só generalizado pro link que for a
-            // cápsula em cada página.
+            // estável, `inert`) na versão original deste wrapper — inalterado,
+            // só generalizado pro link que for a cápsula em cada página.
+            // `overflow-hidden` sempre: o menu do dropdown é `absolute` com
+            // ancestral posicionado na cápsula (fora deste wrapper), então o
+            // clip não o corta.
             inert={!capsulaExpandidaIlha || undefined}
-            style={estiloConteudoIlha}
-            className={`flex items-center gap-2 transition-[max-width,opacity,margin-left] motion-reduce:transition-none ${
-              capsulaExpandidaIlha
-                ? 'ml-2 max-w-[460px] overflow-visible opacity-100'
-                : 'ml-0 max-w-0 overflow-hidden opacity-0'
+            style={{
+              ...estiloConteudoIlha,
+              width: capsulaExpandidaIlha ? larguraConteudoIlha : 0,
+            }}
+            className={`overflow-hidden transition-[width,opacity,margin-left] motion-reduce:transition-none ${
+              capsulaExpandidaIlha ? 'ml-2 opacity-100' : 'ml-0 opacity-0'
             }`}
           >
-            <span aria-hidden="true" className="h-4 w-px shrink-0 bg-white/15" />
-            <SeletorEmMenu
-              id={idFiltroIlha}
-              opcoes={opcoesDropdownIlha}
-              valor={valorDropdownIlha}
-              aoMudar={aoMudarDropdownIlha}
-              rotuloAcessivel={rotuloAcessivelDropdownIlha}
-              mensagemSobreposta={mensagemIlha}
-              aoClicarMensagem={aoClicarMensagemIlha}
-              tomMensagem={tomMensagemIlha}
-              // Sempre `true` aqui: é o padrão pra QUALQUER dropdown hospedado
-              // pela cápsula (pedido do usuário, 2026-09-28 — antes só o
-              // seletor de seções da Início tinha isso, o filtro da Galeria
-              // ficou de fora por engano na primeira leva). Ver comentário de
-              // `ocuparLarguraDoPai` em `SeletorEmMenu.jsx`.
-              ocuparLarguraDoPai
-            />
+            <div ref={medidorConteudoIlhaRef} className="flex w-max items-center gap-2">
+              <DivisorDaIlha />
+              {/* Os dois painéis ficam montados: o SeletorEmMenu guarda estado
+                  (largura do rótulo, aberto) que um desmonte jogaria fora.
+                  `hidden` tira o inativo do layout, então o medidor acima só
+                  conta o painel visível; sair de `display:none` reinicia o
+                  fade de entrada (`animate-ilha-conteudo`). */}
+              <div
+                className={`flex items-center gap-2 animate-ilha-conteudo motion-reduce:animate-none ${
+                  gerenciando ? 'hidden' : ''
+                }`}
+              >
+                <SeletorEmMenu
+                  id={idFiltroIlha}
+                  opcoes={opcoesDropdownIlha}
+                  valor={valorDropdownIlha}
+                  aoMudar={aoMudarDropdownIlha}
+                  rotuloAcessivel={rotuloAcessivelDropdownIlha}
+                  mensagemSobreposta={mensagemIlha}
+                  aoClicarMensagem={aoClicarMensagemIlha}
+                  tomMensagem={tomMensagemIlha}
+                  // Sempre `true` aqui: é o padrão pra QUALQUER dropdown hospedado
+                  // pela cápsula (pedido do usuário, 2026-09-28 — antes só o
+                  // seletor de seções da Início tinha isso, o filtro da Galeria
+                  // ficou de fora por engano na primeira leva). Ver comentário de
+                  // `ocuparLarguraDoPai` em `SeletorEmMenu.jsx`.
+                  ocuparLarguraDoPai
+                />
+                {/* Some enquanto há notificação/status na cápsula (`mensagemIlha`):
+                    o texto sobreposto já ocupa o lugar do filtro. */}
+                {gerenciar && !mensagemIlha && (
+                  <>
+                    <DivisorDaIlha />
+                    <button
+                      type="button"
+                      onClick={gerenciar.aoAlternar}
+                      className="inline-flex h-8 shrink-0 cursor-pointer items-center whitespace-nowrap text-[18px] font-semibold text-ink-muted outline-none transition-colors hover:text-white focus-visible:text-white motion-reduce:transition-none"
+                    >
+                      Gerenciar
+                    </button>
+                  </>
+                )}
+              </div>
+              {gerenciando && (
+                // `key={fase}`: cada fase troca o conteúdo (contagem →
+                // confirmação → removendo → resultado) e reentra com fade
+                // enquanto a largura anima pro novo tamanho.
+                <div
+                  key={gerenciar.fase}
+                  className="flex items-center gap-2 animate-ilha-conteudo motion-reduce:animate-none"
+                >
+                  <ConteudoGerenciarIlha gerenciar={gerenciar} />
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -638,7 +808,7 @@ export default function BarraDeNavegacao({
             aoSubmeterBusca?.();
           }}
           role="search"
-          className="flex items-center mr-8"
+          className="mr-8 flex items-center"
         >
           <label htmlFor={idBusca} className="sr-only">
             Buscar animes

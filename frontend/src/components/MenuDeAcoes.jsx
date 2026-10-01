@@ -17,7 +17,7 @@ import { MoreVertical } from 'lucide-react';
 // `classeGatilho(aberto)`: className completa do botão-gatilho — cada
 // chamador decide a própria skin (`MenuDeAcoesDoAnime`: quadrado com borda
 // da barra de controles; card de "Continuar assistindo": ícone sem chip
-// sobre a miniatura, mesma linguagem de `BotaoRemoverDoCatalogo`).
+// sobre a miniatura).
 // `ancoragem`: lado que o painel abre (`'right'` por padrão) — evita vazar a
 // viewport quando o gatilho é o item mais à direita do contexto. Só importa
 // quando `posicao="baixo"` (painel abre abaixo do gatilho, `top-full`).
@@ -129,7 +129,7 @@ export default function MenuDeAcoes({
           role="menu"
           aria-label={rotuloGatilho}
           onKeyDown={aoTeclarNoMenu}
-          className={`absolute z-10 min-w-[13rem] overflow-hidden border border-border-chrome bg-[#0f0f10] shadow-xl shadow-black/50 ${
+          className={`absolute z-10 min-w-[13rem] overflow-hidden border border-border-chrome rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50 ${
             posicao === 'lado'
               ? 'right-full top-0 mr-1'
               : `top-full mt-1 ${ancoragem === 'right' ? 'right-0' : 'left-0'}`

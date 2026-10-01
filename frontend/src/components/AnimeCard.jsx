@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Check, Sparkles } from 'lucide-react';
 import { textoDeProximaTemporada } from '../inicio/franquia.js';
 import textoEpisodiosNovos from './BadgeDeEpisodiosNovos.jsx';
-import BotaoRemoverDoCatalogo from './BotaoRemoverDoCatalogo.jsx';
+import BrilhoDaCapa from './BrilhoDaCapa.jsx';
 import IconeSalvar from './IconeSalvar.jsx';
 
 // Linguagem visual portada de Slime_Shell_Web/AnimeCard.jsx (superfície
@@ -51,34 +51,31 @@ import IconeSalvar from './IconeSalvar.jsx';
 // não ligado por padrão pra não repetir o aviso em toda fileira/carrossel da
 // Home que também usa item de feed).
 //
-// `aoRemover` (opcional, sem argumentos — quem chama já sabe qual anime via
-// closure): quando presente, renderiza `<BotaoRemoverDoCatalogo>` DENTRO da
-// própria div da capa (ou, sem capa, dentro da caixa única do card) — mesmo
-// lugar de `inicio/CartaoDeEstreia.jsx`, que já ancorava certo (ver rationale
-// em components/BotaoRemoverDoCatalogo.jsx). Isso só é seguro porque o
-// Link/button deixou de ENVOLVER o conteúdo visual: agora é uma camada
-// invisível `absolute inset-0`, IRMÃ do conteúdo (não mais pai dele), cobrindo
-// o card inteiro pra navegação/ativação — mesmo padrão "stretched link" que
-// `CartaoDeEstreia` não precisa porque não tem Link/button nenhum. Sem essa
-// mudança, aninhar `<BotaoRemoverDoCatalogo>` (um `<button>`) dentro da capa
-// aninharia ele dentro do Link/button também — inválido (button dentro de
-// <a>/<button>). Como a camada de navegação não tem mais texto visível dentro,
-// o nome acessível vem de `aria-labelledby` apontando pro badge "Assistido"
-// (`idBadge`) e pro bloco de legenda (`idLegenda`) — replica o que antes era
-// lido automaticamente por estar tudo dentro do próprio Link.
+// Camada de navegação: Link/button `absolute inset-0`, IRMÃ do conteúdo (não
+// mais pai dele — padrão "stretched link"), cobrindo o card inteiro pra
+// navegação/ativação. Como não tem texto visível dentro, o nome acessível vem
+// de `aria-labelledby` apontando pros badges (`idBadge*`) e pro bloco de
+// legenda (`idLegenda`) — replica o que seria lido se estivesse tudo dentro do
+// próprio Link.
 //
-// Hover do card (pedido explícito do usuário — sem escala: o card NÃO cresce
-// mais no hover, só reage a `group-hover/card:bg-surface-hover` em
-// `classesConteudo` — quem recebe o `:hover` de mouse é a camada de
-// navegação (Link/button `absolute inset-0`, irmã dele), então a reação
-// precisa passar pelo `group/card` do wrapper, não um `hover:` direto), um
-// cinza sutil (token `surface-hover` do tema, já usado no card "sem capa"
-// abaixo e no card de episódio em lista, components/LinhaDeEpisodio.jsx)
-// sobre `p-2 -m-2` — o padding some o
-// conteúdo visualmente do lugar (a margem negativa cancela o padding), só
-// revela a caixa de fundo maior que o pôster+legenda quando o hover pinta
-// ela. Sem isso a caixa de fundo nasceria já visível fora do hover. Cobre o
-// card INTEIRO (pôster + legenda) nos dois casos (com/sem capa).
+// `modoSelecao` (opcional, só `paginas/Galeria.jsx`): o card deixa de navegar e
+// vira um botão de alternância (`aria-pressed={selecionado}`, `aoAlternarSelecao`)
+// — é o "Gerenciar" da ilha dinâmica (components/BarraDeNavegacao.jsx), por
+// onde a remoção em lote acontece (substituiu o botão de remover por card). O
+// círculo de seleção no canto superior direito é decorativo (`aria-hidden`); o
+// estado é comunicado por `aria-pressed`. `selecionado` acende o anel neon.
+//
+// Hover do card COM capa (pedido explícito do usuário — sem escala: o card NÃO
+// cresce no hover): glow ambiente da própria capa atrás do pôster
+// (`BrilhoDaCapa`). Troca a
+// caixa cinza `surface-hover` de `p-3 -m-3` que havia aqui: ela vazava sobre o
+// pôster vizinho (cards colados, sem gap) e exigia a margem negativa só pra
+// existir. Quem recebe o `:hover` de mouse é a camada de navegação
+// (Link/button `absolute inset-0`, irmã do conteúdo), então a reação passa
+// pelo `group/card` do wrapper, não um `hover:` direto. O glow só fica atrás
+// dos vizinhos porque a `<ul>` de FileiraDeCards/GradeDeCatalogo é `isolate` e
+// põe os outros slots acima do slot em hover. Card SEM capa segue com a
+// própria caixa `bg-surface`/`hover:bg-surface-hover` (sem imagem pra brilhar).
 // Sem indicador de foco de teclado por decisão explícita do usuário
 // (2026-09-13) — havia um `anelFoco` aqui (overlay `border-4`, acendendo
 // `border-neon` via `group-focus-within/card`), removido junto com todo
@@ -108,22 +105,24 @@ import IconeSalvar from './IconeSalvar.jsx';
 // fontes (paginas/Inicio.jsx): o site indexou o anime só sob um título que não
 // bate nenhuma referência canônica. Ausente → nada renderizado a mais.
 // `anime.assistido` (do catálogo agregado por franquia, `inicio/franquia.js`):
-// quando `true`, o card ganha uma pill "Assistido" (colapsada, só ícone, fora
-// do hover — ver comentário de `badgeAssistido` abaixo) no canto do pôster.
-// Suprimido em `semLegenda` (card só-ilustração do header da página do
-// anime).
+// quando `true`, título e meta ficam acinzentados (`text-ink-muted`) — sem
+// nenhum elemento sobre o pôster — e um texto só-leitor-de-tela "Já assistido"
+// (`marcaAssistido`) entra no nome acessível. Suprimido em `semLegenda` (card
+// só-ilustração do header da página do anime).
 //
 // `estatico` (opcional): renderiza o MESMO card, mas sem navegação (não é
 // `<Link>` nem `<button>`), sem a animação de hover/foco (escala + borda que
 // acende) e sem o overlay de borda neon. `semLegenda` (opcional): esconde o
 // bloco de legenda (fonte/badge/título) — só a capa. Os dois são usados
 // juntos no header de `paginas/PaginaDoAnime.jsx`, onde o card é ilustração
-// da capa — não um alvo de navegação (já se está na página do anime), sem
-// botão de remover e sem repetir o título que já está ao lado.
+// da capa — não um alvo de navegação (já se está na página do anime) e sem
+// repetir o título que já está ao lado.
 export default function AnimeCard({
   anime,
   aoAtivar,
-  aoRemover,
+  modoSelecao = false,
+  selecionado = false,
+  aoAlternarSelecao,
   desabilitado = false,
   estatico = false,
   semLegenda = false,
@@ -138,36 +137,22 @@ export default function AnimeCard({
   const capa = anime.capa_path ?? anime.capa_url ?? null;
   const titulo = anime.titulo ?? anime.titulo_romaji;
   const assistido = !semLegenda && Boolean(anime.assistido);
-  // Ids do nome acessível da camada de navegação (ver nota de `aoRemover` no
-  // topo do arquivo) — só usados nos ramos com Link/button real (`estatico`
+  // Ids do nome acessível da camada de navegação (ver nota no topo do arquivo) — só usados nos ramos com Link/button real (`estatico`
   // não precisa, não navega).
   const idBadge = useId();
   const idLegenda = useId();
 
-  // Marca "assistido": pill dentro do grupo empilhado no canto superior
-  // esquerdo do pôster (`pillsSuperiores`, ver abaixo). Colapsada (só ícone)
-  // fora do hover, expande mostrando "Assistido" no hover do card — mesma
-  // animação de sempre (pedido explícito do usuário, 2026-09-21), preservada
-  // ao trocar a pele abaixo. Cor/tamanho do ícone agora seguem o botão de
-  // remover (components/BotaoRemoverDoCatalogo.jsx: `h-8 w-8`,
-  // `strokeWidth={2.5}`, sem chip de fundo — `drop-shadow` no lugar do
-  // `bg-black/80 backdrop-blur-md` de antes), pedido explícito do usuário
-  // (2026-09-21), pra poluir menos o canto do pôster. `max-w-0 opacity-0` →
-  // `group-hover/card:max-w-32 group-hover/card:opacity-100` no texto (não no
-  // `<span>` pai inteiro): encolher o pai junto encolheria também o ícone. O
-  // `aria-label` no pai cobre o nome acessível mesmo com o texto colapsado.
-  const badgeAssistido = assistido && (
-    <span
-      id={idBadge}
-      className="absolute left-2 top-1 z-10 inline-flex h-8 items-center gap-1 whitespace-nowrap text-sm font-semibold uppercase tracking-wide text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
-      aria-label="Já assistido"
-    >
-      <Check aria-hidden="true" strokeWidth={4} className="h-6 w-6 shrink-0" />
-      <span className="max-w-0 overflow-hidden opacity-0 transition-all duration-300 ease-out group-hover/card:max-w-32 group-hover/card:opacity-100 motion-reduce:transition-none">
-        Assistido
-      </span>
+  // Marca "assistido": SÓ pro leitor de tela (a marca visual é o título/meta
+  // acinzentados, `corDoTitulo`/`corDaMeta` abaixo — pedido explícito do
+  // usuário, nada sobre o pôster). O `id` entra no `aria-labelledby` da camada
+  // de navegação (`idsRotulo`).
+  const marcaAssistido = assistido && (
+    <span id={idBadge} className="sr-only">
+      Já assistido
     </span>
   );
+  const corDoTitulo = assistido ? 'text-ink-muted' : 'text-white';
+  const corDaMeta = assistido ? 'text-ink-muted/70' : 'text-ink-muted';
 
   // "Já no catálogo" — ver `indicarCatalogado` no topo do arquivo. Ícone
   // trocado pro mesmo `IconeSalvar` (fita, preenchida = já salvo) de
@@ -176,7 +161,7 @@ export default function AnimeCard({
   // tenho isso" nos dois cards. `preenchido` (sólido/branco): esta pill só
   // aparece quando o anime JÁ está catalogado, nunca no estado "ainda não
   // salvo" (contorno) que o ícone também sabe desenhar. Mesma pele de
-  // `badgeAssistido` acima (pedido explícito do usuário, 2026-09-21): sem
+  // o botão de remover (pedido explícito do usuário, 2026-09-21): sem
   // chip de fundo, só `drop-shadow`, mesmo posicionamento (`absolute left-2
   // top-1`) e mesmo tamanho de ícone (`h-6 w-6`) — as duas pills do canto
   // ficam visualmente idênticas, só o ícone/texto mudam. `max-w-48` (não
@@ -237,7 +222,7 @@ export default function AnimeCard({
   const badgeEpisodio = episodioLancado != null && (
     <span
       id={idBadgeEpisodio}
-      className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 items-center gap-1 whitespace-nowrap bg-black/80 backdrop-blur-md px-2.5 text-sm font-semibold uppercase tracking-wide text-white"
+      className={`absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 px-3.5 items-center gap-1 whitespace-nowrap rounded-2xl bg-black/80 backdrop-blur-md px-2.5 text-sm font-semibold uppercase tracking-wide text-white`}
     >
       <Sparkles aria-hidden="true" className="h-5 w-5" />
       EP.{episodioLancado}
@@ -285,11 +270,11 @@ export default function AnimeCard({
   const idBadgeAviso = idBadge + '-aviso';
   // Centralizada (`left-1/2 -translate-x-1/2`) na base do pôster, não no
   // canto — `bottom-2` espelha o `top-2`/`left-0 top-0` que
-  // `BotaoRemoverDoCatalogo`/`pillsSuperiores` usam no topo.
+  // `pillsSuperiores` usa no topo.
   const badgeAviso = avisoNovos && (
     <span
       id={idBadgeAviso}
-      className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 items-center gap-1 whitespace-nowrap bg-black/80 backdrop-blur-md px-2.5 text-sm font-semibold uppercase tracking-wide text-white"
+      className={`absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 items-center gap-1 whitespace-nowrap bg-black/80 backdrop-blur-md px-2.5 text-sm font-semibold uppercase tracking-wide text-white`}
     >
       <Sparkles aria-hidden="true" className="h-5 w-5" />
       {avisoNovos}
@@ -334,7 +319,7 @@ export default function AnimeCard({
     ? `${rotuloTemporada}EP.${numeroDeEpisodios}`
     : `${numeroDeEpisodios} episódios`;
   const tagTemporada = !semTagEpisodios && episodioLancado == null && numeroDeEpisodios != null && (
-    <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+    <p className={`text-xs font-semibold uppercase tracking-wide ${corDaMeta}`}>
       {textoContagem}
       {rotuloVersao && (
         <>
@@ -351,23 +336,31 @@ export default function AnimeCard({
     </p>
   );
 
-  // Grupo que ancora as pills do canto superior esquerdo do pôster (pedido
-  // explícito do usuário, 2026-09-15) — `badgeAssistido`/`badgeCatalogado` têm
-  // posição própria (`absolute left-2 top-1`, ver comentários delas acima) e
-  // nunca coexistem na prática — os dois únicos call sites de
-  // `indicarCatalogado` (`paginas/Inicio.jsx`/`paginas/PaginaDoAnime.jsx`)
-  // montam um `anime` sem campo `assistido`, então as duas pills não competem
-  // pelo mesmo canto. `absolute` (não `relative`) no wrapper ancora no canto
-  // do pôster (`relative` na div da capa) de forma confiável. `badgeEpisodio`/
-  // `badgeAviso` (episódio novo/recém-lançado) não entram aqui — ficam
-  // centralizadas na base do pôster (ver comentário delas acima);
-  // `avisoProximaTemporada` continua como texto na legenda (ver comentário
-  // dela acima).
-  const pillsSuperiores = (badgeAssistido || badgeCatalogado) && (
+  // Pill do canto superior esquerdo do pôster: "Já no catálogo"
+  // (`badgeCatalogado`, posição própria `absolute left-2 top-2`).
+  // `badgeEpisodio`/`badgeAviso` ficam centralizadas na base do pôster (ver
+  // comentário delas acima); `avisoProximaTemporada` continua como texto na
+  // legenda.
+  const pillsSuperiores = badgeCatalogado && (
     <div className="absolute left-0 top-0 z-10 flex flex-col items-start gap-1.5">
-      {badgeAssistido}
       {badgeCatalogado}
     </div>
+  );
+
+  // Círculo de seleção do `modoSelecao` (ver nota no topo do arquivo) e anel
+  // do card selecionado — o anel vai no recorte do pôster (com capa) ou na
+  // caixa única (sem capa). `estatico` nunca entra em modo de seleção.
+  const emSelecao = modoSelecao && !estatico;
+  const anelDeSelecao = emSelecao && selecionado ? ' ring-[3px] ring-neon' : '';
+  const circuloSelecao = emSelecao && (
+    <span
+      aria-hidden="true"
+      className={`absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 transition-colors duration-200 motion-reduce:transition-none ${
+        selecionado ? 'border-neon bg-neon text-white' : 'border-white bg-black/40 text-transparent'
+      }`}
+    >
+      <Check strokeWidth={4} className="h-4 w-4" />
+    </span>
   );
 
   // Título primeiro (sem cor de hover — pedido explícito do usuário),
@@ -376,7 +369,7 @@ export default function AnimeCard({
   // sobre o pôster (`badgeAviso` acima, centralizada na base).
   const legenda = !semLegenda && (
     <>
-      <h2 className="line-clamp-2 text-sm font-semibold leading-snug text-white lg:text-base">
+      <h2 className={`line-clamp-2 text-sm font-semibold leading-snug lg:text-base ${corDoTitulo}`}>
         {titulo}
       </h2>
       {tagTemporada}
@@ -397,26 +390,23 @@ export default function AnimeCard({
   let classesConteudo;
   let conteudo;
   if (capa) {
-    // COM capa: pôster (imagem, recorte próprio) + legenda abaixo, mas as
-    // duas envolvidas por UMA caixa de hover só (`p-3 -m-3`: o padding some o
-    // conteúdo do lugar — a margem negativa cancela o padding no layout do
-    // slot, então o pôster não encolhe —, só revelando a caixa maior que
-    // pôster+legenda quando `hover:bg-surface-hover` pinta ela; ver bloco de
-    // comentário no topo). 12px de cada lado: o slot da grade/fileira
-    // (GradeDeCatalogo.jsx/FileiraDeCards.jsx) não tem mais padding nenhum
-    // (removido a pedido do usuário, 2026-09-15) — o halo de hover INVADE o
-    // pôster vizinho agora (consequência conhecida, documentada no topo de
-    // GradeDeCatalogo.jsx; não corrigido aqui).
-    classesConteudo =
-      'relative flex w-full flex-col gap-2  p-3 -m-3 text-left transition-colors duration-300 ease-out group-hover/card:bg-surface-hover motion-reduce:transition-none';
+    // COM capa: pôster (imagem, recorte próprio) + legenda abaixo. O glow
+    // (`BrilhoDaCapa`) é irmão do pôster, não filho — ver o porquê lá. Só em
+    // card navegável: `estatico` não recebe `group-hover/card`.
+    const brilhoDaCapa = !estatico && <BrilhoDaCapa capa={capa} />;
+    classesConteudo = 'relative flex w-full flex-col gap-2 text-left';
     conteudo = (
       <>
-        <div className="relative aspect-[2/3] w-full overflow-hidden bg-surface">
+        {brilhoDaCapa}
+        <div
+          className={`relative aspect-[2/3] rounded-2xl w-full overflow-hidden bg-surface${anelDeSelecao}`}
+        >
           <img src={capa} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
           {pillsSuperiores}
           {badgeEpisodio}
           {badgeAviso}
-          {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
+          {marcaAssistido}
+          {circuloSelecao}
         </div>
         {!semLegenda && (
           <div id={idLegenda} className="relative flex flex-col gap-1">
@@ -430,14 +420,14 @@ export default function AnimeCard({
     // título ancorado embaixo via `mt-auto`. Sem imagem, não há degradê pra
     // vazar no canto — nada aqui precisa da separação pôster/legenda (já era
     // uma caixa só de hover antes desta mudança).
-    classesConteudo =
-      'relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left transition-all duration-200 group-hover/card:bg-surface-hover';
+    classesConteudo = `relative flex aspect-[2/3] w-full flex-col justify-between overflow-hidden rounded-xl bg-surface p-4 text-left transition-all duration-200 group-hover/card:bg-surface-hover${anelDeSelecao}`;
     conteudo = (
       <>
         {pillsSuperiores}
         {badgeEpisodio}
         {badgeAviso}
-        {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
+        {marcaAssistido}
+        {circuloSelecao}
         {!semLegenda && (
           <div id={idLegenda} className="relative mt-auto flex flex-col gap-1">
             {legenda}
@@ -453,11 +443,10 @@ export default function AnimeCard({
   // título casaria com QUALQUER ancestral `.group` e acenderia todos os cards
   // da fileira de uma vez ao passar o mouse em qualquer ponto dela. Sem
   // escala (removida a pedido do usuário): só serve de raiz pro grupo, sem
-  // classe própria de hover/foco. `classesConteudo` reage via
-  // `group-hover/card:` (não `hover:` direto) porque quem recebe o hover do
-  // mouse agora é a camada de navegação (Link/button `absolute inset-0`
-  // abaixo), irmã dele, não o próprio `classesConteudo` — `:hover` não
-  // atravessa pra um irmão, só pro ancestral comum (`wrapper`).
+  // classe própria de hover/foco. O conteúdo reage via `group-hover/card:`
+  // (não `hover:` direto) porque quem recebe o hover do mouse é a camada de
+  // navegação (Link/button `absolute inset-0` abaixo), irmã do conteúdo —
+  // `:hover` não atravessa pra um irmão, só pro ancestral comum (`wrapper`).
   const wrapper = 'group/card relative';
 
   if (estatico) {
@@ -470,10 +459,10 @@ export default function AnimeCard({
   }
 
   // Nome acessível da camada de navegação: `aria-labelledby` junta os badges
-  // "EP.n" (episódio recém-lançado), "Assistido", "Já no catálogo" e o aviso
+  // "EP.n" (episódio recém-lançado), "Já assistido", "Já no catálogo" e o aviso
   // de episódio novo, quando presentes, nessa ordem — não é mais a ordem
   // visual (EP.n/aviso de episódio novo migraram pra base do pôster,
-  // `badgeEpisodio`/`badgeAviso`; Assistido/Já no catálogo seguem no canto,
+  // `badgeEpisodio`/`badgeAviso`; Já no catálogo segue no canto,
   // `pillsSuperiores`), só a ordem de leitura — com o bloco de legenda
   // (título + tags, que ainda inclui o aviso de próxima temporada como
   // texto), igual ao texto que seria lido se estivesse tudo dentro do
@@ -491,6 +480,22 @@ export default function AnimeCard({
     .filter(Boolean)
     .join(' ');
   const propsRotulo = idsRotulo ? { 'aria-labelledby': idsRotulo } : { 'aria-label': titulo };
+
+  if (emSelecao) {
+    return (
+      <div className={wrapper}>
+        <div className={classesConteudo}>{conteudo}</div>
+        <button
+          type="button"
+          onClick={aoAlternarSelecao}
+          aria-pressed={selecionado}
+          className="absolute inset-0 cursor-pointer outline-none"
+          {...propsRotulo}
+        />
+        {sobreposicao}
+      </div>
+    );
+  }
 
   if (idCatalogado != null) {
     return (

@@ -153,7 +153,7 @@ export default function SeletorDeTemporada({
           role="menu"
           aria-label="Temporada"
           onKeyDown={aoTeclarNoMenu}
-          className="absolute left-0 top-full z-10 mt-1 min-w-[20rem] overflow-hidden border border-border-chrome bg-[#0f0f10] shadow-xl shadow-black/50"
+          className="absolute left-0 top-full z-10 mt-1 min-w-[20rem] overflow-hidden border rounded-2xl border-border-chrome bg-[#0f0f10] shadow-xl shadow-black/50"
         >
           {temporadas.map((temporada, indice) => {
             const atual = temporada.id === animeIdAtual;
