@@ -1,4 +1,5 @@
-import BotaoRemoverDoCatalogo from '../components/BotaoRemoverDoCatalogo.jsx';
+import { Check } from 'lucide-react';
+import BrilhoDaCapa from '../components/BrilhoDaCapa.jsx';
 import IconeSalvar from '../components/IconeSalvar.jsx';
 
 // Card de anime que ainda NÃO estreou. Dois usos:
@@ -15,15 +16,19 @@ import IconeSalvar from '../components/IconeSalvar.jsx';
 // armadilha de teclado). Quando o anime estrear de verdade e aparecer num site,
 // a página dele passa a resolver fonte normalmente.
 //
-// Ação de salvar só renderiza com `aoSalvar`; o botão de remover só com
-// `aoRemover` — NUNCA os dois juntos (mesma posição, se coexistissem um
-// cobriria o outro). A ausência do handler é o sinal — sem prop booleana. O
-// botão de salvar é o ícone de fita (`IconeSalvar`, mesmo desenho do
-// Instagram), sobreposto no canto superior direito da capa — DENTRO da
-// própria div da capa (não como irmão dela lá fora, ver nota mais abaixo).
-// SEMPRE visível (não escondido até hover, ao contrário de
-// `BotaoRemoverDoCatalogo`): salvar é a ação primária deste card e precisa
-// ficar visível de cara.
+// Ação de salvar só renderiza com `aoSalvar` (a ausência do handler é o sinal —
+// sem prop booleana). O botão de salvar é o ícone de fita (`IconeSalvar`, mesmo
+// desenho do Instagram), sobreposto no canto superior esquerdo da capa, DENTRO
+// da própria div da capa (não como irmão dela lá fora). SEMPRE visível (não
+// escondido até hover): salvar é a ação primária deste card e precisa ficar
+// visível de cara.
+//
+// `modoSelecao`/`selecionado`/`aoAlternarSelecao` (só `paginas/Galeria.jsx`):
+// mesmo "Gerenciar" do AnimeCard (ver nota lá) — com `modoSelecao` o card
+// ganha um botão `absolute inset-0` de alternância (`aria-pressed`), o círculo
+// de seleção no canto superior direito e o anel neon quando selecionado. É a
+// única exceção ao "inerte de propósito" acima: o botão só existe nesse modo e
+// tem ação de verdade.
 //
 // `aoSalvar` é um TOGGLE, não só "salvar": com `salvo=false` o clique
 // materializa (fita em contorno); com `salvo=true` o MESMO clique remove essa
@@ -40,29 +45,19 @@ import IconeSalvar from '../components/IconeSalvar.jsx';
 // `estreia_em` (data completa da AniList) ou pelo menos `ano` passam a existir.
 //
 // Mesma mecânica visual de hover do AnimeCard — sem escala (removida a
-// pedido do usuário): hover de mouse → `hover:bg-surface-hover` sobre
-// `p-3 -m-3` (o padding some o conteúdo do lugar, a margem negativa cancela;
-// só revela a caixa de fundo quando o hover pinta ela), cobrindo o card
-// INTEIRO (pôster + legenda), não só a imagem. Sem indicador de foco de
-// teclado por decisão explícita do usuário (2026-09-13, ver
-// components/AnimeCard.jsx) — havia um anel/borda neon aqui antes, removido
-// junto com o resto do sistema. Grupo NOMEADO `group/card` (a fileira
-// horizontal tem `group/fileira` próprio pras setas).
+// pedido do usuário): glow ambiente da capa atrás do pôster (`BrilhoDaCapa`,
+// ver components/AnimeCard.jsx), pôster com `rounded-2xl`. Sem indicador de
+// foco de teclado por decisão explícita do usuário (2026-09-13, ver
+// components/AnimeCard.jsx). Grupo NOMEADO `group/card` (a fileira horizontal
+// tem `group/fileira` próprio pras setas).
 //
 // Título ABAIXO do pôster, em fluxo normal — não mais sobre um degradê por
 // cima da imagem (rationale completo do porquê em components/AnimeCard.jsx,
 // mesma correção: o degradê deixava uma lasca sem escurecer no canto
-// arredondado em alguns motores gráficos). O botão de salvar e
-// `BotaoRemoverDoCatalogo` (ambos `absolute right-2 top-2`, nunca os dois ao
-// mesmo tempo — ver nota acima) moram DENTRO da div da capa (`relative
-// aspect-[2/3] overflow-hidden`), não como irmãos dela no wrapper `p-3 -m-3`
-// de fora: esse wrapper existe só pra pintar o fundo do hover (ver bloco
-// abaixo) e NÃO é uma referência de posição confiável — o padding/margem
-// negativa que "cancela" só funciona no eixo horizontal (margem vertical
-// colapsa com o pai, que não tem padding/borda pra bloquear isso), então um
-// `top-2` ancorado nele desalinhava do topo real do pôster. Ancorando na
-// própria div da capa, a posição é exata por construção e qualquer transbordo
-// sai recortado (`overflow-hidden`) de graça.
+// arredondado em alguns motores gráficos). O botão de salvar e o círculo de
+// seleção (`absolute`) moram DENTRO da div da capa (`relative aspect-[2/3]
+// overflow-hidden`): a posição é exata por construção e qualquer transbordo
+// sai recortado de graça.
 
 // Instâncias únicas de módulo — recriar `Intl.*` por render é caro.
 const fmtDia = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'long' });
@@ -111,15 +106,28 @@ function textoDeEstreia(item) {
   return 'Estreia em breve';
 }
 
-export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRemover }) {
+export default function CartaoDeEstreia({
+  item,
+  salvo,
+  salvando,
+  aoSalvar,
+  modoSelecao = false,
+  selecionado = false,
+  aoAlternarSelecao,
+}) {
   const titulo =
     item.titulo || item.titulo_romaji || item.titulo_ingles || 'Sem título';
   const capa = item.capa_url ?? item.capa_path ?? null;
 
   return (
     <div className="group/card relative">
-      <div className="relative flex w-full flex-col gap-2  p-3 -m-3 transition-colors duration-300 ease-out hover:bg-surface-hover motion-reduce:transition-none">
-        <div className="relative aspect-[2/3] w-full overflow-hidden  bg-surface">
+      <div className="relative flex w-full flex-col gap-2">
+        {capa && <BrilhoDaCapa capa={capa} />}
+        <div
+          className={`relative aspect-[2/3] w-full overflow-hidden rounded-2xl bg-surface${
+            modoSelecao && selecionado ? ' ring-[3px] ring-neon' : ''
+          }`}
+        >
           {capa && (
             <img
               src={capa}
@@ -128,14 +136,8 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
               className="absolute inset-0 h-full w-full object-cover"
             />
           )}
-          {/* Salvar/remover moram AQUI DENTRO (não como irmãos do pôster lá
-              embaixo em `A`) — ver nota de posição no bloco de comentário do
-              topo do arquivo: o wrapper `p-3 -m-3` NÃO é uma referência de
-              posição confiável (colapso de margem verticais entre ele e o
-              pai), então ancorar `top-2`/`left-2` nele deixava o ícone
-              flutuando fora da capa. Aqui dentro o pai É a própria capa
-              (`relative overflow-hidden`), então a posição é exata e
-              qualquer transbordo fica recortado de graça. */}
+          {/* O botão de salvar mora AQUI DENTRO (não como irmão do pôster): a
+              posição é exata e o transbordo fica recortado. */}
           {aoSalvar &&
             (salvo ? (
               <button
@@ -158,7 +160,16 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
                 <IconeSalvar />
               </button>
             ))}
-          {aoRemover && <BotaoRemoverDoCatalogo titulo={titulo} aoRemover={aoRemover} />}
+          {modoSelecao && (
+            <span
+              aria-hidden="true"
+              className={`absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 transition-colors duration-200 motion-reduce:transition-none ${
+                selecionado ? 'border-neon bg-neon text-white' : 'border-white bg-black/40 text-transparent'
+              }`}
+            >
+              <Check strokeWidth={4} className="h-4 w-4" />
+            </span>
+          )}
         </div>
         <div className="relative flex flex-col gap-1">
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors lg:text-base">
@@ -169,6 +180,15 @@ export default function CartaoDeEstreia({ item, salvo, salvando, aoSalvar, aoRem
           </p>
         </div>
       </div>
+      {modoSelecao && (
+        <button
+          type="button"
+          onClick={aoAlternarSelecao}
+          aria-pressed={selecionado}
+          aria-label={`${titulo}, ${textoDeEstreia(item)}`}
+          className="absolute inset-0 cursor-pointer outline-none"
+        />
+      )}
     </div>
   );
 }

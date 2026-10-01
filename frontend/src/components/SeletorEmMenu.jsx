@@ -142,8 +142,20 @@ export default function SeletorEmMenu({
   // metade final já no tamanho certo quando o texto some/aparece).
   const medidorRef = useRef(null);
   const [larguraRotulo, setLarguraRotulo] = useState(null);
+  // `ResizeObserver` + descarte de largura 0: o pai pode esconder este
+  // componente com `display:none` (a ilha esconde o filtro no modo Gerenciar,
+  // BarraDeNavegacao.jsx) — medir nesse estado dava 0 e o rótulo voltava com
+  // largura zero (só a seta aparecia). Ao reaparecer, o observer re-mede.
   useLayoutEffect(() => {
-    if (medidorRef.current) setLarguraRotulo(medidorRef.current.offsetWidth);
+    const medidor = medidorRef.current;
+    if (!medidor) return undefined;
+    const medir = () => {
+      if (medidor.offsetWidth > 0) setLarguraRotulo(medidor.offsetWidth);
+    };
+    medir();
+    const observador = new ResizeObserver(medir);
+    observador.observe(medidor);
+    return () => observador.disconnect();
   }, [textoAlvo]);
 
   useEffect(() => {
@@ -234,7 +246,7 @@ export default function SeletorEmMenu({
             setAberto(true);
           }
         }}
-        className={`inline-flex items-center gap-2 pr-2.5 h-8 text-[18px] font-semibold outline-none transition-colors hover:border-neon cursor-pointer ${
+        className={`inline-flex items-center gap-2 h-8 text-[18px] font-semibold outline-none transition-colors hover:border-neon cursor-pointer ${
           mensagemSobreposta && tomMensagem === 'alerta'
             ? 'text-amber-300 hover:text-amber-200'
             : 'text-ink-muted hover:text-white'
@@ -289,7 +301,7 @@ export default function SeletorEmMenu({
           // `ocuparLarguraDoPai`, senão `left-0 min-w-full` (o próprio
           // botão gatilho, comportamento default/Galeria) — ver comentário
           // de `ocuparLarguraDoPai` no topo do arquivo.
-          className={`absolute top-full z-20 mt-1 border border-border-chrome bg-[#0f0f10] shadow-xl shadow-black/50 ${
+          className={`absolute top-full z-20 mt-1 border border-border-chrome rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50 ${
             ocuparLarguraDoPai ? 'inset-x-0' : 'left-0 min-w-full'
           }`}
         >

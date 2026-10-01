@@ -1,11 +1,16 @@
 import { SOMBRA_SLIDE_ATIVO } from './CarrosselDestaques.jsx';
-import { CLASSE_GUTTER, CLASSES_POR_PAGINA, FLEX_BASIS_SLOT } from './tamanhoDeCard.js';
+import {
+  CLASSE_GUTTER,
+  CLASSE_RESPIRO_POSTER,
+  CLASSES_POR_PAGINA,
+  FLEX_BASIS_SLOT_COM_RESPIRO,
+} from './tamanhoDeCard.js';
 import { SlotDeCard } from './GradeDeCards.jsx';
 
 // Grade de catálogo: irmã de FileiraDeCards.jsx que QUEBRA LINHA (`flex-wrap`)
 // em vez de rolar. Compartilha o vocabulário de tamanho de ./tamanhoDeCard.js
 // (mesmo `--por-pagina` por breakpoint via `CLASSES_POR_PAGINA`, mesmo
-// `CLASSE_GUTTER`, mesmo `FLEX_BASIS_SLOT`), então o card sai com a MESMA
+// `CLASSE_GUTTER`, mesmo `FLEX_BASIS_SLOT_COM_RESPIRO`), então o card sai com a MESMA
 // largura de slot que a fileira por construção — desde que as duas passem o
 // MESMO `tamanho`: as fileiras de pôster da Home (Próximas estreias, Top 10)
 // e as duas grades daqui passam `tamanho="pequeno"` explicitamente (pedido
@@ -16,10 +21,11 @@ import { SlotDeCard } from './GradeDeCards.jsx';
 // `--por-pagina` intacto (6 por linha no xl, tamanho "pequeno").
 // FileiraDeCards.jsx usava `p-[10px]` no slot antes; depois (2026-09-15) o
 // usuário removeu de lá também, então hoje as duas telas têm o MESMO
-// tratamento de padding também. Consequência conhecida: com o respiro
-// zerado, o halo cinza do hover (`p-3 -m-3` em components/AnimeCard.jsx,
-// ~12px) não tem mais pra onde vazar sem invadir o pôster vizinho — não
-// corrigido aqui, avisar se incomodar visualmente.
+// tratamento de padding também. `isolate` + `[&:has(li:hover)>li:not(:hover)]:z-1`
+// na `<ul>`: o glow do hover (components/AnimeCard.jsx, `-z-10`, vaza ~14px pra
+// fora do pôster) precisa ficar ATRÁS dos pôsteres vizinhos, que são
+// contíguos — sem isso o slot em hover (ou o stacking context do `SlotDeCard`
+// animado) pintaria o brilho por cima do vizinho. Mesma regra em FileiraDeCards.jsx.
 //
 // Sem setas / `onScroll` / `medirLimites` / `useRef`: não há trilha rolável
 // pra medir. Nada aqui recorta o overflow (não há `overflow-x-auto` como na
@@ -73,7 +79,7 @@ export default function GradeDeCatalogo({
   return (
     <ul
       role="list"
-      className={`flex flex-wrap ${CLASSE_GUTTER} gap-y-[36px] pt-[22px] pb-[24px] ${
+      className={`isolate flex flex-wrap [&:has(li:hover)>li:not(:hover)]:z-1 ${CLASSE_GUTTER} ${CLASSE_RESPIRO_POSTER} gap-y-[36px] pt-[22px] pb-[24px] ${
         CLASSES_POR_PAGINA[tamanho] ?? CLASSES_POR_PAGINA.grande
       }`}
     >
@@ -81,7 +87,7 @@ export default function GradeDeCatalogo({
         <li
           key={chaveDoItem(item)}
           className="relative shrink-0 grow-0"
-          style={{ flexBasis: FLEX_BASIS_SLOT }}
+          style={{ flexBasis: FLEX_BASIS_SLOT_COM_RESPIRO }}
         >
           {/* Wrapper só da sombra, mesmo markup de FileiraDeCards.jsx: traça o
               retângulo `rounded-xl` (raio do AnimeCard) na borda do card. Fica

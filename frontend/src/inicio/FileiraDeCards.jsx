@@ -3,8 +3,9 @@ import { SOMBRA_SLIDE_ATIVO } from './CarrosselDestaques.jsx';
 import IconeSeta from './IconeSeta.jsx';
 import {
   CLASSE_GUTTER,
+  CLASSE_RESPIRO_POSTER,
   CLASSES_POR_PAGINA,
-  FLEX_BASIS_SLOT,
+  FLEX_BASIS_SLOT_COM_RESPIRO,
   PADDING_TITULO,
 } from './tamanhoDeCard.js';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
@@ -29,8 +30,13 @@ const _PONTOS_DE_QUEBRA = [
 // abaixo), por isso extraído: as duas precisam do MESMO valor pra as
 // pílulas baterem com onde as setas realmente param.
 function _passoDaTrilha(trilha) {
-  const paddingInline = Number.parseFloat(getComputedStyle(trilha).paddingInlineStart);
-  return trilha.clientWidth - 2 * paddingInline;
+  const estilo = getComputedStyle(trilha);
+  const paddingInline = Number.parseFloat(estilo.paddingInlineStart);
+  // + 1 gap: a próxima página começa DEPOIS do respiro entre slots; sem somar,
+  // cada página deslizava um gap a menos e o alinhamento derivava. `normal`
+  // (sem gap) vira NaN → 0.
+  const gap = Number.parseFloat(estilo.columnGap) || 0;
+  return trilha.clientWidth - 2 * paddingInline + gap;
 }
 
 // Fileira horizontal de cards no estilo "prateleira" do Disney+ (título +
@@ -235,8 +241,21 @@ export default function FileiraDeCards({
           posicionamento absoluto delas. Grupo NOMEADO — os cards dentro têm
           `group/card` próprio; `group` puro nos dois faria o hover da trilha
           acender a borda de todos os cards de uma vez. */}
-      <div className="group/fileira relative">
-        {/* `pt-[22px] pb-[44px]` NÃO é cosmético: `overflow-x-auto` também
+      <div className="group/fileira relative flow-root">
+        {/* GLOW VAZANDO DA SEÇÃO: a trilha (`overflow-x-auto`) recorta nos dois
+            eixos, então o brilho do hover (`BrilhoDaCapa`: ~55px acima e ~80px
+            abaixo do pôster, com o blur) só aparece se o box de rolagem for
+            MAIOR que a fileira visível. Por isso `pt-[80px] pb-[88px]`
+            compensados por `-mt-[58px] -mb-[44px]`: o espaçamento efetivo
+            segue `22px` em cima / `44px` embaixo (o `flow-root` do wrapper
+            impede a margem negativa de colapsar e mover o wrapper — as setas
+            `inset-y-0` continuam na altura original), mas o recorte fica
+            mais longe. A trilha passa a SOBREPOR o título e a seção de baixo
+            com padding transparente: `pointer-events-none` nela e
+            `pointer-events-auto` nos `<li>`, senão ela taparia as pílulas de
+            paginação. Custo: rolar com o gesto horizontal sobre o gap/padding
+            (fora de um card) não rola a fileira.
+            `pt-[22px] pb-[44px]` (valores efetivos) NÃO é cosmético: `overflow-x-auto` também
             recorta no eixo Y, e a drop shadow do billboard desce ~46px abaixo
             da borda do card (`0 26px 30px -10px`). O `pb-[44px]` foi calibrado
             de quando o slot ainda tinha `p-[10px]` (card 10px acima da borda
@@ -249,17 +268,14 @@ export default function FileiraDeCards({
             `comSombra=true` voltar a ser usado. O `pt` também é o respiro
             título -> cards (o h2 não tem `margin-bottom`). Mesma classe de
             armadilha do `py-16 -my-16` de CarrosselDestaques.jsx. Sem classe
-            `gap-*` e sem padding no `<li>`: cards colam borda a borda (mesmo
-            tratamento de GradeDeCatalogo.jsx, ver comentário lá) — EXCETO
-            `tamanho="episodio"` (só "Continuar assistindo", 2026-09-18): os
-            cards de `LinhaDeEpisodio.jsx` em modo grade (`CartaoDeEpisodio`)
-            não têm pôster com bordas arredondadas pra se destacar sozinho
-            contra o vizinho como o `AnimeCard` tem — sem respiro, as caixas
-            16:9 (`bg-surface`, cantos retos) coladas ficavam indistinguíveis.
-            `gap-x-[20px]` (não padding no `<li>`, pedido do usuário: a
-            fileira acompanha o título, não o contrário) insere respiro só
-            ENTRE os slots — a borda de fora do primeiro/último card continua
-            colada no gutter, como os demais tamanhos. Scrollbar escondida nos
+            padding no `<li>`; o respiro entre pôsteres é `gap-x-4` na trilha
+            (`CLASSE_RESPIRO_POSTER`, mesmo de GradeDeCatalogo.jsx) — inclusive
+            em `tamanho="episodio"` ("Continuar assistindo"), que antes tinha
+            `gap-x-[20px]` próprio porque as caixas 16:9 de cantos retos
+            coladas não se distinguiam; hoje o card tem cantos `rounded-2xl` e
+            glow como o `AnimeCard`, então segue o mesmo padrão. O respiro só
+            fica ENTRE os slots — a borda de fora do primeiro/último card
+            continua colada no gutter. Scrollbar escondida nos
             dois motores (Firefox / WebKit). `--por-pagina` (via
             `CLASSES_POR_PAGINA[tamanho]`) por breakpoint aqui, nunca como prop
             numérica. */}
@@ -267,15 +283,15 @@ export default function FileiraDeCards({
           ref={trilhaRef}
           id={idTrilha}
           onScroll={medirLimites}
-          className={`flex overflow-x-auto ${CLASSE_GUTTER} pt-[22px] pb-[44px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
-            tamanho === 'episodio' ? 'gap-x-[20px]' : ''
+          className={`isolate flex overflow-x-auto [&:has(li:hover)>li:not(:hover)]:z-1 ${CLASSE_GUTTER} pointer-events-none -mt-[58px] -mb-[44px] pt-[80px] pb-[88px] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+            CLASSE_RESPIRO_POSTER
           } ${CLASSES_POR_PAGINA[tamanho] ?? CLASSES_POR_PAGINA.grande}`}
         >
           {lista.map((item, indice) => (
             <li
               key={chaveDoItem(item)}
-              className="relative shrink-0 grow-0"
-              style={{ flexBasis: FLEX_BASIS_SLOT }}
+              className="pointer-events-auto relative shrink-0 grow-0"
+              style={{ flexBasis: FLEX_BASIS_SLOT_COM_RESPIRO }}
             >
               {/* Wrapper só da sombra: traça o retângulo `rounded-xl` (mesmo
                   raio do AnimeCard) exatamente na borda do card — hoje a

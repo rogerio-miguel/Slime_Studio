@@ -5,7 +5,6 @@ import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
-import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
@@ -388,53 +387,115 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
     return ordenarPorTitulo(lista);
   }, [franquias, termoBuscaNormalizado, filtroSelecionado]);
 
-  const [animeParaRemover, setAnimeParaRemover] = useState(null);
-  const [removendo, setRemovendo] = useState(false);
-  const [erroRemocao, setErroRemocao] = useState(null);
+  // Modo "Gerenciar" (ilha dinâmica, BarraDeNavegacao.jsx): seleção em lote do
+  // catálogo e remoção com a confirmação dentro da própria ilha — substituiu o
+  // botão de remover por card e o `DialogoDeConfirmacao`. Fases: 'inativo' →
+  // 'selecionando' → 'confirmando' → 'removendo' → 'concluido' (sai sozinho do modo) ou 'erro' (fica até o usuário fechar). `selecionados` guarda
+  // `anime.id` do REPRESENTANTE de cada franquia; só os que estão em
+  // `animesExibidos` contam (um filtro que esconde um item selecionado o tira
+  // da conta e do que é removido, sem surpresa).
+  const [fase, setFase] = useState('inativo');
+  const [selecionados, setSelecionados] = useState(() => new Set());
+  const [resultado, setResultado] = useState(null);
 
-  // Remove a franquia INTEIRA: um DELETE por temporada (`idsDaFranquia`). Falha
-  // no meio (ex. temporada com captura em andamento) para o laço e deixa as já
-  // removidas removidas — cada `removerAnime` bem-sucedido já invalida
-  // 'animes' (invalidacao.js) e recarrega esta grade sozinho, refletindo o
-  // estado real mesmo numa remoção parcial, sem precisar de um `recarregar()`
-  // manual aqui.
-  const confirmarRemocao = useCallback(async () => {
-    if (!animeParaRemover) return;
-    setRemovendo(true);
-    setErroRemocao(null);
-    const ids = animeParaRemover.idsDaFranquia ?? [animeParaRemover.id];
-    try {
-      for (const id of ids) {
-        await removerAnime(id);
-      }
-      setAnimeParaRemover(null);
-    } catch (erroCapturado) {
-      if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
-        setErroRemocao(
-          'Há uma captura em andamento — aguarde terminar antes de remover.'
-        );
-      } else {
-        console.error('falha ao remover anime do catálogo', erroCapturado);
-        setErroRemocao('Não foi possível remover — tente novamente.');
-      }
-    } finally {
-      setRemovendo(false);
-    }
-  }, [animeParaRemover]);
+  const itensSelecionados = useMemo(
+    () => animesExibidos.filter((anime) => selecionados.has(anime.id)),
+    [animesExibidos, selecionados],
+  );
+  const qtdSelecionados = itensSelecionados.length;
 
-  // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
-  // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior
-  // "vazaria" pra próxima abertura do dialog.
-  const fecharDialogoRemocao = useCallback(() => {
-    setAnimeParaRemover(null);
-    setErroRemocao(null);
+  const sairDoGerenciar = useCallback(() => {
+    setFase('inativo');
+    setSelecionados(new Set());
+    setResultado(null);
   }, []);
 
-  const contagemTemporadas = animeParaRemover?.contagemDeTemporadas ?? 1;
-  const mensagemRemocao =
-    contagemTemporadas > 1
-      ? `Remover "${animeParaRemover?.titulo}" e suas ${contagemTemporadas} temporadas do catálogo? Todos os episódios e capturas da franquia serão apagados.`
-      : `Remover "${animeParaRemover?.titulo}" do catálogo? Episódios e capturas associados serão apagados.`;
+  const alternarSelecao = useCallback(
+    (anime) => {
+      if (fase !== 'selecionando') return;
+      setSelecionados((anterior) => {
+        const novo = new Set(anterior);
+        if (novo.has(anime.id)) novo.delete(anime.id);
+        else novo.add(anime.id);
+        return novo;
+      });
+    },
+    [fase],
+  );
+
+  // Remove cada franquia selecionada INTEIRA: um DELETE por temporada
+  // (`idsDaFranquia`), em série. Falha no meio (ex. temporada com captura em
+  // andamento) para o laço e deixa as já removidas removidas — cada
+  // `removerAnime` bem-sucedido já invalida 'animes' (invalidacao.js) e
+  // recarrega esta grade sozinho, refletindo o estado real mesmo numa remoção
+  // parcial, sem `recarregar()` manual. A seleção é limpa nos dois desfechos:
+  // depois de uma remoção parcial os ids selecionados deixam de ser confiáveis.
+  const confirmarRemocaoEmLote = useCallback(async () => {
+    const alvos = itensSelecionados;
+    if (alvos.length === 0) return;
+    setFase('removendo');
+    let removidos = 0;
+    try {
+      for (const anime of alvos) {
+        for (const id of anime.idsDaFranquia ?? [anime.id]) {
+          await removerAnime(id);
+        }
+        removidos += 1;
+      }
+      setResultado(removidos === 1 ? '1 anime removido' : `${removidos} animes removidos`);
+      setFase('concluido');
+    } catch (erroCapturado) {
+      const parcial = removidos > 0 ? ` (${removidos} já removido${removidos > 1 ? 's' : ''})` : '';
+      if (erroCapturado instanceof ErroDeApi && erroCapturado.detail?.motivo === 'job_em_execucao') {
+        setResultado(`Há uma captura em andamento — aguarde terminar antes de remover${parcial}.`);
+      } else {
+        console.error('falha ao remover anime do catálogo', erroCapturado);
+        setResultado(`Não foi possível remover — tente novamente${parcial}.`);
+      }
+      setFase('erro');
+    } finally {
+      setSelecionados(new Set());
+    }
+  }, [itensSelecionados]);
+
+  // "Removido" some sozinho e sai do modo Gerenciar (ilha volta ao normal).
+  useEffect(() => {
+    if (fase !== 'concluido') return undefined;
+    const timer = setTimeout(sairDoGerenciar, 3500);
+    return () => clearTimeout(timer);
+  }, [fase, sairDoGerenciar]);
+
+  // Esc: volta da confirmação pra seleção; fora dela, sai do modo. Ignorado
+  // enquanto remove (o laço não é cancelável).
+  useEffect(() => {
+    if (fase === 'inativo' || fase === 'removendo') return undefined;
+    const aoTeclar = (evento) => {
+      if (evento.key !== 'Escape') return;
+      if (fase === 'confirmando') setFase('selecionando');
+      else sairDoGerenciar();
+    };
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  }, [fase, sairDoGerenciar]);
+
+  // Catálogo esvaziado (removeu tudo): não há mais o que gerenciar, e a ilha
+  // deixa de receber `gerenciar` abaixo — sem isto o modo ficaria preso ligado.
+  const catalogoVazio = !carregando && !erro && animes?.length === 0;
+  useEffect(() => {
+    if (catalogoVazio && fase !== 'inativo' && fase !== 'removendo') sairDoGerenciar();
+  }, [catalogoVazio, fase, sairDoGerenciar]);
+
+  const temporadasSelecionadas = itensSelecionados.reduce(
+    (total, anime) => total + (anime.contagemDeTemporadas ?? 1),
+    0,
+  );
+  const tituloCurto = (titulo) => (titulo.length > 28 ? `${titulo.slice(0, 27)}…` : titulo);
+  const rotuloDoAlvo =
+    qtdSelecionados === 1
+      ? `"${tituloCurto(itensSelecionados[0].titulo)}"`
+      : `${qtdSelecionados} animes`;
+  const sufixoTemporadas = temporadasSelecionadas > qtdSelecionados ? ` (${temporadasSelecionadas} temporadas)` : '';
+  const textoConfirmacao = `Remover ${rotuloDoAlvo}${sufixoTemporadas} e os episódios?`;
 
   return (
     <>
@@ -472,6 +533,22 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
         aoClicarCapturaProntaIlha={aoClicarCapturaProntaIlha}
         erroCapturaIlha={erroCapturaIlha}
         aoClicarErroCapturaIlha={aoClicarErroCapturaIlha}
+        gerenciar={
+          !carregando && !erro && animes?.length > 0
+            ? {
+                fase,
+                qtdSelecionados,
+                textoConfirmacao: qtdSelecionados > 0 ? textoConfirmacao : '',
+                resultado,
+                aoAlternar: () => (fase === 'inativo' ? setFase('selecionando') : sairDoGerenciar()),
+                aoSelecionarTodos: () => setSelecionados(new Set(animesExibidos.map((anime) => anime.id))),
+                aoPedirRemocao: () => setFase('confirmando'),
+                aoCancelarRemocao: () => setFase('selecionando'),
+                aoConfirmarRemocao: confirmarRemocaoEmLote,
+                aoSair: sairDoGerenciar,
+              }
+            : undefined
+        }
       />
       {/* `bg-black` (não mais `bg-[#17171b]` de paginas/Inicio.jsx): a Galeria
           não leva mais a drop shadow dos cards (`comSombra={false}` nas duas
@@ -549,13 +626,18 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
               comSombra={false}
               comAnimacao={false}
               chaveDoItem={(anime) => anime.id}
-              renderItem={(anime) =>
-                !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
-                  <CartaoDeEstreia item={anime} aoRemover={() => setAnimeParaRemover(anime)} />
+              renderItem={(anime) => {
+                const propsDeSelecao = {
+                  modoSelecao: fase !== 'inativo',
+                  selecionado: selecionados.has(anime.id),
+                  aoAlternarSelecao: () => alternarSelecao(anime),
+                };
+                return !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
+                  <CartaoDeEstreia item={anime} {...propsDeSelecao} />
                 ) : (
-                  <AnimeCard anime={anime} aoRemover={() => setAnimeParaRemover(anime)} />
-                )
-              }
+                  <AnimeCard anime={anime} {...propsDeSelecao} />
+                );
+              }}
             />
           </section>
         )}
@@ -587,16 +669,6 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
             />
           </section>
         )}
-
-        <DialogoDeConfirmacao
-          aberto={animeParaRemover != null}
-          titulo="Remover do catálogo"
-          mensagem={mensagemRemocao}
-          erro={erroRemocao}
-          aoConfirmar={confirmarRemocao}
-          aoFechar={fecharDialogoRemocao}
-          confirmando={removendo}
-        />
       </main>
     </>
   );
