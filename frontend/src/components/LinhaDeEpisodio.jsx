@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { IconePlay } from '../player/Icones.jsx';
+import BrilhoDaCapa from './BrilhoDaCapa.jsx';
 
 // Re-exportado: `src/inicio/` não pode importar de `src/player/` direto
 // (fronteira Clean Architecture documentada em paginas/Inicio.jsx, D5 do
@@ -133,9 +134,16 @@ export function CartaoDeEpisodio({
   rotuloAcessivel,
   legenda,
   sobreposicao,
+  brilho,
   children,
 }) {
   const emGrade = modo === 'grade';
+  // `brilho` (URL da thumb ou `null` sem thumb, só modo grade, opcional — o
+  // card de "Continuar assistindo" e os da página do anime passam; `undefined`
+  // = card antigo): mesmo hover do `AnimeCard` — glow ambiente da própria
+  // miniatura atrás do card (`BrilhoDaCapa`), cantos `rounded-2xl`, e SEM a
+  // moldura cinza `p-2 -m-2` abaixo. Sem `brilho` o card segue com a moldura.
+  const comBrilho = emGrade && brilho !== undefined;
   const estilo = {
     boxShadow: emGrade
       ? undefined
@@ -143,7 +151,7 @@ export function CartaoDeEpisodio({
   };
   const classeCaixa = `relative flex w-full overflow-hidden bg-surface text-left text-sm ${cor} ${
     emGrade ? 'aspect-[16/9] ' : ''
-  }`;
+  }${comBrilho ? 'rounded-2xl ' : ''}`;
 
   // `sobreposicao` (opcional, só modo grade — pedido do usuário quando
   // `components/CartaoContinuarAssistindo.jsx` ganhou um menu de ações sobre
@@ -201,12 +209,16 @@ export function CartaoDeEpisodio({
     // `1rem` (as duas margens de 0.5rem) na largura, a caixa volta a
     // transbordar 8px pros dois lados igualmente (mesmo efeito do
     // `AnimeCard.jsx`), sem deslocar o conjunto pra esquerda.
-    const classeVisual =
-      `relative flex w-[calc(100%+1rem)] flex-col gap-1.5 text-left text-sm ${cor} ` +
-      'p-2 -m-2 transition-colors duration-300 ease-out group-hover/cartao:bg-surface-hover motion-reduce:transition-none';
+    const classeVisual = comBrilho
+      ? `relative flex w-full flex-col gap-1.5 text-left text-sm ${cor}`
+      : `relative flex w-[calc(100%+1rem)] flex-col gap-1.5 text-left text-sm ${cor} ` +
+        'p-2 -m-2 transition-colors duration-300 ease-out group-hover/cartao:bg-surface-hover motion-reduce:transition-none';
 
     return (
-      <div className="group/cartao relative">
+      // `group/card` além de `group/cartao`: é o grupo que o `BrilhoDaCapa`
+      // escuta (mesmo nome do `AnimeCard`).
+      <div className="group/cartao group/card relative">
+        {comBrilho && brilho && <BrilhoDaCapa capa={brilho} classeAspecto="aspect-video" />}
         <div className={classeVisual}>
           <div className={classeCaixa} style={estilo}>
             {children}
@@ -469,7 +481,7 @@ export function SinopseEpisodio({ sinopse }) {
 function BadgeAssistido({ flutuante = false }) {
   return (
     <span
-      className={`px-2.5 py-0.5 bg-black/80 text-xs font-semibold uppercase tracking-wide text-white ${
+      className={`px-3.5 py-1.5 rounded-2xl bg-black/80 text-xs font-semibold uppercase tracking-wide text-white ${
         flutuante ? 'absolute bottom-2 right-2 z-10' : ''
       }`}
       aria-label="já assistido"
@@ -653,6 +665,7 @@ export default function LinhaDeEpisodio({
     return (
       <CartaoDeEpisodio
         modo={modo}
+        brilho={thumb ?? null}
         cor="text-white"
         para={`/assistir/${episodio.id}`}
         estadoDeRota={{
@@ -785,7 +798,7 @@ export default function LinhaDeEpisodio({
     );
     if (naoNumerico) {
       return (
-        <CartaoDeEpisodio modo={modo} cor="text-ink-muted" legenda={legenda}>
+        <CartaoDeEpisodio modo={modo} brilho={thumb ?? null} cor="text-ink-muted" legenda={legenda}>
           {conteudo}
         </CartaoDeEpisodio>
       );
@@ -793,6 +806,7 @@ export default function LinhaDeEpisodio({
     return (
       <CartaoDeEpisodio
         modo={modo}
+        brilho={thumb ?? null}
         cor="text-ink-muted"
         aoClicar={() => aoCapturar(numero)}
         desabilitado={capturando}
@@ -832,6 +846,7 @@ export default function LinhaDeEpisodio({
     return (
       <CartaoDeEpisodio
         modo={modo}
+        brilho={thumb ?? null}
         cor="text-ink-muted"
         legenda={
           <FaixaDeConteudo
@@ -895,7 +910,7 @@ export default function LinhaDeEpisodio({
   );
   if (naoNumerico) {
     return (
-      <CartaoDeEpisodio modo={modo} cor="text-white font-semibold" legenda={legendaCaptura}>
+      <CartaoDeEpisodio modo={modo} brilho={thumb ?? null} cor="text-white font-semibold" legenda={legendaCaptura}>
         {conteudoCaptura}
       </CartaoDeEpisodio>
     );
@@ -903,6 +918,7 @@ export default function LinhaDeEpisodio({
   return (
     <CartaoDeEpisodio
       modo={modo}
+      brilho={thumb ?? null}
       cor="text-white font-semibold"
       aoClicar={() => aoCapturar(numero)}
       desabilitado={capturando}
