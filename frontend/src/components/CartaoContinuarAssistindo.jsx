@@ -234,7 +234,7 @@ export default function CartaoContinuarAssistindo({ item, job, aoCapturar, captu
 // (`h-3.5` → `h-4`), pill/texto ficam como estavam.
 function BadgeNovo() {
   return (
-    <span className="absolute left-2 top-2 z-10 inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-2xl bg-black/80 px-2 text-xs font-semibold uppercase tracking-wide text-white backdrop-blur-md">
+    <span className="absolute left-2 top-2 z-10 inline-flex h-8 px-3.5 items-center gap-1 whitespace-nowrap rounded-2xl bg-black/80 text-xs font-semibold uppercase tracking-wide text-white backdrop-blur-md">
       <Sparkles aria-hidden="true" className="h-4 w-4" />
       Novo ep
     </span>

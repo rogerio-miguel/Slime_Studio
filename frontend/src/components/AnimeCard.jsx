@@ -222,7 +222,7 @@ export default function AnimeCard({
   const badgeEpisodio = episodioLancado != null && (
     <span
       id={idBadgeEpisodio}
-      className={`absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 px-3.5 items-center gap-1 whitespace-nowrap rounded-2xl bg-black/80 backdrop-blur-md px-2.5 text-sm font-semibold uppercase tracking-wide text-white`}
+      className={`absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 px-3.5 items-center gap-1 whitespace-nowrap rounded-2xl bg-black/80 backdrop-blur-md text-sm font-semibold uppercase tracking-wide text-white`}
     >
       <Sparkles aria-hidden="true" className="h-5 w-5" />
       EP.{episodioLancado}
@@ -274,7 +274,7 @@ export default function AnimeCard({
   const badgeAviso = avisoNovos && (
     <span
       id={idBadgeAviso}
-      className={`absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 items-center gap-1 whitespace-nowrap bg-black/80 backdrop-blur-md px-2.5 text-sm font-semibold uppercase tracking-wide text-white`}
+      className={`absolute bottom-2 left-1/2 z-10 -translate-x-1/2 inline-flex h-8 px-3.5 items-center gap-1 whitespace-nowrap rounded-2xl bg-black/80 backdrop-blur-md text-sm font-semibold uppercase tracking-wide text-white`}
     >
       <Sparkles aria-hidden="true" className="h-5 w-5" />
       {avisoNovos}

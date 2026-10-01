@@ -813,7 +813,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                 item,
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute left-2 top-2 z-10 flex h-8 px-3.5 items-center gap-1 rounded-2xl bg-black/80 px-2.5 backdrop-blur-md"
+                  className="pointer-events-none absolute left-2 top-2 z-10 flex h-8 px-3.5 items-center gap-1 rounded-2xl bg-black/80 backdrop-blur-md"
                 >
                   <IconeEmAlta className="h-5 w-5" />
                   <span className="text-sm font-semibold text-white">#{indice + 1}</span>
