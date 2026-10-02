@@ -196,6 +196,14 @@ class AnimeFireProvider(ExtratorDeSite):
                 dominio=self.dominio,
             )
 
+        if not episodios_brutos:
+            # Confirmado ao vivo (2026-10-02): anime ainda não estreado vem com
+            # `episodes: []` e `seasons` válido — estado legítimo, não mudança
+            # de estrutura. O que continua erro é lista COM itens que o parse
+            # não aproveitou (abaixo): isso sim sugere o formato ter mudado.
+            logger.info("AnimeFire: %r ainda não tem episódios publicados", identificador)
+            return []
+
         primeiro_episodio_por_temporada = self._mapa_primeiro_episodio_por_temporada(
             dados_do_anime.get("seasons"), url
         )

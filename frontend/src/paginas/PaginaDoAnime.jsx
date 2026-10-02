@@ -1197,7 +1197,15 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
         </div>
 
         {linhas.length === 0 && !episodios.carregando && !remotos.carregando && (
-          <p className="text-sm text-ink-muted">Nenhum episódio encontrado.</p>
+          // Fonte respondeu com sucesso e lista vazia = a fonte ainda não
+          // publicou episódios (o anime pode já ter estreado na AniList — o
+          // atraso é do site); sem `remotos.dados` (erro), o alerta vermelho
+          // acima já cobre e aqui fica o texto genérico.
+          <p role="status" className="text-sm text-ink-muted">
+            {remotos.dados
+              ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios deste anime. Tente de novo mais tarde.`
+              : 'Nenhum episódio encontrado.'}
+          </p>
         )}
         </div>
 
