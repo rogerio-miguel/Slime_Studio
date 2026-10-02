@@ -835,6 +835,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
         <DestaqueGrande
           key="banner-destaque"
           item={bannerDestaque}
+          rank={(emAlta.dados ?? []).indexOf(bannerDestaque) + 1}
           aoAtivar={() => materializarEIrPara(bannerDestaque)}
           desabilitado={chaveEmMaterializacao != null}
         />
@@ -870,6 +871,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
         <DestaqueGrande
           key="segundo-banner-destaque"
           item={segundoBannerDestaque}
+          rank={(emAlta.dados ?? []).indexOf(segundoBannerDestaque) + 1}
           aoAtivar={() => materializarEIrPara(segundoBannerDestaque)}
           desabilitado={chaveEmMaterializacao != null}
         />
