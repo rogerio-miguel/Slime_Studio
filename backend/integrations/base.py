@@ -266,9 +266,14 @@ class ArteDeAnime:
     cadeia normal de `ProvedorDeMetadados` (AniList/Kitsu) — a AniList modela
     cada temporada como uma `Media` própria, então já resolve a capa por
     temporada corretamente por construção, ao contrário do TMDB, que agrupa a
-    série inteira sob um único id."""
+    série inteira sob um único id.
+
+    `sinopse_serie`/`ano_da_serie`: sinopse pt-BR e ano de estreia da SÉRIE do
+    TMDB (não da temporada) — insumo de `core/sinopse.py::escolher_sinopse`."""
 
     banner_url: str | None
+    sinopse_serie: str | None = None
+    ano_da_serie: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

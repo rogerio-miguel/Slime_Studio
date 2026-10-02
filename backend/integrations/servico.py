@@ -38,6 +38,7 @@ from dataclasses import dataclass, replace
 import requests
 
 from core.erros import FalhaDeMetadados
+from core.sinopse import eh_primeira_temporada, escolher_sinopse
 from core.temporada import separar_temporada
 from core.texto import slugificar
 from integrations.base import (
@@ -994,6 +995,35 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
     return None
 
 
+async def buscar_sinopse_da_temporada(titulo: str, ano: int | None, temporada: int) -> str | None:
+    """Sinopse pt-BR da temporada no TMDB — só o backfill de sinopse usa (a
+    maioria das temporadas não tem tradução própria). Best-effort: erro de
+    provedor vira `None` com log; sem memo (uso pontual)."""
+    if _arte_desabilitada_por_auth:
+        return None
+    titulo_base, _derivado = separar_temporada(titulo)
+    for provedor in provedores_de_arte():
+        if not isinstance(provedor, TmdbProvider):
+            continue
+        try:
+            return await _chamar(
+                provedor, provedor.sinopse_da_temporada, titulo_base, ano, temporada
+            )
+        except TmdbNaoAutorizado as excecao:
+            _desabilitar_arte_por_auth(provedor, excecao)
+            return None
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de arte %r falhou ao buscar sinopse da temporada %s de %r: %s",
+                provedor.nome,
+                temporada,
+                titulo,
+                excecao,
+            )
+    return None
+
+
 # --- overlay de still/nome/sinopse de episódio (TMDB, Fatia 5/6 do PLANO_ARTE_TMDB.md) ---
 #
 # `buscar_info_de_episodio` tem dois caminhos: com `temporada` (o `n` da
@@ -1148,8 +1178,10 @@ async def _buscar_info_de_um_provedor(
 
 
 async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T:
-    """Sobrepõe banner de TMDB num `MetadadosDeAnime` ou `AnimeEmAlta` —
-    genérico porque os dois compartilham exatamente o campo `banner_url`.
+    """Sobrepõe banner e sinopse pt-BR de TMDB num `MetadadosDeAnime` ou
+    `AnimeEmAlta` — genérico porque os dois compartilham `banner_url`/`sinopse`.
+    A sinopse segue `core/sinopse.py::escolher_sinopse` (só troca uma sinopse que
+    já existe, nunca cria) e o TMDB sem tradução pt-BR a deixa como está.
     `titulo=None` devolve `registro` intacto (nada para buscar). Banner nulo
     do TMDB PRESERVA o valor anterior — nunca zera o `bannerImage` já
     resolvido pela AniList. `capa_url` de `registro` nunca é tocado aqui:
@@ -1175,6 +1207,11 @@ async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T
     return replace(
         registro,
         banner_url=arte.banner_url if arte.banner_url is not None else registro.banner_url,
+        sinopse=escolher_sinopse(
+            registro.sinopse,
+            serie_ptbr=arte.sinopse_serie,
+            primeira_temporada=eh_primeira_temporada(arte.ano_da_serie, ano),
+        ),
     )
 
 
