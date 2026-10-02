@@ -13,6 +13,7 @@ import {
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 import { traduzirGenero } from './generos.js';
 import BlocoConteudoHero from './BlocoConteudoHero.jsx';
+import SinopseEmFoco from '../components/SinopseEmFoco.jsx';
 
 // Hero da home (estilo AnimeFire): banner full-width com imagem de fundo e
 // gradiente escuro, um destaque por vez, alimentado pelo feed
@@ -295,6 +296,14 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   // gate `autoAvancando`, que também alimenta o `aria-live` do contêiner no
   // render.
   const [pausado, setPausado] = useState(false);
+  // Modo foco da sinopse (components/SinopseEmFoco.jsx): guarda os textos do
+  // slide que abriu (`{ titulo, tituloSecundario, sinopse }`) — um dialog só pro
+  // carrossel inteiro, e o conteúdo não depende de qual slide está ativo
+  // depois. Aberto, congela o auto-avanço e a rotação da janela, senão o slide
+  // trocaria por baixo de quem está lendo.
+  const [sinopseEmFoco, setSinopseEmFoco] = useState(null);
+  const abertaPorPonteiroRef = useRef(false);
+  const emPausa = pausado || sinopseEmFoco != null;
   const movimentoReduzido = usePrefersReducedMotion();
 
   // Navegação por passo, com wrap por módulo — sem cópias, o wrap não precisa
@@ -315,10 +324,10 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   // Ref-espelho de `pausado`: o timer de rotação é longo (10 min) e não deve
   // ser recriado a cada hover/foco (recriar reiniciaria a contagem). Mesmo
   // truque do `pausadoRef` da antiga GradeRotativa.
-  const pausadoRef = useRef(pausado);
+  const pausadoRef = useRef(emPausa);
   useEffect(() => {
-    pausadoRef.current = pausado;
-  }, [pausado]);
+    pausadoRef.current = emPausa;
+  }, [emPausa]);
 
   // Rotação da janela: a cada `INTERVALO_ROTACAO_MS` avança um bloco pelo pool.
   // Gate por haver mais itens que a janela. Hover/foco só adiam o próximo
@@ -346,7 +355,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   // Gate único do auto-avanço, reusado no efeito e no `aria-live` do
   // contêiner: sem preferência por menos movimento, sem pausa por hover/foco
   // e com mais de um destaque.
-  const autoAvancando = !movimentoReduzido && !pausado && n > 1;
+  const autoAvancando = !movimentoReduzido && !emPausa && n > 1;
 
   // Contagem regressiva sobrevive à pausa (pedido explícito do usuário,
   // 2026-09-20): ao pausar por hover/foco, o tempo já decorrido fica
@@ -409,6 +418,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   };
 
   return (
+    <>
     <section
       aria-roledescription="carrossel"
       aria-labelledby={idTitulo}
@@ -596,6 +606,26 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                   // anime não tem esse limite — o hero dela cresce).
                   sinopse={item.sinopse}
                   ocultarSinopseNoMobile
+                  // O botão só aparece se o `line-clamp` cortou texto (decisão
+                  // do `BlocoConteudoHero`); só o slide ativo é focável
+                  // (`inert` nos demais).
+                  acaoSinopse={
+                    <button
+                      type="button"
+                      onClick={(evento) => {
+                        abertaPorPonteiroRef.current = evento.detail > 0;
+                        setSinopseEmFoco({
+                          titulo,
+                          tituloSecundario: mostrarAlternativo ? tituloAlternativo : null,
+                          sinopse: item.sinopse,
+                        });
+                      }}
+                      aria-haspopup="dialog"
+                      className="-mt-0.5 inline-flex min-h-9 items-center text-sm font-bold text-neon outline-none transition-colors hover:text-white focus-visible:underline"
+                    >
+                      Ler sinopse completa
+                    </button>
+                  }
                   // Fatos rotulados (Ano/Gêneros/Próximo episódio) ACIMA do
                   // botão — o AnimeFire não mostra essa linha no hero, mas o
                   // usuário quis mantê-la e vê-la nesta posição. MESMO
@@ -743,7 +773,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                             movimentoReduzido
                               ? ''
                               : `animate-[preencher-progresso-dot_10000ms_linear_forwards] ${
-                                  pausado ? '[animation-play-state:paused]' : ''
+                                  emPausa ? '[animation-play-state:paused]' : ''
                                 }`
                           }`}
                         />
@@ -757,5 +787,21 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
         )}
       </div>
     </section>
+
+    {/* Fora da <section>: o `aoTeclar` dela (setas trocam o slide) e o
+        pause por hover/foco não devem ver os eventos de dentro do dialog. */}
+    <SinopseEmFoco
+      aberta={sinopseEmFoco != null}
+      titulo={sinopseEmFoco?.titulo ?? ''}
+      tituloSecundario={sinopseEmFoco?.tituloSecundario}
+      sinopse={sinopseEmFoco?.sinopse}
+      aoFechar={() => {
+        setSinopseEmFoco(null);
+        // O dialog devolve o foco ao botão que o abriu; aberto por mouse/toque,
+        // isso deixaria a <section> "com foco dentro" (ver `desfocarSePonteiro`).
+        if (abertaPorPonteiroRef.current) document.activeElement?.blur();
+      }}
+    />
+    </>
   );
 }

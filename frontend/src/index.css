@@ -113,3 +113,52 @@ html {
     opacity: 1;
   }
 }
+
+/* Modo foco da sinopse (components/SinopseEmFoco.jsx): o `::backdrop` do
+   <dialog> borra e escurece a página inteira — o hero, a navbar, tudo — e as
+   frases entram uma a uma (`--i` é o índice da frase, definido inline).
+   `both` mantém a frase invisível durante o atraso. Animações em vez de
+   `transition` porque o <dialog> nasce já `display` ligado ao abrir.
+   Saída sem animação de propósito: fechar tem que ser instantâneo. */
+/* Trava a rolagem da página por trás: `showModal()` não faz isso sozinho.
+   `scrollbar-gutter: stable` mantém o espaço da barra, senão a página
+   alargaria e "pularia" ao abrir. `:has` em vez de efeito em JS pra não haver
+   estado de scroll pra desfazer (Esc, clique e `close()` já fecham o dialog). */
+html:has(dialog.sinopse-foco[open]) {
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+
+dialog.sinopse-foco::backdrop {
+  background: rgb(6 8 12 / 0.74);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  animation: sinopse-foco-fundo 0.5s ease both;
+}
+
+@keyframes sinopse-foco-fundo {
+  from {
+    background: rgb(6 8 12 / 0);
+    -webkit-backdrop-filter: blur(0);
+    backdrop-filter: blur(0);
+  }
+}
+
+.sinopse-foco-frase {
+  animation: sinopse-foco-frase 0.6s ease both;
+  animation-delay: calc(0.3s + var(--i) * 0.16s);
+}
+
+@keyframes sinopse-foco-frase {
+  from {
+    opacity: 0;
+    filter: blur(7px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.sinopse-foco::backdrop,
+  .sinopse-foco-frase {
+    animation: none;
+  }
+}
