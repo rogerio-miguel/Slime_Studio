@@ -10,34 +10,33 @@ negativo = corta). `frequency.value` é em **Hz**.
 
 ## Parâmetros que valem a pena mexer
 
-| Quero...                              | Nó / linha                          | Valor atual | Mexa assim |
+Os de timbre são constantes no topo do arquivo (`GRAVE_*`, `HARMONICOS_*`,
+`PRESENCA_GANHO_DB`, `CINEMA_WET_LEVEL`); o resto está em `montarGrafoCinema()`.
+
+| Quero...                              | Constante / nó                       | Valor atual | Mexa assim |
 |----------------------------------------|--------------------------------------|-------------|------------|
-| Mais grave / menos grave                | `bassShelf.gain`                     | `8` (dB)    | Subir até ~10-11 é seguro (compressor+limiter cobrem). Acima disso, o grave começa a "engolir" o resto — ajuste `compressor.threshold` junto (ver abaixo) se acontecer. |
-| Onde o grave começa a reforçar          | `bassShelf.frequency`                | `90` (Hz)   | Menor (ex. 70) = só o "grave grave" (impacto, sub); maior (ex. 120) = grave mais presente/quente, mas pode invadir voz masculina grave. |
-| Mais agudo / menos agudo                | `trebleShelf.gain`                   | `-5` (dB)   | Mais negativo (ex. -7, -8) = mais macio/abafado. Mais perto de 0 = mais brilho, risco de voltar o estridente. Não passe de 0 sem motivo — foi o que causou a queixa original. |
-| A partir de onde corta o agudo          | `trebleShelf.frequency`              | `6000` (Hz) | Menor (ex. 4500-5000) = corta mais cedo, som mais "fechado"/quente. Maior (ex. 7500-8000) = mantém mais brilho, corta só o extremo. |
-| Volume geral do modo cinema             | `CINEMA_WET_LEVEL` (topo do arquivo) | `1.5`       | Sobe volume percebido de tudo (grave e agudo já tratados) igualmente. Se for aumentar bastante (>1.8), teste com trecho bem alto — o `limiter` protege de estouro, mas em excesso ele começa a "espremer" audivelmente. |
-| Vozes mais "limpas"/menos abafadas      | `mudCut.gain`                        | `-2` (dB)   | Mais negativo (ex. -3, -4) = tira mais "mud" grave-médio, voz mais clara. Passar de -4 pode deixar o som fino. |
-| Fone mais "dentro da cabeça" (mono-ish) | `crossL.gain` / `crossR.gain`        | `0.35`      | Subir (ex. 0.45-0.5) = mais mistura entre canais, som mais central/menos "extremo". Descer (ex. 0.2) = estéreo mais largo/separado. |
+| Mais grave / menos grave                | `GRAVE_GANHO_DB` (`bassShelf.gain`)  | `11` (dB)   | O compressor vem ANTES do realce, então o grave extra não "bombeia" o resto; o limitador final (-2 dB) cobre os picos. |
+| Onde o grave começa a reforçar          | `GRAVE_FREQ_HZ`                      | `110` (Hz)  | Menor (ex. 80) = só sub/impacto; maior (ex. 130) = mais quente, mas invade voz masculina grave. |
+| Grave "sentido" em fone pequeno         | `HARMONICOS_GANHO`                   | `0.4`       | Harmônicos do grave (o ouvido reconstrói a fundamental). `0` desliga; acima de ~0.5 vira "zumbido". |
+| Clareza de voz                          | `PRESENCA_GANHO_DB` (3 kHz)          | `2.5` (dB)  | Subir deixa a voz mais à frente; passar de ~4 volta o estridente. |
+| Volume geral do modo cinema             | `CINEMA_WET_LEVEL`                   | `1.3`       | Acima de ~1.4 o limitador final passa a trabalhar >2 dB e a distorção começa; prefira subir o grave. |
+| Vozes mais "limpas"/menos abafadas      | `mudCut.gain`                        | `-2` (dB)   | Mais negativo (-3, -4) tira "mud" grave-médio. Passar de -4 deixa o som fino. |
+| Fone mais "dentro da cabeça" (mono-ish) | `crossL.gain` / `crossR.gain`        | `0.35`      | Subir (0.45-0.5) = mais mistura entre canais. Descer (0.2) = estéreo mais largo. |
 
 ## O que evitar mexer sem necessidade
 
-- `compressor.attack` (`0.004`) e `limiter.attack` (`0.002`): já ajustados pra
-  pegar transiente agudo rápido. Deixar mais lento (subir o valor) reabre a
-  brecha que causava o agudo estourado.
-- `subsonic.frequency` (`30`Hz): só corta subgrave inaudível/rumble. Sem
-  motivo pra tocar.
+- Ordem da cadeia (compressor → grave → mud → presença): o compressor antes do
+  realce é de propósito; trocar a ordem reabre o efeito de abafamento.
+- `compressor.attack` (`0.025`): ataque lento preserva o transiente. Deixar
+  mais rápido volta a comprimir o ataque; o `limitador.attack` (`0.003`) é o
+  que pega pico agudo.
+- `subsonic.frequency` (`30`Hz): só corta subgrave inaudível/rumble.
 - Filtros do crossfeed (`shelfL`/`shelfR`, `delayL`/`delayR`): controlam
-  imagem estéreo pra fone, não têm relação com o problema de agudo/grave já
-  resolvido — só mexer se a queixa for especificamente sobre imagem estéreo
-  (som "de dentro da cabeça" demais ou de menos), aí use `crossL`/`crossR`
-  acima em vez destes.
+  imagem estéreo pra fone; só mexer por queixa de imagem estéreo, e aí use
+  `crossL`/`crossR`.
 
 ## Receitas rápidas
 
-- **"Quero ainda mais grave, sem perder o resto":** só `bassShelf.gain` pra
-  cima (9-10), mais nada.
-- **"Ainda incomoda um pouco no agudo":** `trebleShelf.gain` mais negativo
-  (-6 ou -7) antes de mexer em qualquer outra coisa.
-- **"Tá bom mas baixo":** `CINEMA_WET_LEVEL` pra 1.6-1.7, não mexer no resto.
-- **"Voz meio abafada/enterrada":** `mudCut.gain` pra -3.
+- **"Quero ainda mais grave":** `GRAVE_GANHO_DB` pra cima (11 já é o teto recomendado), mais nada.
+- **"Tá bom mas baixo":** `CINEMA_WET_LEVEL` até ~1.4; além disso suba o grave.
+- **"Voz meio abafada/enterrada":** `PRESENCA_GANHO_DB` pra 3-3.5 ou `mudCut.gain` pra -3.
