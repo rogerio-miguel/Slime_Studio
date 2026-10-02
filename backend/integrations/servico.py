@@ -227,6 +227,59 @@ def _agendar_revalidacao_em_segundo_plano(corrotina: Coroutine[None, None, None]
     _tarefas_de_revalidacao_em_segundo_plano.add(tarefa)
     tarefa.add_done_callback(_tarefas_de_revalidacao_em_segundo_plano.discard)
 
+
+# --- persistência dos feeds entre reinícios ---
+#
+# Os 4 feeds acima vivem só na memória do processo: depois de um restart da API
+# a 1ª abertura da Home é cache-miss em tudo e espera a busca AniList + overlay
+# TMDB por item (dezenas de segundos medidos, 2026-10-02). `integrations/` não
+# conhece banco (domínio puro) — quem persiste é injetado pela API no lifespan,
+# como `instalar_provedores_de_arte`. Sem instalar, nada muda (testes, scripts).
+_CHAVE_EM_ALTA = "em-alta"
+_CHAVE_NOVOS_LANCAMENTOS = "novos-lancamentos"
+_CHAVE_PROXIMA_TEMPORADA = "proxima-temporada"
+_PREFIXO_CHAVE_FILEIRA = "fileira:"
+
+_persistir_feed: Callable[[str, list[AnimeEmAlta]], Awaitable[None]] | None = None
+
+
+def instalar_persistencia_de_feeds(
+    persistir: Callable[[str, list[AnimeEmAlta]], Awaitable[None]],
+) -> None:
+    global _persistir_feed
+    _persistir_feed = persistir
+
+
+def restaurar_feeds_persistidos(feeds: dict[str, list[AnimeEmAlta]]) -> None:
+    """Semeia os caches de memória com o que foi persistido, já EXPIRADO
+    (`expira_em=0.0`): a 1ª requisição serve esse dado na hora como "velho" e
+    `_servir_feed_com_stale_revalidate` dispara a revalidação em segundo plano —
+    o usuário nunca espera a busca real. Não sobrescreve cache já preenchido.
+    Chave desconhecida (fileira removida de `FILEIRAS_TEMATICAS`) é ignorada."""
+    global _cache_em_alta, _cache_novos_lancamentos, _cache_proxima_temporada
+    for chave, itens in feeds.items():
+        if chave == _CHAVE_EM_ALTA and _cache_em_alta is None:
+            _cache_em_alta = (0.0, itens)
+        elif chave == _CHAVE_NOVOS_LANCAMENTOS and _cache_novos_lancamentos is None:
+            _cache_novos_lancamentos = (0.0, itens)
+        elif chave == _CHAVE_PROXIMA_TEMPORADA and _cache_proxima_temporada is None:
+            _cache_proxima_temporada = (0.0, itens)
+        elif chave.startswith(_PREFIXO_CHAVE_FILEIRA):
+            fileira = chave.removeprefix(_PREFIXO_CHAVE_FILEIRA)
+            if fileira in _fileiras_por_chave:
+                _cache_fileiras_tematicas.setdefault(fileira, (0.0, itens))
+
+
+async def _persistir_em_segundo_plano(chave: str, itens: list[AnimeEmAlta]) -> None:
+    if _persistir_feed is None:
+        return
+    try:
+        await _persistir_feed(chave, itens)
+    except Exception as excecao:  # noqa: BLE001
+        # Best-effort: o cache de memória já foi gravado; falhar em persistir
+        # (tabela ainda não migrada, banco ocupado) nunca derruba nem atrasa o feed.
+        logger.warning("não foi possível persistir o feed %r: %s", chave, excecao)
+
 # Memo de processo do overlay de banner (D4): `(slug do título base, ano) ->
 # (expira_em_monotonic, ArteDeAnime | None)`. Com cache negativo — título que
 # o TMDB não achou não é re-perguntado dentro do TTL. Ao ultrapassar
@@ -611,6 +664,7 @@ async def _servir_feed_com_stale_revalidate(
     lock: asyncio.Lock,
     buscar_sem_cache: Callable[[], Awaitable[list[AnimeEmAlta]]],
     descricao: str,
+    chave_persistida: str,
 ) -> list[AnimeEmAlta]:
     entrada = obter_cache()
     if entrada is not None:
@@ -620,7 +674,7 @@ async def _servir_feed_com_stale_revalidate(
         if not lock.locked():
             _agendar_revalidacao_em_segundo_plano(
                 _revalidar_em_segundo_plano(
-                    obter_cache, gravar_cache, lock, buscar_sem_cache, descricao
+                    obter_cache, gravar_cache, lock, buscar_sem_cache, descricao, chave_persistida
                 )
             )
         return itens
@@ -631,6 +685,10 @@ async def _servir_feed_com_stale_revalidate(
             return entrada[1]
         itens = await buscar_sem_cache()
         gravar_cache(itens)
+        if _persistir_feed is not None:
+            _agendar_revalidacao_em_segundo_plano(
+                _persistir_em_segundo_plano(chave_persistida, itens)
+            )
         return itens
 
 
@@ -640,6 +698,7 @@ async def _revalidar_em_segundo_plano(
     lock: asyncio.Lock,
     buscar_sem_cache: Callable[[], Awaitable[list[AnimeEmAlta]]],
     descricao: str,
+    chave_persistida: str,
 ) -> None:
     async with lock:
         # Outra revalidação (ou a busca bloqueante de cache-miss) pode ter
@@ -661,6 +720,7 @@ async def _revalidar_em_segundo_plano(
             )
             return
         gravar_cache(itens)
+        await _persistir_em_segundo_plano(chave_persistida, itens)
 
 
 async def _buscar_em_alta_sem_cache() -> list[AnimeEmAlta]:
@@ -701,7 +761,12 @@ async def listar_em_alta() -> list[AnimeEmAlta]:
         _cache_em_alta = (time.monotonic() + _TTL_EM_ALTA_S, itens)
 
     return await _servir_feed_com_stale_revalidate(
-        _obter, _gravar, _lock_em_alta, _buscar_em_alta_sem_cache, "em alta"
+        _obter,
+        _gravar,
+        _lock_em_alta,
+        _buscar_em_alta_sem_cache,
+        "em alta",
+        _CHAVE_EM_ALTA,
     )
 
 
@@ -747,6 +812,7 @@ async def listar_novos_lancamentos() -> list[AnimeEmAlta]:
         _lock_novos_lancamentos,
         _buscar_novos_lancamentos_sem_cache,
         "novos lançamentos",
+        _CHAVE_NOVOS_LANCAMENTOS,
     )
 
 
@@ -792,6 +858,7 @@ async def listar_proxima_temporada() -> list[AnimeEmAlta]:
         _lock_proxima_temporada,
         _buscar_proxima_temporada_sem_cache,
         "próxima temporada",
+        _CHAVE_PROXIMA_TEMPORADA,
     )
 
 
@@ -897,7 +964,12 @@ async def _listar_com_cache(
         _cache_fileiras_tematicas[chave] = (time.monotonic() + _TTL_FILEIRA_TEMATICA_S, itens)
 
     return await _servir_feed_com_stale_revalidate(
-        _obter, _gravar, _locks_fileiras_tematicas[chave], buscar, f"fileira temática {chave!r}"
+        _obter,
+        _gravar,
+        _locks_fileiras_tematicas[chave],
+        buscar,
+        f"fileira temática {chave!r}",
+        f"{_PREFIXO_CHAVE_FILEIRA}{chave}",
     )
 
 

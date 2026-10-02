@@ -8,15 +8,19 @@ carregá-la sozinho).
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.eventos import Assinantes, MonitorDeFila
 from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
 from api.seguranca import CabecalhosDeSeguranca, LimitesDeTaxa, ProtecaoDeOrigem
+from api.servicos import cache_de_feeds
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
@@ -31,6 +35,7 @@ from core.erros import (
     VersaoIndisponivelError,
 )
 from db.engine import criar_engine, criar_sessionmaker
+from integrations import servico as servico_metadados
 from integrations.registro import instalar_provedores_de_arte
 
 logger = logging.getLogger(__name__)
@@ -45,6 +50,23 @@ _ORIGENS_PERMITIDAS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _HOSTS_PERMITIDOS = ["localhost", "127.0.0.1"]
 
 
+async def _ligar_persistencia_de_feeds(sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+    """Feeds da Home sobrevivem a reinício: o último resultado bom volta como cache
+    "velho" (servido na hora, revalidado em segundo plano) em vez de a 1ª abertura
+    esperar a busca AniList + TMDB inteira. Falha aqui nunca impede a API de subir."""
+    servico_metadados.instalar_persistencia_de_feeds(
+        partial(cache_de_feeds.gravar_feed, sessionmaker)
+    )
+    try:
+        feeds = await cache_de_feeds.carregar_feeds_persistidos(sessionmaker)
+    except SQLAlchemyError as excecao:
+        logger.warning(
+            "cache de feeds não restaurado (rode `uv run alembic upgrade head`?): %s", excecao
+        )
+        return
+    servico_metadados.restaurar_feeds_persistidos(feeds)
+
+
 def criar_app(config: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -53,6 +75,7 @@ def criar_app(config: Config) -> FastAPI:
         assinantes = Assinantes()
         monitor = MonitorDeFila(sessionmaker, assinantes)
         instalar_provedores_de_arte(config.tmdb_token)
+        await _ligar_persistencia_de_feeds(sessionmaker)
 
         app.state.config = config
         app.state.sessionmaker = sessionmaker

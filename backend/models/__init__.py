@@ -2,6 +2,7 @@
 
 from models.anime import Anime
 from models.base import Base
+from models.cache_de_feed import CacheDeFeed
 from models.episodio import Episodio
 from models.estado_site import EstadoSite
 from models.fonte_anime import FonteAnime
@@ -11,6 +12,7 @@ from models.sessao_bypass import SessaoBypass
 __all__ = [
     "Anime",
     "Base",
+    "CacheDeFeed",
     "Episodio",
     "EstadoSite",
     "FonteAnime",
