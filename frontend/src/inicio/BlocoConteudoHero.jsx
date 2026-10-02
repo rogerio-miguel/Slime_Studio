@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { PADDING_TITULO } from './tamanhoDeCard.js';
 
 // Esqueleto do bloco de conteúdo do hero (pills → título/subtítulo → sinopse →
@@ -12,6 +13,10 @@ import { PADDING_TITULO } from './tamanhoDeCard.js';
 // `relative` — precisa pintar acima da arte/gradiente `absolute` do header,
 // ver comentário em PaginaDoAnime.jsx — + `pb-8 pt-24`). `paddingInline` vai
 // sempre aqui (mesmo gutter percentual de Home/Galeria, ./tamanhoDeCard.js).
+// `acaoSinopse`: nó (botão "ler sinopse completa") renderizado logo abaixo da
+// sinopse SÓ quando o `line-clamp` realmente cortou texto — sem isso, uma
+// sinopse curta ganharia um botão que não leva a nada. Mede com
+// `ResizeObserver` (o corte muda com a largura da janela).
 export default function BlocoConteudoHero({
   className,
   pills,
@@ -19,11 +24,26 @@ export default function BlocoConteudoHero({
   tituloSecundario,
   extraTitulo,
   sinopse,
+  acaoSinopse,
   ocultarSinopseNoMobile = false,
   meta,
   metaExtra,
   cta,
 }) {
+  const sinopseRef = useRef(null);
+  const [sinopseCortada, setSinopseCortada] = useState(false);
+
+  useEffect(() => {
+    const elemento = sinopseRef.current;
+    if (!elemento) return undefined;
+    // O observer dispara uma vez ao `observe`, então não há medição avulsa aqui.
+    const observador = new ResizeObserver(() => {
+      setSinopseCortada(elemento.scrollHeight > elemento.clientHeight + 1);
+    });
+    observador.observe(elemento);
+    return () => observador.disconnect();
+  }, [sinopse]);
+
   return (
     <div
       className={`flex flex-col items-start gap-4 ${className ?? ''}`}
@@ -41,7 +61,10 @@ export default function BlocoConteudoHero({
 
       {sinopse && (
         <div className={ocultarSinopseNoMobile ? 'hidden sm:block' : undefined}>
-          <p className="line-clamp-2 max-w-2xl text-sm font-bold text-ink-muted sm:text-base">{sinopse}</p>
+          <p ref={sinopseRef} className="line-clamp-2 max-w-2xl text-sm font-bold text-ink-muted sm:text-base">
+            {sinopse}
+          </p>
+          {sinopseCortada && acaoSinopse}
         </div>
       )}
 

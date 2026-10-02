@@ -21,6 +21,7 @@ import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import MenuDeAcoesDoAnime from '../components/MenuDeAcoesDoAnime.jsx';
 import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
+import SinopseEmFoco from '../components/SinopseEmFoco.jsx';
 import { nomeDaFonte } from '../fontes.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
@@ -286,6 +287,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   const modoVisualizacao = modoArmazenado === 'grade' ? 'grade' : 'lista';
 
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
+  // Modo foco da sinopse (components/SinopseEmFoco.jsx).
+  const [sinopseEmFoco, setSinopseEmFoco] = useState(false);
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState(null);
 
@@ -956,6 +959,18 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             // <header>). `!animeNaoEncontrado` some com ela quando o anime foi
             // removido do catálogo.
             sinopse={!animeNaoEncontrado ? anime?.sinopse : null}
+            // O botão só aparece se o `line-clamp` cortou texto (decisão do
+            // `BlocoConteudoHero`); abre a sinopse inteira em modo foco.
+            acaoSinopse={
+              <button
+                type="button"
+                onClick={() => setSinopseEmFoco(true)}
+                aria-haspopup="dialog"
+                className="-mt-0.5 inline-flex min-h-9 cursor-pointer items-center text-sm font-bold text-neon outline-none transition-colors hover:text-white focus-visible:underline"
+              >
+                Ler sinopse completa
+              </button>
+            }
             metaExtra={
               fatos.length > 0 &&
               !animeNaoEncontrado && (
@@ -1233,6 +1248,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           aoFechar={fecharDialogoTrocaDeFonte}
           confirmando={confirmandoTrocaFonte}
           erro={erroTrocaFonte}
+        />
+
+        <SinopseEmFoco
+          aberta={sinopseEmFoco}
+          titulo={tituloExibicao ?? anime?.titulo ?? ''}
+          tituloSecundario={tituloSecundario}
+          sinopse={anime?.sinopse}
+          aoFechar={() => setSinopseEmFoco(false)}
         />
 
         <DialogoDeConfirmacao
