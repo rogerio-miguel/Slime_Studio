@@ -99,6 +99,14 @@ def _isola_cooldown_de_provedor(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
+def _isola_persistencia_de_feeds(monkeypatch: pytest.MonkeyPatch):
+    """`integrations.servico._persistir_feed` é estado de módulo, instalado pelo
+    lifespan de `criar_app` apontando pro engine daquele teste. Sem restaurar, o
+    teste seguinte persistiria num engine já descartado."""
+    monkeypatch.setattr(servico_metadados, "_persistir_feed", None)
+
+
+@pytest.fixture(autouse=True)
 def _busca_de_metadados_por_titulo_sem_rede(monkeypatch: pytest.MonkeyPatch):
     """F14: `GET /api/animes` agenda uma busca por título fire-and-forget
     (`integrations.servico.buscar_por_titulo`, cadeia AniList→Kitsu) para cada
