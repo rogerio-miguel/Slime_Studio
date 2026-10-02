@@ -200,9 +200,9 @@ query ($genero: String) {
 """
 
 _QUERY_PROXIMA_TEMPORADA = """
-query ($estacao: MediaSeason, $ano: Int) {
+query ($estacao: MediaSeason, $ano: Int, $status: MediaStatus) {
   Page(page: 1, perPage: 50) {
-    media(season: $estacao, seasonYear: $ano, type: ANIME, sort: POPULARITY_DESC) {
+    media(season: $estacao, seasonYear: $ano, status: $status, type: ANIME, sort: POPULARITY_DESC) {
       id
       title { romaji english }
       coverImage { extraLarge color }
@@ -446,9 +446,22 @@ class AniListProvider(
         return _pagina_para_animes_em_alta(self._executar(_QUERY_EM_ALTA, {}), "em alta")
 
     def listar_proxima_temporada(self) -> list[AnimeEmAlta]:
-        estacao, ano = _proxima_temporada(datetime.now(UTC))
-        dados = self._executar(_QUERY_PROXIMA_TEMPORADA, {"estacao": estacao, "ano": ano})
-        return _pagina_para_animes_em_alta(dados, "próxima temporada")
+        agora = datetime.now(UTC)
+        estacao_atual, ano_atual = _temporada_atual(agora)
+        estacao, ano = _proxima_temporada(agora)
+        # A temporada em curso também tem estreias futuras (o cour começa
+        # escalonado ao longo do 1º mês+); sem elas a fileira pularia direto
+        # pra próxima estação.
+        ainda_nao_lancados = self._executar(
+            _QUERY_PROXIMA_TEMPORADA,
+            {"estacao": estacao_atual, "ano": ano_atual, "status": "NOT_YET_RELEASED"},
+        )
+        proxima = self._executar(_QUERY_PROXIMA_TEMPORADA, {"estacao": estacao, "ano": ano})
+        itens = [
+            *_pagina_para_animes_em_alta(ainda_nao_lancados, "estreias da temporada atual"),
+            *_pagina_para_animes_em_alta(proxima, "próxima temporada"),
+        ]
+        return list({item.anilist_id: item for item in itens}.values())
 
     def listar_novos_lancamentos(self) -> list[AnimeEmAlta]:
         agora = int(datetime.now(UTC).timestamp())
@@ -570,6 +583,10 @@ class AniListProvider(
 
 
 _ESTACOES_ANILIST = ("WINTER", "SPRING", "SUMMER", "FALL")
+
+
+def _temporada_atual(agora: datetime) -> tuple[str, int]:
+    return _ESTACOES_ANILIST[(agora.month - 1) // 3], agora.year
 
 
 def _proxima_temporada(agora: datetime) -> tuple[str, int]:
