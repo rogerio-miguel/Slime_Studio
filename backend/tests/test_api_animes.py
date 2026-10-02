@@ -1139,3 +1139,67 @@ async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
             )
         ).scalar_one()
     assert fonte.versao == VersaoDeFonte.DUBLADO
+
+
+async def test_listar_episodios_remotos_atualiza_texto_gravado_so_com_ptbr_real(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Write-back em `Episodio.titulo`/`sinopse`: pt-BR de verdade substitui o
+    gravado (ep 1: inglês de fallback antigo -> pt-BR); nome em fallback só
+    preenche vazio e nunca regride um texto melhor já gravado (ep 2 mantém a
+    tradução, ep 3 vazio recebe o inglês)."""
+    async with sessionmaker_api() as sessao:
+        anime = Anime(titulo="Anime Writeback", slug="anime-writeback")
+        sessao.add(anime)
+        await sessao.flush()
+        for numero, titulo in ((1, "English One"), (2, "Tradução Boa"), (3, None)):
+            sessao.add(
+                Episodio(
+                    anime_id=anime.id,
+                    numero=numero,
+                    titulo=titulo,
+                    tipo=TipoEpisodio.REGULAR,
+                    versao=VersaoEpisodio.LEGENDADO,
+                    url_fonte=f"https://x/ep{numero}",
+                    site_origem="animefire.one",
+                    status=StatusEpisodio.LIBERADO,
+                )
+            )
+        await sessao.commit()
+        anime_id = anime.id
+
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
+        return FonteResolvida(
+            dominio="animefire.one",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada=None):
+        return [
+            EpisodioRemoto(rotulo=str(n), numero=n, url=f"https://x/ep{n}") for n in (1, 2, 3)
+        ]
+
+    async def _info_fake(titulo, ano, numero, temporada):
+        if numero == 1:
+            return InfoDeEpisodio(still_url=None, nome="Um em PT")
+        return InfoDeEpisodio(still_url=None, nome=f"English {numero}", nome_em_fallback=True)
+
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr(
+        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+    )
+
+    resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        titulos = dict(
+            (await sessao.execute(
+                select(Episodio.numero, Episodio.titulo).where(Episodio.anime_id == anime_id)
+            )).all()
+        )
+    assert titulos == {1: "Um em PT", 2: "Tradução Boa", 3: "English 3"}

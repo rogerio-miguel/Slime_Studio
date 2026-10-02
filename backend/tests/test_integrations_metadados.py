@@ -1449,6 +1449,38 @@ def test_tmdb_buscar_arte_por_titulo_nao_aceita_mais_numero_temporada():
 # --- TmdbProvider.buscar_info_de_episodio (Fatia 5/6, PLANO_ARTE_TMDB.md) ---
 
 
+def test_tmdb_nome_placeholder_pt_br_cai_pro_nome_real_em_ingles(monkeypatch: pytest.MonkeyPatch):
+    """Sem tradução, o TMDB devolve "Episódio N" (não vazio) em pt-BR: tem que
+    contar como ausente pro fallback en-US preencher; placeholder também no
+    inglês ("Episode N") fica sem nome em vez de virar "EP.N - Episode N"."""
+
+    def _fake_get(url, **kwargs):
+        if not url.endswith("/tv/999/season/1"):
+            raise AssertionError(f"URL não mapeada no fake: {url}")
+        if kwargs["params"]["language"] == "pt-BR":
+            episodios = [
+                {"episode_number": 1, "name": "Episódio 1", "overview": "sinopse"},
+                {"episode_number": 2, "name": "Episódio 2", "overview": "sinopse"},
+                {"episode_number": 3, "name": "Nome em PT", "overview": "sinopse"},
+            ]
+        else:
+            episodios = [
+                {"episode_number": 1, "name": "The Floating Island"},
+                {"episode_number": 2, "name": "Episode 2"},
+            ]
+        return _RespostaFalsa(corpo={"episodes": episodios})
+
+    monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
+
+    info = TmdbProvider("token").info_da_temporada(999, 1)
+
+    assert info[1].nome == "The Floating Island"
+    assert info[1].nome_em_fallback is True
+    assert info[2].nome is None
+    assert info[3].nome == "Nome em PT"
+    assert info[3].nome_em_fallback is False
+
+
 def test_tmdb_info_de_episodio_match_feliz(monkeypatch: pytest.MonkeyPatch):
     """Resolve a série, monta a tabela de temporadas (especial season_number=0
     fica fora da numeração absoluta; temporada 1 com 12 episódios, temporada 2

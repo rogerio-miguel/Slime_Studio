@@ -226,11 +226,11 @@ async def _marcar_assistidos(
     comitou (nenhum episódio já capturado deixa de ser marcado), só o passo 2
     (criar os que faltam) não roda.
 
-    Sem `info_de_episodio` aqui (ao contrário de `criar_job_site`): seria uma
-    chamada ao TMDB por episódio faltante, e thumb/título/sinopse exibidos na
-    página do anime/Home já vêm de `remotos.dados`/`item.sinopse`, não de
-    `Episodio.capa_path`/`titulo`/`sinopse` — não há ganho visual que
-    justifique o custo.
+    `titulo`/`sinopse` vêm de `info_de_episodio` (best-effort, como em
+    `criar_job_site`): a página do anime tem fallback ao vivo, mas "Continuar
+    assistindo" lê só o `Episodio` gravado — sem isto o episódio ficava sem nome
+    pra sempre. O custo é baixo: a 1ª consulta memoiza a temporada inteira
+    (`integrations/servico.py`), os demais episódios saem do cache.
     """
     async with sessionmaker() as sessao:
         filtro_numero = [Episodio.numero == numero] if numero is not None else []
@@ -270,6 +270,7 @@ async def _marcar_assistidos(
                 fonte.dominio,
                 [ep.rotulo for ep in candidatos],
             )
+        info = await info_de_episodio(sessionmaker, anime, numero_remoto)
         try:
             await catalogo.criar_episodio_assistido(
                 sessionmaker,
@@ -279,6 +280,8 @@ async def _marcar_assistidos(
                 versao=versao_do_episodio,
                 url_fonte=candidatos[0].url,
                 site_origem=fonte.dominio,
+                titulo_episodio=info.nome if info else None,
+                sinopse=info.sinopse if info else None,
             )
         except EpisodioJaExiste:
             # Corrida genuína (dois cliques quase simultâneos do botão/menu) —

@@ -15,6 +15,7 @@ mora a fronteira de exceção HTTP e o `to_thread`/timeout externo
 """
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from io import BytesIO
@@ -56,6 +57,10 @@ _IDIOMA = "pt-BR"  # TMDB cai pro pôster default quando não há arte pt-BR
 # vezes só no episódio 1 da temporada inteira. Nunca usado pra imagem (still/
 # backdrop/pôster não dependem de idioma). Ver `TmdbProvider.info_da_temporada`.
 _IDIOMA_FALLBACK = "en-US"
+# Sem título cadastrado, o TMDB não devolve `name` vazio: devolve o placeholder
+# localizado ("Episódio 7" / "Episode 7"). Tratado como ausente — senão o
+# fallback en-US nunca preenche o nome real e o placeholder é persistido.
+_NOME_PLACEHOLDER = re.compile(r"^(?:epis[óo]dio|episode)\s*\d+$", re.IGNORECASE)
 # Estritamente < `integrations/servico.py::_TIMEOUT_POR_PROVEDOR_S` (8s) —
 # mesma razão de `integrations/anilist.py::_TIMEOUT_S`.
 _TIMEOUT_S = 6
@@ -328,7 +333,7 @@ class TmdbProvider(ProvedorDeArte):
             numero = episodio.get("episode_number")
             if not isinstance(numero, int):
                 continue
-            nome = episodio.get("name") or None
+            nome = _nome_de_episodio(episodio)
             sinopse = episodio.get("overview") or None
             if nome is None or sinopse is None:
                 falta_traducao = True
@@ -366,10 +371,14 @@ class TmdbProvider(ProvedorDeArte):
             atual = info.get(numero) if isinstance(numero, int) else None
             if atual is None:
                 continue
+            nome_en = None if atual.nome else _nome_de_episodio(episodio)
+            sinopse_en = None if atual.sinopse else (episodio.get("overview") or None)
             info[numero] = InfoDeEpisodio(
                 still_url=atual.still_url,
-                nome=atual.nome or (episodio.get("name") or None),
-                sinopse=atual.sinopse or (episodio.get("overview") or None),
+                nome=atual.nome or nome_en,
+                sinopse=atual.sinopse or sinopse_en,
+                nome_em_fallback=nome_en is not None,
+                sinopse_em_fallback=sinopse_en is not None,
             )
 
     def _resolver_serie(self, titulo: str, ano: int | None) -> dict | None:
@@ -560,6 +569,14 @@ def _ano_de_estreia(item: dict) -> int | None:
         return None
     prefixo = data[:4]
     return int(prefixo) if prefixo.isdigit() else None
+
+
+def _nome_de_episodio(episodio: dict) -> str | None:
+    """`name` do episódio, ou `None` quando vazio ou placeholder do TMDB."""
+    nome = (episodio.get("name") or "").strip()
+    if not nome or _NOME_PLACEHOLDER.match(nome):
+        return None
+    return nome
 
 
 def _url_imagem(caminho: str | None, tamanho: str) -> str | None:
