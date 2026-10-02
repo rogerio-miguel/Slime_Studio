@@ -321,17 +321,24 @@ def test_listar_episodios_com_episodes_em_formato_invalido_levanta_estrutura_do_
         extrator.listar_episodios(cliente, identificador, None)
 
 
-def test_listar_episodios_com_lista_vazia_levanta_estrutura_do_site_mudou(extrator):
-    """`data.episodes: []` é estruturalmente válido, mas zero episódios nunca
-    vira lista vazia silenciosa — mesma trava de não-regressão de catálogo."""
+def test_listar_episodios_com_lista_vazia_devolve_lista_vazia(extrator):
+    """`data.episodes: []` com `seasons` válido é anime ainda não estreado
+    (observado ao vivo) — estado legítimo, não erro."""
     identificador = "anime-sem-episodios"
     url_anime = f"{_API_URL}/anime/{identificador}"
     cliente = ClienteFalso(
-        json_por_url={url_anime: {"data": {"seasons": [], "episodes": []}}}
+        json_por_url={
+            url_anime: {
+                "data": {
+                    "seasons": [{"title": None, "number": 1, "first_episode_number": 1}],
+                    "episodes": [],
+                }
+            }
+        }
     )
 
-    with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador, None)
+    assert extrator.listar_episodios(cliente, identificador, None) == []
+    assert extrator.listar_episodios(cliente, identificador, 1) == []
 
 
 def test_listar_episodios_com_temporada_ausente_em_seasons_levanta_estrutura_do_site_mudou(
