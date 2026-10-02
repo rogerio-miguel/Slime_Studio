@@ -221,7 +221,8 @@ class ProvedorDeMetadados(ABC):
     @abstractmethod
     def listar_proxima_temporada(self) -> list[AnimeEmAlta]:
         """Lista animes da próxima estação (a maioria ainda `NOT_YET_RELEASED`),
-        ordenados por popularidade — mesmo formato de `listar_em_alta`."""
+        ordenados por popularidade — mesmo formato de `listar_em_alta`. O
+        provedor pode somar as estreias ainda não lançadas da estação atual."""
 
     def listar_novos_lancamentos(self) -> list[AnimeEmAlta]:
         """Animes com um episódio lançado recentemente (agenda de exibição da

@@ -48,6 +48,8 @@ import { embaralharComSemente, recorteVisivelDoCarrossel } from '../inicio/janel
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 
+const LIMITE_PROXIMAS_ESTREIAS = 20;
+
 // Rota "/" — interface principal do streaming: navbar + carrossel hero
 // "Destaques da temporada" seguido das fileiras horizontais. A introdução
 // cinematográfica por vídeo (CenarioDeEntrada.jsx, useIntroPorVideo.js) foi
@@ -249,8 +251,10 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // Ordenada por data de estreia crescente (`ordenarPorEstreia`) — os itens
   // ainda sem nenhum sinal de data ficam no final da fileira, e a lista
   // reordena sozinha assim que o warm de lançamento preenche uma data nova.
+  // Corte DEPOIS de ordenar: ficam as 20 estreias mais próximas, e os itens sem
+  // data (final da lista) são os que saem.
   const proximaTemporadaOrdenada = useMemo(
-    () => ordenarPorEstreia(proximaTemporada.dados),
+    () => ordenarPorEstreia(proximaTemporada.dados).slice(0, LIMITE_PROXIMAS_ESTREIAS),
     [proximaTemporada.dados]
   );
 

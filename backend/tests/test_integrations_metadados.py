@@ -402,9 +402,12 @@ def test_anilist_listar_proxima_temporada(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("integrations.anilist.requests.post", _post)
     monkeypatch.setattr("integrations.anilist._proxima_temporada", lambda _agora: ("SPRING", 2099))
+    monkeypatch.setattr("integrations.anilist._temporada_atual", lambda _agora: ("WINTER", 2099))
 
     resultado = AniListProvider().listar_proxima_temporada()
 
+    # Duas buscas (estreias da temporada atual + próxima); o mesmo corpo falso
+    # volta nas duas e o dedup por `anilist_id` colapsa o item repetido.
     assert capturado["variables"] == {"estacao": "SPRING", "ano": 2099}
     assert resultado == [
         AnimeEmAlta(
@@ -426,6 +429,32 @@ def test_anilist_listar_proxima_temporada(monkeypatch: pytest.MonkeyPatch):
             ),
         )
     ]
+
+
+def test_anilist_proxima_temporada_inclui_estreias_da_temporada_atual(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def _corpo(ident: int) -> dict:
+        return {"data": {"Page": {"media": [{"id": ident, "title": {"romaji": f"A{ident}"}}]}}}
+
+    chamadas = []
+
+    def _post(*a, **k):
+        variaveis = k["json"]["variables"]
+        chamadas.append(variaveis)
+        return _RespostaFalsa(corpo=_corpo(1 if variaveis.get("status") else 2))
+
+    monkeypatch.setattr("integrations.anilist.requests.post", _post)
+    monkeypatch.setattr("integrations.anilist._temporada_atual", lambda _agora: ("FALL", 2026))
+    monkeypatch.setattr("integrations.anilist._proxima_temporada", lambda _agora: ("WINTER", 2027))
+
+    resultado = AniListProvider().listar_proxima_temporada()
+
+    assert chamadas == [
+        {"estacao": "FALL", "ano": 2026, "status": "NOT_YET_RELEASED"},
+        {"estacao": "WINTER", "ano": 2027},
+    ]
+    assert [item.anilist_id for item in resultado] == [1, 2]
 
 
 def test_anilist_listar_proxima_temporada_formato_inesperado(monkeypatch: pytest.MonkeyPatch):
