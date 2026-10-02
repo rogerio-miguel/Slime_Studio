@@ -621,7 +621,7 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                         });
                       }}
                       aria-haspopup="dialog"
-                      className="-mt-0.5 inline-flex min-h-9 items-center text-sm font-bold text-neon outline-none transition-colors hover:text-white focus-visible:underline"
+                      className="-mt-0.5 inline-flex min-h-9 cursor-pointer items-center text-sm font-bold text-neon outline-none transition-colors hover:text-white focus-visible:underline"
                     >
                       Ler sinopse completa
                     </button>
