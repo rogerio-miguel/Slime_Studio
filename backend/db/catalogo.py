@@ -496,6 +496,8 @@ async def criar_episodio_assistido(
     versao: VersaoEpisodio,
     url_fonte: str,
     site_origem: str,
+    titulo_episodio: str | None = None,
+    sinopse: str | None = None,
 ) -> int:
     """Cria o `Episodio` já `LIBERADO` + `assistido_em` (agora), sem `Job` —
     "Marcar como assistido" (`api/servicos/jobs.py::marcar_todos_assistidos`)
@@ -519,7 +521,8 @@ async def criar_episodio_assistido(
         versao=versao,
         url_fonte=url_fonte,
         site_origem=site_origem,
-        titulo_episodio=None,
+        titulo_episodio=titulo_episodio,
+        sinopse=sinopse,
         status=StatusEpisodio.LIBERADO,
         assistido_em=datetime.now(UTC),
     )

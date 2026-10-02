@@ -42,6 +42,7 @@ from extractors.servico import filtrar_por_versao, listar_episodios_em
 from integrations import servico as servico_metadados
 from integrations.base import InfoDeEpisodio, TitulosDeAnime
 from models.anime import Anime
+from models.episodio import Episodio
 
 logger = logging.getLogger(__name__)
 
@@ -505,6 +506,7 @@ async def _sobrepor_stills_de_episodios(
             tarefa.cancel()
         await asyncio.gather(*pendentes, return_exceptions=True)
 
+    infos_por_numero: dict[int, InfoDeEpisodio] = {}
     for tarefa in concluidas:
         indice, info = tarefa.result()
         if info is None:
@@ -515,4 +517,52 @@ async def _sobrepor_stills_de_episodios(
             titulo=info.nome,
             sinopse=info.sinopse,
         )
+        infos_por_numero[episodios[indice].numero] = info
+
+    await _atualizar_textos_gravados(sessionmaker, anime, infos_por_numero)
     return resultado
+
+
+def _texto_atualizado(gravado: str | None, novo: str | None, novo_em_fallback: bool) -> str | None:
+    """Texto a persistir: `novo` só substitui o gravado quando é pt-BR de verdade
+    (ex. o TMDB ganhou a tradução desde a captura); em fallback (en-US) só
+    preenche um campo vazio — nunca regride um texto melhor já gravado. `None`
+    nunca apaga."""
+    if novo is None:
+        return gravado
+    if gravado is None or not novo_em_fallback:
+        return novo
+    return gravado
+
+
+async def _atualizar_textos_gravados(
+    sessionmaker: _SessionMaker, anime: Anime, infos_por_numero: dict[int, InfoDeEpisodio]
+) -> None:
+    """Alinha `Episodio.titulo`/`sinopse` já gravados com o que o overlay acabou
+    de resolver — "Continuar assistindo" lê só o valor gravado, então sem isto
+    um nome em inglês de fallback ficaria pra sempre depois que o TMDB ganha o
+    pt-BR. Best-effort: a listagem não pode falhar por causa disto."""
+    if not infos_por_numero:
+        return
+    try:
+        async with sessionmaker() as sessao:
+            locais = await sessao.scalars(
+                select(Episodio).where(
+                    Episodio.anime_id == anime.id, Episodio.numero.in_(infos_por_numero)
+                )
+            )
+            for episodio in locais:
+                info = infos_por_numero[episodio.numero]
+                episodio.titulo = _texto_atualizado(
+                    episodio.titulo, info.nome, info.nome_em_fallback
+                )
+                episodio.sinopse = _texto_atualizado(
+                    episodio.sinopse, info.sinopse, info.sinopse_em_fallback
+                )
+            await sessao.commit()
+    except Exception as excecao:
+        logger.warning(
+            "atualização best-effort de título/sinopse gravados falhou pro anime %r: %s",
+            anime.titulo,
+            excecao,
+        )

@@ -277,11 +277,17 @@ class InfoDeEpisodio:
     (TMDB) na mesma chamada (Fatia 6 — os dois primeiros já existiam via
     `still_url`/Fatia 5, `nome`/`sinopse` são novos). Qualquer campo pode ser
     `None` — TMDB best-effort, sem tradução pt-BR pra muito anime (`nome`/
-    `sinopse` ficam vazios com mais frequência que `still_url`)."""
+    `sinopse` ficam vazios com mais frequência que `still_url`).
+
+    `*_em_fallback`: o texto veio do idioma de fallback (en-US), não do pt-BR —
+    quem persiste só o sobrescreve com texto que NÃO esteja em fallback, senão
+    um texto melhor já gravado (pt-BR ou traduzido) regride pra inglês."""
 
     still_url: str | None
     nome: str | None = None
     sinopse: str | None = None
+    nome_em_fallback: bool = False
+    sinopse_em_fallback: bool = False
 
 
 class ProvedorDeArte(ABC):
