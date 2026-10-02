@@ -54,7 +54,10 @@ export default function SinopseEmFoco({ aberta, titulo, tituloSecundario, sinops
         {tituloSecundario && (
           <p className="mb-6 text-lg font-bold text-ink-muted sm:text-xl">{tituloSecundario}</p>
         )}
-        <p className="text-lg leading-relaxed text-white/90 sm:text-xl sm:leading-[1.75]">
+        {/* Mesmo peso e cor da sinopse do hero (`font-bold text-ink-muted`,
+            inicio/BlocoConteudoHero.jsx e inicio/DestaqueGrande.jsx), só em
+            tamanho de leitura — pedido do usuário, 2026-10-02. */}
+        <p className="text-lg font-bold leading-relaxed text-ink-muted sm:text-xl sm:leading-[1.75]">
           {frases.map((frase, indice) => (
             <span key={indice} className="sinopse-foco-frase" style={{ '--i': indice }}>
               {frase}
