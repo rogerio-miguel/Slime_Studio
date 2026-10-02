@@ -1341,7 +1341,40 @@ def test_tmdb_buscar_arte_por_titulo_match_exato_prefixa_url_de_imagem(
 
     resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime", None)
 
-    assert resultado == ArteDeAnime(banner_url="https://image.tmdb.org/t/p/original/backdrop.jpg")
+    assert resultado == ArteDeAnime(
+        banner_url="https://image.tmdb.org/t/p/original/backdrop.jpg", ano_da_serie=2018
+    )
+
+
+def test_tmdb_buscar_arte_traz_a_sinopse_ptbr_da_serie(monkeypatch: pytest.MonkeyPatch):
+    resultado_tv = _resultado_tv(name="Slime", original_name="Slime", overview="  Premissa. ")
+    corpo = {"results": [resultado_tv]}
+    monkeypatch.setattr(
+        "integrations.tmdb.requests.get", lambda *a, **k: _RespostaFalsa(corpo=corpo)
+    )
+
+    resultado = TmdbProvider("token").buscar_arte_por_titulo("Slime", None)
+
+    assert resultado.sinopse_serie == "Premissa."
+
+
+def test_tmdb_sinopse_da_temporada(monkeypatch: pytest.MonkeyPatch):
+    def _fake_get(url, **kwargs):
+        if url.endswith("/search/tv"):
+            return _RespostaFalsa(
+                corpo={"results": [_resultado_tv(id=999, name="Slime", original_name="Slime")]}
+            )
+        if url.endswith("/tv/999/season/2"):
+            return _RespostaFalsa(corpo={"overview": "Da segunda."})
+        if url.endswith("/tv/999/season/3"):
+            return _RespostaFalsa(corpo={"overview": ""})
+        raise AssertionError(f"URL não mapeada no fake: {url}")
+
+    monkeypatch.setattr("integrations.tmdb.requests.get", _fake_get)
+    tmdb = TmdbProvider("token")
+
+    assert tmdb.sinopse_da_temporada("Slime", None, 2) == "Da segunda."
+    assert tmdb.sinopse_da_temporada("Slime", None, 3) is None
 
 
 def test_tmdb_desempate_por_ano_entre_dois_candidatos(monkeypatch: pytest.MonkeyPatch):
@@ -2451,3 +2484,43 @@ async def test_servico_info_memo_evita_repescar_temporada_pro_proximo_episodio(
     assert terceiro == primeiro
     # search/tv + tv/999 + tv/999/season/1 — uma vez cada, nunca mais.
     assert len(chamadas) == 3
+
+
+async def test_overlay_troca_sinopse_em_ingles_pela_ptbr_da_serie_na_primeira_temporada(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    arte = ArteDeAnime(
+        banner_url="https://tmdb/b.jpg", sinopse_serie="Premissa pt.", ano_da_serie=2026
+    )
+    monkeypatch.setattr(registro, "_provedores_de_arte", (_ProvedorDeArteFake("tmdb", arte=arte),))
+    item = AnimeEmAlta(
+        titulo_romaji="X", titulo_ingles=None, capa_url=None, banner_url=None, anilist_id=1,
+        ano_estreia=2026, sinopse="English synopsis that is long enough " * 4,
+    )
+
+    [resultado] = await servico._sobrepor_arte_em_lote([item])
+
+    assert resultado.sinopse == "Premissa pt."
+    assert resultado.banner_url == "https://tmdb/b.jpg"
+
+
+async def test_overlay_continuacao_especifica_mantem_ingles_e_generica_recebe_ptbr(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    arte = ArteDeAnime(banner_url=None, sinopse_serie="Premissa pt.", ano_da_serie=2018)
+    monkeypatch.setattr(registro, "_provedores_de_arte", (_ProvedorDeArteFake("tmdb", arte=arte),))
+    especifica = "English synopsis of this season that is long enough " * 3
+    itens = [
+        AnimeEmAlta(titulo_romaji="A", titulo_ingles=None, capa_url=None, banner_url=None,
+                    anilist_id=1, ano_estreia=2026, sinopse=especifica),
+        AnimeEmAlta(titulo_romaji="B", titulo_ingles=None, capa_url=None, banner_url=None,
+                    anilist_id=2, ano_estreia=2026, sinopse="The second season of B."),
+        AnimeEmAlta(titulo_romaji="C", titulo_ingles=None, capa_url=None, banner_url=None,
+                    anilist_id=3, ano_estreia=2026, sinopse=None),
+    ]
+
+    a, b, c = await servico._sobrepor_arte_em_lote(itens)
+
+    assert a.sinopse == especifica
+    assert b.sinopse == "Premissa pt."
+    assert c.sinopse is None

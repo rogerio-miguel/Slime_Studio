@@ -124,9 +124,9 @@ class TmdbProvider(ProvedorDeArte):
         return "tmdb"
 
     def buscar_arte_por_titulo(self, titulo: str, ano: int | None) -> ArteDeAnime | None:
-        """Só banner — capa (pôster) não é mais responsabilidade deste método,
-        ver docstring de módulo. Prefere o melhor backdrop de `/tv/{id}/images`
-        (`_melhor_backdrop`: sem texto sobreposto, mais votado) ao
+        """Banner e sinopse pt-BR da série — capa (pôster) não é mais
+        responsabilidade deste método, ver docstring de módulo. Prefere o melhor
+        backdrop de `/tv/{id}/images` (`_melhor_backdrop`: sem texto sobreposto, mais votado) ao
         `backdrop_path` "primário" da série, que o TMDB às vezes fixa numa arte
         com logo/texto ou de temporada aleatória."""
         serie = self._resolver_serie(titulo, ano)
@@ -136,9 +136,26 @@ class TmdbProvider(ProvedorDeArte):
         id_da_serie = serie.get("id")
         melhor = self._melhor_backdrop(id_da_serie) if isinstance(id_da_serie, int) else None
         banner_url = _url_imagem(melhor or serie.get("backdrop_path"), _TAMANHO_BACKDROP)
-        if banner_url is None:
+        # `overview` da busca já vem em `_IDIOMA` (idêntico ao de `GET /tv/{id}`,
+        # medido); vazio quando o TMDB não tem tradução — fica `None`, nunca o inglês.
+        sinopse_serie = (serie.get("overview") or "").strip() or None
+        if banner_url is None and sinopse_serie is None:
             return None
-        return ArteDeAnime(banner_url=banner_url)
+        return ArteDeAnime(
+            banner_url=banner_url,
+            sinopse_serie=sinopse_serie,
+            ano_da_serie=_ano_de_estreia(serie),
+        )
+
+    def sinopse_da_temporada(self, titulo: str, ano: int | None, temporada: int) -> str | None:
+        """Sinopse pt-BR da TEMPORADA (`GET /tv/{id}/season/{n}`); `None` quando
+        a série não é achada ou a temporada não tem tradução (a maioria)."""
+        serie = self._resolver_serie(titulo, ano)
+        id_da_serie = serie.get("id") if serie else None
+        if not isinstance(id_da_serie, int):
+            return None
+        dados = self._executar(f"/tv/{id_da_serie}/season/{temporada}", {"language": _IDIOMA})
+        return (dados.get("overview") or "").strip() or None
 
     def _melhor_backdrop(self, id_da_serie: int) -> str | None:
         """`file_path` do melhor backdrop de `GET /tv/{id}/images`: prefere os
