@@ -4,10 +4,6 @@ import { traduzirGenero } from './generos.js';
 // Sem React, sem imports de `../api/`: cada função recebe a lista do feed e
 // devolve um array NOVO — nunca muta a entrada.
 
-// Lista de gêneros que nunca viram fileira. Ponto único de ajuste: Ecchi fica
-// FORA da exclusão (decisão do usuário), só Hentai é barrado.
-export const GENEROS_EXCLUIDOS = ['Hentai'];
-
 // (A fileira "Próximas estreias" NÃO sai daqui — o feed `em-alta` só lista o
 // que já está no ar. Ela vem do endpoint próprio `GET /api/animes/proxima-
 // temporada` e é consumida direto em paginas/Inicio.jsx. `ordenarPorEstreia`
@@ -53,13 +49,13 @@ export function topDaTemporada(itens, n = 10) {
 
 // Uma fileira por gênero "quente" no feed atual. Conta em quantos itens cada
 // gênero aparece (um item conta para cada gênero seu); descarta gêneros abaixo
-// de `minimoPorFileira` e os de `excluir`; ordena por frequência desc com
+// de `minimoPorFileira`; ordena por frequência desc com
 // desempate alfabético pelo nome AniList (estável entre reloads); corta em
 // `maxFileiras`. Cada fileira devolve os itens do feed com aquele gênero, na
 // ordem original do feed.
 export function fileirasPorGenero(
   itens,
-  { maxFileiras = 3, minimoPorFileira = 6, excluir = GENEROS_EXCLUIDOS } = {},
+  { maxFileiras = 3, minimoPorFileira = 6 } = {},
 ) {
   const lista = itens ?? [];
 
@@ -70,9 +66,8 @@ export function fileirasPorGenero(
     }
   }
 
-  const excluidos = new Set(excluir);
   return [...frequencia.entries()]
-    .filter(([genero, contagem]) => contagem >= minimoPorFileira && !excluidos.has(genero))
+    .filter(([, contagem]) => contagem >= minimoPorFileira)
     .sort(([generoA, contA], [generoB, contB]) => contB - contA || generoA.localeCompare(generoB))
     .slice(0, maxFileiras)
     .map(([genero]) => ({

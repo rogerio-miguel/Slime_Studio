@@ -254,20 +254,14 @@ export function IconeEmAlta(props) {
   );
 }
 
+// Referência estável pro caso de o feed ainda não ter chegado (deps de useMemo).
+const SEM_ITENS = [];
+
 export default function CarrosselDestaques({ itens, aoMaterializar, materializando }) {
   const idTitulo = useId();
   const idSlides = useId();
 
-  // Filtra "Hentai" do gênero (nome exato da AniList, ./generos.js) fora do
-  // pool de sorteio — pedido explícito do usuário, 2026-09-23. `_QUERY_EM_
-  // ALTA` (backend/integrations/anilist.py) não tem `isAdult: false` como as
-  // queries de fileira temática têm, então o filtro entra aqui, no consumo do
-  // feed "em alta". `rank` (abaixo) usa `itens` cru, não `pool`, pra manter a
-  // posição de ranking igual à do feed original mesmo com itens excluídos.
-  const pool = useMemo(
-    () => (itens ?? []).filter((item) => !(item.generos ?? []).includes('Hentai')),
-    [itens]
-  );
+  const pool = itens ?? SEM_ITENS;
 
   // Deslocamento da janela, em BLOCOS de `TAMANHO_DA_JANELA`. Nasce do relógio
   // (não de 0) pra que o recorte também mude entre reloads, não só enquanto a
@@ -444,13 +438,10 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
             const mostrarAlternativo =
               Boolean(tituloAlternativo) && tituloAlternativo !== titulo;
             const catalogado = item.anime_id != null;
-            // Posição no ranking do feed `em-alta` (já vem ordenado). Usa
-            // `itens` (o array cru da prop), não `pool` (filtrado sem
-            // Hentai) — a numeração exibida ("#N em alta") reflete a posição
-            // real no feed, não a posição pós-filtro. O item aqui é a MESMA
-            // referência de objeto (a janela não clona item), então
+            // Posição no ranking do feed `em-alta` (já vem ordenado). O item é a
+            // MESMA referência de objeto (a janela não clona item), então
             // `indexOf` casa. -1 (não deve acontecer) → sem pill.
-            const rank = (itens ?? []).indexOf(item) + 1;
+            const rank = pool.indexOf(item) + 1;
             // Sem arte horizontal: só temos o pôster retrato pra trabalhar.
             const semBanner = !item.banner_url && Boolean(item.capa_url);
             const fonteImagem = item.banner_url || item.capa_url || null;

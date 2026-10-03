@@ -164,12 +164,6 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // "próxima temporada" (ainda não estreou). Mesma exibição silenciosa:
   // carregando/erro/vazio a fileira simplesmente não aparece.
   const novosLancamentos = useRecurso(listarNovosLancamentos, []);
-  // Mesmo filtro de "Hentai" que o carrossel/banner aplicam (ver comentário
-  // em `bannerDestaque` abaixo) — sem isso o feed cru vaza pra fileira.
-  const novosLancamentosSemHentai = useMemo(
-    () => (novosLancamentos.dados ?? []).filter((item) => !(item.generos ?? []).includes('Hentai')),
-    [novosLancamentos.dados]
-  );
   // Chave 'animes' (invalidacao.js): recarrega sozinho quando `criarAnime`/
   // `removerAnime` resolve em qualquer lugar do app (ex. materializar um
   // item do feed abaixo), sem precisar de um `recarregar()` manual aqui.
@@ -310,18 +304,9 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // rodar antes dela existir no arquivo.
   const [bannerDestaque, segundoBannerDestaque] = useMemo(() => {
     const chaveItem = (item) => item.anilist_id ?? item.titulo_romaji;
-    // Mesmo filtro de "Hentai" que CarrosselDestaques.jsx aplica antes de
-    // embaralhar (seu `pool`, não `itens` cru) — sem isso o array passado pro
-    // Fisher-Yates tem um tamanho/ordem diferente do que o carrossel de fato
-    // embaralha, e a semente compartilhada deixa de reproduzir a MESMA janela:
-    // o recorte "visível" calculado aqui diverge do real, e um anime que está
-    // no carrossel escapa do `idsExcluidos` e aparece de novo no banner.
-    const semHentai = (emAlta.dados ?? []).filter(
-      (item) => !(item.generos ?? []).includes('Hentai')
-    );
     const idsExcluidos = new Set([
       ...top10.map(chaveItem),
-      ...recorteVisivelDoCarrossel(semHentai).map(chaveItem),
+      ...recorteVisivelDoCarrossel(emAlta.dados ?? []).map(chaveItem),
     ]);
     const candidatos = (emAlta.dados ?? []).filter(
       (item) => !idsExcluidos.has(chaveItem(item)) && item.banner_url
@@ -841,13 +826,13 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
         />
       ),
     },
-    novosLancamentosSemHentai.length > 0 && {
+    (novosLancamentos.dados ?? []).length > 0 && {
       chave: 'novos-lancamentos',
       node: (
         <div key="novos-lancamentos" ref={refSecao('novos-lancamentos')} data-secao="novos-lancamentos">
           <FileiraDeCards
             titulo="Novos lançamentos"
-            itens={novosLancamentosSemHentai}
+            itens={novosLancamentos.dados}
             tamanho="pequeno"
             comSombra={false}
             chaveDoItem={chaveDoItemDoFeed}
