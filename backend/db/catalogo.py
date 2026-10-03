@@ -158,6 +158,20 @@ async def aplicar_posicao_na_serie(
         await sessao.commit()
 
 
+async def promover_a_temporada(sessionmaker: _SessionMaker, anime_id: int) -> None:
+    """Tira `formato_midia` e numera como T1 (só se ainda sem número) um anime
+    que a AniList marca como ONA/OVA mas é a primeira temporada de uma série:
+    com `formato_midia` ele ficava fora do card/seletor da franquia."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.formato_midia = None
+        if anime.numero_temporada is None:
+            anime.numero_temporada = 1
+        await sessao.commit()
+
+
 async def sobrescrever_arte(sessionmaker: _SessionMaker, anime_id: int, arte: ArteDeAnime) -> None:
     """Sobrescreve `banner_path` de um anime JÁ catalogado — ao contrário de
     `aplicar_metadados` (só-quando-nulo, protege dado confirmado em todos os

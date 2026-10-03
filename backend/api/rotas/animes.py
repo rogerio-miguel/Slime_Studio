@@ -243,13 +243,13 @@ async def listar_animes(
     sessao: AsyncSession = Depends(obter_sessao),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeSaida]:
-    # `formato_midia IS NULL` exclui filme/OVA/ONA/especial: essas linhas se
-    # agrupam no anime original (seletor de temporada, `agrupar_franquias`/
-    # `_temporadas_e_proxima`) em vez de aparecer como card solto na grade.
-    resultado = await sessao.execute(
-        select(Anime).where(Anime.formato_midia.is_(None)).order_by(Anime.titulo)
-    )
-    animes = list(resultado.scalars())
+    # Filme/OVA/ONA/especial (`formato_midia` não nulo) se agrupam no anime
+    # original (seletor de temporada, `agrupar_franquias`/`_temporadas_e_proxima`)
+    # em vez de aparecer como card solto — exceto quando a franquia não tem
+    # temporada normal catalogada (`visiveis_no_catalogo`), senão somem da grade.
+    grupos_de_franquia = await servico_catalogo.agrupar_franquias(sessao)
+    resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
+    animes = servico_catalogo.visiveis_no_catalogo(resultado.scalars(), grupos_de_franquia)
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
@@ -262,7 +262,6 @@ async def listar_animes(
     versoes_confirmadas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
         sessao, ids
     )
-    grupos_de_franquia = await servico_catalogo.agrupar_franquias(sessao)
     # Aquecimento opt-in via `?aquecer=true`: carona fire-and-forget que sonda a
     # fonte real (scraping) dos animes em lançamento com contagem velha/ausente e
     # aquece o `status_lancamento` (filtro do badge) via AniList/Kitsu. Só a
@@ -345,11 +344,9 @@ async def listar_animes(
 async def aquecimento_em_andamento(
     sessao: AsyncSession = Depends(obter_sessao),
 ) -> AquecimentoCatalogoSaida:
-    ids = (
-        (await sessao.execute(select(Anime.id).where(Anime.formato_midia.is_(None))))
-        .scalars()
-        .all()
-    )
+    grupos = await servico_catalogo.agrupar_franquias(sessao)
+    animes = (await sessao.execute(select(Anime))).scalars()
+    ids = [anime.id for anime in servico_catalogo.visiveis_no_catalogo(animes, grupos)]
     em_andamento = servico_sondagem.sondagem_em_andamento(
         ids
     ) or servico_descoberta.refresh_em_andamento(ids)
