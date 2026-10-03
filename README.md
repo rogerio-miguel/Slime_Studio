@@ -4,7 +4,7 @@
   <img src="frontend/src/assets/logo2.png" alt="Slime Studio" height="200"/>
 </h1>
 
-Catálogo pessoal de animes com captura, empacotamento HLS e um player
+Catálogo pessoal de animes com captura, empacotamento HLS e um player <br>
 WebGPU com upscaling Anime4K por frame.
 
 [Páginas](#páginas) · [Player](#player) · [Arquitetura](#arquitetura) · [Rodando localmente](#rodando-localmente)
@@ -21,8 +21,8 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 
 ### Home
 
-<div align="center">
-  <img src="frontend/src/assets/inicio.png" alt="Home do Slime Studio" width="600" />
+<div >
+  <img src="frontend/src/assets/inicio.png" alt="Home do Slime Studio" width="full" />
 </div>
 
 - Destaques da temporada vindos de um feed externo (AniList) — não é o catálogo local.
@@ -31,8 +31,8 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 
 ### Página do anime
 
-<div align="center">
-  <img src="frontend/src/assets/anime-page.png" alt="Página do anime" width="600" />
+<div>
+  <img src="frontend/src/assets/anime-page.png" alt="Página do anime" width="full" />
 </div>
 
 - Resolve a fonte de vídeo entre os sites suportados (AnimeFire, MeusAnimes e AnimesDrive, nessa ordem de prioridade).
@@ -42,8 +42,8 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 
 ### Catálogo
 
-<div align="center">
-  <img src="frontend/src/assets/catalogo.png" alt="Catálogo local" width="600" />
+<div>
+  <img src="frontend/src/assets/catalogo.png" alt="Catálogo local" width="full" />
 </div>
 
 - Um card por franquia, com o estado de cada título (episódio atual, versão, estreia futura).
@@ -57,10 +57,10 @@ Os episódios capturados são empacotados em HLS e assistidos num player própri
 `hls.js` alimenta um `<video>` oculto, e o quadro visível é um `<canvas>` WebGPU, com
 barra de controles própria (sem os controles nativos do `<video>`).
 
-<div align="center">
-  <img src="frontend/src/assets/player.png" alt="Player com a barra de controles" width="600" />
+<div  >
+  <img src="frontend/src/assets/player.png" alt="Player com a barra de controles" width="full" />
   <br /><br />
-  <img src="frontend/src/assets/player4.png" alt="Player com brilho ambiente" width="600" />
+  <img src="frontend/src/assets/player4.png" alt="Player com brilho ambiente" width="full" />
 </div>
 
 ### Controles
@@ -108,10 +108,10 @@ limitação de realces, restauração por CNN, upscale 2x, uma segunda restaura�
 
 <div align="center">
   <b>Desligado</b><br />
-  <img src="frontend/src/assets/upscaling_desligado.png" alt="Quadro sem upscaling" width="600" />
+  <img src="frontend/src/assets/upscaling_desligado.png" alt="Quadro sem upscaling" width="full" />
   <br /><br />
   <b>Ligado</b><br />
-  <img src="frontend/src/assets/upscaling_ligado.png" alt="Quadro com upscaling Anime4K" width="600" />
+  <img src="frontend/src/assets/upscaling_ligado.png" alt="Quadro com upscaling Anime4K" width="full" />
 </div>
 
 ### Som — Áudio Cinema
@@ -146,10 +146,10 @@ Halo de cor ao redor do quadro, no estilo do Ambient Mode do YouTube, desenhado 
   medido ~8 vezes por segundo num canvas fora do DOM, para a leitura de pixels não travar
   a apresentação, e o laço pausa com a aba em segundo plano.
 
-<div align="center">
-  <img src="frontend/src/assets/player2.png" alt="Brilho ambiente em tela cheia" width="600" />
+<div>
+  <img src="frontend/src/assets/player2.png" alt="Brilho ambiente em tela cheia" width="full" />
   <br /><br />
-  <img src="frontend/src/assets/player3.png" alt="Brilho ambiente em tela cheia" width="600" />
+  <img src="frontend/src/assets/player3.png" alt="Brilho ambiente em tela cheia" width="full" />
 </div>
 
 ## Arquitetura
