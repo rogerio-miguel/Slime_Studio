@@ -59,8 +59,6 @@ barra de controles própria (sem os controles nativos do `<video>`).
 
 <div  >
   <img src="frontend/src/assets/player.png" alt="Player com a barra de controles" width="full" />
-  <br /><br />
-  <img src="frontend/src/assets/player4.png" alt="Player com brilho ambiente" width="full" />
 </div>
 
 ### Controles
