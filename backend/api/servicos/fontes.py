@@ -331,6 +331,26 @@ async def _recortar_se_fonte_achatada(
     return recortados
 
 
+async def _info_do_tmdb(
+    anime: Anime, titulo_base: str, numero: int, temporada: int | None
+) -> InfoDeEpisodio | None:
+    """`buscar_info_de_episodio` pelo título da franquia e, se o TMDB não achar a
+    série, pelo `titulo_ingles`. O TMDB indexa muita série asiática só pelo nome
+    inglês/nativo ("Above Myriads"), nunca pelo romaji da AniList ("Wan Ren Zhi
+    Shang") — sem esta reserva todo episódio caía no banner, sem nome nem still,
+    mesmo com a série completa no TMDB. Mesma ordem inglês→romaji do overlay de
+    banner (`integrations/servico.py`), aqui com o romaji primeiro porque é o que
+    já casa a maioria das séries."""
+    info = await servico_metadados.buscar_info_de_episodio(
+        titulo_base, anime.ano, numero, temporada
+    )
+    if info is None and anime.titulo_ingles and anime.titulo_ingles != titulo_base:
+        info = await servico_metadados.buscar_info_de_episodio(
+            anime.titulo_ingles, anime.ano, numero, temporada
+        )
+    return info
+
+
 async def _info_direto_ou_absoluto(
     anime: Anime, titulo_base: str, numero: int, offset_de_temporada: int
 ) -> InfoDeEpisodio | None:
@@ -356,14 +376,10 @@ async def _info_direto_ou_absoluto(
     `titulo_base` (`_titulo_base_da_franquia`) substitui `anime.titulo` nas
     duas chamadas — título de temporada sem marcador reconhecível (ex.
     "Nome. 2", número solto) faria o TMDB não achar a série nenhuma vez."""
-    info = await servico_metadados.buscar_info_de_episodio(
-        titulo_base, anime.ano, numero, anime.numero_temporada
-    )
+    info = await _info_do_tmdb(anime, titulo_base, numero, anime.numero_temporada)
     if info is not None or not offset_de_temporada:
         return info
-    return await servico_metadados.buscar_info_de_episodio(
-        titulo_base, anime.ano, offset_de_temporada + numero, None
-    )
+    return await _info_do_tmdb(anime, titulo_base, offset_de_temporada + numero, None)
 
 
 async def info_de_episodio(
@@ -384,9 +400,7 @@ async def info_de_episodio(
     try:
         titulo_base = await _titulo_base_da_franquia(sessionmaker, anime)
         info = await asyncio.wait_for(
-            servico_metadados.buscar_info_de_episodio(
-                titulo_base, anime.ano, numero, anime.numero_temporada
-            ),
+            _info_do_tmdb(anime, titulo_base, numero, anime.numero_temporada),
             timeout=_TETO_STILL_UNICO_S,
         )
         if info is not None:
@@ -396,9 +410,7 @@ async def info_de_episodio(
         if not offset:
             return None
         return await asyncio.wait_for(
-            servico_metadados.buscar_info_de_episodio(
-                titulo_base, anime.ano, offset + numero, None
-            ),
+            _info_do_tmdb(anime, titulo_base, offset + numero, None),
             timeout=_TETO_STILL_UNICO_S,
         )
     except Exception as excecao:

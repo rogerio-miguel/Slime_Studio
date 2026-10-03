@@ -1517,6 +1517,19 @@ async def _buscar_serie_pai_em_cadeia(
     return None
 
 
+async def abre_serie_de_tv(anilist_id: int) -> bool:
+    """`True` quando `anilist_id` tem sequência direta em TV/TV_SHORT — ou seja,
+    é a temporada anterior de uma série de TV, não um extra. Caso real: a T1 de
+    "Hitoribocchi no Isekai Kouryaku" é ONA na AniList e a T2 é TV com aresta
+    `PREQUEL` pra ela. `False` também quando nenhum provedor responde (sem
+    certeza, não promove)."""
+    capazes = [p for p in PROVEDORES if isinstance(p, ProvedorComRelacoes)]
+    if not capazes:
+        return False
+    relacoes = await _buscar_relacoes_em_cadeia(capazes, anilist_id)
+    return relacoes is not None and bool(relacoes.sequels)
+
+
 async def resolver_ancora_de_midia(anilist_id: int) -> int | None:
     """`serie_ancora` de um filme/OVA/ONA/especial (`Anime.formato_midia` não
     nulo) — o COMPLEMENTO de `resolver_serie`, que só anda o walk `PREQUEL`

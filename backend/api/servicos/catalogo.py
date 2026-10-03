@@ -271,3 +271,20 @@ async def agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
         )
 
     return {linha.id: grupos_por_raiz[acha(("id", linha.id))] for linha in linhas}
+
+
+def visiveis_no_catalogo(
+    animes: Iterable[Anime], grupos: dict[int, list[object]]
+) -> list[Anime]:
+    """Animes que ganham card próprio no catálogo: temporada normal
+    (`formato_midia` nulo) OU filme/OVA/ONA/especial cuja franquia não tem
+    nenhuma temporada normal catalogada pra abrigá-lo. Sem a segunda regra, uma
+    série que a AniList classifica como ONA (ex. 1ª temporada de "Hitoribocchi
+    no Isekai Kouryaku", sequência em TV) ficava órfã e invisível: o card de
+    quem a abrigaria nunca existiu. Preserva a ordem de `animes`."""
+    return [
+        anime
+        for anime in animes
+        if anime.formato_midia is None
+        or not any(linha.formato_midia is None for linha in grupos[anime.id])
+    ]

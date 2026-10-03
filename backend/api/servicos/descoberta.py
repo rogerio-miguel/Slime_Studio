@@ -29,6 +29,7 @@ from db.catalogo import (
     localizar_animes_por_slug,
     obter_ou_criar_anime_id,
     preencher_banner_visual_em_lote,
+    promover_a_temporada,
     sobrescrever_arte,
 )
 from extractors.versao import remover_marcador_de_versao
@@ -851,7 +852,7 @@ async def _resolver_e_aplicar_serie(
     if anilist_id is None:
         return
     if formato is not None:
-        await _aplicar_ancora_de_midia(sessionmaker, anime_id, anilist_id)
+        await _aplicar_ancora_de_midia(sessionmaker, anime_id, anilist_id, formato)
         return
     try:
         serie = await asyncio.wait_for(
@@ -972,13 +973,22 @@ async def _materializar_temporadas_irmas(
 
 
 async def _aplicar_ancora_de_midia(
-    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int
+    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int, formato: str
 ) -> None:
     """Ramo de `_resolver_e_aplicar_serie` para `Anime.formato_midia` não-nulo
     (filme/OVA/ONA/especial): resolve só `serie_ancora`
     (`servico.resolver_ancora_de_midia`, via série-mãe — nunca o walk
     `PREQUEL` normal, que ancoraria o item nele mesmo). `numero_temporada`
     nunca é tocado aqui — esses formatos não têm posição narrativa numerada.
+
+    Só `ONA` também materializa as temporadas de TV da série-mãe
+    (`_materializar_temporadas_irmas`, mesmo agrupamento do ramo TV) e, se tem
+    sequência direta em TV (`abre_serie_de_tv`), é promovido a T1 normal
+    (`promover_a_temporada`): a AniList classifica como ONA séries reais cuja
+    T1 é web e as seguintes são TV (ex. "Hitoribocchi no Isekai Kouryaku") —
+    sem isso a T2 nunca entra no catálogo e a T1 fica fora do card/seletor.
+    Filme/OVA/especial não puxam a série inteira: o usuário clicou num extra,
+    não na série.
 
     Best-effort, mesma filosofia do ramo TV: qualquer falha (provedor, timeout,
     banco) vira `warning` e retorna — a criação do anime já aconteceu."""
@@ -990,6 +1000,16 @@ async def _aplicar_ancora_de_midia(
             await aplicar_posicao_na_serie(
                 sessionmaker, anime_id, PosicaoNaSerie(numero_temporada=None, serie_ancora=ancora)
             )
+            if formato == "ONA":
+                franquia = await asyncio.wait_for(
+                    servico.resolver_franquia(ancora), timeout=_TETO_SERIE_S
+                )
+                if franquia:
+                    await _materializar_temporadas_irmas(sessionmaker, anilist_id, franquia)
+                if await asyncio.wait_for(
+                    servico.abre_serie_de_tv(anilist_id), timeout=_TETO_SERIE_S
+                ):
+                    await promover_a_temporada(sessionmaker, anime_id)
     except Exception as excecao:
         logger.warning(
             "resolução de âncora de mídia relacionada best-effort falhou para "

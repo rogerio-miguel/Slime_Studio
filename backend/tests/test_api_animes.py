@@ -425,11 +425,15 @@ async def _criar_anime_catalogado(
     proximo_ep_em: datetime | None = None,
     estreia_em: date | None = None,
     generos: list[str] | None = None,
+    formato_midia: str | None = None,
+    serie_ancora: int | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         anime = Anime(
             titulo=titulo,
             slug=titulo.lower().replace(" ", "-"),
+            formato_midia=formato_midia,
+            serie_ancora=serie_ancora,
             status_lancamento=status_lancamento,
             episodios_na_fonte=episodios_na_fonte,
             fonte_verificada_em=fonte_verificada_em,
@@ -713,6 +717,72 @@ async def test_listar_animes_expoe_estreia_em_de_bookmark_nao_lancado(
     por_id = {item["id"]: item for item in resposta.json()}
     assert por_id[com_estreia]["estreia_em"] == "2027-04-15"
     assert por_id[sem_estreia]["estreia_em"] is None
+
+
+async def test_listar_animes_mostra_ona_orfao_mas_esconde_quando_a_franquia_tem_temporada_tv(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    """Série que a AniList classifica como ONA (T1 de Hitoribocchi) sem nenhuma
+    temporada TV catalogada na franquia aparece na grade; com a T2 TV da mesma
+    âncora catalogada, ela passa a se agrupar nela (some como card solto)."""
+    ona = await _criar_anime_catalogado(
+        sessionmaker_api, "Serie Ona", formato_midia="ONA", serie_ancora=900
+    )
+    avulso = await _criar_anime_catalogado(sessionmaker_api, "Avulso Normal")
+
+    ids = {item["id"] for item in (await cliente.get("/api/animes")).json()}
+    assert ids == {ona, avulso}
+
+    sequencia = await _criar_anime_catalogado(
+        sessionmaker_api, "Sequencia Tv", serie_ancora=900
+    )
+    ids = {item["id"] for item in (await cliente.get("/api/animes")).json()}
+    assert ids == {sequencia, avulso}
+
+
+@pytest.mark.parametrize(("formato", "materializa"), [("ONA", True), ("MOVIE", False)])
+async def test_ancora_de_midia_so_materializa_e_promove_para_ona(
+    monkeypatch: pytest.MonkeyPatch,
+    sessionmaker_api: _SessionMaker,
+    formato: str,
+    materializa: bool,
+):
+    """T1 ONA (Hitoribocchi) puxa as temporadas de TV da série-mãe pro catálogo e
+    é promovida a T1 normal; filme/OVA/especial só recebem a âncora."""
+    from api.servicos import descoberta
+
+    chamadas: list[tuple[int, list]] = []
+
+    async def _ancora(anilist_id: int) -> int:
+        return 900
+
+    async def _abre_serie(anilist_id: int) -> bool:
+        return True
+
+    async def _franquia(anilist_id: int) -> list:
+        return ["T1-tv"]
+
+    async def _materializar(_sessionmaker, anilist_id_clicado: int, franquia: list) -> None:
+        chamadas.append((anilist_id_clicado, franquia))
+
+    monkeypatch.setattr(descoberta.servico, "resolver_ancora_de_midia", _ancora)
+    monkeypatch.setattr(descoberta.servico, "resolver_franquia", _franquia)
+    monkeypatch.setattr(descoberta.servico, "abre_serie_de_tv", _abre_serie)
+    monkeypatch.setattr(descoberta, "_materializar_temporadas_irmas", _materializar)
+    anime_id = await _criar_anime_catalogado(
+        sessionmaker_api, "Midia Qualquer", formato_midia=formato
+    )
+
+    await descoberta._aplicar_ancora_de_midia(sessionmaker_api, anime_id, 173, formato)
+
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+    assert anime.serie_ancora == 900
+    # ONA com sequência de TV vira T1 normal; filme segue como extra.
+    assert (anime.formato_midia, anime.numero_temporada) == (
+        (None, 1) if materializa else (formato, None)
+    )
+    assert chamadas == ([(173, ["T1-tv"])] if materializa else [])
 
 
 async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(
@@ -1139,6 +1209,54 @@ async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
             )
         ).scalar_one()
     assert fonte.versao == VersaoDeFonte.DUBLADO
+
+
+async def test_listar_episodios_remotos_tenta_titulo_ingles_quando_tmdb_nao_acha_o_romaji(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Série que o TMDB só indexa pelo nome inglês ("Above Myriads", não o romaji
+    "Wan Ren Zhi Shang"): o still/nome sai pelo `titulo_ingles` em vez de todo
+    episódio cair no banner do anime."""
+    async with sessionmaker_api() as sessao:
+        anime = Anime(
+            titulo="Wan Ren Zhi Shang",
+            titulo_ingles="Above Myriads",
+            slug="wan-ren-zhi-shang",
+            banner_path="https://tmdb.org/banner-do-anime.jpg",
+        )
+        sessao.add(anime)
+        await sessao.commit()
+        anime_id = anime.id
+
+    async def _resolver_fake(sessionmaker, anime, versao, titulos_alternativos=None):
+        return FonteResolvida(
+            dominio="meusanimes",
+            identificador="42",
+            versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
+        )
+
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada=None):
+        return [EpisodioRemoto(rotulo="1", numero=1, url="https://x/ep1")]
+
+    titulos_buscados: list[str] = []
+
+    async def _info_fake(titulo, ano, numero, temporada):
+        titulos_buscados.append(titulo)
+        return InfoDeEpisodio(still_url="https://tmdb/1.jpg") if titulo == "Above Myriads" else None
+
+    monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
+    monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
+    monkeypatch.setattr(
+        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+    )
+
+    resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
+
+    assert resposta.status_code == 200
+    assert resposta.json()["episodios"][0]["thumb_url"] == "https://tmdb/1.jpg"
+    assert titulos_buscados == ["Wan Ren Zhi Shang", "Above Myriads"]
 
 
 async def test_listar_episodios_remotos_atualiza_texto_gravado_so_com_ptbr_real(
