@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
 from core.temporada import PosicaoNaSerie, conciliar_posicao, separar_temporada
@@ -159,6 +160,9 @@ async def listar_fileiras_tematicas_com_catalogo(
     achatados: list[AnimeEmAlta] = []
     tamanhos: list[tuple[str, int]] = []
     for chave, itens in por_fileira.items():
+        # Filtra antes de achatar: `tamanhos` precisa bater com o que
+        # `_cruzar_com_catalogo` devolve, que também descarta conteúdo adulto.
+        itens = [item for item in itens if not eh_conteudo_adulto(item.generos)]
         achatados.extend(itens)
         tamanhos.append((chave, len(itens)))
 
@@ -226,7 +230,12 @@ async def _cruzar_com_catalogo(
     Prioridade: `anilist_id` primeiro (único, sem falso-negativo por
     subtítulo/pontuação divergente); slug do título romaji como fallback só
     para os itens sem match por `anilist_id` — necessário porque o Kitsu
-    (provedor de fallback) não carrega `anilist_id`."""
+    (provedor de fallback) não carrega `anilist_id`.
+
+    Ponto único do filtro de conteúdo adulto para feeds/busca/relacionados:
+    também cobre feed restaurado do cache persistido, que pode ter sido gravado
+    antes do filtro existir."""
+    itens = [item for item in itens if not eh_conteudo_adulto(item.generos)]
     anilist_ids = [item.anilist_id for item in itens if item.anilist_id is not None]
     por_anilist_id = await localizar_animes_por_anilist_id(sessionmaker, anilist_ids)
 

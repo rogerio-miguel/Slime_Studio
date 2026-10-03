@@ -82,7 +82,7 @@ query ($busca: String) {
 _QUERY_BUSCA_LISTA = """
 query ($busca: String) {
   Page(page: 1, perPage: 24) {
-    media(search: $busca, type: ANIME, sort: SEARCH_MATCH) {
+    media(search: $busca, type: ANIME, sort: SEARCH_MATCH, isAdult: false) {
       id
       title { romaji english }
       coverImage { extraLarge color }
@@ -102,7 +102,7 @@ query ($busca: String) {
 _QUERY_EM_ALTA = """
 query {
   Page(page: 1, perPage: 50) {
-    media(status: RELEASING, type: ANIME, sort: TRENDING_DESC) {
+    media(status: RELEASING, type: ANIME, sort: TRENDING_DESC, isAdult: false) {
       id
       title { romaji english }
       coverImage { extraLarge color }
@@ -202,7 +202,10 @@ query ($genero: String) {
 _QUERY_PROXIMA_TEMPORADA = """
 query ($estacao: MediaSeason, $ano: Int, $status: MediaStatus) {
   Page(page: 1, perPage: 50) {
-    media(season: $estacao, seasonYear: $ano, status: $status, type: ANIME, sort: POPULARITY_DESC) {
+    media(
+      season: $estacao, seasonYear: $ano, status: $status, type: ANIME,
+      sort: POPULARITY_DESC, isAdult: false
+    ) {
       id
       title { romaji english }
       coverImage { extraLarge color }

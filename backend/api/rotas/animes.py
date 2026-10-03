@@ -36,6 +36,7 @@ from api.servicos import jobs as servico_jobs
 from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
 from core.config import Config
+from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from db.catalogo import obter_ou_criar_anime_id
 from extractors.base import ResultadoBusca
@@ -65,6 +66,11 @@ async def criar_anime(
     Metadados (capa/sinopse/ids de provedor) persistem direto se vierem no
     payload; se ausentes, `api/servicos/descoberta.py` tenta enriquecer por
     título em best-effort (nunca bloqueia esta criação)."""
+    if eh_conteudo_adulto(corpo.generos):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="conteúdo adulto não é suportado",
+        )
     anime_id = await obter_ou_criar_anime_id(
         sessionmaker, corpo.titulo, corpo.ano, formato_midia=corpo.formato
     )
@@ -249,7 +255,10 @@ async def listar_animes(
     # temporada normal catalogada (`visiveis_no_catalogo`), senão somem da grade.
     grupos_de_franquia = await servico_catalogo.agrupar_franquias(sessao)
     resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
-    animes = servico_catalogo.visiveis_no_catalogo(resultado.scalars(), grupos_de_franquia)
+    animes = servico_catalogo.visiveis_no_catalogo(
+        (a for a in resultado.scalars() if not eh_conteudo_adulto(a.generos)),
+        grupos_de_franquia,
+    )
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
@@ -504,7 +513,7 @@ async def obter_anime(
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> AnimeDetalheSaida:
     anime = await sessao.get(Anime, anime_id)
-    if anime is None:
+    if anime is None or eh_conteudo_adulto(anime.generos):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
     # F4b: refresh lazy fire-and-forget do estado de lançamento — não aguarda,
     # só agenda para a próxima leitura (ver `descoberta.agendar_refresh_de_lancamento`).
