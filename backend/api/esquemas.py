@@ -90,12 +90,13 @@ class CriarAnimeRequest(BaseModel):
     # Título em inglês (`title.english` da AniList) do item do feed — persiste
     # em `Anime.titulo_ingles` (só exibição, nunca substitui `Anime.titulo`).
     titulo_ingles: str | None = Field(default=None, max_length=300)
-    # `format` cru da AniList do item clicado na busca da Home
-    # (`AnimeEmAltaSaida.formato` abaixo) — `None` (padrão, série TV) segue o
-    # cadastro de sempre; "MOVIE"/"OVA"/"ONA"/"SPECIAL" grava em `Anime.
-    # formato_midia` na criação (`db.catalogo.obter_ou_criar_anime_id`) e
-    # desvia a resolução de franquia pra `_aplicar_ancora_de_midia` (só
-    # `serie_ancora`, nunca `numero_temporada`) — o item se agrupa no anime
+    # `format` cru da AniList do item clicado, só quando a regra de série×extra
+    # (`integrations/classificacao.py`) o trata como EXTRA (`AnimeEmAltaSaida.
+    # formato` abaixo) — `None` (padrão: TV, ONA e o que o feed não sabe
+    # classificar) segue o cadastro de série; "MOVIE"/"OVA"/"ONA"/"SPECIAL" grava
+    # em `Anime.formato_midia` na criação (`db.catalogo.obter_ou_criar_anime_id`)
+    # e desvia a resolução de franquia pra `_aplicar_ancora_de_midia` (só
+    # `serie_ancora`, nunca `numero_temporada`) — o item se agrupa na série
     # original em vez de virar card solto no catálogo.
     formato: str | None = Field(default=None, max_length=32)
 

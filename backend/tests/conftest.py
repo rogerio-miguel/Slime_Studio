@@ -21,6 +21,7 @@ from api.servicos import descoberta, sondagem
 from core.config import Config
 from db.engine import criar_engine
 from extractors import rede_segura
+from integrations import anilist
 from integrations import servico as servico_metadados
 from models.base import Base
 
@@ -68,8 +69,13 @@ async def _isola_refreshs_de_lancamento():
     pendente — mesma razão de `_isola_sondagens_de_fonte` acima.
     """
     descoberta._refreshs_de_lancamento_em_voo.clear()
+    descoberta._reparos_de_classificacao_em_voo.clear()
+    descoberta._reparos_de_classificacao_recentes.clear()
     yield
-    pendentes = list(descoberta._refreshs_de_lancamento_em_voo.values())
+    pendentes = [
+        *descoberta._refreshs_de_lancamento_em_voo.values(),
+        *descoberta._reparos_de_classificacao_em_voo.values(),
+    ]
     # Drena ANTES de cancelar (ao contrário de `_isola_sondagens_de_fonte`, cujas
     # `Task` podem ficar presas num semáforo/`wait_for` de rede): com os stubs de
     # rede em vigor estas terminam em ms, e uma `Task` cancelada no meio de um
@@ -85,6 +91,17 @@ async def _isola_refreshs_de_lancamento():
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await tarefa
     descoberta._refreshs_de_lancamento_em_voo.clear()
+    descoberta._reparos_de_classificacao_em_voo.clear()
+    descoberta._reparos_de_classificacao_recentes.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isola_cache_de_relacoes():
+    """`anilist._cache_de_relacoes` é estado de módulo: sem zerar, dois testes que
+    usam o mesmo `anilist_id` com respostas diferentes se contaminariam."""
+    anilist._cache_de_relacoes.clear()
+    yield
+    anilist._cache_de_relacoes.clear()
 
 
 @pytest.fixture(autouse=True)

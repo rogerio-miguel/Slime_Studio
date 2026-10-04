@@ -128,12 +128,13 @@ class AnimeEmAlta:
     # vezes devolve `null`). A Home usa como fundo do slide do carrossel quando o
     # item não tem arte horizontal (`banner_url`).
     capa_cor: str | None = None
-    # `format` cru da AniList ("TV"/"TV_SHORT"/"MOVIE"/"OVA"/"ONA"/"SPECIAL"/...)
-    # — só `_QUERY_BUSCA_LISTA` traz hoje (a busca livre da Home é o único feed
-    # de onde o usuário materializa filme/OVA/especial, ver `Anime.formato_midia`
-    # em `models/anime.py`); os demais feeds deixam no default `None`. Repassado
-    # cru pro payload de `POST /api/admin/animes` sem tradução (pt-BR é
-    # responsabilidade do frontend, mesma regra de `generos`).
+    # `format` cru da AniList ("MOVIE"/"OVA"/"ONA"/"SPECIAL"/...) SÓ quando
+    # `classificacao.eh_serie` trata o item como extra; `None` é série (TV, ONA,
+    # ou feed sem `format`). Só `_QUERY_BUSCA_LISTA` e "Relacionados" trazem
+    # `format` hoje (ver `Anime.formato_midia` em `models/anime.py`); os demais
+    # feeds deixam `None` e o 2º estágio (`servico.formato_se_extra`) reclassifica
+    # com as relações. Repassado cru pro payload de `POST /api/admin/animes` sem
+    # tradução (pt-BR é responsabilidade do frontend, mesma regra de `generos`).
     formato: str | None = None
     # Número do episódio que motivou a entrada no feed "novos lançamentos"
     # (`AiringSchedule.episode` da AniList, ver `anilist.py::
@@ -176,17 +177,24 @@ class NoDeSerie:
 class RelacoesDeAnime:
     """Vizinhança de `no` no grafo de `relations`, já reduzida ao que o walk de
     série usa: só prequels/sequels que são `Media` do tipo ANIME em formato de
-    temporada (`TV`/`TV_SHORT`). O adapter (`anilist.py`) aplica esse filtro —
-    este módulo é domínio puro e não conhece o vocabulário de `format` da
-    AniList.
+    temporada (`classificacao.FORMATOS_DE_TEMPORADA`). O adapter (`anilist.py`)
+    aplica esse filtro.
 
     `sequels` (para frente) espelha `prequels` (para trás) — usado por
     `integrations/servico.py::resolver_franquia` para enumerar a franquia
-    inteira a partir da âncora já encontrada pelo walk `PREQUEL`."""
+    inteira a partir da âncora já encontrada pelo walk `PREQUEL`.
+
+    `formato`/`episodios`/`duracao_min`/`tem_pai` descrevem o PRÓPRIO `no` (não
+    os vizinhos) e alimentam `classificacao.eh_serie`; `tem_pai` é a aresta
+    `PARENT` para algum anime."""
 
     no: NoDeSerie
     prequels: tuple[NoDeSerie, ...]
     sequels: tuple[NoDeSerie, ...] = ()
+    formato: str | None = None
+    episodios: int | None = None
+    duracao_min: int | None = None
+    tem_pai: bool = False
 
 
 class ProvedorDeMetadados(ABC):
@@ -367,16 +375,16 @@ class ProvedorComRelacoes(ABC):
 
     @abstractmethod
     def buscar_serie_pai(self, anilist_id: int) -> NoDeSerie | None:
-        """Primeiro nó TV/TV_SHORT relacionado a `anilist_id` no grafo de
-        `relations`, de QUALQUER `relationType` (ao contrário de
-        `buscar_relacoes`, que só anda `PREQUEL`) — um filme/OVA/especial quase
-        nunca tem aresta `PREQUEL` de volta pra série-mãe (a AniList rotula
-        essa ligação como `SIDE_STORY`/`ADAPTATION`/`ALTERNATIVE`/etc.,
-        variável por título). Usado só para resolver a franquia de um item
-        FORA do formato de temporada (`integrations/servico.py::
+        """Série-mãe de `anilist_id`: o nó de formato de temporada (TV/TV_SHORT/
+        ONA) ligado por aresta `PARENT`; sem `PARENT`, o primeiro nó de temporada
+        de QUALQUER `relationType` (ao contrário de `buscar_relacoes`, que só
+        anda `PREQUEL`) — um filme/OVA/especial quase nunca tem aresta
+        `PREQUEL` de volta pra série-mãe (a AniList rotula essa ligação como
+        `SIDE_STORY`/`ADAPTATION`/`ALTERNATIVE`/etc., variável por título).
+        Usado só para ancorar um EXTRA (`integrations/servico.py::
         resolver_ancora_de_midia`) — nunca para o walk normal de `resolver_
-        serie`. `None` quando não há nenhum nó TV relacionado ou o provedor
-        não conhece o id."""
+        serie`. `None` quando não há nenhum nó de temporada relacionado ou o
+        provedor não conhece o id."""
 
 
 class ProvedorComRecomendacoes(ABC):
