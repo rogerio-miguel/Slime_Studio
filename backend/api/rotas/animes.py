@@ -616,7 +616,7 @@ def _ids_do_seletor_de_temporada(
     temporadas, proxima_temporada = _temporadas_e_proxima(
         anime_id, numero_temporada, grupos[anime_id]
     )
-    ids = {temporada.id for temporada in temporadas}
+    ids = {t for temporada in temporadas for t in (temporada.id, *temporada.ids_das_partes)}
     if proxima_temporada is not None:
         ids.add(proxima_temporada.id)
     return ids
@@ -627,6 +627,39 @@ def _banner_da_franquia(banner_proprio: str | None, grupo: list[object]) -> str 
     `numero_temporada`) que tem um, pra trocar de temporada no seletor não
     trocar a arte do hero. Cai no banner próprio quando nenhuma irmã tem."""
     return next((linha.banner_path for linha in grupo if linha.banner_path), banner_proprio)
+
+
+def _colapsar_partes(
+    anime_id: int, linhas: list[object]
+) -> list[tuple[object, int | None, list[int]]]:
+    """`(linha, total_episodios, ids_das_partes)` por temporada do seletor. A
+    AniList divide uma temporada em "Part 1"/"Part 2" (linhas TV com o mesmo
+    `numero_temporada`) e os sites servem as duas juntas, então o seletor mostra
+    UMA entrada, com o total somado. Representante: a própria `anime_id` se for
+    uma das partes (a página aberta continua marcada), senão a que já tem
+    episódio capturado, senão a de menor id (`grupo` já vem ordenado por id)."""
+    partes: dict[int, list[object]] = {}
+    for linha in linhas:
+        if linha.numero_temporada is not None and linha.formato_midia is None:
+            partes.setdefault(linha.numero_temporada, []).append(linha)
+
+    resultado = []
+    for linha in linhas:
+        irmas = partes.get(linha.numero_temporada, []) if linha.formato_midia is None else []
+        if len(irmas) < 2:
+            resultado.append((linha, linha.total_episodios_anilist, []))
+            continue
+        representante = next(
+            (p for p in irmas if p.id == anime_id),
+            next((p for p in irmas if p.tem_episodios), irmas[0]),
+        )
+        if linha is not representante:
+            continue
+        totais = [p.total_episodios_anilist for p in irmas if p.total_episodios_anilist]
+        resultado.append(
+            (linha, sum(totais) if totais else None, [p.id for p in irmas if p is not linha])
+        )
+    return resultado
 
 
 def _temporadas_e_proxima(
@@ -660,7 +693,7 @@ def _temporadas_e_proxima(
             or linha.status_lancamento != StatusLancamento.NAO_LANCADO
         )
 
-    acessiveis = [linha for linha in grupo if _acessivel(linha)]
+    acessiveis = _colapsar_partes(anime_id, [linha for linha in grupo if _acessivel(linha)])
     temporadas = (
         [
             TemporadaIrmaSaida(
@@ -668,9 +701,10 @@ def _temporadas_e_proxima(
                 numero_temporada=linha.numero_temporada,
                 titulo=linha.titulo,
                 formato_midia=linha.formato_midia,
-                total_episodios=linha.total_episodios_anilist,
+                total_episodios=total,
+                ids_das_partes=ids_das_partes,
             )
-            for linha in acessiveis
+            for linha, total, ids_das_partes in acessiveis
         ]
         if len(acessiveis) >= 2
         else []
