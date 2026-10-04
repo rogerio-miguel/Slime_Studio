@@ -53,6 +53,8 @@ export default function BarraDeControles({
   aoAlternarTelaCheia,
   aoAlternarHud,
   hudVisivel,
+  aoAlternarGlow,
+  glowLigado,
   aoAlternarCinema,
   cinemaHabilitado,
   cinemaFalhou,
@@ -365,6 +367,8 @@ export default function BarraDeControles({
             aoAlternarCinema={aoAlternarCinema}
             hudVisivel={hudVisivel}
             aoAlternarHud={aoAlternarHud}
+            glowLigado={glowLigado}
+            aoAlternarGlow={aoAlternarGlow}
           />
           <button type="button" onClick={aoAlternarTelaCheia} aria-label="Tela cheia" className={classeBotao}>
             <IconeTelaCheia width={26} height={26} />

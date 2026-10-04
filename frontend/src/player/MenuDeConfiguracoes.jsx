@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, X, Sparkles, Keyboard, AudioLines, Activity } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, Sparkles, Keyboard, AudioLines, Activity, Sun } from 'lucide-react';
 import { PRESETS } from './presets.js';
 import { IconeEngrenagem } from './Icones.jsx';
 
@@ -89,6 +89,8 @@ export default function MenuDeConfiguracoes({
   // do "Áudio cinema" abaixo, sem exceção (HUD não tem estado "indisponível").
   hudVisivel,
   aoAlternarHud,
+  glowLigado,
+  aoAlternarGlow,
 }) {
   const [aberto, setAberto] = useState(false);
   const [tela, setTela] = useState('raiz'); // 'raiz' | 'qualidade' | 'controles'
@@ -100,14 +102,14 @@ export default function MenuDeConfiguracoes({
 
   const opcaoAtual = opcoesDeQualidade.find((opcao) => opcao.valor === presetAtual);
   const rotuloAtual = presetAtual === 'auto' ? 'Automático' : (opcaoAtual?.rotulo ?? presetAtual);
-  // Tela 'raiz' tem 4 itens focáveis ("Qualidade" + "Áudio cinema" +
-  // "Estatísticas" + "Controles"); 'qualidade' tem uma linha por opção;
+  // Tela 'raiz' tem 5 itens focáveis ("Qualidade" + "Controles" + "Áudio
+  // cinema" + "Brilho ambiente" + "Estatísticas"); 'qualidade' tem uma linha por opção;
   // 'controles' é só leitura (ATALHOS_DE_TECLADO, sem seleção) — 0 itens
   // focáveis, a navegação por seta/Home/End não se aplica lá (guarda em
   // aoTeclarNoMenu abaixo). O botão de voltar do cabeçalho fica fora da
   // navegação por seta em qualquer sub-tela (mesmo tratamento do botão de
   // fechar), não entra na contagem.
-  const totalDeItens = tela === 'raiz' ? 4 : tela === 'qualidade' ? opcoesDeQualidade.length : 0;
+  const totalDeItens = tela === 'raiz' ? 5 : tela === 'qualidade' ? opcoesDeQualidade.length : 0;
 
   const fechar = (devolverFoco = true) => {
     setAberto(false);
@@ -307,8 +309,25 @@ export default function MenuDeConfiguracoes({
                 }}
                 type="button"
                 role="menuitemcheckbox"
-                aria-checked={hudVisivel}
+                aria-checked={glowLigado}
                 tabIndex={indiceAtivo === 3 ? 0 : -1}
+                onClick={aoAlternarGlow}
+                className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3.5 text-left text-base text-white outline-none transition-colors focus-visible:bg-white/10 hover:bg-white/10"
+              >
+                <span className="flex items-center gap-3">
+                  <Sun width={18} height={18} aria-hidden="true" className="text-ink-muted" />
+                  <span>Brilho ambiente</span>
+                </span>
+                <Interruptor ligado={glowLigado} />
+              </button>
+              <button
+                ref={(no) => {
+                  itensRef.current[4] = no;
+                }}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={hudVisivel}
+                tabIndex={indiceAtivo === 4 ? 0 : -1}
                 onClick={aoAlternarHud}
                 className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3.5 text-left text-base text-white outline-none transition-colors focus-visible:bg-white/10 hover:bg-white/10"
               >

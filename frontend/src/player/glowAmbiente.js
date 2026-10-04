@@ -48,18 +48,67 @@ const INTERVALO_AMOSTRA_ACAO_MS = 125;
 // (Math.min(1, ...) no ponto de uso) cobre corte de cena.
 const AMBIENT_ACAO_ESCALA_POR_MS = 0.15;
 
-// Constante de tempo (ms) da EMA que suaviza a INTENSIDADE DE AÇÃO — o alpha
-// real é derivado dela e do dt de cada amostra (1 - e^(-dt/τ)), então o fade
-// tem a mesma cara em qualquer taxa de amostragem. Bem mais lenta que a
-// suavização de COR (AMBIENT_SMOOTHING): a opacidade não pode "piscar" a
-// cada pico de ação isolado.
-const AMBIENT_ACAO_TAU_MS = 320;
+// Constantes de tempo (ms) da EMA assimétrica que suaviza a VISIBILIDADE do
+// halo — o alpha real é derivado delas e do dt de cada amostra
+// (1 - e^(-dt/τ)), então o fade tem a mesma cara em qualquer taxa de
+// amostragem. Subida rápida: corte de cena/explosão acende o glow na hora
+// em vez de esperar uma média lenta. Descida lenta: depois do pico ele some
+// devagar, sem piscar a cada pico de ação isolado.
+const AMBIENT_VISIBILIDADE_ATAQUE_TAU_MS = 100;
+const AMBIENT_VISIBILIDADE_DECAIMENTO_TAU_MS = 700;
+
+// Cena parada com cor útil nas bordas mostra um halo calmo (fração da
+// visibilidade máxima); o movimento só empurra o resto do caminho. Sem esse
+// piso, cena estática colorida ficava com o glow invisível.
+const AMBIENT_PISO_ESTATICO = 0.35;
+
+// "Cor útil" da faixa externa da amostra — é o que o halo realmente projeta
+// pra fora. Luminância média abaixo disso pesa linearmente até zero (borda
+// preta → halo apagado mesmo com movimento: não acrescentaria nada) e satura
+// em LUM_CHEIA; croma (max−min dos canais, 0..1) abaixo de CROMA_CHEIA
+// reduz a utilidade até CROMA_PISO, de modo que cena clara e neutra
+// (branco/cinza) ainda ganha um halo discreto em vez de nenhum. Calibrar
+// visualmente.
+const AMBIENT_LUM_CHEIA = 0.25;
+const AMBIENT_CROMA_CHEIA = 0.3;
+const AMBIENT_CROMA_PISO = 0.4;
+// Espessura (px do canvas de amostra) da faixa externa considerada borda.
+const AMBIENT_ANEL_PX = 2;
+
+// Utilidade 0..1 do halo pra esta amostra: luminância e croma médios dos
+// pixels do anel externo. Mesma amostra do diff de movimento — nenhum
+// readback extra.
+function utilidadeDeCorDasBordas(pixels, largura, altura) {
+  let lum = 0;
+  let croma = 0;
+  let n = 0;
+  for (let y = 0; y < altura; y++) {
+    const naBordaY = y < AMBIENT_ANEL_PX || y >= altura - AMBIENT_ANEL_PX;
+    for (let x = 0; x < largura; x++) {
+      if (!naBordaY && x >= AMBIENT_ANEL_PX && x < largura - AMBIENT_ANEL_PX) continue;
+      const i = (y * largura + x) * 4;
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      lum += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      croma += Math.max(r, g, b) - Math.min(r, g, b);
+      n++;
+    }
+  }
+  if (n === 0) return 0;
+  const lumMedia = lum / n / 255;
+  const cromaMedio = croma / n / 255;
+  const fatorLum = Math.min(1, lumMedia / AMBIENT_LUM_CHEIA);
+  const fatorCroma = AMBIENT_CROMA_PISO + (1 - AMBIENT_CROMA_PISO) * Math.min(1, cromaMedio / AMBIENT_CROMA_CHEIA);
+  return fatorLum * fatorCroma;
+}
 
 // Inicia o loop de amostragem sobre `canvas` (2D) a partir de `video`.
 // `elementoDeMedida` é o nó do `.frame` (lido via getComputedStyle pra pegar
 // --ambient-bleed, ver comentário abaixo). `rvfc` é o rVFC ORIGINAL do
 // vídeo (ver topo do arquivo). `aoAtualizarIntensidadeAcao`, opcional, é
-// chamado com a intensidade de movimento suavizada (0..1) a cada amostra
+// chamado com a visibilidade suavizada do halo (0..1: cor útil das bordas ×
+// movimento, ver AMBIENT_PISO_ESTATICO) a cada amostra
 // (~a cada INTERVALO_AMOSTRA_ACAO_MS, não todo frame) — quem não passa esse
 // callback não paga o getImageData. Devolve `parar()`, que cancela o frame
 // pendente explicitamente via cancelVideoFrameCallback.
@@ -147,6 +196,7 @@ export function iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc, aoA
         ctxAmostra.drawImage(video, 0, 0, canvasAmostra.width, canvasAmostra.height);
         const frameAtual = ctxAmostra.getImageData(0, 0, canvasAmostra.width, canvasAmostra.height).data;
 
+        let movimento = 0;
         if (bufferAnterior) {
           // Diferença média absoluta por canal RGB entre esta amostra e a
           // anterior (alpha pulado — ctx é opaco, `alpha:false`, não carrega
@@ -166,14 +216,21 @@ export function iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc, aoA
           const diferencaMedia = amostras > 0 ? somaDiferenca / amostras : 0;
           // Movimento por ms ÷ escala: normalizado por tempo, então o
           // intervalo de amostragem não muda a sensibilidade.
-          const intensidadeBruta = Math.min(1, diferencaMedia / dt / AMBIENT_ACAO_ESCALA_POR_MS);
-
-          // EMA com alpha derivado de dt e da constante de tempo — fade com a
-          // mesma cara em qualquer taxa de amostragem. Cena parada:
-          // intensidadeBruta ~0 e a suavizada decai atrás dela.
-          const alpha = 1 - Math.exp(-dt / AMBIENT_ACAO_TAU_MS);
-          intensidadeSuavizada += (intensidadeBruta - intensidadeSuavizada) * alpha;
+          movimento = Math.min(1, diferencaMedia / dt / AMBIENT_ACAO_ESCALA_POR_MS);
         }
+
+        // Visibilidade-alvo: cor útil das bordas × (piso estático + movimento
+        // no resto). Cena escura/sem cor apaga o halo; cena parada colorida
+        // mantém um halo calmo; ação sobe até o teto.
+        const utilidade = utilidadeDeCorDasBordas(frameAtual, canvasAmostra.width, canvasAmostra.height);
+        const alvo = utilidade * (AMBIENT_PISO_ESTATICO + (1 - AMBIENT_PISO_ESTATICO) * movimento);
+
+        // EMA assimétrica (ataque rápido, decaimento lento) com alpha
+        // derivado de dt — mesma cara em qualquer taxa de amostragem.
+        const tau = alvo > intensidadeSuavizada
+          ? AMBIENT_VISIBILIDADE_ATAQUE_TAU_MS
+          : AMBIENT_VISIBILIDADE_DECAIMENTO_TAU_MS;
+        intensidadeSuavizada += (alvo - intensidadeSuavizada) * (1 - Math.exp(-dt / tau));
 
         bufferAnterior = frameAtual;
         aoAtualizarIntensidadeAcao(intensidadeSuavizada);
