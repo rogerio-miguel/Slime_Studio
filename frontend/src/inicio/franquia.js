@@ -84,7 +84,8 @@ function dataCurta(data) {
 // temporada seguinte da franquia que ainda não saiu. Com `estreia_em` (ISO
 // `YYYY-MM-DD`, parse com `T00:00:00` pra cair na meia-noite LOCAL, evita o
 // dia anterior por fuso) mostra a data; sem ela, degrada pro ano
-// (`proxima.ano`). `null` = nada a anunciar. Usado no hero da página do
+// (`proxima.ano`); sem nenhum dos dois (AniList anunciou a temporada sem
+// âncora de tempo) vira "em breve". `null` = nada a anunciar. Usado no hero da página do
 // anime (`paginas/PaginaDoAnime.jsx`) e no card do catálogo
 // (`components/AnimeCard.jsx`) — mesma função, só a variante muda.
 export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
@@ -98,17 +99,15 @@ export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
       const ordinal = numero != null ? `${numero}ª Temp` : proxima.titulo;
       return `${ordinal} • ${dataCurta(data)}`;
     }
-    if (proxima.ano) {
-      const ordinal = numero != null ? `${numero}ª Temp` : proxima.titulo;
-      return `${ordinal} • ${proxima.ano}`;
-    }
-    return null;
+    const ordinal = numero != null ? `${numero}ª Temp` : proxima.titulo;
+    if (proxima.ano) return `${ordinal} • ${proxima.ano}`;
+    return `${ordinal} • Em breve`;
   }
 
   const ordinal = numero != null ? `${numero}ª temporada` : proxima.titulo;
   if (dataValida) return `${ordinal} estreia em ${fmtDataEstreia.format(data)}`;
   if (proxima.ano) return `${ordinal} estreia em ${proxima.ano}`;
-  return null;
+  return `${ordinal} em breve`;
 }
 
 // Agrupa uma lista de `AnimeSaida` (`GET /api/animes`) em franquias. Cada item
