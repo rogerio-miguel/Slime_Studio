@@ -132,3 +132,37 @@ def test_seletor_colapsa_partes_da_mesma_temporada_numa_entrada():
     temporadas, _ = _temporadas_e_proxima(143, 2, grupo)
     assert [t.id for t in temporadas] == [42, 143]
     assert temporadas[1].ids_das_partes == [43]
+
+
+def test_parte_nova_de_temporada_existente_vira_proxima_como_nova_parte():
+    from api.rotas.animes import _temporadas_e_proxima
+
+    def _linha(id_: int, numero: int, status: StatusLancamento, tem_episodios: bool):
+        return SimpleNamespace(
+            id=id_,
+            numero_temporada=numero,
+            titulo=f"T{numero}",
+            status_lancamento=status,
+            estreia_em=None,
+            ano=2027,
+            formato_midia=None,
+            total_episodios_anilist=None,
+            tem_episodios=tem_episodios,
+        )
+
+    # Slime: T4 (22) existe; "4th Season Part 3" (144) é parte dela, não a "4ª temporada".
+    grupo = [
+        _linha(42, 1, StatusLancamento.FINALIZADO, True),
+        _linha(22, 4, StatusLancamento.FINALIZADO, True),
+        _linha(144, 4, StatusLancamento.NAO_LANCADO, False),
+    ]
+
+    for aberto, numero in ((42, 1), (22, 4)):
+        _, proxima = _temporadas_e_proxima(aberto, numero, grupo)
+        assert (proxima.id, proxima.nova_parte) == (144, True)
+
+    # Uma temporada genuinamente nova (número acima) continua sem o marcador.
+    grupo.append(_linha(200, 5, StatusLancamento.NAO_LANCADO, False))
+    grupo.remove(grupo[2])
+    _, proxima = _temporadas_e_proxima(22, 4, grupo)
+    assert (proxima.id, proxima.nova_parte) == (200, False)

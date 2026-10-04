@@ -693,7 +693,13 @@ def _temporadas_e_proxima(
             or linha.status_lancamento != StatusLancamento.NAO_LANCADO
         )
 
-    acessiveis = _colapsar_partes(anime_id, [linha for linha in grupo if _acessivel(linha)])
+    linhas_acessiveis = [linha for linha in grupo if _acessivel(linha)]
+    acessiveis = _colapsar_partes(anime_id, linhas_acessiveis)
+    numeros_existentes = {
+        linha.numero_temporada
+        for linha in linhas_acessiveis
+        if linha.numero_temporada is not None and linha.formato_midia is None
+    }
     temporadas = (
         [
             TemporadaIrmaSaida(
@@ -714,7 +720,8 @@ def _temporadas_e_proxima(
     numero_atual = numero_temporada_atual or 0
 
     def _prevista(linha: object) -> bool:
-        """Irmã que ainda vem: `nao_lancado`, numerada acima da atual, e sem
+        """Irmã que ainda vem: `nao_lancado`, numerada acima da atual (ou igual,
+        quando é parte nova de uma temporada que já existe), e sem
         data passada — data completa (`estreia_em`) no futuro de preferência,
         senão o `ano` (>= ano corrente) como fallback pro aviso degradar pra
         "estreia em 2026". Sem data NEM ano (temporada anunciada na AniList sem
@@ -722,8 +729,19 @@ def _temporadas_e_proxima(
         "em breve" em vez de sumir."""
         if linha.id == anime_id or linha.status_lancamento != StatusLancamento.NAO_LANCADO:
             return False
+        # "4th Season Part 3" com a T4 já no seletor é parte de uma temporada que
+        # existe, não uma "4ª temporada" a estrear: vale também na própria T4
+        # (`>=`), onde uma temporada nova exigiria número maior.
+        if _e_nova_parte(linha):
+            return (linha.numero_temporada or 0) >= numero_atual and _data_futura_ou_incerta(linha)
         if (linha.numero_temporada or 0) <= numero_atual:
             return False
+        return _data_futura_ou_incerta(linha)
+
+    def _e_nova_parte(linha: object) -> bool:
+        return linha.numero_temporada in numeros_existentes and linha.formato_midia is None
+
+    def _data_futura_ou_incerta(linha: object) -> bool:
         if linha.estreia_em is not None:
             return linha.estreia_em > hoje
         return linha.ano is None or linha.ano >= hoje.year
@@ -736,6 +754,7 @@ def _temporadas_e_proxima(
             titulo=previstas[0].titulo,
             estreia_em=previstas[0].estreia_em,
             ano=previstas[0].ano,
+            nova_parte=_e_nova_parte(previstas[0]),
         )
         if previstas
         else None
