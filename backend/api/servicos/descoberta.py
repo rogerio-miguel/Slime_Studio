@@ -8,6 +8,7 @@ traduz para schemas.
 import asyncio
 import logging
 import re
+import time
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
@@ -30,7 +31,8 @@ from db.catalogo import (
     localizar_animes_por_slug,
     obter_ou_criar_anime_id,
     preencher_banner_visual_em_lote,
-    promover_a_temporada,
+    promover_a_serie,
+    rebaixar_a_extra,
     sobrescrever_arte,
 )
 from extractors.versao import remover_marcador_de_versao
@@ -71,6 +73,19 @@ _MAX_REFRESHS_DE_LANCAMENTO_POR_LOTE = 5
 # custa até 2 round-trips (AniList + fallback Kitsu) contra 1 da busca por id,
 # então tem orçamento independente. Pior caso por listagem: 5 (id) + 2 (título).
 _MAX_BUSCAS_POR_TITULO_POR_LOTE = 2
+
+# Reparo automático de classificação/posição na série (`agendar_reparos_de_
+# classificacao`). Teto próprio por listagem: cada reparo custa ~4-8 chamadas à
+# AniList (classificação + walk + franquia) contra ~30/min de limite medido em
+# 2026-10-04 — 2 por visita deixa folga mesmo somado aos refreshs acima.
+_MAX_REPAROS_DE_CLASSIFICACAO_POR_LOTE = 2
+# Cooldown por anime e por processo, contado da TENTATIVA (não do sucesso): série
+# cujo walk nunca resolve (ciclo, prequel ambíguo) ficaria retentando a cada
+# `?aquecer=true` pra sempre. Em memória de propósito — reiniciar o processo
+# zera, que é exatamente quando vale tentar de novo.
+_COOLDOWN_REPARO_DE_CLASSIFICACAO_S = 3600
+_reparos_de_classificacao_em_voo: dict[int, asyncio.Task] = {}
+_reparos_de_classificacao_recentes: dict[int, float] = {}
 
 # Segmento entre parênteses/colchetes no título local — os sites de extração
 # marcam versão assim ("Nome (Dublado)"), fora da fronteira de token que
@@ -541,6 +556,9 @@ def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime
 
     As duas listas de candidatos são disjuntas por construção (`anilist_id` é ou
     não é `None`), então compartilhar `_refreshs_de_lancamento_em_voo` é seguro.
+
+    Por fim, `agendar_reparos_de_classificacao` (orçamento próprio) refaz a
+    posição/classificação de série criada sem âncora.
     """
     limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
 
@@ -557,6 +575,57 @@ def agendar_refreshs_do_catalogo(sessionmaker: _SessionMaker, animes: list[Anime
     )
     for anime in por_titulo[:_MAX_BUSCAS_POR_TITULO_POR_LOTE]:
         _agendar_busca_por_titulo(sessionmaker, anime)
+
+    agendar_reparos_de_classificacao(sessionmaker, animes)
+
+
+def _reparo_de_classificacao_em_cooldown(anime_id: int, agora: float) -> bool:
+    ultima_tentativa = _reparos_de_classificacao_recentes.get(anime_id)
+    return (
+        ultima_tentativa is not None
+        and agora - ultima_tentativa < _COOLDOWN_REPARO_DE_CLASSIFICACAO_S
+    )
+
+
+def agendar_reparos_de_classificacao(sessionmaker: _SessionMaker, animes: list[Anime]) -> None:
+    """Reparo automático (fire-and-forget) de anime criado como série que ficou
+    sem posição: `formato_midia` nulo + `anilist_id` + `serie_ancora` nulo. Toda
+    criação bem-sucedida grava a âncora (`_resolver_e_aplicar_serie`); âncora nula
+    é a assinatura de que a AniList falhou no meio (429, timeout) — inclusive no
+    2º estágio da classificação, o que deixaria um ONA com `PARENT` como série.
+
+    Refaz `_resolver_e_aplicar_serie` (classifica COM relações; extra é rebaixado
+    e ancorado, série ganha posição e franquia). Não cobre o que já tem âncora
+    mas dado velho (ex. `PARENT` adicionado depois na AniList):
+    `scripts/reclassificar_midia.py`.
+
+    No-op silencioso quando não há candidato, o anime já tem reparo em voo ou
+    tentativa dentro do cooldown, ou não há event loop rodando."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    agora = time.monotonic()
+    candidatos = [
+        anime
+        for anime in animes
+        if anime.anilist_id is not None
+        and anime.formato_midia is None
+        and anime.serie_ancora is None
+        and anime.id not in _reparos_de_classificacao_em_voo
+        and not _reparo_de_classificacao_em_cooldown(anime.id, agora)
+    ]
+    for anime in candidatos[:_MAX_REPAROS_DE_CLASSIFICACAO_POR_LOTE]:
+        anime_id = anime.id
+        _reparos_de_classificacao_recentes[anime_id] = agora
+        tarefa = loop.create_task(
+            _resolver_e_aplicar_serie(sessionmaker, anime_id, anime.titulo, anime.anilist_id)
+        )
+        _reparos_de_classificacao_em_voo[anime_id] = tarefa
+        tarefa.add_done_callback(
+            lambda _tarefa, aid=anime_id: _reparos_de_classificacao_em_voo.pop(aid, None)
+        )
 
 
 def refresh_em_andamento(ids: Iterable[int]) -> bool:
@@ -841,11 +910,14 @@ async def _resolver_e_aplicar_serie(
     `aplicar_posicao_na_serie` (só-quando-NULL — o marcador do título gravado na
     criação nunca é sobrescrito).
 
-    `formato` não-nulo (`Anime.formato_midia` — filme/OVA/ONA/especial) desvia
-    pra `_aplicar_ancora_de_midia`: esses formatos quase nunca têm aresta
-    `PREQUEL` de volta pra série TV (o walk normal ficaria ancorado neles
+    `formato` não-nulo (`Anime.formato_midia` — EXTRA: filme/OVA curto/especial/
+    ONA-extra) desvia pra `_aplicar_ancora_de_midia`: extras quase nunca têm
+    aresta `PREQUEL` de volta pra série (o walk normal ficaria ancorado neles
     mesmos), então só `serie_ancora` é resolvido (via série-mãe), nunca
-    `numero_temporada` — não têm posição narrativa numerada.
+    `numero_temporada` — não têm posição narrativa numerada. `formato` `None`
+    ainda passa por `_formato_se_extra_declarado` (feed sem relações deixa
+    ONA/OVA longo com `PARENT` passar como série); ver `integrations/
+    classificacao.py`.
 
     Best-effort de ponta a ponta, mesma filosofia de `_resolver_titulos_
     canonicos`: sem `anilist_id` não há grafo para andar; qualquer falha
@@ -860,6 +932,8 @@ async def _resolver_e_aplicar_serie(
     """
     if anilist_id is None:
         return
+    if formato is None:
+        formato = await _formato_se_extra_declarado(sessionmaker, anime_id, anilist_id)
     if formato is not None:
         await _aplicar_ancora_de_midia(sessionmaker, anime_id, anilist_id, formato)
         return
@@ -981,26 +1055,45 @@ async def _materializar_temporadas_irmas(
             )
 
 
+async def _formato_se_extra_declarado(
+    sessionmaker: _SessionMaker, anime_id: int, anilist_id: int
+) -> str | None:
+    """Segundo estágio da classificação série×extra: o feed (sem relações)
+    deixou passar como série; aqui `servico.formato_se_extra` aplica a regra com
+    a aresta `PARENT`. Se for extra, grava `formato_midia` e devolve o `format`
+    pra `_resolver_e_aplicar_serie` desviar pro ramo de âncora. Best-effort:
+    qualquer falha vira `warning` e `None` (segue como série — o erro barato)."""
+    try:
+        formato = await asyncio.wait_for(
+            servico.formato_se_extra(anilist_id), timeout=_TETO_SERIE_S
+        )
+        if formato is not None:
+            await rebaixar_a_extra(sessionmaker, anime_id, formato)
+        return formato
+    except Exception as excecao:
+        logger.warning(
+            "classificação série×extra best-effort falhou para anime_id=%s anilist_id=%s: %s",
+            anime_id,
+            anilist_id,
+            excecao,
+        )
+        return None
+
+
 async def _aplicar_ancora_de_midia(
     sessionmaker: _SessionMaker, anime_id: int, anilist_id: int, formato: str
 ) -> None:
     """Ramo de `_resolver_e_aplicar_serie` para `Anime.formato_midia` não-nulo
-    (filme/OVA/ONA/especial): resolve só `serie_ancora`
+    (extra: filme/OVA curto/especial/ONA-extra): resolve só `serie_ancora`
     (`servico.resolver_ancora_de_midia`, via série-mãe — nunca o walk
     `PREQUEL` normal, que ancoraria o item nele mesmo). `numero_temporada`
-    nunca é tocado aqui — esses formatos não têm posição narrativa numerada.
+    nunca é tocado aqui — extra não tem posição narrativa numerada. Não puxa a
+    série-mãe pro catálogo: o usuário clicou num extra, não na série (a
+    Crunchyroll também não materializa).
 
-    Só `ONA` também materializa as temporadas de TV da série-mãe
-    (`_materializar_temporadas_irmas`, mesmo agrupamento do ramo TV) e, se tem
-    sequência direta em TV (`abre_serie_de_tv`), é promovido a T1 normal
-    (`promover_a_temporada`): a AniList classifica como ONA séries reais cuja
-    T1 é web e as seguintes são TV (ex. "Hitoribocchi no Isekai Kouryaku") —
-    sem isso a T2 nunca entra no catálogo e a T1 fica fora do card/seletor.
-    Filme/OVA/especial não puxam a série inteira: o usuário clicou num extra,
-    não na série.
-
-    Best-effort, mesma filosofia do ramo TV: qualquer falha (provedor, timeout,
-    banco) vira `warning` e retorna — a criação do anime já aconteceu."""
+    `formato` só entra no log. Best-effort, mesma filosofia do ramo TV:
+    qualquer falha (provedor, timeout, banco) vira `warning` e retorna — a
+    criação do anime já aconteceu."""
     try:
         ancora = await asyncio.wait_for(
             servico.resolver_ancora_de_midia(anilist_id), timeout=_TETO_SERIE_S
@@ -1009,21 +1102,38 @@ async def _aplicar_ancora_de_midia(
             await aplicar_posicao_na_serie(
                 sessionmaker, anime_id, PosicaoNaSerie(numero_temporada=None, serie_ancora=ancora)
             )
-            if formato == "ONA":
-                franquia = await asyncio.wait_for(
-                    servico.resolver_franquia(ancora), timeout=_TETO_SERIE_S
-                )
-                if franquia:
-                    await _materializar_temporadas_irmas(sessionmaker, anilist_id, franquia)
-                if await asyncio.wait_for(
-                    servico.abre_serie_de_tv(anilist_id), timeout=_TETO_SERIE_S
-                ):
-                    await promover_a_temporada(sessionmaker, anime_id)
     except Exception as excecao:
         logger.warning(
             "resolução de âncora de mídia relacionada best-effort falhou para "
-            "anime_id=%s anilist_id=%s: %s",
+            "anime_id=%s anilist_id=%s formato=%s: %s",
             anime_id,
             anilist_id,
+            formato,
             excecao,
         )
+
+
+async def reclassificar_midia(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    titulo: str,
+    anilist_id: int,
+    *,
+    formato_atual: str | None,
+    formato: str,
+    serie: bool,
+) -> str | None:
+    """Aplica a classificação (`servico.classificar_midia`) a um anime JÁ
+    catalogado — `scripts/reclassificar_midia.py`. Devolve `"promovido"` (era
+    extra, a regra atual diz série: refaz posição e agrupa a franquia como numa
+    criação), `"rebaixado"` (era série, a regra diz extra: ancora na série-mãe)
+    ou `None` quando nada muda. Idempotente: roda de novo e não faz nada."""
+    if serie and formato_atual is not None:
+        await promover_a_serie(sessionmaker, anime_id)
+        await _resolver_e_aplicar_serie(sessionmaker, anime_id, titulo, anilist_id)
+        return "promovido"
+    if not serie and formato_atual is None:
+        await rebaixar_a_extra(sessionmaker, anime_id, formato)
+        await _aplicar_ancora_de_midia(sessionmaker, anime_id, anilist_id, formato)
+        return "rebaixado"
+    return None

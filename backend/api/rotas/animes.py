@@ -648,9 +648,10 @@ def _temporadas_e_proxima(
     - `proxima_temporada_prevista`: a irmã `nao_lancado` de menor
       `numero_temporada` acima da atual que já tem `estreia_em` no futuro, ou —
       quando a AniList ainda não fechou a data completa — pelo menos `ano` no
-      ano corrente ou adiante. Alimenta o aviso "Nª temporada estreia em ..." no
-      hero da página do anime e no card do catálogo (data completa quando há,
-      senão só o ano). `None` quando não há nenhuma nesse estado."""
+      ano corrente ou adiante, ou sem nenhum dos dois (aviso "em breve").
+      Alimenta o aviso "Nª temporada estreia em ..." no hero da página do anime
+      e no card do catálogo (data completa quando há, senão só o ano, senão "em
+      breve"). `None` quando não há nenhuma nesse estado."""
 
     def _acessivel(linha: object) -> bool:
         return (
@@ -679,17 +680,19 @@ def _temporadas_e_proxima(
     numero_atual = numero_temporada_atual or 0
 
     def _prevista(linha: object) -> bool:
-        """Irmã que ainda vem: `nao_lancado`, numerada acima da atual, e com
-        alguma âncora temporal no futuro — data completa (`estreia_em`) de
-        preferência, senão o `ano` (>= ano corrente) como fallback pro aviso
-        degradar pra "estreia em 2026" em vez de sumir."""
+        """Irmã que ainda vem: `nao_lancado`, numerada acima da atual, e sem
+        data passada — data completa (`estreia_em`) no futuro de preferência,
+        senão o `ano` (>= ano corrente) como fallback pro aviso degradar pra
+        "estreia em 2026". Sem data NEM ano (temporada anunciada na AniList sem
+        nenhuma âncora, ex. "Hitoribocchi 2nd Season") também vale: o aviso vira
+        "em breve" em vez de sumir."""
         if linha.id == anime_id or linha.status_lancamento != StatusLancamento.NAO_LANCADO:
             return False
         if (linha.numero_temporada or 0) <= numero_atual:
             return False
         if linha.estreia_em is not None:
             return linha.estreia_em > hoje
-        return linha.ano is not None and linha.ano >= hoje.year
+        return linha.ano is None or linha.ano >= hoje.year
 
     previstas = [linha for linha in grupo if _prevista(linha)]
     proxima = (

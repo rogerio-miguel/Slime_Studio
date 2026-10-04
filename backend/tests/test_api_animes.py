@@ -427,6 +427,7 @@ async def _criar_anime_catalogado(
     generos: list[str] | None = None,
     formato_midia: str | None = None,
     serie_ancora: int | None = None,
+    numero_temporada: int | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         anime = Anime(
@@ -434,6 +435,7 @@ async def _criar_anime_catalogado(
             slug=titulo.lower().replace(" ", "-"),
             formato_midia=formato_midia,
             serie_ancora=serie_ancora,
+            numero_temporada=numero_temporada,
             status_lancamento=status_lancamento,
             episodios_na_fonte=episodios_na_fonte,
             fonte_verificada_em=fonte_verificada_em,
@@ -740,49 +742,229 @@ async def test_listar_animes_mostra_ona_orfao_mas_esconde_quando_a_franquia_tem_
     assert ids == {sequencia, avulso}
 
 
-@pytest.mark.parametrize(("formato", "materializa"), [("ONA", True), ("MOVIE", False)])
-async def test_ancora_de_midia_so_materializa_e_promove_para_ona(
-    monkeypatch: pytest.MonkeyPatch,
-    sessionmaker_api: _SessionMaker,
-    formato: str,
-    materializa: bool,
+async def test_ancora_de_midia_so_ancora_e_nao_puxa_a_serie_mae(
+    monkeypatch: pytest.MonkeyPatch, sessionmaker_api: _SessionMaker
 ):
-    """T1 ONA (Hitoribocchi) puxa as temporadas de TV da série-mãe pro catálogo e
-    é promovida a T1 normal; filme/OVA/especial só recebem a âncora."""
+    """Extra (filme/OVA/especial) recebe só `serie_ancora` — não materializa a
+    franquia da série-mãe nem vira temporada numerada."""
     from api.servicos import descoberta
-
-    chamadas: list[tuple[int, list]] = []
 
     async def _ancora(anilist_id: int) -> int:
         return 900
 
-    async def _abre_serie(anilist_id: int) -> bool:
-        return True
-
-    async def _franquia(anilist_id: int) -> list:
-        return ["T1-tv"]
-
-    async def _materializar(_sessionmaker, anilist_id_clicado: int, franquia: list) -> None:
-        chamadas.append((anilist_id_clicado, franquia))
+    async def _materializar(*_args) -> None:
+        raise AssertionError("extra não materializa a franquia")
 
     monkeypatch.setattr(descoberta.servico, "resolver_ancora_de_midia", _ancora)
-    monkeypatch.setattr(descoberta.servico, "resolver_franquia", _franquia)
-    monkeypatch.setattr(descoberta.servico, "abre_serie_de_tv", _abre_serie)
     monkeypatch.setattr(descoberta, "_materializar_temporadas_irmas", _materializar)
     anime_id = await _criar_anime_catalogado(
-        sessionmaker_api, "Midia Qualquer", formato_midia=formato
+        sessionmaker_api, "Midia Qualquer", formato_midia="MOVIE"
     )
 
-    await descoberta._aplicar_ancora_de_midia(sessionmaker_api, anime_id, 173, formato)
+    await descoberta._aplicar_ancora_de_midia(sessionmaker_api, anime_id, 173, "MOVIE")
 
     async with sessionmaker_api() as sessao:
         anime = await sessao.get(Anime, anime_id)
-    assert anime.serie_ancora == 900
-    # ONA com sequência de TV vira T1 normal; filme segue como extra.
-    assert (anime.formato_midia, anime.numero_temporada) == (
-        (None, 1) if materializa else (formato, None)
+    assert (anime.serie_ancora, anime.formato_midia, anime.numero_temporada) == (
+        900,
+        "MOVIE",
+        None,
     )
-    assert chamadas == ([(173, ["T1-tv"])] if materializa else [])
+
+
+@pytest.mark.parametrize(
+    ("formato_declarado", "formato_persistido"), [("ONA", "ONA"), (None, None)]
+)
+async def test_serie_criada_sem_formato_e_rebaixada_so_quando_a_aresta_pai_aparece(
+    monkeypatch: pytest.MonkeyPatch,
+    sessionmaker_api: _SessionMaker,
+    formato_declarado: str | None,
+    formato_persistido: str | None,
+):
+    """O feed não traz relações: ONA com `PARENT` nasce série (`formato` `None`) e
+    o 2º estágio (`formato_se_extra`) o rebaixa a extra, zera `numero_temporada`
+    e ancora na série-mãe. Sem `PARENT` segue série intocada."""
+    from api.servicos import descoberta
+
+    async def _formato_se_extra(anilist_id: int) -> str | None:
+        return formato_declarado
+
+    async def _ancora(anilist_id: int) -> int:
+        return 900
+
+    async def _serie(anilist_id: int):
+        return None
+
+    monkeypatch.setattr(descoberta.servico, "formato_se_extra", _formato_se_extra)
+    monkeypatch.setattr(descoberta.servico, "resolver_ancora_de_midia", _ancora)
+    monkeypatch.setattr(descoberta.servico, "resolver_serie", _serie)
+    anime_id = await _criar_anime_catalogado(
+        sessionmaker_api, "Ona Com Pai", numero_temporada=1
+    )
+
+    await descoberta._resolver_e_aplicar_serie(sessionmaker_api, anime_id, "Ona Com Pai", 173)
+
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+    assert anime.formato_midia == formato_persistido
+    if formato_declarado is None:
+        assert anime.numero_temporada == 1
+    else:
+        assert (anime.numero_temporada, anime.serie_ancora) == (None, 900)
+
+
+@pytest.mark.parametrize(
+    ("formato_atual", "serie", "desfecho", "formato_final", "ancora_final"),
+    [
+        ("ONA", True, "promovido", None, 700),  # catálogo antigo: ONA série nascia extra
+        (None, False, "rebaixado", "ONA", 900),  # PARENT perdido num 429 na criação
+        ("ONA", False, None, "ONA", 555),  # já extra: intocado
+        (None, True, None, None, 555),  # já série: intocado
+    ],
+)
+async def test_reclassificar_midia_promove_rebaixa_ou_nao_mexe(
+    monkeypatch: pytest.MonkeyPatch,
+    sessionmaker_api: _SessionMaker,
+    formato_atual: str | None,
+    serie: bool,
+    desfecho: str | None,
+    formato_final: str | None,
+    ancora_final: int,
+):
+    from api.servicos import descoberta
+    from integrations.servico import SerieResolvida
+
+    async def _ancora_do_pai(anilist_id: int) -> int:
+        return 900
+
+    async def _serie(anilist_id: int):
+        return SerieResolvida(ancora=700, ordinal=1)
+
+    async def _sem_franquia(anilist_id: int) -> list:
+        return []
+
+    async def _sem_extra(anilist_id: int) -> None:
+        return None
+
+    monkeypatch.setattr(descoberta.servico, "resolver_ancora_de_midia", _ancora_do_pai)
+    monkeypatch.setattr(descoberta.servico, "resolver_serie", _serie)
+    monkeypatch.setattr(descoberta.servico, "resolver_franquia", _sem_franquia)
+    monkeypatch.setattr(descoberta.servico, "formato_se_extra", _sem_extra)
+    anime_id = await _criar_anime_catalogado(
+        sessionmaker_api, "Reclassificavel", formato_midia=formato_atual, serie_ancora=555
+    )
+
+    resultado = await descoberta.reclassificar_midia(
+        sessionmaker_api,
+        anime_id,
+        "Reclassificavel",
+        173,
+        formato_atual=formato_atual,
+        formato="ONA",
+        serie=serie,
+    )
+
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+    assert resultado == desfecho
+    assert (anime.formato_midia, anime.serie_ancora) == (formato_final, ancora_final)
+    if desfecho == "promovido":
+        assert anime.numero_temporada == 1
+
+
+async def test_reparo_automatico_so_pega_serie_sem_ancora_respeita_teto_e_cooldown(
+    monkeypatch: pytest.MonkeyPatch, sessionmaker_api: _SessionMaker
+):
+    """Candidato = série (`formato_midia` nulo) com `anilist_id` e `serie_ancora`
+    nulo — a assinatura de criação que a AniList derrubou no meio. Extra, anime já
+    ancorado e anime sem `anilist_id` ficam de fora; no máximo 2 por lote; e a
+    tentativa recente entra em cooldown."""
+    from api.servicos import descoberta
+
+    chamadas: list[int] = []
+
+    async def _reparo(_sessionmaker, anime_id: int, _titulo: str, _anilist_id: int) -> None:
+        chamadas.append(anime_id)
+
+    monkeypatch.setattr(descoberta, "_resolver_e_aplicar_serie", _reparo)
+
+    async def _criar(titulo: str, **campos) -> Anime:
+        anime_id = await _criar_anime_catalogado(sessionmaker_api, titulo, **campos)
+        async with sessionmaker_api() as sessao:
+            anime = await sessao.get(Anime, anime_id)
+            anime.anilist_id = campos.pop("anilist_id", 100 + anime_id)
+            await sessao.commit()
+            await sessao.refresh(anime)
+            return anime
+
+    pendentes = [await _criar(f"Pendente {i}") for i in range(3)]
+    ja_ancorado = await _criar("Ja Ancorado", serie_ancora=1)
+    extra = await _criar("Extra", formato_midia="MOVIE")
+    sem_anilist = await _criar_anime_catalogado(sessionmaker_api, "Sem Anilist")
+    async with sessionmaker_api() as sessao:
+        sem_anilist_obj = await sessao.get(Anime, sem_anilist)
+        todos = [*pendentes, ja_ancorado, extra, sem_anilist_obj]
+
+    descoberta.agendar_reparos_de_classificacao(sessionmaker_api, todos)
+    await asyncio.gather(*descoberta._reparos_de_classificacao_em_voo.values())
+
+    assert chamadas == [pendentes[0].id, pendentes[1].id]  # teto de 2, só os candidatos
+
+    descoberta.agendar_reparos_de_classificacao(sessionmaker_api, todos)
+    await asyncio.gather(*descoberta._reparos_de_classificacao_em_voo.values())
+
+    # 1ª e 2ª estão em cooldown; entra a 3ª. Ninguém repete.
+    assert chamadas == [pendentes[0].id, pendentes[1].id, pendentes[2].id]
+
+
+@pytest.mark.parametrize(
+    ("estreia_em", "ano", "prevista"),
+    [
+        (date(2999, 1, 1), None, True),  # data futura
+        (date(2000, 1, 1), None, False),  # data passada
+        (None, 2999, True),  # só o ano, no futuro
+        (None, 2000, False),  # só o ano, no passado
+        (None, None, True),  # Hitoribocchi 2nd Season: sem data nem ano → "em breve"
+    ],
+)
+def test_proxima_temporada_prevista_inclui_a_que_nao_tem_data_nem_ano(
+    estreia_em: date | None, ano: int | None, prevista: bool
+):
+    from types import SimpleNamespace
+
+    from api.rotas.animes import _temporadas_e_proxima
+
+    def _linha(id_: int, numero: int, **campos):
+        base = {
+            "id": id_,
+            "numero_temporada": numero,
+            "titulo": f"T{numero}",
+            "status_lancamento": StatusLancamento.FINALIZADO,
+            "estreia_em": None,
+            "ano": None,
+            "formato_midia": None,
+            "total_episodios_anilist": None,
+            "tem_episodios": True,
+        }
+        return SimpleNamespace(**{**base, **campos})
+
+    grupo = [
+        _linha(1, 1),
+        _linha(
+            2,
+            2,
+            status_lancamento=StatusLancamento.NAO_LANCADO,
+            estreia_em=estreia_em,
+            ano=ano,
+            tem_episodios=False,
+        ),
+    ]
+
+    _, proxima = _temporadas_e_proxima(1, 1, grupo)
+
+    assert (proxima is not None) is prevista
+    if prevista:
+        assert (proxima.id, proxima.estreia_em, proxima.ano) == (2, estreia_em, ano)
 
 
 async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(

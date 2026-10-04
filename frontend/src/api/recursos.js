@@ -175,10 +175,11 @@ export function liberarEpisodio(episodioId, { manterVivo } = {}) {
 // `CriarAnimeRequest`).
 //
 // `formato` (`format` cru da AniList do item clicado, `AnimeEmAlta.formato`
-// da busca da Home) decide se o anime criado é uma temporada normal (`undefined`,
-// o caso comum) ou filme/OVA/ONA/especial — o backend grava em `Anime.
-// formato_midia` e resolve a franquia por série-mãe em vez do walk normal,
-// pra ele se agrupar no anime original em vez de virar card solto.
+// da busca da Home) só vem preenchido quando o backend já classifica o item como
+// EXTRA (filme/OVA curto/especial/ONA-extra); série — inclusive ONA — chega
+// `undefined`, o caso comum. Extra: o backend grava em `Anime.formato_midia` e
+// resolve a franquia por série-mãe em vez do walk normal, pra ele se agrupar no
+// anime original em vez de virar card solto.
 export function criarAnime({
   titulo,
   ano,

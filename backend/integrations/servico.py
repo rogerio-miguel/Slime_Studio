@@ -58,6 +58,7 @@ from integrations.base import (
     RelacoesDeAnime,
     TitulosDeAnime,
 )
+from integrations.classificacao import eh_serie
 from integrations.registro import (
     FILEIRAS_TEMATICAS,
     PROVEDORES,
@@ -1517,30 +1518,47 @@ async def _buscar_serie_pai_em_cadeia(
     return None
 
 
-async def abre_serie_de_tv(anilist_id: int) -> bool:
-    """`True` quando `anilist_id` tem sequência direta em TV/TV_SHORT — ou seja,
-    é a temporada anterior de uma série de TV, não um extra. Caso real: a T1 de
-    "Hitoribocchi no Isekai Kouryaku" é ONA na AniList e a T2 é TV com aresta
-    `PREQUEL` pra ela. `False` também quando nenhum provedor responde (sem
-    certeza, não promove)."""
+async def classificar_midia(anilist_id: int) -> tuple[str, bool] | None:
+    """`(format cru, é_série)` de `anilist_id` segundo `classificacao.eh_serie`
+    COM as relações (aresta `PARENT`). `None` quando nenhum provedor responde ou
+    a AniList não informa o `format` — "não sei" é um terceiro estado que quem
+    chama NÃO pode confundir com "é série" (promoveria extra por falha de rede)."""
     capazes = [p for p in PROVEDORES if isinstance(p, ProvedorComRelacoes)]
     if not capazes:
-        return False
+        return None
     relacoes = await _buscar_relacoes_em_cadeia(capazes, anilist_id)
-    return relacoes is not None and bool(relacoes.sequels)
+    if relacoes is None or relacoes.formato is None:
+        return None
+    serie = eh_serie(
+        relacoes.formato, relacoes.episodios, relacoes.duracao_min, relacoes.tem_pai
+    )
+    return relacoes.formato, serie
+
+
+async def formato_se_extra(anilist_id: int) -> str | None:
+    """`format` cru da AniList quando `anilist_id` é EXTRA; `None` quando é série
+    ou quando não dá pra saber (sem certeza, não rebaixa).
+
+    Usado no enriquecimento pós-criação pra rebaixar o que o feed, sem acesso às
+    relações, deixou passar como série (ex. ONA/OVA longo com `PARENT` de TV)."""
+    classificacao = await classificar_midia(anilist_id)
+    if classificacao is None:
+        return None
+    formato, serie = classificacao
+    return None if serie else formato
 
 
 async def resolver_ancora_de_midia(anilist_id: int) -> int | None:
-    """`serie_ancora` de um filme/OVA/ONA/especial (`Anime.formato_midia` não
-    nulo) — o COMPLEMENTO de `resolver_serie`, que só anda o walk `PREQUEL`
-    entre `Media` TV/TV_SHORT e por isso não serve pra esses formatos (a
-    aresta de volta pra série-mãe quase nunca é `PREQUEL`, ver `buscar_
-    serie_pai`).
+    """`serie_ancora` de um EXTRA (`Anime.formato_midia` não nulo: filme/OVA/
+    especial/ONA-extra) — o COMPLEMENTO de `resolver_serie`, que só anda o walk
+    `PREQUEL` e por isso não serve pra esses formatos (a aresta de volta pra
+    série-mãe quase nunca é `PREQUEL`, ver `buscar_serie_pai`).
 
-    Acha o primeiro nó TV/TV_SHORT relacionado (`buscar_serie_pai`) e devolve
-    a ÂNCORA DELE (`resolver_serie` nesse nó — que pode ser ele mesmo, se for
-    a T1, ou subir a cadeia de prequels se não for). `None` quando não há nó
-    TV relacionado, ou o walk a partir dele falha — nunca ancora o filme nele
+    Acha a série-mãe (`buscar_serie_pai`: aresta `PARENT`, senão o primeiro nó
+    de temporada relacionado — TV, TV_SHORT ou ONA) e devolve a ÂNCORA DELA
+    (`resolver_serie` nesse nó — que pode ser ele mesmo, se for a T1, ou subir
+    a cadeia de prequels se não for). `None` quando não há nó de temporada
+    relacionado, ou o walk a partir dele falha — nunca ancora o extra nele
     mesmo (isso o transformaria num card de franquia próprio, o problema que
     esta função existe para evitar).
 

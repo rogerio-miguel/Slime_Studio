@@ -158,17 +158,35 @@ async def aplicar_posicao_na_serie(
         await sessao.commit()
 
 
-async def promover_a_temporada(sessionmaker: _SessionMaker, anime_id: int) -> None:
-    """Tira `formato_midia` e numera como T1 (só se ainda sem número) um anime
-    que a AniList marca como ONA/OVA mas é a primeira temporada de uma série:
-    com `formato_midia` ele ficava fora do card/seletor da franquia."""
+async def rebaixar_a_extra(sessionmaker: _SessionMaker, anime_id: int, formato: str) -> None:
+    """Marca como extra (`formato_midia` = `format` cru da AniList) um anime
+    criado como série — o feed não traz relações, então ONA/OVA longo com
+    aresta `PARENT` só é reconhecido depois (`integrations/servico.py::
+    formato_se_extra`). Zera `numero_temporada` e `serie_ancora`: extra não tem
+    posição narrativa numerada (o marcador do título gravado na criação não
+    vale) e `aplicar_posicao_na_serie` só preenche campo NULL — uma âncora
+    antiga (a do próprio anime, de quando era série) travaria a do pai."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.formato_midia = formato
+        anime.numero_temporada = None
+        anime.serie_ancora = None
+        await sessao.commit()
+
+
+async def promover_a_serie(sessionmaker: _SessionMaker, anime_id: int) -> None:
+    """Inverso de `rebaixar_a_extra`: tira `formato_midia` (e a âncora herdada do
+    pai) de um anime que a regra atual trata como série — caso do catálogo
+    anterior ao classificador, em que todo ONA nascia extra. A posição na série
+    é refeita depois por `_resolver_e_aplicar_serie`."""
     async with sessionmaker() as sessao:
         anime = await sessao.get(Anime, anime_id)
         if anime is None:
             return
         anime.formato_midia = None
-        if anime.numero_temporada is None:
-            anime.numero_temporada = 1
+        anime.serie_ancora = None
         await sessao.commit()
 
 

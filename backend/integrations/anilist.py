@@ -15,6 +15,7 @@ import dataclasses
 import html
 import logging
 import re
+import time
 from datetime import UTC, date, datetime
 
 import requests
@@ -34,8 +35,19 @@ from integrations.base import (
     RelacoesDeAnime,
     TitulosDeAnime,
 )
+from integrations.classificacao import FORMATOS_DE_TEMPORADA, eh_serie
 
 logger = logging.getLogger(__name__)
+
+# Cache curto da resposta de `_QUERY_RELACOES` por `anilist_id`. Uma criação/reparo
+# lê as relações do MESMO anime 2-3 vezes em segundos (classificação série×extra,
+# 1º passo do walk, `buscar_serie_pai`) e a AniList limita em ~30 chamadas/min
+# (medido em 2026-10-04). TTL curto: relação nova (sequência anunciada) não deve
+# ficar escondida. Estado de módulo acessado de `to_thread`: `get`/`set` de dict
+# são atômicos no CPython e o pior caso de corrida é uma chamada repetida.
+_TTL_RELACOES_S = 120
+_LIMITE_CACHE_RELACOES = 256
+_cache_de_relacoes: dict[int, tuple[float, dict]] = {}
 
 _URL = "https://graphql.anilist.co"
 # Estritamente menor que o `wait_for` externo de
@@ -92,6 +104,7 @@ query ($busca: String) {
       startDate { year }
       status
       episodes
+      duration
       format
       nextAiringEpisode { episode airingAt }
     }
@@ -239,6 +252,9 @@ query ($id: Int) {
     id
     title { romaji }
     startDate { year month }
+    format
+    episodes
+    duration
     relations {
       edges {
         relationType(version: 2)
@@ -281,6 +297,7 @@ query ($id: Int) {
           startDate { year }
           status
           episodes
+          duration
           nextAiringEpisode { episode airingAt }
         }
       }
@@ -298,6 +315,7 @@ query ($id: Int) {
           startDate { year }
           status
           episodes
+          duration
           nextAiringEpisode { episode airingAt }
         }
       }
@@ -335,18 +353,12 @@ _STATUS_ANILIST: dict[str, StatusLancamento] = {
 _REGEX_TAG_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _REGEX_TAG_HTML = re.compile(r"<[^>]+>")
 
-# Formatos de `Media` que contam como "temporada" para o walk de série
-# (`integrations/servico.py::resolver_serie`): filme, OVA, ONA, especial e
-# música são descartados como aresta de prequel — spin-off/recap não avança o
-# ordinal narrativo, e a correção manual desses casos é a Fase 6. `TV_SHORT`
-# entra: série de curtas ainda é temporada numerada (ex. "Yama no Susume").
-_FORMATOS_DE_SERIE = frozenset({"TV", "TV_SHORT"})
 
 # `relationType`s de sequência de TV — já cobertos pelo seletor de temporada
 # (`api/rotas/animes.py::_temporadas_e_proxima`, via o walk de `PREQUEL` de
 # `buscar_relacoes`), então `buscar_relacionados` os descarta pra não duplicar
 # a mesma temporada nas duas UIs. Só quando `node.format` também é de série —
-# um `SEQUEL` fora de `_FORMATOS_DE_SERIE` (ex. um filme recap) não é temporada
+# um `SEQUEL` fora de `FORMATOS_DE_TEMPORADA` (ex. um filme recap) não é temporada
 # numerada e fica.
 _RELACOES_DE_SEQUENCIA_TV = frozenset({"PREQUEL", "SEQUEL"})
 
@@ -478,10 +490,25 @@ class AniListProvider(
             dados = self._executar(_QUERY_POR_TAG, {"tag": fileira.valor})
         return _pagina_para_animes_em_alta(dados, f"fileira temática {fileira.chave!r}")
 
-    def buscar_relacoes(self, anilist_id: int) -> RelacoesDeAnime | None:
+    def _media_de_relacoes(self, anilist_id: int) -> dict | None:
+        """`Media` de `_QUERY_RELACOES` (cache por `_TTL_RELACOES_S`); `None` quando
+        a AniList não conhece o id. Só resposta válida é cacheada."""
+        agora = time.monotonic()
+        memo = _cache_de_relacoes.get(anilist_id)
+        if memo is not None and agora < memo[0]:
+            return memo[1]
         dados = self._executar(_QUERY_RELACOES, {"id": anilist_id})
         media = dados.get("Media") if isinstance(dados, dict) else None
         if not isinstance(media, dict):
+            return None
+        if len(_cache_de_relacoes) >= _LIMITE_CACHE_RELACOES:
+            _cache_de_relacoes.clear()
+        _cache_de_relacoes[anilist_id] = (agora + _TTL_RELACOES_S, media)
+        return media
+
+    def buscar_relacoes(self, anilist_id: int) -> RelacoesDeAnime | None:
+        media = self._media_de_relacoes(anilist_id)
+        if media is None:
             return None
 
         no = _no_de_serie(media)
@@ -493,27 +520,38 @@ class AniListProvider(
         prequels = _relacoes_de_serie_por_tipo(arestas or [], "PREQUEL", anilist_id)
         sequels = _relacoes_de_serie_por_tipo(arestas or [], "SEQUEL", anilist_id)
 
-        return RelacoesDeAnime(no=no, prequels=tuple(prequels), sequels=tuple(sequels))
+        return RelacoesDeAnime(
+            no=no,
+            prequels=tuple(prequels),
+            sequels=tuple(sequels),
+            formato=_texto_ou_none(media.get("format")),
+            episodios=_inteiro_ou_none(media.get("episodes")),
+            duracao_min=_inteiro_ou_none(media.get("duration")),
+            tem_pai=_tem_aresta_de_pai(arestas or []),
+        )
 
     def buscar_serie_pai(self, anilist_id: int) -> NoDeSerie | None:
-        dados = self._executar(_QUERY_RELACOES, {"id": anilist_id})
-        media = dados.get("Media") if isinstance(dados, dict) else None
-        if not isinstance(media, dict):
+        media = self._media_de_relacoes(anilist_id)
+        if media is None:
             return None
 
         relacoes = media.get("relations") or {}
         arestas = relacoes.get("edges") if isinstance(relacoes, dict) else None
-        for aresta in arestas or []:
-            if not isinstance(aresta, dict):
-                continue
-            node = aresta.get("node")
-            if not isinstance(node, dict) or node.get("type") != "ANIME":
-                continue
-            if node.get("format") not in _FORMATOS_DE_SERIE:
-                continue
-            candidato = _no_de_serie(node)
-            if candidato is not None:
-                return candidato
+        candidatos = [
+            (aresta.get("relationType"), aresta["node"])
+            for aresta in arestas or []
+            if isinstance(aresta, dict)
+            and isinstance(aresta.get("node"), dict)
+            and aresta["node"].get("type") == "ANIME"
+            and aresta["node"].get("format") in FORMATOS_DE_TEMPORADA
+        ]
+        # `PARENT` primeiro: é a única aresta que a amostra de 400 itens mostrou
+        # confiável como "extra de"; as demais só servem de fallback.
+        candidatos.sort(key=lambda candidato: candidato[0] != "PARENT")
+        for _tipo, node in candidatos:
+            no_candidato = _no_de_serie(node)
+            if no_candidato is not None:
+                return no_candidato
         return None
 
     def buscar_relacionados(self, anilist_id: int) -> list[AnimeEmAlta]:
@@ -547,7 +585,7 @@ class AniListProvider(
             vistos.add(ident)
             if (
                 aresta.get("relationType") in _RELACOES_DE_SEQUENCIA_TV
-                and node.get("format") in _FORMATOS_DE_SERIE
+                and node.get("format") in FORMATOS_DE_TEMPORADA
             ):
                 continue
             resultado.append(_item_para_anime_em_alta(node))
@@ -662,8 +700,8 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
     formato de resposta em `listar_em_alta`, `listar_proxima_temporada`,
     `listar_fileira_tematica` e `buscar_relacionados`).
 
-    `formato`: `None` para qualquer `Media` de série (`_FORMATOS_DE_SERIE`,
-    "TV"/"TV_SHORT") — o contrato de `AnimeEmAltaSaida.formato`/
+    `formato`: `None` para qualquer `Media` que `classificacao.eh_serie` trata
+    como série — o contrato de `AnimeEmAltaSaida.formato`/
     `CriarAnimeRequest.formato` é "`None` = temporada normal, "MOVIE"/"OVA"/
     "ONA"/"SPECIAL" = agrupa sob a série-mãe" (`Anime.formato_midia`,
     `db.catalogo.obter_ou_criar_anime_id`). Repassar o "TV" cru da AniList
@@ -671,8 +709,16 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
     verdade — some do catálogo (`listar_animes` filtra `formato_midia IS
     NULL`) sem se agrupar em nenhuma franquia (bug real, anime id=82 no
     catálogo local: "Ladies versus Butlers!" virou órfão assim ao ser
-    materializado por "Relacionados")."""
+    materializado por "Relacionados"). O item do feed não traz relações, então
+    `tem_pai` é sempre `False` aqui: ONA com `PARENT` nasce série e é rebaixado
+    a extra no enriquecimento (`api/servicos/descoberta.py`)."""
     formato_bruto = item.get("format")
+    serie = eh_serie(
+        _texto_ou_none(formato_bruto),
+        _inteiro_ou_none(item.get("episodes")),
+        _inteiro_ou_none(item.get("duration")),
+        tem_pai=False,
+    )
     return AnimeEmAlta(
         titulo_romaji=(item.get("title") or {}).get("romaji") or "",
         titulo_ingles=(item.get("title") or {}).get("english"),
@@ -686,7 +732,7 @@ def _item_para_anime_em_alta(item: dict) -> AnimeEmAlta:
         ),
         lancamento=_extrair_lancamento(item),
         sinopse=_sanitizar_sinopse(item.get("description")),
-        formato=None if formato_bruto in _FORMATOS_DE_SERIE else _texto_ou_none(formato_bruto),
+        formato=None if serie else _texto_ou_none(formato_bruto),
     )
 
 
@@ -695,7 +741,7 @@ def _relacoes_de_serie_por_tipo(
 ) -> list[NoDeSerie]:
     """Nós de `arestas` (`relations.edges` cru da AniList) com `relationType`
     igual a `relation_type` ("PREQUEL" ou "SEQUEL") e `Media` ANIME em formato
-    de temporada (`_FORMATOS_DE_SERIE`) — mesmo filtro para os dois sentidos do
+    de temporada (`FORMATOS_DE_TEMPORADA`) — mesmo filtro para os dois sentidos do
     walk de série (`buscar_relacoes`, usado tanto por `resolver_serie` quanto
     por `resolver_franquia`)."""
     resultado: list[NoDeSerie] = []
@@ -708,7 +754,7 @@ def _relacoes_de_serie_por_tipo(
         candidato = _no_de_serie(node)
         if candidato is None:
             continue
-        if node.get("format") not in _FORMATOS_DE_SERIE:
+        if node.get("format") not in FORMATOS_DE_TEMPORADA:
             logger.info(
                 "walk de série: %s %r (id=%s, format=%s) de id=%s descartado "
                 "— não é temporada de TV",
@@ -821,6 +867,23 @@ def _texto_ou_none(texto: str | None) -> str | None:
         return None
     limpo = texto.strip()
     return limpo or None
+
+
+def _inteiro_ou_none(valor: object) -> int | None:
+    """`episodes`/`duration` da AniList vêm `null` em anime recém-anunciado."""
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) else None
+
+
+def _tem_aresta_de_pai(arestas: list[dict]) -> bool:
+    """Aresta `PARENT` para um `Media` ANIME — a AniList marca assim o extra
+    (OVA/especial/ONA-extra) ligado à série de que ele deriva."""
+    return any(
+        isinstance(aresta, dict)
+        and aresta.get("relationType") == "PARENT"
+        and isinstance(aresta.get("node"), dict)
+        and aresta["node"].get("type") == "ANIME"
+        for aresta in arestas
+    )
 
 
 def _sinonimos(brutos: object) -> tuple[str, ...]:
