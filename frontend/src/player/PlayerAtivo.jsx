@@ -51,6 +51,7 @@ export default function PlayerAtivo({
   // sem sinal de por quê.
   const [qualidade, setQualidade] = usePreferencia('slime.qualidade', 'auto');
   const [hudVisivel, setHudVisivel] = usePreferencia('slime.hudVisivel', false);
+  const [glowLigado, setGlowLigado] = usePreferencia('slime.glow', true);
   // Piso que a GPU aguentou por último — semeia o degrau inicial pra não sondar
   // do topo (e travar) toda vez que abre um episódio.
   const [degrauAutoSalvo, setDegrauAutoSalvo] = usePreferencia('slime.degrauAuto', 0);
@@ -149,6 +150,7 @@ export default function PlayerAtivo({
   }, []);
 
   const alternarHud = useCallback(() => setHudVisivel((atual) => !atual), [setHudVisivel]);
+  const alternarGlow = useCallback(() => setGlowLigado((atual) => !atual), [setGlowLigado]);
 
   const alternarCinema = useCallback(() => {
     audioCinema.alternar(!audioCinema.habilitado);
@@ -211,7 +213,9 @@ export default function PlayerAtivo({
       aria-label={titulo || 'Player de vídeo'}
     >
       <div className="frame" ref={frameRef}>
-        {dimensoesDaFonte && <GlowAmbiente videoRef={videoRef} elementoDeMedidaRef={frameRef} />}
+        {/* Desmonta (não esconde com CSS) quando desligado: assim o laço de
+            amostragem e o blur param de verdade. */}
+        {glowLigado && dimensoesDaFonte && <GlowAmbiente videoRef={videoRef} elementoDeMedidaRef={frameRef} />}
         {/* Vídeo invisível (opacity 0 via player.css) — só alimenta o
             pipeline WebGPU e o áudio. Nunca remonta: createMediaElementSource
             (áudio cinema) e hls.attachMedia se prendem ao elemento. */}
@@ -262,6 +266,8 @@ export default function PlayerAtivo({
         aoAlternarTelaCheia={alternarTelaCheia}
         aoAlternarHud={alternarHud}
         hudVisivel={hudVisivel}
+        aoAlternarGlow={alternarGlow}
+        glowLigado={glowLigado}
         aoAlternarCinema={alternarCinema}
         cinemaHabilitado={audioCinema.habilitado}
         cinemaFalhou={audioCinema.falhou}
