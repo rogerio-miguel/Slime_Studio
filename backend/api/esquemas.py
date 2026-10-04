@@ -143,6 +143,10 @@ class TemporadaIrmaSaida(BaseModel):
     # divide uma temporada em "Part 1"/"Part 2", mesmo `numero_temporada`). Fora
     # do seletor, mas a remoção da franquia precisa deles pra não deixar órfãos.
     ids_das_partes: list[int] = []
+    # Só na `proxima_temporada`: a estreia é uma nova parte de uma temporada que
+    # já existe no seletor ("4th Season Part 3" com a T4 catalogada), não uma
+    # temporada nova — o front troca "Nª temporada" por "Nova parte".
+    nova_parte: bool = False
 
 
 class AnimeSaida(BaseModel):

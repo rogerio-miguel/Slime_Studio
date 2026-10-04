@@ -94,17 +94,21 @@ export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
   const data = proxima.estreia_em ? new Date(`${proxima.estreia_em}T00:00:00`) : null;
   const dataValida = data && !Number.isNaN(data.getTime());
 
+  // `nova_parte`: parte nova de uma temporada que já existe ("4th Season Part
+  // 3" com a T4 catalogada) — não é uma "Nª temporada" a estrear.
   if (curto) {
-    if (dataValida) {
-      const ordinal = numero != null ? `${numero}ª Temp` : proxima.titulo;
-      return `${ordinal} • ${dataCurta(data)}`;
-    }
-    const ordinal = numero != null ? `${numero}ª Temp` : proxima.titulo;
+    const ordinal = proxima.nova_parte
+      ? 'Nova parte'
+      : numero != null
+        ? `${numero}ª Temp`
+        : proxima.titulo;
+    if (dataValida) return `${ordinal} • ${dataCurta(data)}`;
     if (proxima.ano) return `${ordinal} • ${proxima.ano}`;
     return `${ordinal} • Em breve`;
   }
 
-  const ordinal = numero != null ? `${numero}ª temporada` : proxima.titulo;
+  let ordinal = numero != null ? `${numero}ª temporada` : proxima.titulo;
+  if (proxima.nova_parte) ordinal = numero != null ? `Nova parte da ${numero}ª temporada` : 'Nova parte';
   if (dataValida) return `${ordinal} estreia em ${fmtDataEstreia.format(data)}`;
   if (proxima.ano) return `${ordinal} estreia em ${proxima.ano}`;
   return `${ordinal} em breve`;
