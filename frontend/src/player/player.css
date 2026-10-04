@@ -7,7 +7,7 @@
    `.frame` abaixo). O vídeo sempre ocupa 100% da largura — sem faixa
    lateral. */
 :root {
-  --bar-height: 4rem;
+  --bar-height: 3rem;
   --bar-height-fullscreen: 5rem;
   /* Distância do .frame às bordas laterais da tela — um valor por modo,
      independentes. 0 = encosta na borda (comportamento anterior). A regra
@@ -76,11 +76,12 @@ body.pagina-player {
   filter: blur(60px) saturate(1.6) brightness(1.2) contrast(1.6);
   /* Desligado por padrão (fundo 100% preto sólido) — decisão deliberada do
      usuário, não bug: --action-intensity só existe depois que
-     glowAmbiente.js detecta movimento/ação sustentada entre frames (EMA
-     lenta, AMBIENT_ACAO_SUAVIZACAO) e GlowAmbiente.jsx escreve a variável
-     neste próprio elemento a cada frame amostrado. Sem valor setado, o
-     fallback do var() é 0 → opacity 0 → halo invisível, canvas por trás
-     pinta preto sólido (ver comentário de contrast acima). Teto em 0.9, não
+     glowAmbiente.js amostra a cena e calcula a visibilidade do halo (cor
+     útil das bordas × movimento, com piso pra cena parada colorida; EMA
+     assimétrica: sobe rápido, desce devagar) e GlowAmbiente.jsx escreve a
+     variável neste próprio elemento a cada frame amostrado. Sem valor
+     setado, o fallback do var() é 0 → opacity 0 → halo invisível, canvas
+     por trás pinta preto sólido (ver comentário de contrast acima). Teto em 0.9, não
      1, pelo mesmo motivo já documentado: evita o halo "sólido" demais
      mesmo no pico de ação. transition é a segunda camada de suavização,
      complementar à EMA em JS — rede de segurança contra jitter
