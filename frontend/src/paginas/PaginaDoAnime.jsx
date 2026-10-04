@@ -720,7 +720,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   const confirmarRemocao = useCallback(async () => {
     setRemovendo(true);
     setErroRemocao(null);
-    const ids = anime?.temporadas?.length ? anime.temporadas.map((t) => t.id) : [animeId];
+    const ids = anime?.temporadas?.length
+      ? anime.temporadas.flatMap((t) => [t.id, ...(t.ids_das_partes ?? [])])
+      : [animeId];
     try {
       for (const id of ids) {
         await removerAnime(id);

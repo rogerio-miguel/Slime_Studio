@@ -34,7 +34,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 # orquestração cross-camada) — monta a lista slug-única de todos os nomes do
 # anime, com o título cadastrado como âncora na posição 0.
 from api.servicos.busca import _referencias_de_anime
-from core.enums import VersaoDeFonte, VersaoEpisodio
+from api.servicos.catalogo import agrupar_franquias
+from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from extractors.base import EpisodioRemoto
 from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
@@ -261,6 +262,41 @@ async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int
     return int(total or 0)
 
 
+async def _total_das_partes_irmas(sessionmaker: _SessionMaker, anime: Anime) -> int:
+    """Soma de `total_episodios_anilist` das OUTRAS linhas TV da mesma franquia
+    com o mesmo `numero_temporada` (ex. "2nd Season" e "2nd Season Part 2").
+    Agrupa por `agrupar_franquias` (slug do título base OU `serie_ancora`), não
+    só por `serie_ancora`, que nessas partes costuma divergir."""
+    if anime.numero_temporada is None or anime.formato_midia is not None:
+        return 0
+    async with sessionmaker() as sessao:
+        grupos = await agrupar_franquias(sessao)
+    return sum(
+        linha.total_episodios_anilist or 0
+        for linha in grupos.get(anime.id, [])
+        if linha.id != anime.id
+        and linha.numero_temporada == anime.numero_temporada
+        and linha.formato_midia is None
+    )
+
+
+def _episodios_esperados(anime: Anime) -> tuple[int, bool] | None:
+    """`(quantidade, em_aberto)` de episódios que a AniList atribui a esta
+    temporada. Temporada fechada: `total_episodios_anilist`. Temporada em
+    exibição não tem total (a AniList devolve `None`), mas `proximo_ep_numero - 1`
+    é quantos já foram ao ar — piso, não teto: a fonte pode estar à frente.
+    `None` quando não há como saber."""
+    if anime.total_episodios_anilist:
+        return anime.total_episodios_anilist, False
+    if (
+        anime.status_lancamento is StatusLancamento.EM_LANCAMENTO
+        and anime.proximo_ep_numero
+        and anime.proximo_ep_numero > 1
+    ):
+        return anime.proximo_ep_numero - 1, True
+    return None
+
+
 async def _recortar_se_fonte_achatada(
     sessionmaker: _SessionMaker, anime: Anime, episodios: list[EpisodioRemoto]
 ) -> list[EpisodioRemoto]:
@@ -269,35 +305,52 @@ async def _recortar_se_fonte_achatada(
     a série inteira em vez de recortar (`ExtratorDeSite.listar_episodios`,
     degradação documentada em `extractors/base.py`).
 
-    Detecção: nº de episódios com `numero` distinto excede
-    `anime.total_episodios_anilist` — a temporada pedida não cabe na contagem
-    que a AniList declara pra ela, sinal de que o recorte nativo não rodou.
+    Detecção: nº de episódios com `numero` distinto excede o que a AniList
+    atribui à temporada (`_episodios_esperados`) — sinal de que o recorte nativo
+    não rodou. Em temporada em exibição a fonte pode legitimamente estar 1
+    episódio à frente da AniList, então a detecção só dispara com folga de 1 e
+    só quando há temporadas anteriores (`offset > 0`): sem elas não há o que
+    cortar.
     Corte: mesmo offset acumulado de `_offset_de_temporada` (soma de
     `total_episodios_anilist` das temporadas irmãs anteriores), aplicado como
     intervalo absoluto sobre `numero` — reaproveita o `numero` cru da fonte
     (que nesse caso é a numeração contínua da série, não 1-based) sem
-    reescrever `rotulo` (chave de dedup do adapter).
+    reescrever `rotulo` (chave de dedup do adapter). Temporada fechada corta
+    também o teto (`offset + total`); em exibição fica sem teto, porque os
+    próximos episódios a estrear ainda pertencem a ela.
 
-    Sem contagem AniList (`total_episodios_anilist` nulo) ou sem temporada
-    pedida (`numero_temporada` nulo) não há como decidir — devolve `episodios`
-    intacto, mesma degradação segura que o adapter já aplica.
+    Sem contagem esperada ou sem temporada pedida (`numero_temporada` nulo) não
+    há como decidir — devolve `episodios` intacto, mesma degradação segura que o
+    adapter já aplica.
 
     Episódios com `numero=None` (rótulo não-numérico, ex. "Especial"/"OVA 2")
     não entram no recorte por número (não têm como ser atribuídos a uma
     temporada) — preservados sempre, mesmo comportamento de antes desta
     correção."""
-    total_temporada = anime.total_episodios_anilist
-    if anime.numero_temporada is None or not total_temporada:
+    esperados = _episodios_esperados(anime)
+    if anime.numero_temporada is None or esperados is None:
         return episodios
+    total_temporada, em_aberto = esperados
 
     numeros = {ep.numero for ep in episodios if ep.numero is not None}
-    if len(numeros) <= total_temporada:
+    folga = 1 if em_aberto else 0
+    if len(numeros) <= total_temporada + folga:
         return episodios
+    # Só aqui, porque a consulta varre o catálogo: a AniList às vezes divide uma
+    # temporada em "Part 1"/"Part 2" (linhas separadas, mesmo `numero_temporada`)
+    # enquanto o site serve as duas juntas — o total da temporada é a soma.
+    if not em_aberto:
+        total_temporada += await _total_das_partes_irmas(sessionmaker, anime)
+        if len(numeros) <= total_temporada:
+            return episodios
 
     offset = await _offset_de_temporada(sessionmaker, anime)
+    if em_aberto and offset == 0:
+        return episodios
+    teto = None if em_aberto else offset + total_temporada
 
     def _no_intervalo(ep: EpisodioRemoto) -> bool:
-        return ep.numero is not None and offset < ep.numero <= offset + total_temporada
+        return ep.numero is not None and ep.numero > offset and (teto is None or ep.numero <= teto)
 
     if not any(_no_intervalo(ep) for ep in episodios):
         logger.warning(

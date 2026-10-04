@@ -139,6 +139,10 @@ class TemporadaIrmaSaida(BaseModel):
     # 12 no total, e é o total que o seletor deve mostrar. `None` quando a
     # AniList ainda não fechou a contagem (comum em `nao_lancado`).
     total_episodios: int | None = None
+    # `Anime.id` das outras partes que o seletor absorveu nesta entrada (a AniList
+    # divide uma temporada em "Part 1"/"Part 2", mesmo `numero_temporada`). Fora
+    # do seletor, mas a remoção da franquia precisa deles pra não deixar órfãos.
+    ids_das_partes: list[int] = []
 
 
 class AnimeSaida(BaseModel):
