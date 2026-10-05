@@ -58,6 +58,7 @@ from db.engine import criar_engine, criar_sessionmaker
 from extractors import download, resiliencia, resolucao, servico
 from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
 from extractors.busca import servico as servico_busca
+from extractors.busca.termos import escada_combinada, variantes_de_busca
 from models.anime import Anime
 from models.base import Base
 from models.episodio import Episodio
@@ -790,11 +791,13 @@ async def test_baixar_episodio_sem_prazo_preserva_comportamento_anterior(
 class _ExtratorDeBuscaFalso:
     """Fake mínimo para `buscar_em_com_variantes` — não herda de
     `ExtratorDeSite` (ABC) porque `resiliencia.chamar` é substituído nestes
-    testes por uma versão que chama a operação direto, sem checar
-    `extrator.exige_navegador`/cooldown (mesmo raciocínio de
-    `tests/test_resolucao.py::_ExtratorFalso`)."""
+    testes por uma versão que chama a operação direto, sem checar cooldown
+    (mesmo raciocínio de `tests/test_resolucao.py::_ExtratorFalso`).
+    `exige_navegador` existe porque `buscar_variantes_em_janelas` o lê pra
+    decidir o paralelismo."""
 
     dominio = "site-falso.io"
+    exige_navegador = False
 
     def __init__(
         self,
@@ -1097,3 +1100,70 @@ async def test_buscar_por_site_com_variantes_dominios_explicito_limita_busca(
     assert set(resultado) == {"site-a.io"}
     assert extrator_a.chamadas == ["Anime X"]
     assert extrator_b.chamadas == []  # fora do subconjunto pedido, nunca consultado
+
+
+async def test_buscar_variantes_em_janelas_primeira_sozinha_e_depois_em_pares(monkeypatch):
+    """A 1ª variante termina antes de qualquer outra começar (grava a sessão do
+    site sem corrida); as seguintes entram em janelas de 2, e o resultado sai na
+    ordem da escada mesmo quando a 3ª termina antes da 2ª."""
+    eventos: list[str] = []
+
+    async def chamar_falso(sessionmaker, extrator, operacao, *, nome_operacao):
+        termo = operacao(None)
+        eventos.append(f"inicio {termo}")
+        await asyncio.sleep({"b": 0.05}.get(termo, 0))
+        eventos.append(f"fim {termo}")
+        return [termo]
+
+    monkeypatch.setattr(servico_busca.resiliencia, "chamar", chamar_falso)
+
+    class _Falso:
+        exige_navegador = False
+
+        def buscar(self, cliente, termo):
+            return termo
+
+    achados = servico_busca.buscar_variantes_em_janelas(None, _Falso(), ["a", "b", "c", "d"])
+    ordem = [v async for v, _ in achados]
+
+    assert ordem == ["a", "b", "c", "d"]
+    assert eventos[:2] == ["inicio a", "fim a"]
+    assert eventos.index("inicio c") < eventos.index("fim b")  # b e c na mesma janela
+    assert eventos.index("inicio d") > eventos.index("fim b")  # d só na janela seguinte
+
+
+async def test_buscar_variantes_em_janelas_site_com_navegador_fica_sequencial(monkeypatch):
+    em_voo = 0
+    maximo = 0
+
+    async def chamar_falso(sessionmaker, extrator, operacao, *, nome_operacao):
+        nonlocal em_voo, maximo
+        em_voo += 1
+        maximo = max(maximo, em_voo)
+        await asyncio.sleep(0.01)
+        em_voo -= 1
+        return []
+
+    monkeypatch.setattr(servico_busca.resiliencia, "chamar", chamar_falso)
+
+    class _ComNavegador:
+        exige_navegador = True
+
+        def buscar(self, cliente, termo):
+            return []
+
+    achados = servico_busca.buscar_variantes_em_janelas(None, _ComNavegador(), list("abcd"))
+    assert [v async for v, _ in achados] == list("abcd")
+    assert maximo == 1
+
+
+def test_escada_combinada_poe_todos_os_titulos_completos_antes_dos_cortes_e_prefixos():
+    escada = escada_combinada(["Wan Ren Zhi Shang", "Above Myriads"])
+    assert escada[:2] == ["Wan Ren Zhi Shang", "Above Myriads"]
+    # "Wan" (3 letras) não entra como prefixo de 1 palavra; "Above" (5) entra, por último
+    assert escada[2:] == ["Wan Ren", "Wan Ren Zhi", "Above"]
+
+
+def test_escada_combinada_de_um_titulo_so_equivale_a_variantes_de_busca():
+    for titulo in ("Overlord II", "Nome 2nd Season: Extra", "Dogul Wang", "Naruto"):
+        assert escada_combinada([titulo]) == variantes_de_busca(titulo)

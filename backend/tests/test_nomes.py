@@ -420,3 +420,63 @@ def test_proximidade_a_referencias_lista_vazia_nunca_pontua_como_match_exato():
     fingir match exato: 1º critério sempre 1, fica atrás de qualquer match
     real na ordenação."""
     assert proximidade_a_referencias([], "Qualquer Card")[0] == 1
+
+
+_REFERENCIAS_OVERLORD_II = ["Overlord II", "Over Lord 2", "オーバーロードⅡ"]
+
+
+@pytest.mark.parametrize(
+    ("candidato", "esperado"),
+    [
+        # regressão ao vivo: o "Ⅱ" do título nativo virava a chave "i" e aceitava
+        # qualquer card começando com "i"
+        ("In the Clear Moonlit Dusk", False),
+        ("Overlord 3 – Todos os Episódios", False),
+        ("Overlord 2 – Todos os Episódios", True),
+        # card da franquia (nome sem o marcador), que o guard de uma palavra rejeitava
+        ("Overlord", True),
+    ],
+)
+def test_corresponde_a_alguma_ref_temporada_com_numeral_romano_e_titulo_nativo(
+    candidato, esperado
+):
+    assert corresponde_a_alguma_referencia(_REFERENCIAS_OVERLORD_II, candidato) is esperado
+
+
+def test_corresponde_a_alguma_ref_numeral_romano_nao_colide_com_a_temporada_1():
+    """"II" não pode colapsar em "i" pela regra de vogal longa e virar "Overlord I"."""
+    assert corresponde_a_alguma_referencia(["Overlord II"], "Overlord I") is False
+    assert corresponde_a_alguma_referencia(["Overlord II"], "Overlord 2") is True
+    assert corresponde_a_alguma_referencia(["Overlord IV"], "Overlord 4") is True
+
+
+def test_corresponde_a_alguma_ref_chave_curta_nao_aceita_por_prefixo():
+    """Referência de chave curta ("Ⅳ" nativo -> "4") não é prefixo de card sem relação."""
+    assert corresponde_a_alguma_referencia(["オーバーロードⅣ"], "4-nin wa Idol") is False
+
+
+def test_corresponde_a_alguma_ref_card_da_franquia_so_vale_com_marcador_na_referencia():
+    """Sem marcador de temporada a referência não tem "franquia": o guard de uma
+    palavra continua valendo ("One" vs "One Piece")."""
+    assert corresponde_a_alguma_referencia(["One Piece"], "One") is False
+    assert corresponde_a_alguma_referencia(["Naruto Shippuden"], "Naruto") is False
+    assert corresponde_a_alguma_referencia(["One Piece Season 2"], "One Piece") is True
+
+
+def test_proximidade_a_referencias_card_da_franquia_fica_depois_do_que_casa_por_prefixo():
+    candidatos = ["Overlord", "Overlord 2 – Todos os Episódios", "Overlord II"]
+    ordenados = sorted(candidatos, key=lambda t: proximidade_a_referencias(["Overlord II"], t))
+    assert ordenados == ["Overlord II", "Overlord 2 – Todos os Episódios", "Overlord"]
+
+
+def test_marcador_de_numeral_romano_alem_de_ii_e_iii_entra_na_reducao():
+    assert "Dungeon ni Deai wo" in variantes_de_busca("Dungeon ni Deai wo IV")
+    assert "Nome" in variantes_de_busca("Nome VIII")
+
+
+def test_corresponde_a_alguma_ref_card_dublado_da_franquia_tambem_vale():
+    """MeusAnimes cataloga "Overlord Dublado" como entrada própria da franquia."""
+    assert corresponde_a_alguma_referencia(["Overlord II"], "Overlord Dublado") is True
+    assert corresponde_a_alguma_referencia(["Overlord II"], "Outro Anime Dublado") is False
+    # sem marcador de temporada na referência não há "franquia": mantém o guard
+    assert corresponde_a_alguma_referencia(["One Piece"], "One Dublado") is False

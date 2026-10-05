@@ -376,7 +376,9 @@ async def test_titulo_com_subtitulo_resolve_via_variante_truncada_sem_confirmaca
         identificador="anime-principal",
         versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA,
     )
-    assert extrator.chamadas == [titulo_completo, titulo_truncado]
+    # a 1ª variante roda sozinha e o resto em janelas de 2: o truncado achou,
+    # mas o prefixo que dividia a janela com ele também foi chamado.
+    assert extrator.chamadas[:2] == [titulo_completo, titulo_truncado]
 
 
 async def test_sem_resultado_no_primeiro_site_tenta_o_proximo(sessionmaker, monkeypatch):

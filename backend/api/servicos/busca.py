@@ -53,7 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.texto import slugificar
 from extractors.busca import servico as servico_extractors
 from extractors.busca.servico import ResultadoDeFonte
-from extractors.busca.termos import variantes_de_busca
+from extractors.busca.termos import escada_combinada, variantes_de_busca
 from extractors.registro import EXTRATORES
 from integrations import servico as servico_metadados
 from integrations.base import TitulosDeAnime
@@ -370,7 +370,9 @@ def _termos_de_busca(titulos: TitulosDeAnime | None, titulo: str) -> list[str]:
     varrer os sites de extração — concatena a escada de `variantes_de_busca`
     (`extractors/busca/termos.py`, o mesmo gerador da Fase 1) de cada idioma.
 
-    Ordem: `titulo_romaji`, `titulo_ingles`, `titulo` (o digitado) — romaji
+    Ordem: por degrau (`extractors/busca/termos.py::escada_combinada` — todos os
+    títulos completos, depois todos os cortes, por último os prefixos) e, dentro
+    do degrau, `titulo_romaji`, `titulo_ingles`, `titulo` (o digitado) — romaji
     primeiro porque os sites de streaming indexam romaji com mais frequência
     que qualquer outra grafia. A ordem aqui é só a heurística de "qual termo
     tende a fazer o card certo aparecer primeiro"; a PRECISÃO não vem desta
@@ -393,18 +395,9 @@ def _termos_de_busca(titulos: TitulosDeAnime | None, titulo: str) -> list[str]:
     if titulos is None:
         return variantes_de_busca(titulo)
 
-    escada: list[str] = []
-    slugs_vistos: set[str] = set()
-    for idioma in (titulos.titulo_romaji, titulos.titulo_ingles, titulo):
-        if idioma is None:
-            continue
-        for variante in variantes_de_busca(idioma):
-            slug = slugificar(variante)
-            if slug in slugs_vistos:
-                continue
-            slugs_vistos.add(slug)
-            escada.append(variante)
-    return escada
+    return escada_combinada(
+        [idioma for idioma in (titulos.titulo_romaji, titulos.titulo_ingles, titulo) if idioma]
+    )
 
 
 def _variantes_sem_repetir_fase1(variantes: list[str], slugs_fase1: set[str]) -> list[str]:
