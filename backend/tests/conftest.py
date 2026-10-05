@@ -17,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.main import criar_app
+from api.servicos import busca as servico_busca
 from api.servicos import descoberta, sondagem
 from core.config import Config
 from db.engine import criar_engine
@@ -93,6 +94,15 @@ async def _isola_refreshs_de_lancamento():
     descoberta._refreshs_de_lancamento_em_voo.clear()
     descoberta._reparos_de_classificacao_em_voo.clear()
     descoberta._reparos_de_classificacao_recentes.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isola_cache_de_busca_de_fontes():
+    """`api.servicos.busca._cache_de_busca` é estado de módulo: sem zerar, dois
+    testes que buscam o mesmo título com fontes fake diferentes se contaminariam."""
+    servico_busca._cache_de_busca.clear()
+    yield
+    servico_busca._cache_de_busca.clear()
 
 
 @pytest.fixture(autouse=True)

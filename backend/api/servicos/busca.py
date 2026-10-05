@@ -47,6 +47,7 @@ materialização (`criar_anime` -> `enriquecer_anime_criado`), não aqui.
 
 import asyncio
 import logging
+import time
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -129,7 +130,45 @@ async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
 # Fase 2 mora em `_expandir_com_termos_de_provedor_em_todas_as_fontes` — hoje
 # redundante (a escada combinada da Fase 1 já a domina), mantida até uma fatia
 # de remoção própria.
+# Cache em memória do resultado de "Trocar fonte", por título digitado: reabrir o
+# diálogo ou voltar de outra temporada refazia dezenas de requests idênticos aos
+# sites. Só guarda resposta COMPLETA e positiva (nenhum site indisponível e ao menos
+# um candidato) — "não achei" e "não consegui tentar" nunca ficam presos, porque o
+# usuário que busca de novo espera uma tentativa de verdade. Vive só no processo da
+# API (some no restart) e é limitado em tamanho.
+_TTL_CACHE_DE_BUSCA_S = 120
+_MAXIMO_ENTRADAS_CACHE_DE_BUSCA = 64
+_relogio = time.monotonic
+_cache_de_busca: dict[str, tuple[float, list[ResultadoDeFonte]]] = {}
+
+
+def _chave_do_cache_de_busca(titulo: str) -> str:
+    return slugificar(titulo) or titulo.strip().casefold()
+
+
 async def buscar_em_todas_as_fontes_com_titulos_alternativos(
+    sessionmaker: _SessionMaker, titulo: str
+) -> list[ResultadoDeFonte]:
+    """`_buscar_em_todas_as_fontes` com o cache de `_cache_de_busca` por cima."""
+    chave = _chave_do_cache_de_busca(titulo)
+    agora = _relogio()
+    guardado = _cache_de_busca.get(chave)
+    if guardado is not None and agora - guardado[0] < _TTL_CACHE_DE_BUSCA_S:
+        return guardado[1]
+
+    resultado = await _buscar_em_todas_as_fontes(sessionmaker, titulo)
+
+    completo = not any(f.indisponivel or f.motivo == _MOTIVO_NAO_CONSULTADO for f in resultado)
+    if completo and any(f.candidatos for f in resultado):
+        _cache_de_busca[chave] = (_relogio(), resultado)
+        while len(_cache_de_busca) > _MAXIMO_ENTRADAS_CACHE_DE_BUSCA:
+            del _cache_de_busca[next(iter(_cache_de_busca))]  # a mais antiga (ordem de inserção)
+    else:
+        _cache_de_busca.pop(chave, None)
+    return resultado
+
+
+async def _buscar_em_todas_as_fontes(
     sessionmaker: _SessionMaker, titulo: str
 ) -> list[ResultadoDeFonte]:
     """Devolve a UNIÃO de todas as fontes que realmente têm o anime — busca
@@ -270,6 +309,9 @@ async def _expandir_com_termos_de_provedor_em_todas_as_fontes(
     return _completar_nao_consultados(por_dominio)
 
 
+_MOTIVO_NAO_CONSULTADO = "não consultado"
+
+
 def _completar_nao_consultados(
     resultados: dict[str, ResultadoDeFonte],
 ) -> list[ResultadoDeFonte]:
@@ -289,7 +331,7 @@ def _completar_nao_consultados(
                     dominio=extrator.dominio,
                     candidatos=[],
                     indisponivel=False,
-                    motivo="não consultado",
+                    motivo=_MOTIVO_NAO_CONSULTADO,
                 )
             )
     return finais
