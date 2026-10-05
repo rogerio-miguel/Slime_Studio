@@ -153,6 +153,21 @@ export function gradienteHeroSemBanner(cor) {
   return `linear-gradient(to right, ${cor}, transparent 60%), ${gradienteHero(cor)}`;
 }
 
+// Fundo do slide sem arte horizontal (`semBanner`): a `capa_cor` vira um degradê
+// em vez de cor chapada — brilho claro no lado do pôster (direita) e canto
+// inferior esquerdo escurecido atrás do texto. Branco/preto translúcidos em vez
+// de derivar outro matiz: funciona com qualquer `capa_cor` sem cálculo de cor.
+// Só `backgroundImage` — o `backgroundColor` fica no `style` do <li>, e o
+// shorthand `background` o zeraria.
+const FUNDO_SEM_BANNER =
+  'radial-gradient(ellipse 70% 90% at 78% 35%, rgba(255, 255, 255, 0.24), transparent 70%), radial-gradient(ellipse 85% 85% at 8% 100%, rgba(0, 0, 0, 0.55), transparent 70%)';
+
+// Grão de ruído (feTurbulence em SVG inline) por cima do degradê, em `overlay`
+// e baixa opacidade: tira o aspecto de gradiente de CSS "liso demais" sem
+// baixar imagem (o CSP já libera `data:` em `img-src`).
+const GRAO_SEM_BANNER =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")";
+
 // `#rgb`/`#rrggbb` → `[r, g, b]`. Só pra montar `rgba()` abaixo — os
 // chamadores de `gradienteHero*` sempre passam hex ('#000', '#17171b'),
 // nunca `rgb()`/nome de cor.
@@ -471,12 +486,19 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                 aria-roledescription="slide"
                 aria-label={`${i + 1} de ${n}: ${titulo}`}
                 inert={!ativo}
-                // `semBanner` + cor dominante da capa (AniList `coverImage.color`):
-                // a cor entra como fundo do slide, sob o blur da capa (ver o
-                // primeiro <img> abaixo). `bg-surface` continua de fallback
-                // quando `capa_cor` é null — item do Kitsu, ou `color: null`
-                // da própria AniList.
-                style={semBanner && item.capa_cor ? { backgroundColor: item.capa_cor } : undefined}
+                // `semBanner`: cor dominante da capa (AniList `coverImage.color`)
+                // como base do degradê `FUNDO_SEM_BANNER`. `bg-surface`
+                // continua de fallback quando `capa_cor` é null — item do
+                // Kitsu, ou `color: null` da própria AniList — com o degradê
+                // por cima dele.
+                style={
+                  semBanner
+                    ? {
+                        ...(item.capa_cor ? { backgroundColor: item.capa_cor } : {}),
+                        backgroundImage: FUNDO_SEM_BANNER,
+                      }
+                    : undefined
+                }
                 // Crossfade: todos os slides empilhados na mesma área
                 // (`absolute inset-0`, herdada do `h-svh` do wrapper — ver
                 // acima), só a opacity muda. `pointer-events-none` no inativo
@@ -486,54 +508,50 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                   ativo ? 'opacity-100' : 'pointer-events-none opacity-0'
                 }`}
               >
-                {fonteImagem && (
+                {/* Com banner, é a arte horizontal. Sem banner não há imagem
+                    de fundo: o degradê do <li> + o grão abaixo fazem o
+                    fundo (a capa borrada daqui foi aposentada). */}
+                {fonteImagem && !semBanner && (
                   <img
-                    // Só o banner horizontal (caso COM banner) sobe pra
-                    // `original`: no `semBanner` a fonte é a capa da AniList
-                    // (`item.capa_url`, sem variantes de tamanho) e o regex
-                    // não casaria — não vale chamar o helper nesse caminho.
-                    src={semBanner ? fonteImagem : imagemEmAltaResolucao(fonteImagem)}
+                    src={imagemEmAltaResolucao(fonteImagem)}
                     alt=""
                     loading={primeiroDestaque ? undefined : 'lazy'}
                     decoding={primeiroDestaque ? undefined : 'async'}
-                    className={
-                      semBanner
-                        ? // a capa borrada/escurecida é só textura por cima da
-                          // cor dominante — em TODOS os breakpoints, não mais
-                          // a arte recortada nítida abaixo de `lg`. `opacity-70`
-                          // deixa a cor de fundo do <li> aparecer atrás.
-                          'absolute inset-0 h-full w-full object-cover object-top scale-125 blur-lg brightness-[0.5] opacity-70'
-                        : // `object-top`: ancora a imagem pelo topo (medido no
-                          // AnimeFire) — a essa altura (`h-svh`) o `object-cover`
-                          // centralizado cortaria rosto/cabeça dos personagens
-                          // no banner.
-                          'absolute inset-0 h-full w-full object-cover object-top'
-                    }
+                    // `object-top`: ancora a imagem pelo topo (medido no
+                    // AnimeFire) — a essa altura (`h-svh`) o `object-cover`
+                    // centralizado cortaria rosto/cabeça dos personagens
+                    // no banner.
+                    className="absolute inset-0 h-full w-full object-cover object-top"
                   />
                 )}
 
-                {/* Sem banner (`semBanner`): o fundo do slide é a cor
-                    dominante da capa (`item.capa_cor`, via `style` no `<li>`
-                    acima), com a própria capa borrada por cima como textura
-                    (o primeiro <img>). Só de `lg` pra cima o pôster também
-                    entra NÍTIDO como card na lateral direita (oposta ao
-                    texto) — abaixo disso não há largura pro pôster ao lado do
-                    texto: fica só cor + capa borrada + gradiente + título.
-                    Mesma URL do fundo, então sem download extra. */}
+                {/* Sem banner (`semBanner`): o fundo é o degradê da cor dominante
+                    (`item.capa_cor`, via `style` no `<li>` acima) + grão. Só
+                    de `lg` pra cima o pôster entra NÍTIDO como card na
+                    lateral direita (oposta ao texto) — abaixo disso não há
+                    largura pro pôster ao lado do texto: fica só cor +
+                    gradiente + título. */}
+                {semBanner && (
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 opacity-[0.09] mix-blend-overlay"
+                    style={{ backgroundImage: GRAO_SEM_BANNER }}
+                  />
+                )}
                 {semBanner && (
                   <img
                     src={item.capa_url}
                     alt=""
                     loading={primeiroDestaque ? undefined : 'lazy'}
                     decoding={primeiroDestaque ? undefined : 'async'}
-                    className="absolute right-14 top-1/2 hidden aspect-[2/3] h-[82%] -translate-y-1/2 rounded-xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 lg:block"
+                    className="absolute right-22 top-1/2 hidden aspect-[2/3] h-[70%] -translate-y-1/2 rounded-xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 lg:block"
                   />
                 )}
 
                 {/* Gradiente empilhado (::before do AnimeFire) — 3 camadas
                     inline (multi-gradiente arbitrário não é confiável no
                     Tailwind v4). Sem banner, uma 4ª camada à esquerda pro
-                    texto continuar legível sobre o pôster borrado. Substitui
+                    texto continuar legível sobre o degradê. Substitui
                     o card com bordas/sombra flutuante do layout anterior —
                     aqui a imagem+gradiente É a seção. */}
                 <div
