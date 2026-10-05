@@ -991,7 +991,7 @@ export default function BarraDeNavegacao({
             aoSubmeterBusca?.();
           }}
           role="search"
-          className="mr-8 flex items-center"
+          className=" flex items-center"
         >
           <label htmlFor={idBusca} className="sr-only">
             Buscar animes
