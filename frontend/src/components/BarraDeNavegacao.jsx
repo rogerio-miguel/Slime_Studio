@@ -104,11 +104,11 @@ import SeletorEmMenu from './SeletorEmMenu';
 // Mesmo padrão tipográfico do gatilho do `SeletorEmMenu` (18px semibold,
 // `ink-muted` → branco no hover, sem fundo), separado dos vizinhos pelo mesmo
 // divisor `h-4 w-px bg-white/15` da cápsula.
-function DivisorDaIlha() {
+export function DivisorDaIlha() {
   return <span aria-hidden="true" className="h-4 w-px shrink-0 bg-white/15" />;
 }
 
-function BotaoDaIlha({ children, perigo = false, ...props }) {
+export function BotaoDaIlha({ children, perigo = false, ...props }) {
   return (
     <button
       type="button"
@@ -206,6 +206,11 @@ export default function BarraDeNavegacao({
   secaoSelecionada,
   aoMudarSecao,
   gerenciar,
+  // `modoDaIlha` (nó React ou null — só `paginas/PaginaDoAnime.jsx`, no modo "Trocar
+  // banner"): quando presente, a ilha abre e mostra esse conteúdo no lugar do
+  // dropdown/mensagens, igual ao `gerenciar` mas sem contrato próprio — quem usa monta
+  // os botões com `BotaoDaIlha`/`DivisorDaIlha`.
+  modoDaIlha = null,
   notificacaoNovosEps = false,
   aoClicarNotificacaoNovosEps,
   verificandoNovosEps = false,
@@ -245,6 +250,21 @@ export default function BarraDeNavegacao({
   // callbacks, não o valor transiente de cada sinal) — ver bug corrigido no
   // comentário do próprio wrapper mais abaixo.
   const gerenciando = Boolean(gerenciar) && gerenciar.fase !== 'inativo';
+  const temModoDaIlha = Boolean(modoDaIlha);
+  const modoNaIlha = gerenciando || temModoDaIlha;
+  // Com `modoDaIlha`, a roda sobre a cápsula não rola a página (a lista de opções
+  // dela rola sozinha, ver `components/SeletorDeBanner.jsx`). Ref por callback pelo
+  // mesmo motivo de `medidorConteudoIlhaRef`: a cápsula remonta ao trocar de posição.
+  // Listener nativo, porque o `onWheel` do React é passivo e não cancela a rolagem.
+  const travarRodaNaIlhaRef = useCallback(
+    (no) => {
+      if (!no || !temModoDaIlha) return undefined;
+      const travar = (evento) => evento.preventDefault();
+      no.addEventListener('wheel', travar, { passive: false });
+      return () => no.removeEventListener('wheel', travar);
+    },
+    [temModoDaIlha],
+  );
   const temConteudoNaIlha = Boolean(
     gerenciar ||
       aoMudarFiltro ||
@@ -368,7 +388,7 @@ export default function BarraDeNavegacao({
   // abaixo (forma + conteúdo): os dois usam exatamente a mesma
   // abertura/fechamento que o filtro já usava, só troca o que aparece DENTRO.
   const capsulaExpandidaIlha =
-    gerenciando ||
+    modoNaIlha ||
     ((temFiltroNaIlha || temSecoesNaIlha) && ilhaAtiva) ||
     notificacaoNovosEps ||
     verificandoNovosEps ||
@@ -583,6 +603,7 @@ export default function BarraDeNavegacao({
   const renderLinkComCapsula = ({ chave, to, ativo, Icone, rotulo, onClick }) => (
     <li key={chave}>
       <div
+        ref={travarRodaNaIlhaRef}
         style={estiloFormaIlha}
         // `relative`: âncora de posicionamento do dropdown (`ocuparLarguraDoPai`
         // no `SeletorEmMenu`, sempre `true` aqui, pedido do usuário,
@@ -631,7 +652,7 @@ export default function BarraDeNavegacao({
                   fade de entrada (`animate-ilha-conteudo`). */}
               <div
                 className={`flex items-center gap-2 animate-ilha-conteudo motion-reduce:animate-none ${
-                  gerenciando ? 'hidden' : ''
+                  modoNaIlha ? 'hidden' : ''
                 }`}
               >
                 <SeletorEmMenu
@@ -674,6 +695,11 @@ export default function BarraDeNavegacao({
                   className="flex items-center gap-2 animate-ilha-conteudo motion-reduce:animate-none"
                 >
                   <ConteudoGerenciarIlha gerenciar={gerenciar} />
+                </div>
+              )}
+              {!gerenciando && modoDaIlha && (
+                <div className="flex items-center gap-2 animate-ilha-conteudo motion-reduce:animate-none">
+                  {modoDaIlha}
                 </div>
               )}
             </div>

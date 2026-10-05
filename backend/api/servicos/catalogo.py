@@ -10,7 +10,7 @@ como as leituras agregadas de `lancamentos.py`/`sondagem.py`.
 import shutil
 from collections.abc import Iterable
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
@@ -232,6 +232,7 @@ async def agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
                 Anime.formato_midia,
                 Anime.total_episodios_anilist,
                 Anime.banner_path,
+                Anime.banner_escolhido,
                 tem_episodio.label("tem_episodios"),
             )
         )
@@ -271,6 +272,27 @@ async def agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
         )
 
     return {linha.id: grupos_por_raiz[acha(("id", linha.id))] for linha in linhas}
+
+
+async def definir_banner_da_franquia(
+    sessionmaker: _SessionMaker, anime_id: int, banner_url: str | None
+) -> bool:
+    """Grava `banner_escolhido` (ou o limpa, com `None`) em TODAS as linhas da
+    franquia de `anime_id`. Em todas, e não só na que o usuário abriu, para que uma
+    temporada anterior catalogada depois — que passa a vir primeiro no grupo —
+    não esconda a escolha. Devolve `False` se o anime não existir."""
+    async with sessionmaker() as sessao:
+        grupos = await agrupar_franquias(sessao)
+        grupo = grupos.get(anime_id)
+        if grupo is None:
+            return False
+        await sessao.execute(
+            update(Anime).where(Anime.id.in_([linha.id for linha in grupo])).values(
+                banner_escolhido=banner_url
+            )
+        )
+        await sessao.commit()
+        return True
 
 
 def visiveis_no_catalogo(

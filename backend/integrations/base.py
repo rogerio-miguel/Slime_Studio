@@ -304,6 +304,16 @@ class InfoDeEpisodio:
     sinopse_em_fallback: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class CandidatoDeBanner:
+    """Uma opção de banner do seletor da página do anime. `arquivo` é o
+    identificador do provedor (no TMDB, o `file_path` com `/` inicial) — é o que
+    volta do cliente ao escolher, nunca uma URL; `miniatura_url` é só para exibir."""
+
+    arquivo: str
+    miniatura_url: str
+
+
 class ProvedorDeArte(ABC):
     """Capability autônoma, NÃO um `ProvedorDeMetadados` (D1 do plano de arte
     TMDB): o TMDB não responde sinopse/ids/feed, só imagem — por isso ganha
@@ -342,6 +352,15 @@ class ProvedorDeArte(ABC):
         mesmo padrão de `ProvedorDeMetadados.buscar_metadados_por_anilist_id`).
         Só `TmdbProvider` a sobrescreve."""
         return None
+
+    def listar_candidatos_de_banner(self, titulo: str, ano: int | None) -> list[CandidatoDeBanner]:
+        """Opções de banner da série de `titulo`/`ano`, da melhor para a pior
+        segundo o provedor, para o usuário escolher. `[]` quando a série não é
+        achada ou o provedor não tem arte.
+
+        Capability opcional com implementação PADRÃO `[]` (mesmo padrão de
+        `buscar_info_de_episodio`). Só `TmdbProvider` a sobrescreve."""
+        return []
 
 
 class ProvedorComLancamento(ABC):

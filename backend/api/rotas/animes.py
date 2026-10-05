@@ -17,11 +17,13 @@ from api.esquemas import (
     AnimeSaida,
     AquecimentoCatalogoSaida,
     BuscaEmFontesSaida,
+    CandidatoDeBannerSaida,
     ConfirmarFonteRequest,
     CriarAnimeRequest,
     EpisodioRemotoSaida,
     EpisodioSaida,
     EpisodiosRemotosSaida,
+    EscolherBannerRequest,
     FileiraTematicaSaida,
     FonteConsultadaSaida,
     ResultadoBuscaFonteSaida,
@@ -43,7 +45,9 @@ from extractors.base import ResultadoBusca
 from extractors.registro import EXTRATORES
 from extractors.resolucao import confirmar_fonte
 from extractors.versao import inferir_versao
+from integrations import servico as servico_metadados
 from integrations.base import AnimeEmAlta
+from integrations.tmdb import url_de_banner
 from models.anime import Anime
 from models.episodio import Episodio
 from models.fonte_anime import FonteAnime
@@ -240,6 +244,32 @@ async def remover_anime(
 ) -> None:
     removido = await servico_catalogo.remover_anime(sessionmaker, config, anime_id)
     if not removido:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+
+
+@router.put("/{anime_id}/banner", status_code=status.HTTP_204_NO_CONTENT)
+async def escolher_banner(
+    anime_id: int,
+    corpo: EscolherBannerRequest,
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> None:
+    """Banner escolhido no seletor da página do anime, válido para a franquia
+    inteira. A URL gravada é montada aqui a partir do `arquivo` validado."""
+    gravado = await servico_catalogo.definir_banner_da_franquia(
+        sessionmaker, anime_id, url_de_banner(corpo.arquivo)
+    )
+    if not gravado:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+
+
+@router.delete("/{anime_id}/banner", status_code=status.HTTP_204_NO_CONTENT)
+async def restaurar_banner(
+    anime_id: int,
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> None:
+    """Volta ao banner automático: zera a escolha em toda a franquia."""
+    restaurado = await servico_catalogo.definir_banner_da_franquia(sessionmaker, anime_id, None)
+    if not restaurado:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
 
 
@@ -559,6 +589,7 @@ async def obter_anime(
         ano=anime.ano,
         capa_path=anime.capa_path,
         banner_path=_banner_da_franquia(anime.banner_path, grupos[anime.id]),
+        banner_personalizado=_banner_escolhido_da_franquia(grupos[anime.id]) is not None,
         capa_cor=anime.capa_cor,
         generos=anime.generos or [],
         sinopse=anime.sinopse,
@@ -571,6 +602,30 @@ async def obter_anime(
         temporadas=temporadas,
         proxima_temporada=proxima_temporada,
     )
+
+
+@router_publico.get(
+    "/{anime_id}/banners",
+    response_model=list[CandidatoDeBannerSaida],
+    dependencies=[limitar("listar-banners", maximo=30)],
+)
+async def listar_banners_do_anime(
+    anime_id: int, sessao: AsyncSession = Depends(obter_sessao)
+) -> list[CandidatoDeBannerSaida]:
+    """Opções do seletor de banner. Busca pela primeira temporada da franquia
+    (o TMDB modela a série inteira) e devolve `[]` sem provedor de arte ou sem
+    série achada."""
+    if await sessao.get(Anime, anime_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
+    grupos = await servico_catalogo.agrupar_franquias(sessao)
+    primeira = grupos[anime_id][0]
+    candidatos = await servico_metadados.listar_candidatos_de_banner(
+        primeira.titulo, primeira.ano
+    )
+    return [
+        CandidatoDeBannerSaida(arquivo=c.arquivo, miniatura_url=c.miniatura_url)
+        for c in candidatos
+    ]
 
 
 @router_publico.get("/{anime_id}/relacionados", response_model=list[AnimeEmAltaSaida])
@@ -625,11 +680,19 @@ def _ids_do_seletor_de_temporada(
     return ids
 
 
+def _banner_escolhido_da_franquia(grupo: list[object]) -> str | None:
+    """Banner que o usuário escolheu no seletor, se alguma linha da franquia o tem."""
+    return next((linha.banner_escolhido for linha in grupo if linha.banner_escolhido), None)
+
+
 def _banner_da_franquia(banner_proprio: str | None, grupo: list[object]) -> str | None:
-    """Banner único da franquia: o da primeira temporada (`grupo` já ordenado por
-    `numero_temporada`) que tem um, pra trocar de temporada no seletor não
-    trocar a arte do hero. Cai no banner próprio quando nenhuma irmã tem."""
-    return next((linha.banner_path for linha in grupo if linha.banner_path), banner_proprio)
+    """Banner único da franquia, pra trocar de temporada no seletor não trocar a
+    arte do hero: a escolha do usuário, se houver; senão o da primeira temporada
+    (`grupo` já ordenado por `numero_temporada`) que tem um. Cai no banner
+    próprio quando nenhuma irmã tem."""
+    return _banner_escolhido_da_franquia(grupo) or next(
+        (linha.banner_path for linha in grupo if linha.banner_path), banner_proprio
+    )
 
 
 def _colapsar_partes(

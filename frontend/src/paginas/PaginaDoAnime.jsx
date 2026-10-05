@@ -18,12 +18,14 @@ import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
+import { SeletorDeBannerNaIlha } from '../components/SeletorDeBanner.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import MenuDeAcoesDoAnime from '../components/MenuDeAcoesDoAnime.jsx';
 import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
 import SinopseEmFoco from '../components/SinopseEmFoco.jsx';
 import { nomeDaFonte } from '../fontes.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+import { useSeletorDeBanner } from '../hooks/useSeletorDeBanner.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import BlocoConteudoHero from '../inicio/BlocoConteudoHero.jsx';
 import {
@@ -311,6 +313,20 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   // implementado aqui — mesmo espírito do docstring de escopo em
   // `backend/extractors/animesdrive.py`.
   const [trocandoFonte, setTrocandoFonte] = useState(false);
+  const [trocandoBanner, setTrocandoBanner] = useState(false);
+  // Modo "Trocar banner": as opções e os botões moram na ilha da navbar
+  // (`modoDaIlha` abaixo) e o hero mostra ao vivo a opção marcada. O resto da página
+  // fica como está.
+  const seletorDeBanner = useSeletorDeBanner({
+    aberto: trocandoBanner,
+    animeId,
+    bannerAtual: anime?.banner_path ?? null,
+    aoSalvar: () => {
+      setTrocandoBanner(false);
+      recarregarAnime();
+    },
+    aoFechar: () => setTrocandoBanner(false),
+  });
   const [confirmandoTrocaFonte, setConfirmandoTrocaFonte] = useState(false);
   const [erroTrocaFonte, setErroTrocaFonte] = useState(null);
   const [versaoAtiva, setVersaoAtiva] = useState('legendado');
@@ -812,6 +828,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           mensagem a cápsula mostra quando mais de uma está ativa: ver
           comentário de `mensagemIlha` em BarraDeNavegacao.jsx. */}
       <BarraDeNavegacao
+        modoDaIlha={
+          trocandoBanner ? (
+            <SeletorDeBannerNaIlha
+              seletor={seletorDeBanner}
+              personalizado={anime?.banner_personalizado ?? false}
+            />
+          ) : null
+        }
         transparente
         statusCapturaIlha={statusCapturaIlha}
         aoClicarStatusCapturaIlha={aoClicarStatusCapturaIlha}
@@ -878,7 +902,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             o <header> cresce (não corta) se a sinopse empurrar — dentro do
             teto que o clamp já garante. */}
         <header className="relative -mt-24 -mb-32 flex h-svh min-h-[480px] flex-col justify-end overflow-hidden bg-surface">
-          {anime?.banner_path && (
+          {(seletorDeBanner.urlDaPrevia || anime?.banner_path) && (
             <img
               // `imagemEmAltaResolucao` sobe o backdrop do TMDB de w1280 pra
               // `original` — mesma função e mesmo motivo do hero do carrossel
@@ -886,7 +910,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
               // URL de outra origem passa intacta. `object-top`: a essa altura
               // o `object-cover` centralizado cortaria a cabeça dos
               // personagens no banner.
-              src={imagemEmAltaResolucao(anime.banner_path)}
+              src={seletorDeBanner.urlDaPrevia ?? imagemEmAltaResolucao(anime.banner_path)}
               alt=""
               className="absolute inset-0 h-full w-full object-cover object-top"
             />
@@ -1126,6 +1150,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
                   `h-8 w-8`). */}
               <MenuDeAcoesDoAnime
                 aoTrocarFonte={() => setTrocandoFonte(true)}
+                aoTrocarBanner={() => setTrocandoBanner(true)}
                 aoMarcarAssistidos={aoMarcarTodosAssistidos}
                 marcandoAssistidos={marcandoTodosAssistidos}
                 tudoAssistido={tudoAssistido}
