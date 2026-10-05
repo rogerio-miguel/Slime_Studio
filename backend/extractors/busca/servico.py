@@ -316,11 +316,9 @@ async def buscar_por_site_com_variantes(
     anime realmente existe, não a rodada de variante que respondeu primeiro.
 
     `dominios=None` (default) consulta todo `EXTRATORES`. Um subconjunto
-    explícito (`dominios=[...]`) limita a busca a esses sites — não usado
-    ainda por nenhum chamador desta fatia, mas já com o contrato pronto pra
-    uma fatia futura que reestrutura a Fase 2 de termos de provedor (continuar
-    só nos sites que ainda não têm candidato, sem reconsultar quem já
-    achou)."""
+    explícito (`dominios=[...]`) limita a busca a esses sites — sem chamador
+    hoje (só a expansão por termo de provedor, removida, o usava); fica o
+    contrato, que é testado."""
     extratores = [obter_extrator(d) for d in dominios] if dominios is not None else list(EXTRATORES)
     disponiveis, resultados = await _separar_por_cooldown(sessionmaker, extratores)
 

@@ -50,12 +50,9 @@ _TETO_ESPERA_CONFERENCIA_S = 30
 # `FonteNaoEncontrada`), tipicamente rápida de detectar — reavaliar quando a
 # Fase E1 tiver dados reais de distribuição de duração da cadeia.
 #
-# Limitação herdada do mesmo padrão já em uso por
-# `api/servicos/busca.py::_TETO_EXPANSAO_S`: cancelar via `wait_for` não mata
-# a thread do SO já em voo dentro de `asyncio.to_thread`
-# (`extractors/resiliencia.py`), só o aguardo por ela — na pior das hipóteses
-# ela roda até terminar sozinha. Mesma limitação documentada lá, não é
-# regressão nova desta revisão.
+# Limitação do `wait_for` sobre `asyncio.to_thread`: cancelar não mata a
+# thread do SO já em voo (`extractors/resiliencia.py`), só o aguardo por ela —
+# na pior das hipóteses ela roda até terminar sozinha.
 #
 # Estourar este teto não é "site lento", é "gastamos tempo demais tentando
 # trocar de site" — propaga a última falha real em vez de insistir, e nunca

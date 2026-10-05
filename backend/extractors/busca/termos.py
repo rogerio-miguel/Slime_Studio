@@ -166,8 +166,8 @@ _MINIMO_CARACTERES_PREFIXO = 3
 _MINIMO_CARACTERES_PRIMEIRA_PALAVRA = 5
 
 # Teto de prefixos gerados aqui — cada um vira 1 request real por site em
-# `extractors/busca/servico.py::buscar_em_com_variantes` (Fase 1 de
-# `api/servicos/busca.py`, sem `wait_for` de lote como a Fase 2 tem). O
+# `extractors/busca/servico.py::buscar_em_com_variantes` (chamado por
+# `api/servicos/busca.py`, sem teto de tempo de lote). O
 # título completo (sonda 0) + os até 2 cortes do bloco de precisão já cobrem
 # o lado longo; 3 prefixos bastam pro lado curto sem multiplicar request
 # contra site com anti-bot proporcional ao tamanho do título.

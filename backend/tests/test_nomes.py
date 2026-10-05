@@ -132,7 +132,7 @@ def test_prefixo_crescente_nao_ativa_pra_titulo_de_uma_palavra():
 
 def test_prefixo_crescente_respeita_teto_de_variantes_em_titulo_longo():
     """Cada variante é 1 request real por site (`extractors/busca/servico.py`), sem
-    teto de tempo de lote como a Fase 2 de `api/servicos/busca.py` tem — um
+    teto de tempo de lote — um
     título muito longo não pode multiplicar o número de requests sem limite."""
     titulo = "Um Dois Tres Quatro Cinco Seis Sete Oito Nove Dez"  # 10 palavras
     variantes = variantes_de_busca(titulo)
