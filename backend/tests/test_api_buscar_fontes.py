@@ -305,3 +305,38 @@ async def test_buscar_fontes_escopo_todas_usa_caminho_paralelo_e_preserva_domini
     assert por_dominio["animesdrive"]["identificador"] == "2"
 
 
+
+
+async def test_buscar_fontes_correspondencia_incerta_vai_depois_dos_cards_validados(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Regressão ao vivo (Wan Ren Zhi Shang): 3 cards incertos do AnimeFire, que vem
+    primeiro na ordem dos sites, apareciam acima do card certo do MeusAnimes."""
+
+    async def _buscar_em_com_variantes_fake(sessionmaker, dominio, variantes, *, referencias):
+        if dominio == "animefire.one":
+            incerto = ResultadoBusca(titulo_exibicao="Outro", identificador="x", url="https://x/x")
+            return (
+                ResultadoDeFonte(
+                    dominio=dominio,
+                    candidatos=[incerto],
+                    indisponivel=False,
+                    motivo=None,
+                    correspondencia_incerta=True,
+                ),
+                None,
+            )
+        if dominio == "meusanimes":
+            certo = ResultadoBusca(titulo_exibicao="Certo", identificador="c", url="https://x/c")
+            return _fonte("meusanimes", certo), None
+        return _fonte(dominio), None
+
+    monkeypatch.setattr(
+        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+    )
+
+    resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "Qualquer"})
+
+    assert resposta.status_code == 200
+    titulos = [r["titulo_exibicao"] for r in resposta.json()["resultados"]]
+    assert titulos == ["Certo", "Outro"]
