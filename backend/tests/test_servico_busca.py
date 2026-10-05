@@ -22,6 +22,7 @@ from core.erros import FalhaDeMetadados
 from extractors.base import ResultadoBusca
 from extractors.busca.servico import ResultadoDeFonte
 from extractors.busca.termos import variantes_de_busca
+from extractors.registro import EXTRATORES
 from integrations.base import TitulosDeAnime
 
 
@@ -522,3 +523,86 @@ def test_variantes_sem_repetir_fase1_filtra_slugs_ja_tentados():
     resultado = servico_busca._variantes_sem_repetir_fase1(variantes, slugs_fase1)
 
     assert resultado == ["Boku no Hero Academia World Heroes", "Boku"]
+
+
+# --- cache de "Trocar fonte" ---
+
+
+def _contador_de_buscas(monkeypatch: pytest.MonkeyPatch, fontes: list[ResultadoDeFonte]):
+    chamadas = {"n": 0}
+
+    async def _sem_titulos(titulo):
+        return None
+
+    async def _buscar(sessionmaker, variantes, *, referencias, dominios=None):
+        chamadas["n"] += 1
+        return {fonte.dominio: fonte for fonte in fontes}
+
+    monkeypatch.setattr("integrations.servico.buscar_titulos", _sem_titulos)
+    monkeypatch.setattr(servico_busca.servico_extractors, "buscar_por_site_com_variantes", _buscar)
+    return chamadas
+
+
+def _todas_com_candidato() -> list[ResultadoDeFonte]:
+    return [_fonte_com(extrator.dominio) for extrator in EXTRATORES]
+
+
+def _fonte_com(dominio: str) -> ResultadoDeFonte:
+    candidato = ResultadoBusca(titulo_exibicao="Overlord", identificador="o", url="https://x/o")
+    return ResultadoDeFonte(
+        dominio=dominio, candidatos=[candidato], indisponivel=False, motivo=None
+    )
+
+
+async def test_cache_de_busca_reaproveita_resposta_positiva_dentro_do_ttl(monkeypatch):
+    chamadas = _contador_de_buscas(monkeypatch, _todas_com_candidato())
+
+    buscar = servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos
+    primeira = await buscar(None, "Overlord II")
+    segunda = await buscar(None, "  overlord ii ")
+
+    assert chamadas["n"] == 1
+    assert segunda == primeira
+
+
+async def test_cache_de_busca_expira_depois_do_ttl(monkeypatch):
+    chamadas = _contador_de_buscas(monkeypatch, _todas_com_candidato())
+    relogio = {"t": 1000.0}
+    monkeypatch.setattr(servico_busca, "_relogio", lambda: relogio["t"])
+
+    await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(None, "Overlord II")
+    relogio["t"] += servico_busca._TTL_CACHE_DE_BUSCA_S + 1
+    await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(None, "Overlord II")
+
+    assert chamadas["n"] == 2
+
+
+async def test_cache_de_busca_nao_guarda_resposta_sem_candidato_nem_com_site_indisponivel(
+    monkeypatch,
+):
+    vazia = ResultadoDeFonte(
+        dominio="animefire.one", candidatos=[], indisponivel=False, motivo=None
+    )
+    fora = ResultadoDeFonte(
+        dominio="animefire.one", candidatos=[], indisponivel=True, motivo="fora do ar"
+    )
+    # só o MeusAnimes respondeu: os demais sites saem como "não consultado"
+    sem_consulta = [_fonte_com("meusanimes")]
+    parcial = [fora, *_todas_com_candidato()[1:]]
+    casos = (("Sem nada", [vazia]), ("Parcial", parcial), ("Incompleta", sem_consulta))
+    for titulo, fontes in casos:
+        chamadas = _contador_de_buscas(monkeypatch, fontes)
+        await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(None, titulo)
+        await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(None, titulo)
+        assert chamadas["n"] == 2, titulo
+
+
+async def test_cache_de_busca_e_limitado_e_descarta_a_entrada_mais_antiga(monkeypatch):
+    chamadas = _contador_de_buscas(monkeypatch, _todas_com_candidato())
+    monkeypatch.setattr(servico_busca, "_MAXIMO_ENTRADAS_CACHE_DE_BUSCA", 2)
+
+    for titulo in ("Um", "Dois", "Tres"):
+        await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(None, titulo)
+    await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(None, "Um")
+
+    assert chamadas["n"] == 4  # "Um" foi despejada ao entrar "Tres"

@@ -15,8 +15,11 @@ referência mais parecida ao mais distante.
 """
 
 import re
+import unicodedata
 
 from core.texto import slugificar
+from extractors.busca.termos import remover_marcadores_temporada_parte
+from extractors.versao import remover_marcador_de_versao
 
 # Vogal longa aparece grafada de duas formas conforme o site: par dobrado
 # ("Suuguu", romaji Hepburn "solto") ou reduzida a partir de macron pelo
@@ -25,6 +28,24 @@ from core.texto import slugificar
 # "suuguu" (chave com par dobrado) nunca bateria com "sugu" (chave já
 # reduzida do outro lado).
 _REGEX_VOGAL_LONGA = re.compile(r"ou|uu|oo|aa|ii|ee")
+
+# Numeral romano de temporada ("Overlord II", "オーバーロードⅣ") vira o arábico
+# ANTES do slug: sem isso a regra de vogal longa acima colapsa "ii" em "i"
+# ("overlordii" -> "overlordi", igual à S1) e o "Ⅱ" do título nativo vira a
+# chave "i", que por contenção de prefixo aceita qualquer card começando com
+# "i" (confirmado ao vivo: "In the Clear Moonlit Dusk" validava "Overlord II").
+# Só maiúsculas e sem "V"/"X" soltos — mesmo recorte de
+# `termos.py::_REGEX_MARCADOR_TEMPORADA_PARTE`. O lookaround é ASCII (não `\b`)
+# porque o numeral do título nativo vem colado ao katakana.
+_REGEX_NUMERAL_ROMANO = re.compile(r"(?<![A-Za-z])(II|III|IV|VI|VII|VIII|IX)(?![A-Za-z])")
+_NUMERAL_ROMANO_PARA_ARABICO = {
+    "II": "2", "III": "3", "IV": "4", "VI": "6", "VII": "7", "VIII": "8", "IX": "9",
+}
+
+# Contenção de prefixo só vale com chave de pelo menos este tamanho dos dois
+# lados: uma chave curta ("2", "iv", "ao") é prefixo de card sem relação.
+# Igualdade de chave escapa deste piso.
+_MINIMO_CHAVE_PARA_PREFIXO = 3
 
 
 def corresponde_a_alguma_referencia(referencias: list[str], titulo_candidato: str) -> bool:
@@ -94,7 +115,16 @@ def _corresponde_a_uma_referencia(referencia: str, titulo_candidato: str) -> boo
     # Igualdade de chave vem antes do check de contagem: casa grafia colada/separada (DogulWang).
     if ref == cand:
         return True
+    # Card da franquia: o nome da referência sem o marcador de temporada/parte
+    # ("Overlord" para "Overlord II"). Site que cataloga a franquia num card só
+    # (MeusAnimes, AnimeFire) o chama pelo nome base, e o recorte por temporada
+    # acontece em `listar_episodios`. Vem antes do guard de uma palavra, que
+    # rejeitaria exatamente este card.
+    if _e_card_da_franquia(referencia, titulo_candidato):
+        return True
     if len(titulo_candidato.split()) == 1 and len(referencia.split()) > 1:
+        return False
+    if min(len(ref), len(cand)) < _MINIMO_CHAVE_PARA_PREFIXO:
         return False
     return ref.startswith(cand) or cand.startswith(ref)
 
@@ -112,9 +142,34 @@ def _chave_de_comparacao(texto: str) -> str:
     um par vogal-vogal formado só pela junção de duas palavras vizinhas (que
     o hífen removido deixou coladas) escaparia da normalização.
     """
-    slug = slugificar(texto)
+    normalizado = unicodedata.normalize("NFKC", texto)
+    normalizado = _REGEX_NUMERAL_ROMANO.sub(
+        lambda m: _NUMERAL_ROMANO_PARA_ARABICO[m.group(1)], normalizado
+    )
+    slug = slugificar(normalizado)
     sem_hifen = slug.replace("-", "")
     return _REGEX_VOGAL_LONGA.sub(lambda correspondencia: correspondencia.group(0)[0], sem_hifen)
+
+
+def _e_card_da_franquia(referencia: str, titulo_candidato: str) -> bool:
+    """`titulo_candidato` é o card da franquia de `referencia`. O marcador de
+    versão do card ("Overlord Dublado") não conta: dublado é outra entrada de
+    catálogo da mesma franquia (`extractors/versao.py`), e o diálogo a agrupa
+    com a legendada."""
+    franquia = _chave_da_franquia(referencia)
+    sem_versao = remover_marcador_de_versao(titulo_candidato)
+    return bool(franquia) and _chave_de_comparacao(sem_versao) == franquia
+
+
+def _chave_da_franquia(referencia: str) -> str:
+    """Chave de `referencia` sem o marcador de temporada/parte, ou `""` quando
+    não há marcador a tirar ou o nome base é curto demais pra identificar uma
+    franquia (`_MINIMO_CHAVE_PARA_PREFIXO`)."""
+    base = remover_marcadores_temporada_parte(unicodedata.normalize("NFKC", referencia))
+    if base == referencia.strip():
+        return ""
+    chave = _chave_de_comparacao(base)
+    return chave if len(chave) >= _MINIMO_CHAVE_PARA_PREFIXO else ""
 
 
 def e_nome_do_anime(variante: str, referencias: list[str]) -> bool:
@@ -167,10 +222,12 @@ def proximidade_a_referencias(
 
     1. Chave normalizada idêntica à da referência (`_chave_de_comparacao`, a
        mesma de `_corresponde_a_uma_referencia`) pontua 0; match que só passou
-       por contenção de prefixo pontua 1. O card cujo título bate exatamente
-       vem antes do que apenas começa igual. Referência sem chave (só kanji,
-       string vazia) nunca pontua 0 — o `ref and` impede que dois candidatos
-       de chave vazia empatem em 0 e "ganhem" de um match real.
+       por contenção de prefixo pontua 1; card da franquia (nome sem o
+       marcador de temporada) pontua 2. O card cujo título bate exatamente
+       vem antes do que apenas começa igual, e este antes do card da
+       franquia. Referência sem chave (só kanji, string vazia) nunca pontua 0 —
+       o `ref and` impede que dois candidatos de chave vazia empatem em 0 e
+       "ganhem" de um match real.
     2. Desempate: menor diferença de comprimento entre a chave do candidato e
        a da referência. Aproxima o card truncado antes do subtítulo ("Nome"
        por "Nome: Subtítulo") e afasta uma continuação bem mais longa.
@@ -198,4 +255,10 @@ def _proximidade_a_uma_referencia(referencia: str, titulo_candidato: str) -> tup
     cada critério e como a ordenação a consome."""
     ref = _chave_de_comparacao(referencia)
     cand = _chave_de_comparacao(titulo_candidato)
-    return (0 if ref and ref == cand else 1, abs(len(cand) - len(ref)))
+    if ref and ref == cand:
+        return (0, 0)
+    # Card da franquia vem depois dos que casam por prefixo: numa fonte que
+    # separa temporada por card, o card da temporada certa tem que ganhar dele.
+    if _e_card_da_franquia(referencia, titulo_candidato):
+        return (2, abs(len(cand) - len(ref)))
+    return (1, abs(len(cand) - len(ref)))

@@ -13,10 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import VersaoDeFonte, VersaoEpisodio
 from core.texto import slugificar
-from extractors import circuit_breaker, resiliencia
+from extractors import circuit_breaker
 from extractors.base import ExtratorDeSite, ResultadoBusca
 from extractors.busca.correspondencia import corresponde_a_alguma_referencia
-from extractors.busca.termos import variantes_de_busca
+from extractors.busca.servico import buscar_variantes_em_janelas
+from extractors.busca.termos import escada_combinada
 from extractors.registro import EXTRATORES
 from extractors.versao import remover_marcador_de_versao
 from models.anime import Anime
@@ -225,9 +226,10 @@ async def proximo_site_para(
 
 
 def _variantes_das_referencias(referencias: list[str]) -> list[str]:
-    """Escada de busca combinada de TODOS os nomes do anime: concatena a
-    `extractors/busca/termos.py::variantes_de_busca` de cada referência na ordem
-    da lista (digitado, romaji, inglês, nativo, sinônimos), deduplicando por
+    """Escada de busca combinada de TODOS os nomes do anime
+    (`extractors/busca/termos.py::escada_combinada`: por degrau — títulos
+    completos, depois cortes, depois prefixos), referências na ordem da lista
+    (digitado, romaji, inglês, nativo, sinônimos), deduplicando por
     `core/texto.py::slugificar` e preservando a primeira ocorrência.
 
     Espelha `api/servicos/busca.py::_termos_de_busca` (que `extractors/` não
@@ -238,18 +240,8 @@ def _variantes_das_referencias(referencias: list[str]) -> list[str]:
     entre referências e são as únicas descartadas aqui.
 
     Com `referencias == [anime.titulo]` (caminho sem canônico) o resultado é
-    `variantes_de_busca(anime.titulo)` inalterado: `variantes_de_busca` já
-    deduplica por slug, então o segundo passe é no-op."""
-    escada: list[str] = []
-    slugs_vistos: set[str] = set()
-    for referencia in referencias:
-        for variante in variantes_de_busca(referencia):
-            slug = slugificar(variante)
-            if slug in slugs_vistos:
-                continue
-            slugs_vistos.add(slug)
-            escada.append(variante)
-    return escada
+    `variantes_de_busca(anime.titulo)` inalterado."""
+    return escada_combinada(referencias)
 
 
 async def _buscar_variantes(
@@ -280,13 +272,12 @@ async def _buscar_variantes(
     `extractors/busca/servico.py::buscar_em_com_variantes`, que captura
     `FalhaDeExtracao` e devolve `indisponivel`; aqui a exceção sobe de
     propósito)."""
-    for variante in _variantes_das_referencias(referencias):
-        candidatos = await resiliencia.chamar(
-            sessionmaker,
-            extrator,
-            lambda cliente, ex=extrator, v=variante: ex.buscar(cliente, v),
-            nome_operacao="buscar",
-        )
+    async for _variante, resposta in buscar_variantes_em_janelas(
+        sessionmaker, extrator, _variantes_das_referencias(referencias)
+    ):
+        if isinstance(resposta, BaseException):
+            raise resposta
+        candidatos = resposta
         validos = [
             c
             for c in candidatos

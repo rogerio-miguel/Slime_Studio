@@ -6,6 +6,7 @@ download moram em `extractors/servico.py`.
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -36,6 +37,48 @@ async def buscar_em(
         lambda cliente: extrator.buscar(cliente, titulo),
         nome_operacao="buscar",
     )
+
+
+# Variantes buscadas ao mesmo tempo num mesmo site (após a 1ª, que roda sozinha).
+# 2 e não mais: o anti-bot dos sites é proporcional à rajada, e o ganho principal
+# (site que não tem o anime esgota a escada inteira) já vem de dividir o tempo
+# por ~2.
+_PARALELISMO_DE_VARIANTES = 2
+
+
+async def buscar_variantes_em_janelas(
+    sessionmaker: _SessionMaker, extrator: ExtratorDeSite, variantes: list[str]
+) -> AsyncIterator[tuple[str, list[ResultadoBusca] | BaseException]]:
+    """Busca `variantes` em `extrator` e devolve `(variante, resultado)` NA ORDEM
+    DA ESCADA; `resultado` é a lista de candidatos ou a exceção daquela chamada
+    (devolvida, não levantada — quem consome decide, e só vê a exceção de uma
+    variante se nenhuma anterior já resolveu o caso). O consumidor para quando
+    quiser; o que já estava em voo na mesma janela só é descartado.
+
+    A 1ª variante roda SOZINHA: é a mais provável e, ao terminar, já deixou a
+    sessão do site gravada (`sessao_cache.salvar` faz `get` + `add`, e duas
+    chamadas simultâneas num site sem sessão colidiriam na chave primária). As
+    demais rodam em janelas de `_PARALELISMO_DE_VARIANTES`. Site que exige
+    navegador fica sequencial: cada chamada abriria o seu próprio Chrome."""
+    tamanho = 1 if extrator.exige_navegador else _PARALELISMO_DE_VARIANTES
+    janelas = [variantes[:1]] + [
+        variantes[i : i + tamanho] for i in range(1, len(variantes), tamanho)
+    ]
+    for janela in janelas:
+        respostas = await asyncio.gather(
+            *(
+                resiliencia.chamar(
+                    sessionmaker,
+                    extrator,
+                    lambda cliente, v=variante: extrator.buscar(cliente, v),
+                    nome_operacao="buscar",
+                )
+                for variante in janela
+            ),
+            return_exceptions=True,
+        )
+        for variante, resposta in zip(janela, respostas, strict=True):
+            yield variante, resposta
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +146,9 @@ _MAXIMO_INCERTOS = 5
 async def buscar_em_com_variantes(
     sessionmaker: _SessionMaker, dominio: str, variantes: list[str], *, referencias: list[str]
 ) -> tuple[ResultadoDeFonte, str | None]:
-    """Tenta cada variante em `dominio`, na ordem, e para na primeira que
+    """Tenta as variantes em `dominio` na ordem da escada (a 1ª sozinha, o resto em
+    janelas de `_PARALELISMO_DE_VARIANTES` — ver `buscar_variantes_em_janelas`;
+    o veredito segue a ordem da escada, uma janela só custa a chamada a mais) e para na primeira que
     devolver candidatos validados contra `referencias`
     (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia` — o
     card só precisa bater com UM dos nomes do anime). Devolve o
@@ -151,15 +196,11 @@ async def buscar_em_com_variantes(
     extrator = obter_extrator(dominio)
     descartados = 0
     incertos: list[ResultadoBusca] = []
-    for indice, variante in enumerate(variantes):
-        try:
-            candidatos = await resiliencia.chamar(
-                sessionmaker,
-                extrator,
-                lambda cliente, v=variante: extrator.buscar(cliente, v),
-                nome_operacao="buscar",
-            )
-        except FalhaDeExtracao as excecao:
+    indice = -1
+    async for variante, resposta in buscar_variantes_em_janelas(sessionmaker, extrator, variantes):
+        indice += 1
+        if isinstance(resposta, FalhaDeExtracao):
+            excecao = resposta
             logger.warning(
                 "extrator %r falhou na busca por variante %r: %s",
                 dominio,
@@ -172,6 +213,9 @@ async def buscar_em_com_variantes(
                 ),
                 None,
             )
+        if isinstance(resposta, BaseException):
+            raise resposta
+        candidatos = resposta
         validos = [
             c for c in candidatos if corresponde_a_alguma_referencia(referencias, c.titulo_exibicao)
         ]

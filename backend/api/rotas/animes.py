@@ -494,7 +494,10 @@ async def buscar_animes_em_fontes(
                 site_diferencia_versao=_diferencia_versao(fonte.dominio),
                 correspondencia_incerta=fonte.correspondencia_incerta,
             )
-            for fonte in fontes
+            # `sorted` é estável: dentro de cada grupo vale a ordem dos sites. Cards de
+            # "correspondência incerta" vão por último pra nunca aparecerem acima de um
+            # card que bateu as referências do anime.
+            for fonte in sorted(fontes, key=lambda fonte: fonte.correspondencia_incerta)
             for candidato in fonte.candidatos
         ],
         fontes=[
