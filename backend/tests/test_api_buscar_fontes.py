@@ -189,8 +189,7 @@ async def test_buscar_fontes_registrada_antes_do_catch_all_anime_id(
     monkeypatch.setattr(
         "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
-    # As duas fontes disponíveis vêm vazias -> dispara a Fase 2 (expansão por
-    # termo de provedor); sem este patch, bateria no AniList/Kitsu de verdade.
+    # Sem este patch, a resolução do título canônico bateria no AniList de verdade.
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})

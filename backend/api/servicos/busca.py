@@ -10,20 +10,12 @@ metadados (AniList) UPFRONT (`_resolver_titulos_canonicos`), monta a escada de
 termos combinada dos vários idiomas (`_termos_de_busca`) e a lista de
 referências de validação multi-idioma (`_referencias_de_anime`), e faz Fase 1
 PARALELA (cada site esgotando a escada de forma independente, validação
-multi-referência via `correspondencia.py`), seguida de Fase 2 por termo de
-provedor (romaji/inglês, best-effort) enquanto sobrar site pendente. Devolve a
-UNIÃO das fontes onde o anime realmente existe.
+multi-referência via `correspondencia.py`). Devolve a UNIÃO das fontes onde o
+anime realmente existe.
 
 A busca da Home NÃO passa mais por aqui — virou busca direta na AniList
 (`GET /api/animes/buscar`, `integrations.servico.listar_por_busca`); a
 resolução de fonte da Home ficou preguiçosa, na página do anime.
-
-Bug real que o gate por-site da Fase 2 resolve (2026-08-29): com gate global,
-"Dogul Wang" achado no site padrão pela escada de regex impedia o segundo site
-de ser consultado com o título inglês do provedor ("Tomb Raider King"), onde o
-anime existe — o diálogo listava uma fonte só. A escada combinada da Fase 1
-hoje cobre esse caso já na Fase 1; a Fase 2 virou redundante e está rastreada
-para remoção — ver `_expandir_com_termos_de_provedor_em_todas_as_fontes`.
 
 Infra:
 
@@ -34,10 +26,9 @@ Infra:
 - `_completar_nao_consultados` — todo `EXTRATORES` aparece na saída, mesmo o
   site que não chegou a ser consultado (senão a UI que checa "todas as fontes
   indisponíveis" mentiria);
-- tetos: `_TETO_METADADOS_S` (só o round-trip de `buscar_titulos`) e
-  `_TETO_EXPANSAO_S` (o trabalho de rede best-effort da Fase 2);
-- caráter best-effort do trabalho de provedor/Fase 2: falha, timeout ou
-  qualquer outro erro nunca propaga pra fora nem derruba a Fase 1 já obtida.
+- teto `_TETO_METADADOS_S` (o round-trip de `buscar_titulos`);
+- caráter best-effort do metadado de provedor: falha ou timeout nunca derruba a
+  busca nos sites, que segue só com o título digitado.
 
 Candidato de busca em fonte não carrega capa: `extractors/` é só extração de
 VÍDEO (`ResultadoBusca` não tem `capa_url`) e o diálogo "Trocar fonte" lista
@@ -62,27 +53,6 @@ from integrations.base import TitulosDeAnime
 logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
-
-# Teto do trabalho de rede best-effort da Fase 2 (só ela — a Fase 1 e o
-# round-trip de `buscar_titulos` rodam FORA deste orçamento). `wait_for`
-# externo que, ao estourar, devolve o que a Fase 1 já obteve em vez de travar a
-# resposta.
-#
-# Perfil "Fase 2, escada por termo de provedor":
-# `_expandir_com_termos_de_provedor_em_todas_as_fontes` tenta até 2 termos de
-# provedor (romaji, inglês), cada um gerando a PRÓPRIA escada de variantes
-# (`extractors/busca/termos.py::variantes_de_busca` — até 3 termos de precisão
-# + até `_MAXIMO_PREFIXOS`=3 prefixos de recall, 6 variantes no pior caso),
-# tentados termo a termo em SEQUÊNCIA (sites em PARALELO dentro de cada termo,
-# não multiplicam). Cada variante custa até o timeout do GET síncrono dos
-# adapters (`_TIMEOUT_S` de `extractors/animefire.py` etc., 15s). Conta: até
-# 2 × (6 × 15s) = 180s, dentro dos 190. A Fase 2 hoje é redundante (a escada
-# combinada da Fase 1 já a domina — ela nem chega a tocar a rede), mas o teto
-# fica no valor da conta enquanto a Fase 2 existir.
-#
-# A variância de captura de navegador de um site com challenge (até 90s) é um
-# risco estrutural separado — fora do escopo desta conta.
-_TETO_EXPANSAO_S = 190
 
 # Sub-teto só de `buscar_titulos`:
 # `_resolver_titulos_canonicos` roda como `wait_for` separado, UPFRONT, porque a
@@ -126,13 +96,11 @@ async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
         return None
 
 
-# --- Fase 1 combinada paralela + Fase 2 (expansão por termo de provedor) ---
-# Fase 2 mora em `_expandir_com_termos_de_provedor_em_todas_as_fontes` — hoje
-# redundante (a escada combinada da Fase 1 já a domina), mantida até uma fatia
-# de remoção própria.
+# --- Busca combinada paralela em todos os sites ---
+
 # Cache em memória do resultado de "Trocar fonte", por título digitado: reabrir o
 # diálogo ou voltar de outra temporada refazia dezenas de requests idênticos aos
-# sites. Só guarda resposta COMPLETA e positiva (nenhum site indisponível e ao menos
+# sites. Só guarda resposta COMPLETA e positiva (todo site consultado e disponível e ao menos
 # um candidato) — "não achei" e "não consegui tentar" nunca ficam presos, porque o
 # usuário que busca de novo espera uma tentativa de verdade. Vive só no processo da
 # API (some no restart) e é limitado em tamanho.
@@ -186,19 +154,15 @@ async def _buscar_em_todas_as_fontes(
     2. `referencias` (`_referencias_de_anime` — todos os nomes do anime) e
        `termos` (`_termos_de_busca` — escada combinada de romaji + inglês +
        digitado, deduplicada por slug).
-    3. Fase 1: `buscar_por_site_com_variantes` com a escada combinada em TODOS
-       os sites em paralelo, cada um esgotando a escada.
-    4. Fase 2 (`_expandir_com_termos_de_provedor_em_todas_as_fontes`,
-       best-effort sob `_TETO_EXPANSAO_S`): enquanto sobrar site PENDENTE (não
-       `indisponivel` e sem candidato), reexpande só os pendentes com cada
-       título canônico isolado. REDUNDANTE desde que a Fase 1 passou a varrer
-       a escada combinada — mantida por segurança, rastreada para remoção.
+    3. `buscar_por_site_com_variantes` com a escada combinada em TODOS os sites
+       em paralelo, cada um esgotando a escada.
 
-    O gate da Fase 2 é POR-SITE, não global — bug real 2026-08-29 ("Dogul
-    Wang"): com gate global, um site achar pela escada de regex pulava a Fase
-    2 inteira e o segundo site nunca era consultado com o título inglês do
-    provedor ("Tomb Raider King"), onde o anime existe — o diálogo listava uma
-    fonte só. A escada combinada da Fase 1 hoje cobre esse caso já na Fase 1.
+    Havia uma Fase 2 (reexpandir os sites sem candidato com cada título canônico
+    isolado) que a escada combinada já tornava redundante — não tocava a rede e
+    segurava um teto de 190s à toa; foi removida. O bug que a motivou ("Dogul
+    Wang", 2026-08-29: um site achar pela escada de regex impedia o segundo de
+    ser consultado com o título inglês do provedor) é coberto por a escada
+    combinada incluir o título inglês de cada site desde a 1ª varredura.
     """
     titulos = await _resolver_titulos_canonicos(titulo)
     referencias = _referencias_de_anime(titulos, titulo)
@@ -207,106 +171,7 @@ async def _buscar_em_todas_as_fontes(
     resultado_por_dominio = await servico_extractors.buscar_por_site_com_variantes(
         sessionmaker, termos, referencias=referencias
     )
-    resultado = _completar_nao_consultados(resultado_por_dominio)
-
-    # Mesmo critério do `pendentes` de `_expandir_com_termos_de_provedor_em_
-    # todas_as_fontes`: site sem candidato e ainda disponível é trabalho em
-    # aberto pro contrato de UNIÃO, mesmo com outro site já tendo achado. Gate
-    # mais frouxo que esse filtro desperdiça rede; mais estrito pula a Fase 2 e
-    # o site pendente nunca é consultado (bug real, ver docstring de módulo).
-    algum_site_pendente = any(
-        not fonte.indisponivel and not fonte.candidatos for fonte in resultado
-    )
-    if algum_site_pendente:
-        slugs_fase1 = {slugificar(v) for v in termos}
-        try:
-            expandido = await asyncio.wait_for(
-                _expandir_com_termos_de_provedor_em_todas_as_fontes(
-                    sessionmaker, titulo, titulos, resultado, slugs_fase1
-                ),
-                timeout=_TETO_EXPANSAO_S,
-            )
-        except Exception as excecao:
-            # Captura ampla e intencional: a expansão da Fase 2 é best-effort —
-            # timeout do lote de scraping ou qualquer outro erro não pode
-            # derrubar a busca da Fase 1 (o metadado já foi resolvido upfront,
-            # fora daqui).
-            logger.warning(
-                "expansão por termo de provedor best-effort falhou para título %r: %s",
-                titulo,
-                excecao,
-            )
-            expandido = None
-        if expandido is not None:
-            resultado = expandido
-
-    return resultado
-
-
-async def _expandir_com_termos_de_provedor_em_todas_as_fontes(
-    sessionmaker: _SessionMaker,
-    titulo: str,
-    titulos: TitulosDeAnime | None,
-    resultado_fase1: list[ResultadoDeFonte],
-    slugs_fase1: set[str],
-) -> list[ResultadoDeFonte] | None:
-    """Fase 2 (best-effort): reexpande os sites ainda PENDENTES com cada título
-    canônico do provedor isoladamente. Contrato de saída: a UNIÃO das fontes.
-
-    Recebe `titulos` JÁ resolvido pelo chamador (`_resolver_titulos_canonicos`,
-    upfront, uma vez só — compartilhado com a montagem da Fase 1); NÃO refaz o
-    round-trip de metadados. `titulos is None` → `None` (o chamador mantém a
-    Fase 1).
-
-    `_termos_alternativos` uma vez (romaji, depois inglês, descartando o que
-    repete o digitado); por termo: `pendentes` recalculado (não `indisponivel`
-    e sem candidato de termo anterior), escada própria (`variantes_de_busca`)
-    filtrada pelo dedupe de `slugs_fase1`, fan-out `buscar_por_site_com_
-    variantes` só nos `pendentes` (`dominios=`, evita reconsultar quem já
-    respondeu), referência isolada `[termo]`. Só passa pro próximo termo se
-    ainda sobrar pendente.
-
-    REDUNDANTE na prática: `slugs_fase1 = {slugificar(v) for v in termos}` e
-    `termos` (`_termos_de_busca`) já concatena as escadas de romaji e inglês —
-    então `_variantes_sem_repetir_fase1` esvazia a escada de todo termo aqui e
-    esta função retorna `None` sem tocar a rede. Mantida intacta na fatia d3
-    (Fase 1 combinada + dedupe correto); a remoção — desta função, de
-    `_termos_alternativos` e do gate — é uma fatia própria do orquestrador.
-
-    `None` quando o provedor não resolveu `titulos`, quando `_termos_
-    alternativos` degrada para vazio (romaji/inglês repetem o digitado ou
-    slugificam para vazio), ou quando nenhum termo achou candidato novo — o
-    chamador mantém o resultado (intacto) da Fase 1."""
-    if titulos is None:
-        return None
-    termos = _termos_alternativos(titulos, titulo)
-    if not termos:
-        return None
-
-    por_dominio = {fonte.dominio: fonte for fonte in resultado_fase1}
-    algum_termo_achou = False
-
-    for termo in termos:
-        pendentes = [
-            dominio
-            for dominio, fonte in por_dominio.items()
-            if not fonte.indisponivel and not fonte.candidatos
-        ]
-        if not pendentes:
-            break  # todo site já achou candidato ou ficou indisponível
-        variantes_termo = _variantes_sem_repetir_fase1(variantes_de_busca(termo), slugs_fase1)
-        if not variantes_termo:
-            continue  # a escada combinada da Fase 1 já varreu toda a escada deste termo
-        resposta_por_dominio = await servico_extractors.buscar_por_site_com_variantes(
-            sessionmaker, variantes_termo, referencias=[termo], dominios=pendentes
-        )
-        por_dominio.update(resposta_por_dominio)
-        if any(fonte.candidatos for fonte in resposta_por_dominio.values()):
-            algum_termo_achou = True
-
-    if not algum_termo_achou:
-        return None
-    return _completar_nao_consultados(por_dominio)
+    return _completar_nao_consultados(resultado_por_dominio)
 
 
 _MOTIVO_NAO_CONSULTADO = "não consultado"
@@ -315,12 +180,10 @@ _MOTIVO_NAO_CONSULTADO = "não consultado"
 def _completar_nao_consultados(
     resultados: dict[str, ResultadoDeFonte],
 ) -> list[ResultadoDeFonte]:
-    """`resultados` pode não ter entrada pra todo `EXTRATORES` — um fan-out
-    best-effort cancelado por timeout pode não ter resposta pra todo site. O
-    contrato de saída da API precisa listar todos os domínios mesmo assim
-    (senão a UI que checa "todas as fontes indisponíveis" mentiria) — o não
-    consultado sai como `indisponivel=False, candidatos=[], motivo="não
-    consultado"`."""
+    """Saída na ordem de `EXTRATORES`. `resultados` pode não ter entrada pra todo
+    site; o contrato da API precisa listar todos os domínios mesmo assim (senão a
+    UI que checa "todas as fontes indisponíveis" mentiria) — o ausente sai como
+    `indisponivel=False, candidatos=[], motivo="não consultado"`."""
     finais = []
     for extrator in EXTRATORES:
         if extrator.dominio in resultados:
@@ -335,25 +198,6 @@ def _completar_nao_consultados(
                 )
             )
     return finais
-
-
-def _termos_alternativos(titulos: TitulosDeAnime, titulo_original: str) -> list[str]:
-    """Ordem: romaji, depois inglês. Descarta por chave `core/texto.py::slugificar`
-    o que repete o termo digitado e o que slugifica pra vazio (kanji)."""
-    slug_original = slugificar(titulo_original)
-    candidatos = [titulos.titulo_romaji, titulos.titulo_ingles]
-
-    termos: list[str] = []
-    slugs_vistos: set[str] = {slug_original}
-    for candidato in candidatos:
-        if candidato is None:
-            continue
-        slug = slugificar(candidato)
-        if not slug or slug in slugs_vistos:
-            continue
-        slugs_vistos.add(slug)
-        termos.append(candidato)
-    return termos
 
 
 def _referencias_de_anime(titulos: TitulosDeAnime | None, titulo: str) -> list[str]:
@@ -440,12 +284,3 @@ def _termos_de_busca(titulos: TitulosDeAnime | None, titulo: str) -> list[str]:
     return escada_combinada(
         [idioma for idioma in (titulos.titulo_romaji, titulos.titulo_ingles, titulo) if idioma]
     )
-
-
-def _variantes_sem_repetir_fase1(variantes: list[str], slugs_fase1: set[str]) -> list[str]:
-    """Filtra a escada de variantes de um termo de provedor (`variantes_de_busca`),
-    removendo qualquer entrada cujo slug (`core/texto.py::slugificar`) já foi
-    tentado na Fase 1 (`variantes_puras` do título digitado) — dedupe entre
-    fases: nunca reconsulta um site com exatamente o mesmo termo de busca que
-    a Fase 1 já tentou e não achou."""
-    return [variante for variante in variantes if slugificar(variante) not in slugs_fase1]

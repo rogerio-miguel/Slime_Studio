@@ -36,39 +36,7 @@ def _fonte_indisponivel(dominio: str, motivo: str = "falhou") -> ResultadoDeFont
     return ResultadoDeFonte(dominio=dominio, candidatos=[], indisponivel=True, motivo=motivo)
 
 
-def test_teto_expansao_e_190():
-    """`_TETO_EXPANSAO_S` cobre dois perfis diferentes (ver o comentário-bloco):
-    no `todas` é só a Fase 2 (escada por termo de provedor em
-    `_expandir_com_termos_de_provedor_em_todas_as_fontes`, 2 × 90s = 180s); no
-    `padrao` é um único fan-out da escada combinada `_termos_de_busca`. Nos
-    DOIS o round-trip de `buscar_titulos` ficou FORA deste orçamento
-    (`_TETO_METADADOS_S` próprio, upfront) desde 2026-09-07. Trava de
-    regressão do valor."""
-    assert servico_busca._TETO_EXPANSAO_S == 190
-
-
-def test_termos_alternativos_descarta_romaji_igual_ao_digitado_e_kanji_vazio():
-    """`_termos_alternativos` ainda é usada pelo escopo `todas` (não pelo
-    `padrao`, que passou a usar `_termos_de_busca`) — trava direta pra não
-    perder essa regra."""
-    titulos = TitulosDeAnime(titulo_romaji="Naruto", titulo_ingles="Naruto")
-
-    termos = servico_busca._termos_alternativos(titulos, "Naruto")
-
-    assert termos == []
-
-
-def test_termos_alternativos_ordem_romaji_antes_de_ingles():
-    titulos = TitulosDeAnime(
-        titulo_romaji="Tensei Shitara Slime Datta Ken", titulo_ingles="That Time I Got Reincarnated"
-    )
-
-    termos = servico_busca._termos_alternativos(titulos, "Slime")
-
-    assert termos == ["Tensei Shitara Slime Datta Ken", "That Time I Got Reincarnated"]
-
-
-async def test_todas_fase2_termo_de_provedor_acha_quando_fase1_vazia(
+async def test_todas_termo_de_provedor_entra_na_escada_quando_o_digitado_nao_acha(
     monkeypatch: pytest.MonkeyPatch,
 ):
     candidato = ResultadoBusca(titulo_exibicao="Tensei Slime", identificador="1", url="https://x/1")
@@ -104,14 +72,12 @@ async def test_todas_fase2_termo_de_provedor_acha_quando_fase1_vazia(
     assert resultado[0].candidatos == [candidato]
 
 
-async def test_todas_fase1_combinada_une_romaji_e_ingles_numa_rodada_so(
+async def test_todas_escada_combinada_une_romaji_e_ingles_numa_rodada_so(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A escada combinada da Fase 1 traz romaji E inglês — um site que só
-    indexa o romaji e outro que só indexa o inglês entram os dois na mesma
-    rodada paralela da Fase 1. Contrato de UNIÃO: um candidato de cada site,
-    numa rodada de scraping só, sem a expansão termo a termo da Fase 2
-    (redundante — a Fase 2 não chega a tocar a rede)."""
+    """A escada combinada traz romaji E inglês — um site que só indexa o romaji
+    e outro que só indexa o inglês entram os dois na mesma rodada paralela.
+    Contrato de UNIÃO: um candidato de cada site, numa rodada de scraping só."""
     romaji = "Naruto Shippuuden"
     ingles = "Naruto Hurricane Chronicles"
     candidato_af = ResultadoBusca(titulo_exibicao=romaji, identificador="1", url="https://af/1")
@@ -149,7 +115,7 @@ async def test_todas_fase1_combinada_une_romaji_e_ingles_numa_rodada_so(
         None, "Naruto"
     )
 
-    assert rodadas == [None]  # Fase 1 só; a Fase 2 (redundante) não toca a rede
+    assert rodadas == [None]  # uma rodada de scraping só
     fontes_por_dominio = {f.dominio: f for f in resultado}
     assert fontes_por_dominio["animefire.one"].candidatos == [candidato_af]
     assert fontes_por_dominio["animesdrive"].candidatos == [candidato_ad]
@@ -162,11 +128,10 @@ async def test_todas_titulo_ingles_do_provedor_alcanca_site_pendente(
     """Bug real (2026-08-29, "Dogul Wang"): o AnimeFire achar pela escada de
     regex não pode impedir o AnimesDrive de ser alcançado com o título inglês
     do provedor ("Tomb Raider King"), onde o anime existe — antes o diálogo
-    "Trocar fonte" listava uma fonte só. A escada COMBINADA da Fase 1
-    (`_termos_de_busca` = romaji + inglês + digitado) varre o inglês já na
-    Fase 1, em paralelo, em todos os sites — a UNIÃO traz as duas fontes numa
-    rodada de scraping só (o gate por-site da Fase 2 continua no lugar, mas a
-    Fase 2 nem chega a tocar a rede)."""
+    "Trocar fonte" listava uma fonte só. A escada COMBINADA
+    (`_termos_de_busca` = romaji + inglês + digitado) varre o inglês já na 1ª
+    varredura, em paralelo, em todos os sites — a UNIÃO traz as duas fontes numa
+    rodada de scraping só."""
     candidato_af = ResultadoBusca(
         titulo_exibicao="Dogul Wang", identificador="1", url="https://af/1"
     )
@@ -211,13 +176,11 @@ async def test_todas_titulo_ingles_do_provedor_alcanca_site_pendente(
     assert fontes["meusanimes"].candidatos == []
 
 
-async def test_todas_fase2_nao_roda_quando_todos_os_sites_ja_acharam(
+async def test_todas_faz_uma_rodada_so_quando_todos_os_sites_acham(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Contrapartida do gate POR-SITE: quando NENHUM site ficou pendente (os
-    três acharam candidato na Fase 1), a Fase 2 é pulada inteira — sem segunda
-    rodada de scraping (o canônico já foi resolvido upfront, `buscar_titulos`
-    stubado)."""
+    """Os três sites acharam candidato: uma rodada de scraping só (o canônico já
+    foi resolvido upfront, `buscar_titulos` stubado)."""
     candidato_af = ResultadoBusca(
         titulo_exibicao="Naruto", identificador="1", url="https://af/1"
     )
@@ -252,19 +215,17 @@ async def test_todas_fase2_nao_roda_quando_todos_os_sites_ja_acharam(
         None, "Naruto"
     )
 
-    assert rodadas == [None]  # só a Fase 1; Fase 2 pulada (nenhum pendente)
+    assert rodadas == [None]  # uma rodada de scraping só
     fontes = {f.dominio: f for f in resultado}
     assert fontes["animefire.one"].candidatos == [candidato_af]
     assert fontes["meusanimes"].candidatos == [candidato_am]
     assert fontes["animesdrive"].candidatos == [candidato_ad]
 
 
-async def test_todas_fase1_toda_vazia_e_preservada(monkeypatch: pytest.MonkeyPatch):
-    """Fase 1 não acha nada em site nenhum e a Fase 2 também não
-    (`_expandir_com_termos_de_provedor_em_todas_as_fontes` → `None`): o
-    chamador preserva a rodada da Fase 1 (`if expandido is not None`), cada
-    fonte fica disponível-vazia com `motivo` `None` — "não achei" nunca vira
-    "indisponível" nem "não consultado" (CLAUDE.md §4)."""
+async def test_todas_toda_vazia_e_preservada(monkeypatch: pytest.MonkeyPatch):
+    """Nenhum site acha nada: cada fonte fica disponível-vazia com `motivo`
+    `None` — "não achei" nunca vira "indisponível" nem "não consultado"
+    (CLAUDE.md §4)."""
     romaji = "Naruto Shippuuden"
 
     async def _buscar_por_site_com_variantes_fake(
@@ -293,11 +254,11 @@ async def test_todas_fase1_toda_vazia_e_preservada(monkeypatch: pytest.MonkeyPat
     assert all(fonte.motivo is None for fonte in resultado)
 
 
-async def test_todas_fase2_falha_de_metadados_nao_propaga_devolve_rodada_da_fase1(
+async def test_todas_falha_de_metadados_nao_propaga_e_busca_so_com_o_digitado(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """`buscar_titulos` lança → `_resolver_titulos_canonicos` degrada pra
-    `None` (best-effort, upfront) e a Fase 1 do `todas` segue só com o título
+    `None` (best-effort, upfront) e a busca segue só com o título
     digitado como referência (`referencias == [titulo]`), sem propagar a
     exceção."""
     referencias_vistas: list[list[str]] = []
@@ -333,11 +294,9 @@ async def test_todas_fase2_falha_de_metadados_nao_propaga_devolve_rodada_da_fase
 async def test_todas_todos_os_sites_indisponiveis_ainda_resolve_o_canonico_upfront(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A resolução canônica do `todas` agora roda SEMPRE, upfront (a escada
-    combinada da Fase 1 depende dela) — a orquestração antiga a pulava quando
-    todo site já vinha `indisponivel`. Sem site pendente, a Fase 2 continua
-    pulada (`algum_site_pendente` na guarda: site indisponível não é pendente),
-    sem segunda rodada de scraping; cada fonte volta `indisponivel`."""
+    """A resolução canônica roda SEMPRE, upfront (a escada combinada depende
+    dela) — a orquestração antiga a pulava quando todo site já vinha
+    `indisponivel`. Uma rodada de scraping só; cada fonte volta `indisponivel`."""
     titulos_chamado: list[str] = []
     rodadas: list[list[str] | None] = []
 
@@ -366,7 +325,7 @@ async def test_todas_todos_os_sites_indisponiveis_ainda_resolve_o_canonico_upfro
     )
 
     assert titulos_chamado == ["Naruto"]
-    assert rodadas == [None]  # só a Fase 1; nenhum pendente → Fase 2 pulada
+    assert rodadas == [None]  # uma rodada de scraping só
     assert all(fonte.indisponivel for fonte in resultado)
 
 
@@ -500,29 +459,6 @@ def test_termos_de_busca_nunca_vazia_quando_so_o_digitado_e_util():
     termos = servico_busca._termos_de_busca(titulos, "One Piece")
 
     assert termos == variantes_de_busca("One Piece")
-
-
-def test_variantes_sem_repetir_fase1_filtra_slugs_ja_tentados():
-    """`_variantes_sem_repetir_fase1` não é mais usada pelo escopo `padrao`
-    (que passou a rodar uma escada combinada só, sem dedupe entre fases), mas
-    continua no caminho do escopo `todas` — trava direta pra não perder essa
-    regra."""
-    variantes = [
-        "Boku no Hero Academia World Heroes",
-        "Boku no Hero Academia",
-        "Boku no Hero",
-        "Boku no",
-        "Boku",
-    ]
-    slugs_fase1 = {
-        servico_busca.slugificar("Boku no Hero Academia"),
-        servico_busca.slugificar("Boku no Hero"),
-        servico_busca.slugificar("Boku no"),
-    }
-
-    resultado = servico_busca._variantes_sem_repetir_fase1(variantes, slugs_fase1)
-
-    assert resultado == ["Boku no Hero Academia World Heroes", "Boku"]
 
 
 # --- cache de "Trocar fonte" ---
