@@ -22,7 +22,6 @@ import { SeletorDeBannerNaIlha } from '../components/SeletorDeBanner.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import MenuDeAcoesDoAnime from '../components/MenuDeAcoesDoAnime.jsx';
 import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
-import SinopseEmFoco from '../components/SinopseEmFoco.jsx';
 import { nomeDaFonte } from '../fontes.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { useSeletorDeBanner } from '../hooks/useSeletorDeBanner.js';
@@ -289,7 +288,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   const modoVisualizacao = modoArmazenado === 'grade' ? 'grade' : 'lista';
 
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
-  // Modo foco da sinopse (components/SinopseEmFoco.jsx).
+  // Sinopse completa aberta (painel da ilha: components/SinopseNaIlha.jsx, via
+  // `sinopse` de BarraDeNavegacao).
   const [sinopseEmFoco, setSinopseEmFoco] = useState(false);
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState(null);
@@ -828,6 +828,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           mensagem a cápsula mostra quando mais de uma está ativa: ver
           comentário de `mensagemIlha` em BarraDeNavegacao.jsx. */}
       <BarraDeNavegacao
+        sinopse={
+          sinopseEmFoco
+            ? {
+                titulo: tituloExibicao ?? anime?.titulo ?? '',
+                tituloSecundario,
+                texto: anime?.sinopse,
+                aoFechar: () => setSinopseEmFoco(false),
+              }
+            : null
+        }
         modoDaIlha={
           trocandoBanner ? (
             <SeletorDeBannerNaIlha
@@ -1283,14 +1293,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           aoFechar={fecharDialogoTrocaDeFonte}
           confirmando={confirmandoTrocaFonte}
           erro={erroTrocaFonte}
-        />
-
-        <SinopseEmFoco
-          aberta={sinopseEmFoco}
-          titulo={tituloExibicao ?? anime?.titulo ?? ''}
-          tituloSecundario={tituloSecundario}
-          sinopse={anime?.sinopse}
-          aoFechar={() => setSinopseEmFoco(false)}
         />
 
         <DialogoDeConfirmacao

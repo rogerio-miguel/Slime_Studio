@@ -4,6 +4,8 @@ import { Home, LibraryBig, Search, Tags, X } from 'lucide-react';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 import LogoSlimeStudio from './LogoSlimeStudio';
 import SeletorEmMenu from './SeletorEmMenu';
+import SinopseNaIlha, { ConteudoDaSinopse } from './SinopseNaIlha.jsx';
+import { useCapsulaVisivel, useSinopseNaCapsula } from '../hooks/useSinopseNaCapsula.js';
 
 // Navbar fixa (z-20, sempre acima do conteúdo).
 //
@@ -211,6 +213,17 @@ export default function BarraDeNavegacao({
   // dropdown/mensagens, igual ao `gerenciar` mas sem contrato próprio — quem usa monta
   // os botões com `BotaoDaIlha`/`DivisorDaIlha`.
   modoDaIlha = null,
+  // `sinopse` (opcional — só `paginas/Inicio.jsx` e `paginas/PaginaDoAnime.jsx`
+  // passam; `undefined` = a página não tem sinopse, `null` = tem e está
+  // fechada): `{ titulo, tituloSecundario, texto, aoFechar }` enquanto a sinopse
+  // completa está aberta. A cápsula abre sozinha mostrando "Sinopse" e, quando
+  // termina de abrir, ELA MESMA cresce na vertical e vira o painel
+  // (hooks/useSinopseNaCapsula.js; abaixo de `sm`, onde a cápsula não existe,
+  // cai no <dialog> de SinopseNaIlha.jsx). A página mantém o objeto até
+  // `aoFechar`, que só dispara depois da animação de volta — é isso que fecha a
+  // cápsula, na ordem inversa da abertura. Fica de fora da fila de
+  // `mensagemIlha`: o painel é modal e cobre as mensagens.
+  sinopse,
   notificacaoNovosEps = false,
   aoClicarNotificacaoNovosEps,
   verificandoNovosEps = false,
@@ -251,7 +264,8 @@ export default function BarraDeNavegacao({
   // comentário do próprio wrapper mais abaixo.
   const gerenciando = Boolean(gerenciar) && gerenciar.fase !== 'inativo';
   const temModoDaIlha = Boolean(modoDaIlha);
-  const modoNaIlha = gerenciando || temModoDaIlha;
+  const temSinopse = Boolean(sinopse);
+  const modoNaIlha = gerenciando || temModoDaIlha || temSinopse;
   // Com `modoDaIlha`, a roda sobre a cápsula não rola a página (a lista de opções
   // dela rola sozinha, ver `components/SeletorDeBanner.jsx`). Ref por callback pelo
   // mesmo motivo de `medidorConteudoIlhaRef`: a cápsula remonta ao trocar de posição.
@@ -265,8 +279,25 @@ export default function BarraDeNavegacao({
     },
     [temModoDaIlha],
   );
+  // `sinopse !== undefined` (e não `temSinopse`): o gate de montagem tem que ser
+  // estável, senão o wrapper nasceria já aberto e sem transição de largura.
+  // Nó da cápsula: o hook da sinopse mede o retângulo dela pra ancorar a
+  // transformação em painel.
+  const capsulaRef = useRef(null);
+  const refDaCapsula = useCallback(
+    (no) => {
+      capsulaRef.current = no;
+      const desfazerTrava = travarRodaNaIlhaRef(no);
+      return () => {
+        capsulaRef.current = null;
+        desfazerTrava?.();
+      };
+    },
+    [travarRodaNaIlhaRef],
+  );
   const temConteudoNaIlha = Boolean(
-    gerenciar ||
+    sinopse !== undefined ||
+      gerenciar ||
       aoMudarFiltro ||
       aoMudarSecao ||
       aoClicarNotificacaoNovosEps ||
@@ -387,7 +418,7 @@ export default function BarraDeNavegacao({
   // `capsulaExpandidaIlha` substitui `ilhaAtiva` cru em toda a coreografia
   // abaixo (forma + conteúdo): os dois usam exatamente a mesma
   // abertura/fechamento que o filtro já usava, só troca o que aparece DENTRO.
-  const capsulaExpandidaIlha =
+  const ilhaPedida =
     modoNaIlha ||
     ((temFiltroNaIlha || temSecoesNaIlha) && ilhaAtiva) ||
     notificacaoNovosEps ||
@@ -395,6 +426,23 @@ export default function BarraDeNavegacao({
     Boolean(capturaProntaIlha) ||
     Boolean(statusCapturaIlha) ||
     Boolean(erroCapturaIlha);
+
+  // Na Início, a ilha só abre DEPOIS da troca de posição dos links — a mesma
+  // ordem do scroll, onde isso acontece aos 24px (`LIMIAR_LOGO_PX`) com a
+  // cápsula ainda fechada e ela só abre aos 96px (`LIMIAR_ILHA_PX`). Quando um
+  // gatilho que não é scroll (sinopse, captura, notificação) pede a ilha no topo
+  // da página, `ilhaSimulandoScroll` faz a troca primeiro e
+  // `ilhaLiberadaTrasTroca` abre a cápsula `ATRASO_ILHA_APOS_TROCA_MS` depois; ao
+  // fechar, a cápsula fecha primeiro e só então os links voltam (a ordem inversa
+  // do scroll de volta ao topo). A logo NÃO entra na simulação: ela só anima com
+  // scroll de verdade (pedido do usuário, 2026-10-05).
+  // Abrir tudo junto remontava a cápsula (o slot do link muda) já aberta: ela
+  // aparecia de uma vez, sem a animação de abertura. Já rolado (`logoColapsada`)
+  // ou fora da Início não há o que simular e nada muda.
+  const exigeTrocaAntes = emInicio && !logoColapsada;
+  const [ilhaSimulandoScroll, setIlhaSimulandoScroll] = useState(false);
+  const [ilhaLiberadaTrasTroca, setIlhaLiberadaTrasTroca] = useState(false);
+  const capsulaExpandidaIlha = ilhaPedida && (!exigeTrocaAntes || ilhaLiberadaTrasTroca);
 
   // Qual dropdown ocupa o conteúdo da ilha — mutuamente exclusivo na prática
   // (nenhuma página passa os dois trios), `temSecoesNaIlha` decide porque só
@@ -524,7 +572,31 @@ export default function BarraDeNavegacao({
   const DURACAO_ILHA_ABRE_MS = 450;
   const DURACAO_ILHA_FECHA_MS = 400;
   const ATRASO_CONTEUDO_ILHA_ABRE_MS = 170;
+  // Folga entre a troca dos links e a abertura da cápsula: o que o usuário leva
+  // rolando dos 24px aos 96px.
+  const ATRASO_ILHA_APOS_TROCA_MS = 200;
+  useEffect(() => {
+    if (!exigeTrocaAntes) return undefined;
+    if (ilhaPedida) {
+      setIlhaSimulandoScroll(true);
+      const temporizador = setTimeout(() => setIlhaLiberadaTrasTroca(true), ATRASO_ILHA_APOS_TROCA_MS);
+      return () => clearTimeout(temporizador);
+    }
+    setIlhaLiberadaTrasTroca(false);
+    const temporizador = setTimeout(() => setIlhaSimulandoScroll(false), DURACAO_ILHA_FECHA_MS);
+    return () => clearTimeout(temporizador);
+  }, [exigeTrocaAntes, ilhaPedida]);
   const easeFormaAtual = EASE_ILHA_FORMA_FECHA;
+  // A cápsula só vira painel depois de terminar de abrir (+ folga do fade do
+  // conteúdo). `ilhaVisivel`: abaixo de `sm` o <ul> some e vale o <dialog>.
+  const ilhaVisivel = useCapsulaVisivel();
+  const painel = useSinopseNaCapsula({
+    ativa: temSinopse && ilhaVisivel,
+    atrasoAbrirMs: (exigeTrocaAntes ? ATRASO_ILHA_APOS_TROCA_MS : 0) + DURACAO_ILHA_ABRE_MS + 60,
+    capsulaRef,
+    aoFechar: sinopse?.aoFechar,
+    movimentoReduzido,
+  });
   // `contain: 'layout style'` isola o reflow da transição de
   // `padding`/`background-color` deste `<div>` a esta subárvore (a própria
   // cápsula) — o resto da página (incluindo o scroll em si) não entra na
@@ -591,7 +663,12 @@ export default function BarraDeNavegacao({
   // `order`), pra manter a ordem de tab igual à ordem visual; `key` em cada
   // `<li>` evita que o React desmonte/remonte o dropdown da cápsula ao
   // trocar de posição.
-  const linksTrocados = emInicio && logoColapsada;
+  //
+  // Também troca com a ilha pedida sem scroll (sinopse, captura, notificação),
+  // simulando o scroll só nos links (`ilhaSimulandoScroll`, ver `ilhaPedida`) — pedido
+  // do usuário, 2026-10-05: o "Início" é a cápsula na Início e tem que abrir no
+  // meio da navbar, onde o painel da sinopse cresce, igual a quando se rola.
+  const linksTrocados = emInicio && (logoColapsada || ilhaSimulandoScroll);
 
   // Fábrica de `<li>` compartilhada pelos dois links que podem virar
   // "a cápsula" (fundo + dropdown da ilha) — extraída pra não duplicar essa
@@ -601,20 +678,37 @@ export default function BarraDeNavegacao({
   // `temConteudoNaIlha`, `estiloConteudoIlha`, `opcoesDropdownIlha` etc.) —
   // redefinida a cada render, sem custo real (só JSX, sem trabalho pesado).
   const renderLinkComCapsula = ({ chave, to, ativo, Icone, rotulo, onClick }) => (
-    <li key={chave}>
+    <li key={chave} style={painel.estiloItem}>
       <div
-        ref={travarRodaNaIlhaRef}
-        style={estiloFormaIlha}
+        ref={refDaCapsula}
+        style={{ ...estiloFormaIlha, ...painel.estiloCapsula }}
         // `relative`: âncora de posicionamento do dropdown (`ocuparLarguraDoPai`
         // no `SeletorEmMenu`, sempre `true` aqui, pedido do usuário,
         // 2026-09-28) — o menu passa a ocupar a largura da CÁPSULA INTEIRA
         // (do ícone/link até o chevron do dropdown), não só a do próprio
         // botão gatilho. Vale pros dois usos da cápsula (seções na Início,
         // filtro na Galeria) — é o padrão agora, não uma exceção da Início.
-        className={`relative flex items-center rounded-full transition-[background-color,padding] motion-reduce:transition-none ${
+        className={`relative flex flex-col rounded-full transition-[background-color,padding] motion-reduce:transition-none ${
           capsulaExpandidaIlha ? 'bg-white/5 px-3 py-1' : 'px-0 py-0'
         }`}
       >
+        {/* Cabeçalho (link + conteúdo da ilha): numa grade de uma linha só pra
+            poder colapsar a altura a 0 quando a cápsula vira o painel da sinopse
+            (`painel.expandida`), junto com a região abaixo crescer. Em repouso é
+            uma passagem direta, sem mudar a medida de nada. `overflow-hidden` só
+            com a sinopse ancorada: em repouso o menu do dropdown (`absolute`,
+            ancorado na cápsula) não pode ser cortado — e ele não é, porque o
+            ancestral posicionado dele está FORA deste wrapper. */}
+        <div
+          className="grid"
+          style={{
+            gridTemplateRows: painel.expandida ? '0fr' : '1fr',
+            opacity: painel.expandida ? 0 : 1,
+            transition: `${painel.estiloGrade.transition}, opacity 200ms ease`,
+          }}
+          inert={painel.ancorada || undefined}
+        >
+          <div className={`flex min-h-0 items-center ${painel.ancorada ? 'overflow-hidden' : ''}`}>
         <Link
           to={to}
           aria-current={ativo ? 'page' : undefined}
@@ -697,11 +791,59 @@ export default function BarraDeNavegacao({
                   <ConteudoGerenciarIlha gerenciar={gerenciar} />
                 </div>
               )}
+              {!gerenciando && !modoDaIlha && temSinopse && (
+                <div className="flex items-center gap-2 animate-ilha-conteudo motion-reduce:animate-none">
+                  {/* `h-9`: mesma altura do dropdown que volta ao sair do modo — senão a
+                      cápsula dá um tranco de altura no fim do fechamento. */}
+                  <span className="inline-flex h-9 items-center whitespace-nowrap text-[18px] font-semibold text-white">
+                    Sinopse
+                  </span>
+                </div>
+              )}
               {!gerenciando && modoDaIlha && (
                 <div className="flex items-center gap-2 animate-ilha-conteudo motion-reduce:animate-none">
                   {modoDaIlha}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+          </div>
+        </div>
+        {painel.ancorada && (
+          <div
+            className="grid"
+            style={{
+              gridTemplateRows: painel.expandida ? '1fr' : '0fr',
+              ...painel.estiloGrade,
+            }}
+          >
+            {/* `role="dialog"` à mão (sem <dialog> nativo): o hook cuida de foco,
+                Esc e Tab. Qualquer clique fecha, menos com texto selecionado
+                (senão copiar um trecho fecharia o painel). */}
+            <div
+              ref={painel.regiaoRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="titulo-sinopse-ilha"
+              tabIndex={-1}
+              data-visivel={painel.expandida ? '' : undefined}
+              data-rolavel={painel.rolavel ? '' : undefined}
+              onClick={() => {
+                if (window.getSelection()?.toString() === '') painel.fechar();
+              }}
+              style={{ maxHeight: 'calc(100dvh - 3rem)' }}
+              className="sinopse-ilha-conteudo cursor-pointer text-left text-white outline-none"
+            >
+              {/* Com barra de rolagem o texto ocupa a largura que sobra (a barra come
+                  uma fatia); sem ela, largura fixa pra não reflowar no crescimento. */}
+              <div style={{ width: painel.rolavel ? undefined : painel.larguraConteudo }}>
+                <ConteudoDaSinopse
+                  titulo={sinopse?.titulo ?? ''}
+                  tituloSecundario={sinopse?.tituloSecundario}
+                  sinopse={sinopse?.texto}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -786,6 +928,7 @@ export default function BarraDeNavegacao({
   const estiloFundoInicial = transparente ? { backgroundColor: 'rgba(0, 0, 0, 0)' } : undefined;
 
   return (
+    <>
     <nav
       ref={navRef}
       aria-label="Principal"
@@ -797,6 +940,13 @@ export default function BarraDeNavegacao({
           de uma altura fixa aqui. `colapsada` troca STUDIO pelo ícone de
           play assim que `scrollY` passa de `LIMIAR_LOGO_PX` — binário,
           independente do fade contínuo do fundo (via `navRef` acima). */}
+      {painel.ancorada && (
+        <div
+          aria-hidden="true"
+          onClick={painel.fechar}
+          className="sinopse-ilha-cortina"
+        />
+      )}
       <LogoSlimeStudio colapsada={logoColapsada} />
       {/* `absolute left-1/2 -translate-x-1/2`: centraliza em relação à
           navbar inteira (que já é `fixed`, então já é containing block pra
@@ -805,7 +955,14 @@ export default function BarraDeNavegacao({
           logo e a busca pesam de cada lado (varia por página: PaginaDoAnime
           não tem busca, então o `justify-between` sozinho puxaria os links
           pro centro errado ali). */}
-      <ul className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-8 text-lg text-ink-muted sm:flex sm:text-lg">
+      <ul
+        className={`absolute left-1/2 hidden -translate-x-1/2 items-center gap-8 text-lg text-ink-muted sm:flex sm:text-lg ${
+          // Com a sinopse ancorada, o <ul> sobe acima da cortina e os links
+          // vizinhos da cápsula somem (senão vazam pelos 6% de transparência
+          // do painel); o <li> da cápsula força `opacity: 1` inline.
+          painel.ancorada ? 'z-10 [&>li]:opacity-0' : ''
+        } [&>li]:transition-opacity`}
+      >
         {/* `linksTrocados`: Início entra ANTES do Catálogo (posição normal,
             esquerda) quando false, e DEPOIS (posição do meio) quando true —
             ver `linksTrocados` acima. `linkInicio`/`catalogoLi` já vêm
@@ -873,5 +1030,17 @@ export default function BarraDeNavegacao({
         </form>
       )}
     </nav>
+    {/* Fallback abaixo de `sm`, onde o <ul> da cápsula some. Fora do <nav>
+        pra não herdar nada do `fundoClasse`. */}
+    {sinopse !== undefined && !ilhaVisivel && (
+      <SinopseNaIlha
+        aberta={temSinopse}
+        titulo={sinopse?.titulo ?? ''}
+        tituloSecundario={sinopse?.tituloSecundario}
+        sinopse={sinopse?.texto}
+        aoFechar={sinopse?.aoFechar}
+      />
+    )}
+    </>
   );
 }
