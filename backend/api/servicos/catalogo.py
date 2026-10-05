@@ -274,6 +274,11 @@ async def agrupar_franquias(sessao: AsyncSession) -> dict[int, list[object]]:
     return {linha.id: grupos_por_raiz[acha(("id", linha.id))] for linha in linhas}
 
 
+def banner_escolhido_da_franquia(grupo: list[object]) -> str | None:
+    """Banner que o usuário escolheu no seletor, se alguma linha da franquia o tem."""
+    return next((linha.banner_escolhido for linha in grupo if linha.banner_escolhido), None)
+
+
 async def definir_banner_da_franquia(
     sessionmaker: _SessionMaker, anime_id: int, banner_url: str | None
 ) -> bool:

@@ -10,12 +10,14 @@ import logging
 import re
 import time
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from api.servicos.catalogo import agrupar_franquias, banner_escolhido_da_franquia
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
@@ -131,7 +133,7 @@ async def listar_em_alta_com_catalogo(
     pares = await _cruzar_com_catalogo(sessionmaker, itens)
     await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
     await _preencher_banner_do_cruzamento(sessionmaker, pares)
-    return pares
+    return await _aplicar_banner_escolhido(sessionmaker, pares)
 
 
 async def listar_novos_lancamentos_com_catalogo(
@@ -146,7 +148,7 @@ async def listar_novos_lancamentos_com_catalogo(
     pares = await _cruzar_com_catalogo(sessionmaker, itens)
     await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
     await _preencher_banner_do_cruzamento(sessionmaker, pares)
-    return pares
+    return await _aplicar_banner_escolhido(sessionmaker, pares)
 
 
 async def listar_fileiras_tematicas_com_catalogo(
@@ -182,6 +184,7 @@ async def listar_fileiras_tematicas_com_catalogo(
         tamanhos.append((chave, len(itens)))
 
     pares_achatados = await _cruzar_com_catalogo(sessionmaker, achatados)
+    pares_achatados = await _aplicar_banner_escolhido(sessionmaker, pares_achatados)
 
     resultado = []
     cursor = 0
@@ -205,7 +208,8 @@ async def listar_proxima_temporada_com_catalogo(
     bloco de lançamento de um título não-lançado muda pouco — o cruzamento
     seco basta."""
     itens = await servico.listar_proxima_temporada()
-    return await _cruzar_com_catalogo(sessionmaker, itens)
+    pares = await _cruzar_com_catalogo(sessionmaker, itens)
+    return await _aplicar_banner_escolhido(sessionmaker, pares)
 
 
 async def listar_busca_com_catalogo(
@@ -369,6 +373,34 @@ async def _preencher_banner_do_cruzamento(
             len(do_feed),
             excecao,
         )
+
+
+async def _aplicar_banner_escolhido(
+    sessionmaker: _SessionMaker, pares: list[tuple[AnimeEmAlta, int | None]]
+) -> list[tuple[AnimeEmAlta, int | None]]:
+    """Troca o `banner_url` do item pelo banner que o usuário escolheu na página
+    do anime (`Anime.banner_escolhido`, lido pela franquia — uma temporada
+    catalogada depois da escolha não o tem na própria linha). Roda DEPOIS do
+    backfill de `_preencher_banner_do_cruzamento`: se rodasse antes, o backfill
+    copiaria a escolha para `banner_path` e limpar a escolha deixaria o resíduo.
+    O cache do feed fica só com dado de provedor, então nada a invalidar.
+
+    Best-effort: falha de leitura vira `warning` e devolve os pares do provedor."""
+    if all(anime_id is None for _, anime_id in pares):
+        return pares
+    try:
+        async with sessionmaker() as sessao:
+            grupos = await agrupar_franquias(sessao)
+    except SQLAlchemyError as excecao:
+        logger.warning("leitura do banner escolhido no feed falhou: %s", excecao)
+        return pares
+
+    resultado = []
+    for item, anime_id in pares:
+        grupo = grupos.get(anime_id) if anime_id is not None else None
+        escolhido = banner_escolhido_da_franquia(grupo) if grupo else None
+        resultado.append((replace(item, banner_url=escolhido) if escolhido else item, anime_id))
+    return resultado
 
 
 def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> None:
