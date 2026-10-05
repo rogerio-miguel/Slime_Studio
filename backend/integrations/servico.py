@@ -44,6 +44,7 @@ from core.texto import slugificar
 from integrations.base import (
     AnimeEmAlta,
     ArteDeAnime,
+    CandidatoDeBanner,
     FileiraTematica,
     InfoDeEpisodio,
     LancamentoDeAnime,
@@ -289,6 +290,13 @@ async def _persistir_em_segundo_plano(chave: str, itens: list[AnimeEmAlta]) -> N
 # `tests/test_integrations_metadados.py` tem fixture autouse que zera isto
 # entre testes (estado de módulo).
 _memo_arte: dict[tuple[str, int | None], tuple[float, ArteDeAnime | None]] = {}
+
+# Memo de processo de `listar_candidatos_de_banner`: mesma chave, TTL e política
+# de limite de `_memo_arte`. Fixture autouse de `tests/test_integrations_metadados.py`
+# zera isto entre testes.
+_memo_candidatos_de_banner: dict[
+    tuple[str, int | None], tuple[float, list[CandidatoDeBanner]]
+] = {}
 
 # Memo de processo de `buscar_titulos` (títulos canônicos AniList) — chave é o
 # slug do título cadastrado. Mesma política/TTL de `_memo_arte` (cache
@@ -1066,6 +1074,48 @@ async def buscar_arte_por_titulo(titulo: str, ano: int | None) -> ArteDeAnime | 
             return arte
 
     return None
+
+
+async def listar_candidatos_de_banner(titulo: str, ano: int | None) -> list[CandidatoDeBanner]:
+    """Opções de banner do seletor da página do anime, nos `provedores_de_arte()`
+    instalados. Mesma resiliência de `buscar_arte_por_titulo` (latch de auth,
+    erro de provedor vira log + próximo provedor), com memo por `(slug do título
+    base, ano)`; erro nunca grava no memo. `[]` é resposta normal (sem série
+    achada ou sem token), nunca erro."""
+    if _arte_desabilitada_por_auth:
+        return []
+
+    titulo_base, _derivado = separar_temporada(titulo)
+    chave = (slugificar(titulo_base), ano)
+    memo = _memo_candidatos_de_banner.get(chave)
+    if memo is not None and time.monotonic() < memo[0]:
+        return memo[1]
+
+    for provedor in provedores_de_arte():
+        try:
+            candidatos = await _chamar(
+                provedor, provedor.listar_candidatos_de_banner, titulo_base, ano
+            )
+        except TmdbNaoAutorizado as excecao:
+            _desabilitar_arte_por_auth(provedor, excecao)
+            return []
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de arte %r falhou ao listar banners de %r: %s",
+                provedor.nome,
+                titulo,
+                excecao,
+            )
+            continue
+
+        if candidatos:
+            if len(_memo_candidatos_de_banner) >= _LIMITE_MEMO_ARTE:
+                _memo_candidatos_de_banner.clear()
+            _memo_candidatos_de_banner[chave] = (time.monotonic() + _TTL_ARTE_S, candidatos)
+            return candidatos
+
+    return []
 
 
 async def buscar_sinopse_da_temporada(titulo: str, ano: int | None, temporada: int) -> str | None:

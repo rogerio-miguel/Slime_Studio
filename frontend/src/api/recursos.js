@@ -244,3 +244,18 @@ export function removerAnime(animeId) {
     return resultado;
   });
 }
+
+// Seletor de banner da página do anime. `arquivo` é o `file_path` do TMDB que o
+// servidor devolveu em `listarBannersDoAnime` — nunca uma URL: o servidor monta a
+// URL final e a escolha vale para a franquia inteira.
+export function listarBannersDoAnime(animeId) {
+  return requisitar(`/api/animes/${animeId}/banners`);
+}
+
+export function escolherBanner(animeId, arquivo) {
+  return requisitar(`/api/admin/animes/${animeId}/banner`, { metodo: 'PUT', corpo: { arquivo } });
+}
+
+export function restaurarBanner(animeId) {
+  return requisitar(`/api/admin/animes/${animeId}/banner`, { metodo: 'DELETE' });
+}

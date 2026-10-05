@@ -1,4 +1,4 @@
-import { Check, RefreshCw, Trash2 } from 'lucide-react';
+import { Check, Image as IconeImagem, RefreshCw, Trash2 } from 'lucide-react';
 import MenuDeAcoes from './MenuDeAcoes.jsx';
 
 // Menu de ações da página do anime (`paginas/PaginaDoAnime.jsx`) — "Trocar
@@ -18,6 +18,7 @@ import MenuDeAcoes from './MenuDeAcoes.jsx';
 // geometria dos outros controles secundários da barra).
 export default function MenuDeAcoesDoAnime({
   aoTrocarFonte,
+  aoTrocarBanner,
   aoMarcarAssistidos,
   marcandoAssistidos,
   tudoAssistido,
@@ -29,6 +30,12 @@ export default function MenuDeAcoesDoAnime({
       rotulo: 'Trocar fonte',
       Icone: RefreshCw,
       aoClicar: aoTrocarFonte,
+    },
+    {
+      chave: 'trocar-banner',
+      rotulo: 'Trocar banner',
+      Icone: IconeImagem,
+      aoClicar: aoTrocarBanner,
     },
     {
       chave: 'marcar-assistido',

@@ -25,7 +25,7 @@ from PIL import Image
 
 from core.temporada import separar_temporada
 from core.texto import slugificar
-from integrations.base import ArteDeAnime, InfoDeEpisodio, ProvedorDeArte
+from integrations.base import ArteDeAnime, CandidatoDeBanner, InfoDeEpisodio, ProvedorDeArte
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ _LARGURA_MINIMA_BACKDROP = 1920
 _LARGURA_ALTA_BACKDROP = 2500  # 4K/quase-4K; abaixo disso, FHD borra em tela grande
 _PROPORCAO_16_9 = 16 / 9
 _TOLERANCIA_DE_PROPORCAO = 0.1
+_TAMANHO_MINIATURA = "w780"  # grade do seletor de banner; o navegador baixa, não o servidor
+_MAXIMO_DE_CANDIDATOS = 12  # opções no seletor de banner
+_MINIMO_SEM_TEXTO = 4  # abaixo disso, o seletor completa com arte com texto sobreposto
 _NOTA_A_PRIORI = 5.0  # prior bayesiano da nota de backdrop (escala TMDB 0-10)
 _PESO_A_PRIORI = 3  # "votos" fictícios do prior
 _TAMANHO_STILL = "original"  # thumb de episódio (Fatia 5). `still_sizes` do TMDB só
@@ -165,14 +168,10 @@ class TmdbProvider(ProvedorDeArte):
         default da série."""
         if id_da_serie in self._backdrop_medido:
             return self._backdrop_medido[id_da_serie]
-        dados = self._executar(
-            f"/tv/{id_da_serie}/images", {"include_image_language": "null,en"}
-        )
-        backdrops = dados.get("backdrops")
-        if not isinstance(backdrops, list) or not backdrops:
+        so_dicts = self._backdrops_da_serie(id_da_serie)
+        if not so_dicts:
             return None
 
-        so_dicts = [b for b in backdrops if isinstance(b, dict) and b.get("file_path")]
         sem_texto = [b for b in so_dicts if b.get("iso_639_1") is None]
         candidatos = sem_texto or so_dicts
         if not candidatos:
@@ -190,6 +189,52 @@ class TmdbProvider(ProvedorDeArte):
         if medido:
             self._backdrop_medido[id_da_serie] = escolhido["file_path"]
         return escolhido["file_path"]
+
+    def _backdrops_da_serie(self, id_da_serie: int) -> list[dict]:
+        """Backdrops de `GET /tv/{id}/images` que têm `file_path`, sem texto
+        (`iso_639_1` nulo) ou em inglês — o TMDB devolve `backdrops` ausente ou
+        malformado em série sem arte, e isso vira lista vazia."""
+        dados = self._executar(
+            f"/tv/{id_da_serie}/images", {"include_image_language": "null,en"}
+        )
+        backdrops = dados.get("backdrops")
+        if not isinstance(backdrops, list):
+            return []
+        return [b for b in backdrops if isinstance(b, dict) and b.get("file_path")]
+
+    def listar_candidatos_de_banner(self, titulo: str, ano: int | None) -> list[CandidatoDeBanner]:
+        """Opções do seletor de banner: os backdrops SEM texto sobreposto na
+        ordem de `_pontuacao_de_backdrop` (resolução, 16:9, nota). Só quando há
+        menos de `_MINIMO_SEM_TEXTO` deles, completa com os que têm texto. Não
+        baixa imagem nenhuma (a miniatura é só a URL) e não mede composição: é a
+        ordem barata, e quem escolhe é o usuário."""
+        serie = self._resolver_serie(titulo, ano)
+        id_da_serie = serie.get("id") if serie else None
+        if not isinstance(id_da_serie, int):
+            return []
+
+        backdrops = self._backdrops_da_serie(id_da_serie)
+        sem_texto = sorted(
+            (b for b in backdrops if b.get("iso_639_1") is None),
+            key=_pontuacao_de_backdrop,
+            reverse=True,
+        )
+        if len(sem_texto) >= _MINIMO_SEM_TEXTO:
+            ordenados = sem_texto
+        else:
+            com_texto = sorted(
+                (b for b in backdrops if b.get("iso_639_1") is not None),
+                key=_pontuacao_de_backdrop,
+                reverse=True,
+            )
+            ordenados = sem_texto + com_texto
+        return [
+            CandidatoDeBanner(
+                arquivo=b["file_path"],
+                miniatura_url=_url_imagem(b["file_path"], _TAMANHO_MINIATURA),
+            )
+            for b in ordenados[:_MAXIMO_DE_CANDIDATOS]
+        ]
 
     def _mais_livre_a_esquerda(self, finalistas: list[dict]) -> tuple[dict, bool]:
         """Dos `finalistas` (já em ordem de `_pontuacao_de_backdrop` e todos da
@@ -594,6 +639,13 @@ def _nome_de_episodio(episodio: dict) -> str | None:
     if not nome or _NOME_PLACEHOLDER.match(nome):
         return None
     return nome
+
+
+def url_de_banner(arquivo: str) -> str:
+    """URL `original` de um `file_path` de backdrop. Pública porque a API monta
+    a URL gravada ao escolher um banner a partir do `arquivo` validado, nunca de
+    uma URL vinda do cliente (host fixo, sem SSRF)."""
+    return f"{_URL_IMAGEM}/{_TAMANHO_BACKDROP}{arquivo}"
 
 
 def _url_imagem(caminho: str | None, tamanho: str) -> str | None:

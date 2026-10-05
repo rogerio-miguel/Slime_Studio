@@ -80,6 +80,13 @@ class Anime(Base):
     # é o fundo do fallback quando não há banner — mesma cor que o carrossel da
     # Home usa em `AnimeEmAltaSaida.capa_cor`.
     banner_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Banner escolhido pelo usuário (seletor da página do anime), URL completa do
+    # TMDB. Coluna SEPARADA de `banner_path` de propósito: nenhum dos caminhos que
+    # sobrescrevem `banner_path` (`sobrescrever_arte`, troca AniList→TMDB,
+    # `scripts/rerresolver_banners.py`) precisa saber da escolha. É gravada em
+    # TODAS as linhas da franquia e vence `banner_path` na leitura
+    # (`api/rotas/animes.py::_banner_da_franquia`).
+    banner_escolhido: Mapped[str | None] = mapped_column(String, nullable=True)
     capa_cor: Mapped[str | None] = mapped_column(String, nullable=True)
     sinopse: Mapped[str | None] = mapped_column(String, nullable=True)
     # Lista de gêneros crus da AniList (ex. `["Action", "Comedy"]`) — a tradução

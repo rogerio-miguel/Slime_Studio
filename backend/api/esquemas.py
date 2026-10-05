@@ -331,6 +331,9 @@ class AnimeDetalheSaida(BaseModel):
     # frontend usa `capa_cor` como fundo do fallback (mesma cor do carrossel da
     # Home). Preenchidos explicitamente em `obter_anime`, 1:1 com as colunas.
     banner_path: str | None
+    # `True` quando `banner_path` é uma escolha do usuário (seletor de banner) e
+    # não o automático — o frontend só oferece "Restaurar padrão" nesse caso.
+    banner_personalizado: bool = False
     capa_cor: str | None
     # Gêneros crus da AniList (tradução pt-BR é no frontend). Default `[]`:
     # preenchido explicitamente em `obter_anime` como `anime.generos or []`,
@@ -369,6 +372,23 @@ class AnimeDetalheSaida(BaseModel):
     # `None` quando não há nenhuma nesse estado. `estreia_em`/`ano` do objeto
     # vêm preenchidos só aqui.
     proxima_temporada: TemporadaIrmaSaida | None = None
+
+
+class CandidatoDeBannerSaida(BaseModel):
+    """Uma opção do seletor de banner: `arquivo` volta em `EscolherBannerRequest`,
+    `miniatura_url` é só para exibir."""
+
+    arquivo: str
+    miniatura_url: str
+
+
+class EscolherBannerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # `file_path` de backdrop do TMDB (`/` + id alfanumérico + extensão). Nunca uma
+    # URL: o servidor monta a URL final com host fixo (`integrations.tmdb.
+    # url_de_banner`), então o cliente não consegue apontar o banner para outro destino.
+    arquivo: str = Field(pattern=r"^/[A-Za-z0-9]{20,40}\.(jpg|png)$")
 
 
 class ConfirmarFonteRequest(BaseModel):
