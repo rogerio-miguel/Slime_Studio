@@ -415,6 +415,16 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
   const [erroMaterializacao, setErroMaterializacao] = useState(null);
 
+  // Sinopse completa aberta pelo carrossel (inicio/CarrosselDestaques.jsx): vive
+  // aqui, e não nele, porque o painel é da ilha da navbar (BarraDeNavegacao.jsx),
+  // irmã do carrossel. `porPonteiro` = aberta por mouse/toque.
+  const [sinopseNaIlha, setSinopseNaIlha] = useState(null);
+  const aoFecharSinopse = useCallback(() => {
+    // O dialog devolve o foco ao botão que o abriu; aberto por mouse/toque, isso
+    // deixaria a <section> do carrossel "com foco dentro".
+    if (sinopseNaIlha?.porPonteiro) document.activeElement?.blur();
+    setSinopseNaIlha(null);
+  }, [sinopseNaIlha]);
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const buscando = termoBuscaNormalizado !== '';
@@ -925,6 +935,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
         termoBusca={termoBusca}
         aoMudarBusca={setTermoBusca}
         aoSubmeterBusca={submeterBusca}
+        sinopse={sinopseNaIlha && { ...sinopseNaIlha, aoFechar: aoFecharSinopse }}
         opcoesSecoes={buscando ? undefined : opcoesSecoes}
         secaoSelecionada={secaoAtual}
         aoMudarSecao={aoMudarSecao}
@@ -1159,6 +1170,8 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                   itens={emAlta.dados}
                   aoMaterializar={materializarEIrPara}
                   materializando={chaveEmMaterializacao != null}
+                  aoAbrirSinopse={setSinopseNaIlha}
+                  sinopseAberta={sinopseNaIlha != null}
                 />
               </section>
             )}

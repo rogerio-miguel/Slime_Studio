@@ -13,7 +13,6 @@ import {
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 import { traduzirGenero } from './generos.js';
 import BlocoConteudoHero from './BlocoConteudoHero.jsx';
-import SinopseEmFoco from '../components/SinopseEmFoco.jsx';
 
 // Hero da home (estilo AnimeFire): banner full-width com imagem de fundo e
 // gradiente escuro, um destaque por vez, alimentado pelo feed
@@ -272,7 +271,13 @@ export function IconeEmAlta(props) {
 // Referência estável pro caso de o feed ainda não ter chegado (deps de useMemo).
 const SEM_ITENS = [];
 
-export default function CarrosselDestaques({ itens, aoMaterializar, materializando }) {
+export default function CarrosselDestaques({
+  itens,
+  aoMaterializar,
+  materializando,
+  aoAbrirSinopse,
+  sinopseAberta,
+}) {
   const idTitulo = useId();
   const idSlides = useId();
 
@@ -305,14 +310,12 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   // gate `autoAvancando`, que também alimenta o `aria-live` do contêiner no
   // render.
   const [pausado, setPausado] = useState(false);
-  // Modo foco da sinopse (components/SinopseEmFoco.jsx): guarda os textos do
-  // slide que abriu (`{ titulo, tituloSecundario, sinopse }`) — um dialog só pro
-  // carrossel inteiro, e o conteúdo não depende de qual slide está ativo
-  // depois. Aberto, congela o auto-avanço e a rotação da janela, senão o slide
+  // A sinopse completa vive na ilha da navbar (components/SinopseNaIlha.jsx,
+  // renderizada por BarraDeNavegacao.jsx), então o estado mora em
+  // paginas/Inicio.jsx, que é quem tem a navbar; aqui só chega `sinopseAberta`
+  // — aberta, congela o auto-avanço e a rotação da janela, senão o slide
   // trocaria por baixo de quem está lendo.
-  const [sinopseEmFoco, setSinopseEmFoco] = useState(null);
-  const abertaPorPonteiroRef = useRef(false);
-  const emPausa = pausado || sinopseEmFoco != null;
+  const emPausa = pausado || sinopseAberta;
   const movimentoReduzido = usePrefersReducedMotion();
 
   // Navegação por passo, com wrap por módulo — sem cópias, o wrap não precisa
@@ -427,7 +430,6 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
   };
 
   return (
-    <>
     <section
       aria-roledescription="carrossel"
       aria-labelledby={idTitulo}
@@ -622,11 +624,14 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
                     <button
                       type="button"
                       onClick={(evento) => {
-                        abertaPorPonteiroRef.current = evento.detail > 0;
-                        setSinopseEmFoco({
+                        aoAbrirSinopse({
                           titulo,
                           tituloSecundario: mostrarAlternativo ? tituloAlternativo : null,
-                          sinopse: item.sinopse,
+                          texto: item.sinopse,
+                          // O dialog devolve o foco ao botão que o abriu; aberto
+                          // por mouse/toque, isso deixaria a <section> "com foco
+                          // dentro" (ver `desfocarSePonteiro`).
+                          porPonteiro: evento.detail > 0,
                         });
                       }}
                       aria-haspopup="dialog"
@@ -796,21 +801,5 @@ export default function CarrosselDestaques({ itens, aoMaterializar, materializan
         )}
       </div>
     </section>
-
-    {/* Fora da <section>: o `aoTeclar` dela (setas trocam o slide) e o
-        pause por hover/foco não devem ver os eventos de dentro do dialog. */}
-    <SinopseEmFoco
-      aberta={sinopseEmFoco != null}
-      titulo={sinopseEmFoco?.titulo ?? ''}
-      tituloSecundario={sinopseEmFoco?.tituloSecundario}
-      sinopse={sinopseEmFoco?.sinopse}
-      aoFechar={() => {
-        setSinopseEmFoco(null);
-        // O dialog devolve o foco ao botão que o abriu; aberto por mouse/toque,
-        // isso deixaria a <section> "com foco dentro" (ver `desfocarSePonteiro`).
-        if (abertaPorPonteiroRef.current) document.activeElement?.blur();
-      }}
-    />
-    </>
   );
 }

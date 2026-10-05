@@ -114,42 +114,111 @@ html {
   }
 }
 
-/* Modo foco da sinopse (components/SinopseEmFoco.jsx): o `::backdrop` do
-   <dialog> borra e escurece a página inteira — o hero, a navbar, tudo — e as
-   frases entram uma a uma (`--i` é o índice da frase, definido inline).
-   `both` mantém a frase invisível durante o atraso. Animações em vez de
-   `transition` porque o <dialog> nasce já `display` ligado ao abrir.
-   Saída sem animação de propósito: fechar tem que ser instantâneo. */
-/* Trava a rolagem da página por trás: `showModal()` não faz isso sozinho.
-   `scrollbar-gutter: stable` mantém o espaço da barra, senão a página
-   alargaria e "pularia" ao abrir. `:has` em vez de efeito em JS pra não haver
-   estado de scroll pra desfazer (Esc, clique e `close()` já fecham o dialog). */
-html:has(dialog.sinopse-foco[open]) {
+/* Sinopse completa na ilha. Em tela larga é a PRÓPRIA cápsula da navbar virando
+   painel (hooks/useSinopseNaCapsula.js, estilos inline em BarraDeNavegacao.jsx;
+   só `.sinopse-ilha-cortina`, `.sinopse-ilha-conteudo` e as frases abaixo são
+   CSS daqui). Abaixo de `sm` a cápsula não existe e vale o <dialog>
+   (components/SinopseNaIlha.jsx): pílula 14rem x 2.5rem no topo-centro
+   (`--ilha-*` são só os valores de repouso) que cresce até o painel quando
+   `data-visivel` entra — posto em JS depois de um reflow, tirado antes do
+   `close()`. A altura anima pelo truque `grid-template-rows: 0fr -> 1fr`
+   (altura `auto` não transiciona; `min-height` segura a altura da pílula) e o
+   texto rola dentro de `.sinopse-ilha-conteudo`. `display` só liga com `[open]`:
+   display próprio num <dialog> fechado sobrescreveria o `display: none` do
+   navegador. Duração = PAINEL_MS no componente. Final centralizado em `%` (do
+   viewport, sem a barra de rolagem). */
+dialog.sinopse-ilha {
+  position: fixed;
+  inset: auto;
+  top: var(--ilha-topo, 1.25rem);
+  left: var(--ilha-esquerda, calc(50% - 7rem));
+  width: var(--ilha-largura, 14rem);
+  min-height: var(--ilha-altura, 2.5rem);
+  max-height: calc(100% - 1.5rem);
+  max-width: none;
+  margin: 0;
+  display: none;
+  grid-template-rows: 0fr;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--ilha-altura, 2.5rem) / 2);
   overflow: hidden;
-  scrollbar-gutter: stable;
+  color: #fff;
+  background-color: rgb(10 12 16 / 0);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0),
+    0 24px 60px rgb(0 0 0 / 0);
+  transition-property:
+    top, left, width, grid-template-rows, border-radius, background-color, box-shadow;
+  transition-duration: 0.34s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-dialog.sinopse-foco::backdrop {
-  background: rgb(6 8 12 / 0.74);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  animation: sinopse-foco-fundo 0.5s ease both;
+dialog.sinopse-ilha[open] {
+  display: grid;
 }
 
-@keyframes sinopse-foco-fundo {
-  from {
-    background: rgb(6 8 12 / 0);
-    -webkit-backdrop-filter: blur(0);
-    backdrop-filter: blur(0);
-  }
+dialog.sinopse-ilha[data-visivel] {
+  top: 0.75rem;
+  left: max(0.75rem, calc(50% - 22rem));
+  width: min(44rem, calc(100% - 1.5rem));
+  grid-template-rows: 1fr;
+  border-radius: 1.75rem;
+  background-color: rgb(10 12 16 / 0.94);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.08),
+    0 24px 60px rgb(0 0 0 / 0.55);
 }
 
-.sinopse-foco-frase {
-  animation: sinopse-foco-frase 0.6s ease both;
-  animation-delay: calc(0.3s + var(--i) * 0.16s);
+.sinopse-ilha-conteudo {
+  min-height: 0;
+  /* Só rola com `data-rolavel` (posto em JS depois do painel assentar, e só se o
+     texto não couber): `auto` direto, ou liberado no fim da transição, fazia a
+     barra de rolagem aparecer e sumir nos últimos quadros do crescimento. */
+  overflow-x: hidden;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
-@keyframes sinopse-foco-frase {
+dialog.sinopse-ilha[data-visivel] .sinopse-ilha-conteudo,
+.sinopse-ilha-conteudo[data-visivel] {
+  opacity: 1;
+  transition-delay: 0.12s;
+}
+
+dialog.sinopse-ilha[data-rolavel] .sinopse-ilha-conteudo,
+.sinopse-ilha-conteudo[data-rolavel] {
+  overflow-y: auto;
+}
+
+/* Camada invisível da cápsula: sem desfoque nem escurecimento (pedido do
+   usuário) — existe só pra um clique fora do painel fechá-lo. Vive DENTRO do
+   <nav> (z-5, abaixo do <ul> da ilha, que sobe a z-10 enquanto o painel está
+   aberto); `fixed` relativo ao viewport só vale porque o <nav> das páginas que
+   passam `sinopse` é `transparente`, sem `backdrop-filter` (que viraria
+   containing block). */
+.sinopse-ilha-cortina {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+}
+
+/* `::backdrop` do dialog (fallback de tela estreita) sem desfoque nem
+   escurecimento, igual à cápsula; o clique nele já fecha (cai no <dialog>). */
+dialog.sinopse-ilha::backdrop {
+  background: transparent;
+}
+
+/* Frases entram uma a uma (`--i` é o índice da frase, definido inline).
+   `both` mantém a frase invisível durante o atraso. */
+.sinopse-ilha-frase {
+  animation: sinopse-ilha-frase 0.6s ease both;
+  animation-delay: calc(0.4s + var(--i) * 0.16s);
+}
+
+@keyframes sinopse-ilha-frase {
   from {
     opacity: 0;
     filter: blur(7px);
@@ -157,8 +226,12 @@ dialog.sinopse-foco::backdrop {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  dialog.sinopse-foco::backdrop,
-  .sinopse-foco-frase {
+  dialog.sinopse-ilha,
+  .sinopse-ilha-conteudo {
+    transition: none;
+  }
+
+  .sinopse-ilha-frase {
     animation: none;
   }
 }
