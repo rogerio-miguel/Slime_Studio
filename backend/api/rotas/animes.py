@@ -589,7 +589,9 @@ async def obter_anime(
         ano=anime.ano,
         capa_path=anime.capa_path,
         banner_path=_banner_da_franquia(anime.banner_path, grupos[anime.id]),
-        banner_personalizado=_banner_escolhido_da_franquia(grupos[anime.id]) is not None,
+        banner_personalizado=(
+            servico_catalogo.banner_escolhido_da_franquia(grupos[anime.id]) is not None
+        ),
         capa_cor=anime.capa_cor,
         generos=anime.generos or [],
         sinopse=anime.sinopse,
@@ -680,17 +682,12 @@ def _ids_do_seletor_de_temporada(
     return ids
 
 
-def _banner_escolhido_da_franquia(grupo: list[object]) -> str | None:
-    """Banner que o usuário escolheu no seletor, se alguma linha da franquia o tem."""
-    return next((linha.banner_escolhido for linha in grupo if linha.banner_escolhido), None)
-
-
 def _banner_da_franquia(banner_proprio: str | None, grupo: list[object]) -> str | None:
     """Banner único da franquia, pra trocar de temporada no seletor não trocar a
     arte do hero: a escolha do usuário, se houver; senão o da primeira temporada
     (`grupo` já ordenado por `numero_temporada`) que tem um. Cai no banner
     próprio quando nenhuma irmã tem."""
-    return _banner_escolhido_da_franquia(grupo) or next(
+    return servico_catalogo.banner_escolhido_da_franquia(grupo) or next(
         (linha.banner_path for linha in grupo if linha.banner_path), banner_proprio
     )
 

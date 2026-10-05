@@ -1550,3 +1550,68 @@ async def test_obter_anime_sem_anilist_id_nao_dispara_busca_por_titulo(
 
     assert chamadas == []
     assert servico_descoberta._refreshs_de_lancamento_em_voo == {}
+
+
+async def test_em_alta_banner_escolhido_vence_o_do_feed_sem_vazar_para_banner_path(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Slime Escolhido", "slime-escolhido", anilist_id=1,
+        banner_escolhido="https://escolhido/banner.jpg",
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_banner(1, banner_url="https://feed/banner.jpg", capa_cor="#e4a15d")]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.status_code == 200
+    assert resposta.json()[0]["banner_url"] == "https://escolhido/banner.jpg"
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        assert anime.banner_path == "https://feed/banner.jpg"
+
+
+async def test_em_alta_banner_escolhido_vale_para_temporada_irma_da_franquia(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    # A escolha mora só na T1; a T2 (catalogada depois) herda pela franquia.
+    await _criar_anime(
+        sessionmaker_api, "Slime Franquia", "slime-franquia", anilist_id=1,
+        serie_ancora=10, banner_escolhido="https://escolhido/banner.jpg",
+    )
+    await _criar_anime(
+        sessionmaker_api, "Slime Franquia 2", "slime-franquia-2", anilist_id=2, serie_ancora=10
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_banner(2, banner_url="https://feed/t2.jpg", capa_cor="#e4a15d")]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.json()[0]["banner_url"] == "https://escolhido/banner.jpg"
+
+
+async def test_em_alta_sem_banner_escolhido_mantem_o_do_feed(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    await _criar_anime(sessionmaker_api, "Slime Padrao", "slime-padrao", anilist_id=1)
+
+    async def _listar_em_alta_fake():
+        return [
+            _feed_com_banner(1, banner_url="https://feed/banner.jpg", capa_cor="#e4a15d"),
+            _feed_com_banner(99, banner_url="https://feed/fora.jpg", capa_cor="#000000"),
+        ]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert [i["banner_url"] for i in resposta.json()] == [
+        "https://feed/banner.jpg",
+        "https://feed/fora.jpg",
+    ]
