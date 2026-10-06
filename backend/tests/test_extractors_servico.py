@@ -938,6 +938,32 @@ async def test_buscar_em_com_variantes_descarta_candidato_que_nao_corresponde_a_
     assert extrator.chamadas == ["Anime X: Sub", "Anime X"]
 
 
+async def test_buscar_em_com_variantes_incerta_preserva_as_duas_versoes_do_mesmo_id(
+    sessionmaker, monkeypatch
+):
+    """Site que serve dublado e legendado no mesmo anime (AnimeFire) devolve um
+    candidato por versão com o mesmo `identificador`: o degrau de correspondência
+    incerta não pode colapsar os dois — o "Trocar fonte" perdia o legendado."""
+    _resiliencia_direta(monkeypatch)
+    dublado = ResultadoBusca(
+        titulo_exibicao="Titulo Em Ingles", identificador="x1", url="https://x/1",
+        versao=VersaoEpisodio.DUBLADO,
+    )
+    legendado = ResultadoBusca(
+        titulo_exibicao="Titulo Em Ingles", identificador="x1", url="https://x/1",
+        versao=VersaoEpisodio.LEGENDADO,
+    )
+    extrator = _ExtratorDeBuscaFalso(respostas={"Anime X": [dublado, legendado]})
+    monkeypatch.setattr(servico_busca, "obter_extrator", lambda dominio: extrator)
+
+    resultado, _variante = await servico_busca.buscar_em_com_variantes(
+        sessionmaker, "site-falso.io", ["Anime X"], referencias=["Anime X"]
+    )
+
+    assert resultado.correspondencia_incerta is True
+    assert resultado.candidatos == [dublado, legendado]
+
+
 async def test_buscar_em_com_variantes_ordena_validos_com_match_exato_primeiro(
     sessionmaker, monkeypatch
 ):
