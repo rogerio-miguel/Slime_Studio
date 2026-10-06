@@ -183,7 +183,7 @@ async def buscar_em_com_variantes(
     (`extractors/busca/correspondencia.py::e_nome_do_anime` — sonda precisa,
     não prefixo curto da escada de recall) trouxe card(s), esses card(s)
     voltam num `ResultadoDeFonte(correspondencia_incerta=True)`, deduplicados
-    por `identificador` e truncados a `_MAXIMO_INCERTOS`. Cobre o site que
+    por (`identificador`, `versao`) e truncados a `_MAXIMO_INCERTOS`. Cobre o site que
     indexa o anime só sob um título que o provedor de metadados não conhece
     (ex. só em PT-BR). A variante vencedora devolvida é `None` nesse caso — não
     houve uma única variante "certa", e o chamador não deve montar banner de
@@ -275,17 +275,23 @@ async def buscar_em_com_variantes(
 
 
 def _deduplicar_candidatos(candidatos: list[ResultadoBusca]) -> list[ResultadoBusca]:
-    """Remove `ResultadoBusca` repetidos por `identificador` (o id do anime
-    naquele site), preservando a primeira ocorrência e a ordem. Usado só no
-    caminho de "correspondência incerta" de `buscar_em_com_variantes`, onde os
-    candidatos são acumulados de VÁRIAS variantes de sonda precisa (romaji e
-    inglês, por exemplo) e o mesmo card pode voltar em mais de uma."""
-    vistos: set[str] = set()
+    """Remove `ResultadoBusca` repetidos por (`identificador`, `versao`),
+    preservando a primeira ocorrência e a ordem. Usado só no caminho de
+    "correspondência incerta" de `buscar_em_com_variantes`, onde os candidatos
+    são acumulados de VÁRIAS variantes de sonda precisa (romaji e inglês, por
+    exemplo) e o mesmo card pode voltar em mais de uma.
+
+    `versao` entra na chave porque um site que serve as duas versões no mesmo
+    anime (AnimeFire: um `id`, "Dublado & Legendado") devolve um candidato por
+    versão com o MESMO `identificador` — deduplicar só por ele descartava o
+    legendado e o "Trocar fonte" oferecia apenas o dublado."""
+    vistos: set[tuple[str, object]] = set()
     unicos: list[ResultadoBusca] = []
     for candidato in candidatos:
-        if candidato.identificador in vistos:
+        chave = (candidato.identificador, candidato.versao)
+        if chave in vistos:
             continue
-        vistos.add(candidato.identificador)
+        vistos.add(chave)
         unicos.append(candidato)
     return unicos
 
