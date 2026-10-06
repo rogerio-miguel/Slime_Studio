@@ -38,6 +38,7 @@ router_admin = APIRouter(prefix="/api/admin/episodios", tags=["admin-episodios"]
 
 _TIPO_M3U8 = "application/vnd.apple.mpegurl"
 _TIPO_TS = "video/mp2t"
+_TIPO_MP4 = "video/mp4"
 _TIPO_JPEG = "image/jpeg"
 _CACHE_MANIFESTO = "private, max-age=60"
 # Nunca `immutable`/max-age longo aqui: a URL do segmento (`seg_%05d.ts`) é
@@ -190,6 +191,8 @@ async def obter_recurso(
         tipo = _TIPO_M3U8
     elif caminho.suffix == ".jpg":
         tipo = _TIPO_JPEG
+    elif caminho.suffix in (".m4s", ".mp4"):
+        tipo = _TIPO_MP4
     else:
         tipo = _TIPO_TS
     # storyboard.jpg segue a mesma política de cache dos segmentos: reprocessar

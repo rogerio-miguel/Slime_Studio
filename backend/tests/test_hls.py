@@ -6,6 +6,8 @@ available` do próprio ffmpeg) e omite a variante — ver `hls.py::empacotar()`
 e a checagem de `#EXT-X-STREAM-INF` no conteúdo do master gerado.
 """
 
+from pathlib import Path
+
 import pytest
 
 from core.erros import FalhaDeFerramenta
@@ -13,6 +15,7 @@ from worker.pipeline.hls import (
     _BITRATE_AUDIO_HINT_BPS,
     _BITRATE_VIDEO_HINT_MINIMO_BPS,
     _hints_de_bitrate,
+    _montar_comando_ffmpeg,
 )
 from worker.pipeline.validacao import EstrategiaFluxo, PlanoDeEmpacotamento, SondagemMidia
 
@@ -92,3 +95,16 @@ def test_duracao_invalida_levanta_falha_de_ferramenta(duracao_s: float):
 
     with pytest.raises(FalhaDeFerramenta):
         _hints_de_bitrate(sondagem, _plano())
+
+
+@pytest.mark.parametrize(
+    ("fmp4", "extensao"), [(True, "seg_%05d.m4s"), (False, "seg_%05d.ts")]
+)
+def test_comando_ffmpeg_escolhe_tipo_de_segmento_pelo_plano(fmp4, extensao):
+    comando = _montar_comando_ffmpeg(
+        Path("ffmpeg"), Path("in.mkv"), Path("/tmp/x.tmp"), _plano(segmentos_fmp4=fmp4),
+        _sondagem(), 8,
+    )
+
+    assert ("-hls_segment_type" in comando) is fmp4
+    assert any(arg.endswith(extensao) for arg in comando)

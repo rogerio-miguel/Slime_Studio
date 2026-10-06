@@ -158,3 +158,21 @@ async def test_segmento_servido_com_sucesso(
     assert resposta.status_code == 200
     assert resposta.content == b"dados-fake-do-segmento"
     assert resposta.headers["cache-control"] == "private, max-age=0, must-revalidate"
+
+
+async def test_segmento_fmp4_servido_como_video_mp4(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
+):
+    diretorio = config_api.media_root / "anime" / "ep3"
+    diretorio.mkdir(parents=True)
+    (diretorio / "master.m3u8").write_text("#EXTM3U\n")
+    (diretorio / "seg_00001.m4s").write_bytes(b"dados-fake-do-segmento")
+    (diretorio / "init.mp4").write_bytes(b"init-fake")
+    episodio_id = await _inserir_episodio_com_hls(
+        sessionmaker_api, titulo_anime="Anime Fmp4", hls_path="anime/ep3/master.m3u8"
+    )
+
+    for nome in ("seg_00001.m4s", "init.mp4"):
+        resposta = await cliente.get(f"/api/episodios/{episodio_id}/{nome}")
+        assert resposta.status_code == 200
+        assert resposta.headers["content-type"] == "video/mp4"

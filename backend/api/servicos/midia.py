@@ -13,8 +13,9 @@ from core.config import Config
 from core.erros import ErroSlimeStudio
 from models.episodio import Episodio
 
-# .jpg: storyboard.jpg (worker/pipeline/storyboard.py)
-_SUFIXOS_PERMITIDOS = {".m3u8", ".ts", ".jpg"}
+# .jpg: storyboard.jpg (worker/pipeline/storyboard.py); .m4s/.mp4: segmentos e
+# init de HLS fMP4 (fonte AV1 copiada sem recodificar)
+_SUFIXOS_PERMITIDOS = {".m3u8", ".ts", ".m4s", ".mp4", ".jpg"}
 
 
 class RecursoDeMidiaInvalido(ErroSlimeStudio):
