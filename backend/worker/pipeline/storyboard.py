@@ -45,6 +45,11 @@ async def gerar_storyboard(
         "-nostdin",
         "-hide_banner",
         "-y",
+        # Só keyframes: decodificar o episódio inteiro (AV1 1080p: ~33s) pra aproveitar
+        # 1 frame a cada 10s é desperdício; o `fps` pega o keyframe mais próximo
+        # (~1s). Prévia de hover tolera o desvio de alguns segundos.
+        "-skip_frame",
+        "nokey",
         "-i",
         str(fonte),
         "-frames:v",

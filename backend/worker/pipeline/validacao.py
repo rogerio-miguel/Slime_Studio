@@ -16,6 +16,9 @@ from worker.pipeline.ferramentas import executar
 # Hi10P (yuv420p10le) é comum em releases de anime e nenhum navegador o
 # decodifica — daí a checagem de pix_fmt abaixo, além de codec/perfil.
 _PERFIS_H264_COMPATIVEIS = {"Baseline", "Main", "High"}
+# AV1 8-bit Main toca por software em qualquer Chrome/Firefox atual; Professional
+# e 10-bit não têm garantia, então seguem pro transcode.
+_PERFIS_AV1_COMPATIVEIS = {"Main"}
 _TIMEOUT_SONDAGEM_S = 30
 
 
@@ -48,6 +51,8 @@ class PlanoDeEmpacotamento:
     # -var_stream_map só de vídeo — sem isso o ffmpeg falha em fontes sem
     # áudio. Ver nota de desvio no relatório final.
     tem_audio: bool
+    # MPEG-TS não carrega AV1: vídeo copiado nesse codec exige segmentos fMP4.
+    segmentos_fmp4: bool = False
 
     @property
     def exige_recodificacao(self) -> bool:
@@ -139,11 +144,17 @@ def decidir_plano(
                 f"{tolerancia_s:.1f}s em torno do esperado ({duracao_esperada_s}s)"
             )
 
-    video_copia = (
+    h264_copiavel = (
         sondagem.codec_video == "h264"
         and sondagem.pix_fmt == "yuv420p"
         and sondagem.perfil_video in _PERFIS_H264_COMPATIVEIS
     )
+    av1_copiavel = (
+        sondagem.codec_video == "av1"
+        and sondagem.pix_fmt == "yuv420p"
+        and sondagem.perfil_video in _PERFIS_AV1_COMPATIVEIS
+    )
+    video_copia = h264_copiavel or av1_copiavel
     audio_copia = sondagem.codec_audio is None or sondagem.codec_audio == "aac"
 
     return PlanoDeEmpacotamento(
@@ -151,6 +162,7 @@ def decidir_plano(
         audio=EstrategiaFluxo.COPIA if audio_copia else EstrategiaFluxo.RECODIFICA,
         rendition=f"{sondagem.altura}p",
         tem_audio=sondagem.codec_audio is not None,
+        segmentos_fmp4=av1_copiavel,
     )
 
 
