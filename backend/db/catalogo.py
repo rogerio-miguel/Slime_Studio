@@ -390,26 +390,22 @@ async def atualizar_lancamentos_em_lote(
         await sessao.commit()
 
 
-async def preencher_banner_visual_em_lote(
-    sessionmaker: _SessionMaker, dados: dict[int, tuple[str, str | None]]
+async def _gravar_visual_em_lote(
+    sessionmaker: _SessionMaker, coluna: str, dados: dict[int, tuple[str, str | None]]
 ) -> None:
-    """Grava `banner_path` (e `capa_cor`, quando o feed traz) de vários `Anime`
-    de uma vez, a partir do cruzamento do feed "em alta"
-    (`api/servicos/descoberta.py`). `dados` já vem filtrado pelo chamador para
-    animes com `banner_path` NULL — preenchimento só-quando-nulo (arte permanente
-    e visível, mesma semântica de `aplicar_metadados`, não a sobrescrita do bloco
-    de lançamento). `anime_id -> (banner_url, capa_cor)`.
+    """`anime_id -> (url, capa_cor)` gravado em `coluna` de vários `Anime`.
+    `capa_cor` vem junto da arte (a cor dominante é da capa) e só é escrita
+    quando o feed a traz — um `capa_cor` ausente não zera uma cor já conhecida.
 
     Particionado em dois lotes (com e sem `capa_cor`), no máximo duas queries no
     total — mesma restrição de `atualizar_lancamentos_em_lote` (o `update` bulk
-    por primary key exige o MESMO conjunto de chaves em todos os dicts do lote):
-    um `capa_cor` ausente no feed não zera uma cor já conhecida do anime."""
+    por primary key exige o MESMO conjunto de chaves em todos os dicts do lote)."""
     if not dados:
         return
     com_cor: list[dict[str, object]] = []
     sem_cor: list[dict[str, object]] = []
-    for anime_id, (banner_url, capa_cor) in dados.items():
-        linha: dict[str, object] = {"id": anime_id, "banner_path": banner_url}
+    for anime_id, (url, capa_cor) in dados.items():
+        linha: dict[str, object] = {"id": anime_id, coluna: url}
         if capa_cor is not None:
             linha["capa_cor"] = capa_cor
             com_cor.append(linha)
@@ -421,6 +417,28 @@ async def preencher_banner_visual_em_lote(
             if lote:
                 await sessao.execute(update(Anime), lote)
         await sessao.commit()
+
+
+async def preencher_banner_visual_em_lote(
+    sessionmaker: _SessionMaker, dados: dict[int, tuple[str, str | None]]
+) -> None:
+    """Grava `banner_path` (e `capa_cor`, quando o feed traz) de vários `Anime`
+    a partir do cruzamento do feed "em alta" (`api/servicos/descoberta.py`).
+    `dados` já vem filtrado pelo chamador para animes com `banner_path` NULL —
+    preenchimento só-quando-nulo (arte permanente e visível, mesma semântica de
+    `aplicar_metadados`, não a sobrescrita do bloco de lançamento)."""
+    await _gravar_visual_em_lote(sessionmaker, "banner_path", dados)
+
+
+async def sincronizar_capas_em_lote(
+    sessionmaker: _SessionMaker, dados: dict[int, tuple[str, str | None]]
+) -> None:
+    """Sobrescreve `capa_path` (e `capa_cor`) de vários `Anime` com a capa que o
+    feed da AniList traz AGORA. Ao contrário do banner (só-quando-nulo), a capa
+    muda na própria AniList — anime não lançado troca o placeholder pela arte
+    oficial — e `aplicar_metadados` só a grava na criação, então o catálogo
+    ficava com a capa antiga. O chamador já filtra para as que de fato mudaram."""
+    await _gravar_visual_em_lote(sessionmaker, "capa_path", dados)
 
 
 async def atualizar_contagem_na_fonte(

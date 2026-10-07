@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos.catalogo import agrupar_franquias, banner_escolhido_da_franquia
+from api.servicos.catalogo import agrupar_franquias, banner_da_temporada_ou_franquia
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
@@ -35,6 +35,7 @@ from db.catalogo import (
     preencher_banner_visual_em_lote,
     promover_a_serie,
     rebaixar_a_extra,
+    sincronizar_capas_em_lote,
     sobrescrever_arte,
 )
 from extractors.versao import remover_marcador_de_versao
@@ -133,7 +134,8 @@ async def listar_em_alta_com_catalogo(
     pares = await _cruzar_com_catalogo(sessionmaker, itens)
     await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
     await _preencher_banner_do_cruzamento(sessionmaker, pares)
-    return await _aplicar_banner_escolhido(sessionmaker, pares)
+    await _sincronizar_capa_do_cruzamento(sessionmaker, pares)
+    return await _aplicar_banner_do_catalogo(sessionmaker, pares)
 
 
 async def listar_novos_lancamentos_com_catalogo(
@@ -148,7 +150,8 @@ async def listar_novos_lancamentos_com_catalogo(
     pares = await _cruzar_com_catalogo(sessionmaker, itens)
     await _refrescar_lancamentos_do_cruzamento(sessionmaker, pares)
     await _preencher_banner_do_cruzamento(sessionmaker, pares)
-    return await _aplicar_banner_escolhido(sessionmaker, pares)
+    await _sincronizar_capa_do_cruzamento(sessionmaker, pares)
+    return await _aplicar_banner_do_catalogo(sessionmaker, pares)
 
 
 async def listar_fileiras_tematicas_com_catalogo(
@@ -184,7 +187,7 @@ async def listar_fileiras_tematicas_com_catalogo(
         tamanhos.append((chave, len(itens)))
 
     pares_achatados = await _cruzar_com_catalogo(sessionmaker, achatados)
-    pares_achatados = await _aplicar_banner_escolhido(sessionmaker, pares_achatados)
+    pares_achatados = await _aplicar_banner_do_catalogo(sessionmaker, pares_achatados)
 
     resultado = []
     cursor = 0
@@ -205,11 +208,13 @@ async def listar_proxima_temporada_com_catalogo(
 
     Sem o refresh oportunista de lançamento de `listar_em_alta_com_catalogo`
     (F4a): animes que ainda não estrearam raramente estão catalogados, e o
-    bloco de lançamento de um título não-lançado muda pouco — o cruzamento
-    seco basta."""
+    bloco de lançamento de um título não-lançado muda pouco. Já a capa é
+    sincronizada (`_sincronizar_capa_do_cruzamento`): é aqui que a AniList mais
+    troca o placeholder pela arte oficial."""
     itens = await servico.listar_proxima_temporada()
     pares = await _cruzar_com_catalogo(sessionmaker, itens)
-    return await _aplicar_banner_escolhido(sessionmaker, pares)
+    await _sincronizar_capa_do_cruzamento(sessionmaker, pares)
+    return await _aplicar_banner_do_catalogo(sessionmaker, pares)
 
 
 async def listar_busca_com_catalogo(
@@ -375,15 +380,58 @@ async def _preencher_banner_do_cruzamento(
         )
 
 
-async def _aplicar_banner_escolhido(
+async def _sincronizar_capa_do_cruzamento(
+    sessionmaker: _SessionMaker, pares: list[tuple[AnimeEmAlta, int | None]]
+) -> None:
+    """Mantém `Anime.capa_path`/`capa_cor` iguais à capa que a AniList serve AGORA:
+    para cada item do feed cruzado com um anime catalogado cuja capa gravada
+    diverge da do feed, sobrescreve. Sem isso a Galeria (lê o catálogo) e a Home
+    (lê o feed) mostram capas diferentes, principalmente em anime não lançado, em
+    que a AniList troca o placeholder pela arte oficial. Nenhuma chamada de rede
+    extra — o item já veio no feed.
+
+    Best-effort de ponta a ponta: falha de leitura ou de escrita vira `warning` e
+    nunca derruba o feed (o cruzamento já foi montado)."""
+    do_feed = {
+        anime_id: item
+        for item, anime_id in pares
+        if anime_id is not None and item.capa_url
+    }
+    if not do_feed:
+        return
+
+    try:
+        async with sessionmaker() as sessao:
+            resultado = await sessao.execute(
+                select(Anime.id, Anime.capa_path).where(Anime.id.in_(list(do_feed)))
+            )
+            gravadas = resultado.all()
+
+        divergentes = {
+            anime_id: (do_feed[anime_id].capa_url, do_feed[anime_id].capa_cor)
+            for anime_id, capa_gravada in gravadas
+            if capa_gravada != do_feed[anime_id].capa_url
+        }
+        await sincronizar_capas_em_lote(sessionmaker, divergentes)
+    except SQLAlchemyError as excecao:
+        logger.warning(
+            "sincronização de capa no cruzamento do feed falhou (%d candidato(s)): %s",
+            len(do_feed),
+            excecao,
+        )
+
+
+async def _aplicar_banner_do_catalogo(
     sessionmaker: _SessionMaker, pares: list[tuple[AnimeEmAlta, int | None]]
 ) -> list[tuple[AnimeEmAlta, int | None]]:
-    """Troca o `banner_url` do item pelo banner que o usuário escolheu na página
-    do anime (`Anime.banner_escolhido`, lido pela franquia — uma temporada
-    catalogada depois da escolha não o tem na própria linha). Roda DEPOIS do
-    backfill de `_preencher_banner_do_cruzamento`: se rodasse antes, o backfill
-    copiaria a escolha para `banner_path` e limpar a escolha deixaria o resíduo.
-    O cache do feed fica só com dado de provedor, então nada a invalidar.
+    """Troca o `banner_url` do item catalogado pelo banner do catálogo
+    (`banner_da_temporada_ou_franquia`: a escolha do usuário, senão o da própria
+    temporada, senão o da primeira temporada da franquia com banner) — o MESMO que
+    a página do anime exibe, pro carrossel não mostrar a arte do provedor enquanto
+    a página mostra outra. Item sem banner no catálogo mantém o do provedor. Roda
+    DEPOIS do backfill de `_preencher_banner_do_cruzamento`: se rodasse antes, o
+    backfill copiaria a escolha para `banner_path` e limpar a escolha deixaria o
+    resíduo. O cache do feed fica só com dado de provedor, então nada a invalidar.
 
     Best-effort: falha de leitura vira `warning` e devolve os pares do provedor."""
     if all(anime_id is None for _, anime_id in pares):
@@ -392,14 +440,15 @@ async def _aplicar_banner_escolhido(
         async with sessionmaker() as sessao:
             grupos = await agrupar_franquias(sessao)
     except SQLAlchemyError as excecao:
-        logger.warning("leitura do banner escolhido no feed falhou: %s", excecao)
+        logger.warning("leitura do banner do catálogo no feed falhou: %s", excecao)
         return pares
 
     resultado = []
     for item, anime_id in pares:
         grupo = grupos.get(anime_id) if anime_id is not None else None
-        escolhido = banner_escolhido_da_franquia(grupo) if grupo else None
-        resultado.append((replace(item, banner_url=escolhido) if escolhido else item, anime_id))
+        proprio = next((linha.banner_path for linha in grupo or [] if linha.id == anime_id), None)
+        banner = banner_da_temporada_ou_franquia(grupo, proprio) if grupo else None
+        resultado.append((replace(item, banner_url=banner) if banner else item, anime_id))
     return resultado
 
 
