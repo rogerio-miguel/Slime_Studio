@@ -1,3 +1,5 @@
+import { reduzirImagemTmdb } from './reduzirImagemTmdb.js';
+
 // Glow ambiente do hover dos cards de pôster (AnimeCard, CartaoDeEstreia): uma
 // segunda `<img>` da própria capa, borrada e saturada, `-z-10` atrás do pôster.
 // IRMÃ do pôster, não filha: o pôster tem `overflow-hidden` e cortaria o brilho
@@ -16,7 +18,7 @@
 export default function BrilhoDaCapa({ capa, classeAspecto = 'aspect-[2/3]' }) {
   return (
     <img
-      src={capa}
+      src={reduzirImagemTmdb(capa)}
       alt=""
       aria-hidden="true"
       loading="lazy"
