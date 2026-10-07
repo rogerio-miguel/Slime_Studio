@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { IconePlay } from '../player/Icones.jsx';
 import BrilhoDaCapa from './BrilhoDaCapa.jsx';
+import { reduzirImagemTmdb } from './reduzirImagemTmdb.js';
 
 // Re-exportado: `src/inicio/` não pode importar de `src/player/` direto
 // (fronteira Clean Architecture documentada em paginas/Inicio.jsx, D5 do
@@ -32,7 +33,7 @@ export function MiniaturaDoEpisodio({ thumb, modo }) {
   return (
     <img
       key={thumb}
-      src={thumb}
+      src={reduzirImagemTmdb(thumb)}
       alt=""
       loading="lazy"
       onError={() => setFalhouEm(thumb)}
