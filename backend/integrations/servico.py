@@ -1338,14 +1338,20 @@ async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T
     )
 
 
+# Referência FORTE às tasks de overlay que passaram do teto do lote (mesma razão
+# de `_tarefas_de_revalidacao_em_segundo_plano`: o loop só guarda referência
+# fraca de uma task).
+_tarefas_de_arte_atrasada: set[asyncio.Task] = set()
+
+
 async def _sobrepor_arte_em_lote(itens: list[AnimeEmAlta]) -> list[AnimeEmAlta]:
     """Sobrepõe arte de TMDB em cada item de um feed, ANTES de gravar no
     cache do feed (D4) — o custo de N chamadas TMDB só é pago 1x por janela
     de TTL do feed, não por request de Home. Mesma mecânica de
     concorrência/deadline de `api/servicos/capas.py::_consultar_capas`: item
-    que não resolveu a tempo mantém a arte da AniList (a *task* pendente é
-    cancelada — não a chamada HTTP síncrona em voo, mesma limitação
-    documentada lá).
+    que não resolveu a tempo sai com a arte da AniList, mas sua task segue em
+    segundo plano e completa a lista devolvida quando terminar (ver o comentário
+    ao fim da função).
 
     Guarda `not itens` explícita: `asyncio.wait` levanta `ValueError` para uma
     lista vazia de tarefas — diferente de `api/servicos/capas.py::_consultar_capas`,
@@ -1362,20 +1368,36 @@ async def _sobrepor_arte_em_lote(itens: list[AnimeEmAlta]) -> list[AnimeEmAlta]:
             item_com_arte = await _com_arte(item, titulo=titulo, ano=item.ano_estreia)
             return indice, item_com_arte
 
-    tasks = [asyncio.ensure_future(_sobrepor_um(i, item)) for i, item in enumerate(itens)]
-    concluidas, pendentes = await asyncio.wait(tasks, timeout=_TETO_LOTE_ARTE_S)
-    if pendentes:
-        for tarefa in pendentes:
-            tarefa.cancel()
-        # Aguarda a cancelação assentar antes de devolver — mesma razão de
-        # `api/servicos/capas.py::_consultar_capas` (a *task* asyncio não pode
-        # ficar solta, mesmo que a thread do OS por trás dela rode até o fim).
-        await asyncio.gather(*pendentes, return_exceptions=True)
-
     resultado = list(itens)
-    for tarefa in concluidas:
+
+    def _aplicar(tarefa: asyncio.Task[tuple[int, AnimeEmAlta]]) -> None:
         indice, item_com_arte = tarefa.result()
         resultado[indice] = item_com_arte
+
+    def _aplicar_atrasada(tarefa: asyncio.Task[tuple[int, AnimeEmAlta]]) -> None:
+        _tarefas_de_arte_atrasada.discard(tarefa)
+        if tarefa.cancelled():
+            return
+        if (excecao := tarefa.exception()) is not None:
+            logger.warning("overlay de arte atrasado falhou: %s", excecao)
+            return
+        _aplicar(tarefa)
+
+    tasks = [asyncio.ensure_future(_sobrepor_um(i, item)) for i, item in enumerate(itens)]
+    concluidas, pendentes = await asyncio.wait(tasks, timeout=_TETO_LOTE_ARTE_S)
+    for tarefa in concluidas:
+        _aplicar(tarefa)
+    # Estourou o teto: o que falta NÃO é cancelado. Cancelar só descartava o
+    # trabalho (a task morria antes de gravar `_memo_arte`) e o feed era cacheado
+    # sem banner até o TTL — com a Home disparando todos os feeds juntos o em-alta
+    # chegou a 18,8s de 20s, então o rabo da fila ficava sem arte. As tasks seguem
+    # em segundo plano e escrevem NA PRÓPRIA `resultado`, que o chamador devolve e
+    # o cache de feed guarda por referência: o feed se completa sozinho, sem
+    # esperar a próxima revalidação. A latência de quem chamou continua limitada
+    # ao teto.
+    for tarefa in pendentes:
+        _tarefas_de_arte_atrasada.add(tarefa)
+        tarefa.add_done_callback(_aplicar_atrasada)
     return resultado
 
 

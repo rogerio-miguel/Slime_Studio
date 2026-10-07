@@ -2553,3 +2553,36 @@ async def test_overlay_continuacao_especifica_mantem_ingles_e_generica_recebe_pt
     assert a.sinopse == especifica
     assert b.sinopse == "Premissa pt."
     assert c.sinopse is None
+
+
+async def test_overlay_que_estoura_o_teto_completa_a_lista_devolvida_depois(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Item que passa do teto sai sem banner, mas a task não é cancelada: ao
+    # terminar, escreve na MESMA lista que o cache de feed guarda por referência.
+    liberar = asyncio.Event()
+
+    arte = ArteDeAnime(banner_url="https://tmdb/b.jpg")
+    monkeypatch.setattr(registro, "_provedores_de_arte", (_ProvedorDeArteFake("tmdb", arte=arte),))
+    monkeypatch.setattr(servico, "_TETO_LOTE_ARTE_S", 0.05)
+
+    async def _arte_lenta(titulo: str, ano: int | None):
+        await liberar.wait()
+        return arte
+
+    async def _chamar_fake(provedor, metodo, *args):
+        return await _arte_lenta(*args)
+
+    monkeypatch.setattr(servico, "_chamar", _chamar_fake)
+    item = AnimeEmAlta(
+        titulo_romaji="Lento", titulo_ingles=None, capa_url=None, banner_url=None, anilist_id=1,
+        ano_estreia=2026,
+    )
+
+    resultado = await servico._sobrepor_arte_em_lote([item])
+    assert resultado[0].banner_url is None
+
+    liberar.set()
+    await asyncio.gather(*servico._tarefas_de_arte_atrasada)
+
+    assert resultado[0].banner_url == "https://tmdb/b.jpg"
