@@ -473,7 +473,7 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
     dependencies=[limitar("buscar-provedor", maximo=60)],
 )
 async def buscar_animes(
-    titulo: str = Query(..., max_length=200),
+    titulo: str = Query(..., max_length=300),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeEmAltaSaida]:
     """Busca livre de anime na biblioteca de metadados (AniList) — alimenta a
@@ -496,7 +496,7 @@ async def buscar_animes(
     dependencies=[limitar("buscar-fontes", maximo=30)],
 )
 async def buscar_animes_em_fontes(
-    titulo: str = Query(..., max_length=200),
+    titulo: str = Query(..., max_length=300),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> BuscaEmFontesSaida:
     """Busca ao vivo em sites de extração — alimenta o diálogo "Trocar fonte":
@@ -588,7 +588,9 @@ async def obter_anime(
         slug=anime.slug,
         ano=anime.ano,
         capa_path=anime.capa_path,
-        banner_path=_banner_da_franquia(anime.banner_path, grupos[anime.id]),
+        banner_path=servico_catalogo.banner_da_temporada_ou_franquia(
+            grupos[anime.id], anime.banner_path
+        ),
         banner_personalizado=(
             servico_catalogo.banner_escolhido_da_franquia(grupos[anime.id]) is not None
         ),
@@ -680,16 +682,6 @@ def _ids_do_seletor_de_temporada(
     if proxima_temporada is not None:
         ids.add(proxima_temporada.id)
     return ids
-
-
-def _banner_da_franquia(banner_proprio: str | None, grupo: list[object]) -> str | None:
-    """Banner único da franquia, pra trocar de temporada no seletor não trocar a
-    arte do hero: a escolha do usuário, se houver; senão o da primeira temporada
-    (`grupo` já ordenado por `numero_temporada`) que tem um. Cai no banner
-    próprio quando nenhuma irmã tem."""
-    return servico_catalogo.banner_escolhido_da_franquia(grupo) or next(
-        (linha.banner_path for linha in grupo if linha.banner_path), banner_proprio
-    )
 
 
 def _colapsar_partes(

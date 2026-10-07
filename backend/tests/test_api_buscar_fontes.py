@@ -339,3 +339,24 @@ async def test_buscar_fontes_correspondencia_incerta_vai_depois_dos_cards_valida
     assert resposta.status_code == 200
     titulos = [r["titulo_exibicao"] for r in resposta.json()["resultados"]]
     assert titulos == ["Certo", "Outro"]
+
+
+async def test_buscar_fontes_aceita_titulo_longo_de_ate_300_caracteres(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    # Títulos romaji de light novel passam de 200 (ex. "Tsuihou Sareta Cheat Fuyo
+    # Majutsushi…", 233); o catálogo aceita até 300, a busca tem de aceitar igual.
+    async def _sem_resultados(sessionmaker, titulo):
+        return []
+
+    monkeypatch.setattr(
+        "api.rotas.animes.servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos",
+        _sem_resultados,
+    )
+    titulo = "a" * 233
+
+    resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": titulo})
+    assert resposta.status_code == 200
+
+    acima = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "a" * 301})
+    assert acima.status_code == 422

@@ -1615,3 +1615,107 @@ async def test_em_alta_sem_banner_escolhido_mantem_o_do_feed(
         "https://feed/banner.jpg",
         "https://feed/fora.jpg",
     ]
+
+
+async def test_em_alta_sem_banner_do_provedor_cai_no_banner_do_catalogo(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    # Temporada nova na AniList vem sem banner; o catálogo tem o da franquia (T1).
+    await _criar_anime(
+        sessionmaker_api, "Slime Franquia", "slime-franquia", anilist_id=1,
+        serie_ancora=10, banner_path="https://catalogo/t1.jpg",
+    )
+    await _criar_anime(
+        sessionmaker_api, "Slime Franquia 2", "slime-franquia-2", anilist_id=2, serie_ancora=10
+    )
+
+    async def _listar_em_alta_fake():
+        return [
+            AnimeEmAlta(
+                titulo_romaji="Anime 2", titulo_ingles=None, capa_url="https://feed/capa.jpg",
+                banner_url=None, anilist_id=2,
+            ),
+            AnimeEmAlta(
+                titulo_romaji="Anime 99", titulo_ingles=None, capa_url="https://feed/capa99.jpg",
+                banner_url=None, anilist_id=99,
+            ),
+        ]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    # Não catalogado (99) segue sem banner; catalogado herda o da franquia.
+    assert [i["banner_url"] for i in resposta.json()] == ["https://catalogo/t1.jpg", None]
+
+
+async def test_em_alta_banner_da_propria_temporada_vence_o_do_provedor_e_o_da_franquia(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    # T2 tem banner próprio no catálogo: vence o do provedor e o da T1.
+    await _criar_anime(
+        sessionmaker_api, "Slime Franquia", "slime-franquia", anilist_id=1,
+        serie_ancora=10, numero_temporada=1, banner_path="https://catalogo/t1.jpg",
+    )
+    await _criar_anime(
+        sessionmaker_api, "Slime Franquia 2", "slime-franquia-2", anilist_id=2,
+        serie_ancora=10, numero_temporada=2, banner_path="https://catalogo/t2.jpg",
+    )
+
+    async def _listar_em_alta_fake():
+        return [_feed_com_banner(2, banner_url="https://feed/t2.jpg", capa_cor="#e4a15d")]
+
+    monkeypatch.setattr("integrations.servico.listar_em_alta", _listar_em_alta_fake)
+
+    resposta = await cliente.get("/api/animes/em-alta")
+
+    assert resposta.json()[0]["banner_url"] == "https://catalogo/t2.jpg"
+
+
+@pytest.mark.parametrize(
+    ("rota", "feed"),
+    [
+        ("/api/animes/em-alta", "listar_em_alta"),
+        ("/api/animes/novos-lancamentos", "listar_novos_lancamentos"),
+        ("/api/animes/proxima-temporada", "listar_proxima_temporada"),
+    ],
+)
+async def test_feed_sincroniza_capa_do_catalogo_quando_a_anilist_troca(
+    cliente: AsyncClient,
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    rota: str,
+    feed: str,
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "Slime Capa", "slime-capa", anilist_id=1,
+        capa_path="https://anilist/placeholder.jpg", capa_cor="#111111",
+    )
+    outro = await _criar_anime(
+        sessionmaker_api, "Slime Igual", "slime-igual", anilist_id=2,
+        capa_path="https://anilist/igual.jpg", capa_cor="#222222",
+    )
+
+    async def _feed_fake():
+        return [
+            AnimeEmAlta(
+                titulo_romaji="Slime Capa", titulo_ingles=None, anilist_id=1,
+                capa_url="https://anilist/oficial.jpg", banner_url=None, capa_cor="#e45dc9",
+            ),
+            AnimeEmAlta(
+                titulo_romaji="Slime Igual", titulo_ingles=None, anilist_id=2,
+                capa_url="https://anilist/igual.jpg", banner_url=None, capa_cor=None,
+            ),
+        ]
+
+    monkeypatch.setattr(f"integrations.servico.{feed}", _feed_fake)
+
+    resposta = await cliente.get(rota)
+
+    assert resposta.status_code == 200
+    async with sessionmaker_api() as sessao:
+        trocada = await sessao.get(Anime, anime_id)
+        igual = await sessao.get(Anime, outro)
+    assert (trocada.capa_path, trocada.capa_cor) == ("https://anilist/oficial.jpg", "#e45dc9")
+    # Capa igual não é reescrita, e `capa_cor` ausente no feed não zera a conhecida.
+    assert (igual.capa_path, igual.capa_cor) == ("https://anilist/igual.jpg", "#222222")

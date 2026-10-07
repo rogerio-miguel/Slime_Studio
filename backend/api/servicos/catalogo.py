@@ -279,6 +279,20 @@ def banner_escolhido_da_franquia(grupo: list[object]) -> str | None:
     return next((linha.banner_escolhido for linha in grupo if linha.banner_escolhido), None)
 
 
+def banner_da_temporada_ou_franquia(
+    grupo: list[object], banner_proprio: str | None
+) -> str | None:
+    """Banner a exibir para uma temporada: a escolha do usuário (vale pra franquia
+    inteira); senão o da própria temporada (`banner_proprio`); senão o da primeira
+    temporada da franquia (`grupo` já ordenado por `numero_temporada`) que tem um.
+    `None` quando nenhuma tem."""
+    return (
+        banner_escolhido_da_franquia(grupo)
+        or banner_proprio
+        or next((linha.banner_path for linha in grupo if linha.banner_path), None)
+    )
+
+
 async def definir_banner_da_franquia(
     sessionmaker: _SessionMaker, anime_id: int, banner_url: str | None
 ) -> bool:
