@@ -418,6 +418,13 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
     }
   }, [remotos.erro]);
 
+  // 409 `versao_indisponivel` na LISTAGEM: nenhum site mapeado ou buscado serve
+  // a versão pedida — na prática, ela ainda não foi lançada (ex. dublado que o
+  // AnimeFire não publicou). Não é falha de consulta: ganha o mesmo aviso
+  // neutro "tente mais tarde" da lista vazia, em vez do alerta vermelho.
+  const versaoIndisponivelNaFonte =
+    remotos.erro instanceof ErroDeApi && remotos.erro.detail?.motivo === 'versao_indisponivel';
+
   // Uma linha por posição de episódio, na ordem em que aparecem na grade.
   // `numero` sozinho não é suficiente como chave: mais de um rótulo remoto
   // pode mapear pro mesmo `numero` inteiro (ex. "7" e "07" — dedup por
@@ -1053,7 +1060,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             )}
           </div>
         )}
-        {remotos.erro && !animeNaoEncontrado && (
+        {remotos.erro && !animeNaoEncontrado && !versaoIndisponivelNaFonte && (
           <div
             role="alert"
             className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
@@ -1241,7 +1248,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           <p role="status" className="text-sm text-ink-muted">
             {remotos.dados
               ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios deste anime. Tente de novo mais tarde.`
-              : 'Nenhum episódio encontrado.'}
+              : versaoIndisponivelNaFonte
+                ? `A versão ${(ROTULO_VERSAO[versaoPedida] ?? versaoPedida).toLowerCase()} ainda não foi publicada em nenhuma fonte. Tente de novo mais tarde.`
+                : 'Nenhum episódio encontrado.'}
           </p>
         )}
         </div>
