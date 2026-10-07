@@ -462,6 +462,7 @@ def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaS
         sinopse=item.sinopse,
         formato=item.formato,
         episodio_lancado=item.episodio_lancado,
+        episodio_lancado_em=item.episodio_lancado_em,
     )
 
 

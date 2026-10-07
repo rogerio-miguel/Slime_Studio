@@ -153,6 +153,7 @@ async def test_em_alta_cruza_com_anime_existente_no_catalogo_local(
         "sinopse": None,
         "formato": None,
         "episodio_lancado": None,
+        "episodio_lancado_em": None,
     }
 
 

@@ -143,6 +143,7 @@ query ($agora: Int) {
   Page(page: 1, perPage: 50) {
     airingSchedules(airingAt_lesser: $agora, sort: TIME_DESC) {
       episode
+      airingAt
       media {
         id
         title { romaji english }
@@ -690,6 +691,11 @@ def _agenda_para_animes_em_alta(dados: dict) -> list[AnimeEmAlta]:
         item = _item_para_anime_em_alta(media)
         if isinstance(episodio, int):
             item = dataclasses.replace(item, episodio_lancado=episodio)
+        instante = agenda.get("airingAt")
+        if isinstance(instante, int) and not isinstance(instante, bool):
+            item = dataclasses.replace(
+                item, episodio_lancado_em=datetime.fromtimestamp(instante, tz=UTC)
+            )
         resultado.append(item)
     return resultado
 
