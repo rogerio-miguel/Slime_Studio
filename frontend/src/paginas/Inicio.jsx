@@ -8,7 +8,6 @@ import {
   listarAnimes,
   listarAnimesEmAlta,
   listarContinuarAssistindo,
-  listarFileirasTematicas,
   listarNovosLancamentos,
   listarProximaTemporada,
   marcarEpisodioAssistido,
@@ -22,29 +21,15 @@ import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
 // só não é renderizado por enquanto.
-import CarrosselDestaques, { IconeEmAlta } from '../inicio/CarrosselDestaques.jsx';
+import CarrosselDestaques from '../inicio/CarrosselDestaques.jsx';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
-import DestaqueGrande from '../inicio/DestaqueGrande.jsx';
-// As fileiras temáticas voltaram a ser renderizadas em 2026-09-20, refeitas
-// do zero (lista de tags de nicho de romance/drama descartada por inteiro —
-// `backend/integrations/registro.py::FILEIRAS_TEMATICAS`) tomando como
-// referência a curadoria do discover da Crunchyroll. As 10 do "mix" aprovado
-// pelo usuário, fatiadas em 3 grupos (3/3/4) intercalados com banners
-// `DestaqueGrande` — ver `fileirasTematicasGrupo1/2/3` e `fileirasDaHome`
-// abaixo. `inicio/intercalarDestaques.js` segue sem uso (era do tempo em que
-// `DestaqueGrande` intercalava vários destaques grandes entre as fileiras
-// automaticamente; hoje os banners são fixos e a intercalação com as
-// fileiras temáticas é feita à mão em `fileirasDaHome`).
-// `inicio/janelaDeDestaques.js` voltou a ser usado (2026-09-20) — não mais
-// pra excluir o recorte do carrossel de "destaques grandes" plurais (que não
-// existem mais), e sim pra excluir esse mesmo recorte do sorteio dos banners
-// (ver `bannerDestaque`/`segundoBannerDestaque`/`terceiroBannerDestaque`
-// abaixo).
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
-import { ordenarPorEstreia, topDaTemporada } from '../inicio/fileiras.js';
-import { rotularFileiras } from '../inicio/fileirasTematicas.js';
+import { agruparPorDiaDeEstreia, ordenarPorEstreia, topDaTemporada } from '../inicio/fileiras.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
-import { embaralharComSemente, recorteVisivelDoCarrossel } from '../inicio/janelaDeDestaques.js';
+import ListaDeLancamentos from '../inicio/ListaDeLancamentos.jsx';
+import PalcoDeEmAlta from '../inicio/PalcoDeEmAlta.jsx';
+import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
+import SlotDoDiaDeEstreia from '../inicio/SlotDoDiaDeEstreia.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 
@@ -56,47 +41,24 @@ const LIMITE_PROXIMAS_ESTREIAS = 20;
 // removida a pedido do usuário (2026-09-15) — a página renderiza direto, sem
 // fase de reveal.
 //
-// Conteúdo (branch `!buscando`): o carrossel hero seguido das fileiras
-// horizontais (inicio/FileiraDeCards.jsx), nesta ordem — "Próximas
-// estreias", "Continuar assistindo", "Top 10 em alta", "Ação sem parar"
-// (1º item do 1º grupo de fileiras temáticas, puxado pra cá — pedido
-// explícito do usuário, 2026-09-20 — o resto do grupo continua mais abaixo),
-// o 1º banner `inicio/DestaqueGrande.jsx` — imagem grande com o mesmo bloco
-// de conteúdo do carrossel hero sobreposto à esquerda (pills, título, fatos,
-// CTA — `inicio/BlocoConteudoHero.jsx`, pedido explícito do usuário,
-// 2026-09-20) —, "Novos lançamentos" (pedido explícito do usuário, pra vir
-// DEPOIS do 1º banner, não mais logo no topo), o resto do 1º grupo de
-// fileiras temáticas ("Isekai" e "Mistério pra desvendar"), o 2º grupo (3:
-// "Só rir pra não chorar", "Terror que tira o sono" e "Gigantes de aço"), o
-// 2º banner e, por fim, o 3º grupo (4: "Adrenalina no esporte", "Fantasia
-// além do real", "Vida cotidiana, sem pressa" e "Prepare o lenço") — grupos e
-// ordem dos banners são pedido explícito do usuário (2026-09-20 pra
-// composição original de 3 banners; o banner do meio foi removido em
-// 2026-09-21 por ficar perto demais do 1º — só 3 fileiras entre os dois,
-// menos espaçamento que entre os banners restantes — restando abertura e
-// fechamento)
-// (ver `fileirasTematicasGrupo1/2/3`, `acaoSemParar` e `fileirasDaHome`
-// abaixo).
+// Conteúdo (branch `!buscando`): o carrossel hero seguido de 4 seções
+// principais, nesta ordem — "Continue de onde parou", "Top 10 em alta" (palco +
+// lista), "Acabou de sair" e "Próximas estreias" (redesenho de 2026-10-07).
+// As fileiras temáticas por gênero e os banners `DestaqueGrande` saíram da Home
+// no mesmo dia, a pedido do usuário (os arquivos `inicio/DestaqueGrande.jsx` e
+// `inicio/fileirasTematicas.js` e o endpoint seguem existindo, só não são
+// renderizados aqui).
 //
-// "Novos lançamentos" vem do feed próprio `GET /api/animes/novos-
-// lancamentos` (agenda de exibição da AniList, um anime por card — o mais
-// recente a ter lançado episódio primeiro); "Top 10" é recorte puro do feed
-// `GET /api/animes/em-alta` (inicio/fileiras.js), mesmo feed de onde saem os
-// itens dos 2 banners (sorteados dentre quem não está no Top 10 nem na janela
-// do carrossel, ver `bannerDestaque`/`segundoBannerDestaque` acima);
-// "Próximas estreias" vem do feed próprio
-// `GET /api/animes/proxima-temporada` (próxima temporada da AniList — o feed
-// "em alta" só traz o que já está no ar); "Continuar assistindo" de
-// `GET /api/episodios/continuar-assistindo`; as fileiras temáticas vêm de
-// `GET /api/animes/fileiras-tematicas` (`backend/integrations/registro.py::
-// FILEIRAS_TEMATICAS`, curadoria por gênero/tag da AniList — rótulo PT e
-// corte de itens em `inicio/fileirasTematicas.js::rotularFileiras`). Cada
-// fileira (e cada banner) some sozinha quando não tem dado (guard no próprio
-// FileiraDeCards, ou o `bannerDestaque`/`segundoBannerDestaque`/
-// `terceiroBannerDestaque && {...}` em `fileirasDaHome`). As fileiras por
-// gênero (`fileirasPorGenero` em fileiras.js, distintas das fileiras
-// temáticas acima) seguem fora da Home — página própria, ainda não
-// construída.
+// "Acabou de sair" vem do feed próprio `GET /api/animes/novos-lancamentos`
+// (agenda de exibição da AniList, um anime por card — o mais recente a ter
+// lançado episódio primeiro); "Top 10" é recorte puro do feed
+// `GET /api/animes/em-alta` (inicio/fileiras.js); "Próximas estreias" vem do
+// feed próprio `GET /api/animes/proxima-temporada` (próxima temporada da
+// AniList — o feed "em alta" só traz o que já está no ar); "Continuar
+// assistindo" de `GET /api/episodios/continuar-assistindo`. Cada seção some
+// sozinha quando não tem dado (guard em `fileirasDaHome`). As fileiras por
+// gênero (`fileirasPorGenero` em fileiras.js) seguem fora da Home — página
+// própria, ainda não construída.
 // "Seu catálogo" segue FORA da Inicio de propósito — o catálogo local (listar,
 // abrir, remover) mora inteiro em `paginas/Galeria.jsx` (rota "/animes",
 // linkada na navbar). `DestaquePrincipal` também não está nesta ordem (pivot
@@ -104,8 +66,8 @@ const LIMITE_PROXIMAS_ESTREIAS = 20;
 //
 // Busca ao vivo (navbar, controlada aqui): digitar substitui inteiramente
 // "Destaques da temporada" por (1) uma grade sobre o catálogo LOCAL
-// (`listarAnimes`, filtro em memória a cada tecla) e (2) "Adicionar da
-// biblioteca" — busca na AniList (`buscarAnimes`, só no Enter). Item ainda
+// (`listarAnimes`, filtro em memória a cada tecla) e (2) "Adicionar ao
+// catálogo" — busca na AniList (`buscarAnimes`, só no Enter). Item ainda
 // não catalogado materializa ao clicar (`materializarEIrPara`, mesmo fluxo
 // dos cards do feed); item já catalogado (`item.anime_id` presente) passa
 // pro `AnimeCard` como `anime.anime_id` — o próprio card já sabe virar
@@ -252,71 +214,11 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
     [proximaTemporada.dados]
   );
 
-  // Fileiras temáticas — `GET /api/animes/fileiras-tematicas`. Mesma exibição
-  // silenciosa das demais fileiras auto-hospedadas: em carregando/erro a
-  // seção simplesmente não aparece, e cada fileira some sozinha se vier vazia
-  // (guard em FileiraDeCards). Tradução de `chave` para rótulo PT e corte de
-  // itens ficam em `rotularFileiras` (inicio/fileirasTematicas.js). Fatiada
-  // em 3 grupos (3/3/4, pedido explícito do usuário, 2026-09-20) pra
-  // intercalar com os 3 banners em `fileirasDaHome` — os cortes são por
-  // POSIÇÃO, não por `chave`: dependem da ordem de
-  // `backend/integrations/registro.py::FILEIRAS_TEMATICAS` (comentário lá
-  // avisa pra não reordenar sem revisar aqui).
-  const fileirasTematicas = useRecurso(listarFileirasTematicas, []);
-  const fileirasTematicasRotuladas = useMemo(
-    () => rotularFileiras(fileirasTematicas.dados),
-    [fileirasTematicas.dados]
-  );
-  const fileirasTematicasGrupo1 = fileirasTematicasRotuladas.slice(0, 3);
-  const fileirasTematicasGrupo2 = fileirasTematicasRotuladas.slice(3, 6);
-  const fileirasTematicasGrupo3 = fileirasTematicasRotuladas.slice(6, 10);
-  // "Ação sem parar" (1º item do grupo 1) sai do grupo e vai logo após "Top
-  // 10" (pedido explícito do usuário, 2026-09-20) — o resto do grupo 1
-  // continua de onde estava (antes do 2º banner). Ver `fileirasDaHome`.
-  const [acaoSemParar, ...restoFileirasTematicasGrupo1] = fileirasTematicasGrupo1;
-
   // "Top 10" — recorte puro do feed `em-alta` (inicio/fileiras.js). `?? []`
   // porque `emAlta.dados` é `null` até a primeira resposta. (As fileiras por
   // gênero — `fileirasPorGenero`, ainda exportada de fileiras.js — saíram da
   // Home; vão pra uma página própria.)
   const top10 = useMemo(() => topDaTemporada(emAlta.dados ?? []), [emAlta.dados]);
-
-  // Banners da Home (inicio/DestaqueGrande.jsx) — 2 itens SORTEADOS do feed
-  // `em-alta` (pedido explícito do usuário, 2026-09-20: antes eram sempre o
-  // colocado seguinte que sobrava, agora é aleatório) excluindo quem já
-  // aparece em "Top 10" OU na janela atual do carrossel hero
-  // (`recorteVisivelDoCarrossel`, mesma fórmula/semente de
-  // `CarrosselDestaques.jsx` — reproduzida aqui só pra saber QUAIS chaves
-  // excluir, não pra renderizar nada; tolerância de "melhor esforço"
-  // documentada em `inicio/janelaDeDestaques.js`), com `banner_url` (sem isso
-  // o componente mesmo não renderiza nada). `embaralharComSemente` com
-  // semente aleatória a cada recálculo — reusa o Fisher-Yates de
-  // `janelaDeDestaques.js` só pra embaralhar, sem o relógio (aqui não precisa
-  // rotacionar por tempo: já reembaralha sozinho a cada novo fetch de
-  // `em-alta`, guard de `useMemo` abaixo). `bannerDestaque` abre a home (logo
-  // após "Top 10"); `segundoBannerDestaque` fecha, entre o grupo 2 e o grupo
-  // 3 de fileiras temáticas (ver `fileirasDaHome`) — um 3º banner existiu
-  // entre 2026-09-20 e 2026-09-21 (removido por ficar perto demais do 1º,
-  // ver comentário no topo do arquivo). Cada um vira `null` quando não sobra
-  // candidato suficiente, mesmo guard de lista vazia dos outros blocos.
-  // Chave duplicada de `chaveDoItemDoFeed` (declarada mais abaixo, usada
-  // pelos `renderItem` de feed) — inline aqui só porque este cálculo precisa
-  // rodar antes dela existir no arquivo.
-  const [bannerDestaque, segundoBannerDestaque] = useMemo(() => {
-    const chaveItem = (item) => item.anilist_id ?? item.titulo_romaji;
-    const idsExcluidos = new Set([
-      ...top10.map(chaveItem),
-      ...recorteVisivelDoCarrossel(emAlta.dados ?? []).map(chaveItem),
-    ]);
-    const candidatos = (emAlta.dados ?? []).filter(
-      (item) => !idsExcluidos.has(chaveItem(item)) && item.banner_url
-    );
-    const sorteados = embaralharComSemente(candidatos, Math.floor(Math.random() * 2 ** 31)).slice(
-      0,
-      2
-    );
-    return [sorteados[0] ?? null, sorteados[1] ?? null];
-  }, [emAlta.dados, top10]);
 
   // Captura disparada pelo ramo `capturavel` de `CartaoContinuarAssistindo`
   // (nunca capturado ou recaptura de `LIBERADO`/`FALHOU`) — mesmo
@@ -538,9 +440,8 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   const [chaveSalvandoEstreia, setChaveSalvandoEstreia] = useState(null);
 
   // Mesma chave usada por TODOS os feeds AniList não catalogados desta página
-  // ("Próximas estreias", "Top 10", fileiras temáticas) — declarada aqui em
-  // vez de mais abaixo (junto de `renderCardDoFeed`) porque o bloco de
-  // "Próximas estreias" precisa dela primeiro.
+  // ("Próximas estreias", "Top 10", "Acabou de sair") — declarada aqui porque o
+  // bloco de "Próximas estreias" precisa dela primeiro.
   const chaveDoItemDoFeed = (item) => item.anilist_id ?? item.titulo_romaji;
   const estreiaEstaSalva = (item) => {
     const chave = chaveDoItemDoFeed(item);
@@ -606,75 +507,15 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
     [chaveSalvandoEstreia, estreiasSalvas, estreiasSalvasIds, estreiasRemovidas]
   );
 
-  // renderItem da fileira "Top 10", alimentada pelo feed `em-alta` — mesmo
-  // contrato que a busca em fontes já usa: card de item ainda não catalogado
-  // que materializa e navega ao ativar; todos ficam desabilitados enquanto uma
-  // materialização está em voo. `sobreposicao` (opcional) vai pro AnimeCard
-  // como irmão do card DENTRO do wrapper, pra crescer junto no hover — é por
-  // onde entra o numeral do Top 10. `chaveDoItemDoFeed` declarada mais acima,
-  // junto do estado de "Próximas estreias".
-  // `semTagEpisodios` default `true`: só "Top 10" (via este default) — pedido
-  // explícito do usuário (2026-09-20) pra tirar a contagem de episódios desse
-  // card, sobra só pôster + título. Fileiras temáticas passam `false`
-  // explicitamente (pedido explícito do usuário, mesma data) pra mostrar a
-  // contagem — sem `numero_temporada` no item de feed, o card já cai sozinho
-  // no fallback "n episódios" (ver `components/AnimeCard.jsx`).
-  const renderCardDoFeed = (item, sobreposicao, semTagEpisodios = true) => (
-    <AnimeCard
-      anime={item}
-      aoAtivar={() => materializarEIrPara(item)}
-      desabilitado={chaveEmMaterializacao != null}
-      sobreposicao={sobreposicao}
-      semTagEpisodios={semTagEpisodios}
-    />
-  );
-
-  // Entrada de `fileirasDaHome` pra UMA fileira temática já rotulada
-  // (`rotularFileiras`) — extraída porque os 3 grupos (`fileirasDaHome`
-  // abaixo) repetem a mesma `FileiraDeCards`. Mesma âncora `ref`/`data-secao`
-  // das 4 fileiras principais (pedido do usuário, 2026-09-28: incluir as
-  // temáticas no seletor de seções também) — `chave` vira a `valor` da opção
-  // no dropdown, `fileira.rotulo` (já traduzido por `rotularFileiras`) vira o
-  // rótulo, sem precisar de um mapa próprio como `ROTULOS_SECAO_NAV` abaixo.
-  const entradaDeFileiraTematica = (fileira) => {
-    const chave = `tematica-${fileira.chave}`;
-    return {
-      chave,
-      // `rotulo` só existe nas entradas temáticas (as principais resolvem
-      // pelo próprio mapa `ROTULOS_SECAO_NAV`, ver `opcoesSecoes` abaixo) —
-      // é o que permite `opcoesSecoes` montar a opção do dropdown sem
-      // precisar de um segundo mapa `chave -> rótulo` pras temáticas.
-      rotulo: fileira.rotulo,
-      node: (
-        <div key={chave} ref={refSecao(chave)} data-secao={chave}>
-          <FileiraDeCards
-            titulo={fileira.rotulo}
-            itens={fileira.itens}
-            tamanho="pequeno"
-            comSombra={false}
-            chaveDoItem={chaveDoItemDoFeed}
-            renderItem={(item) => renderCardDoFeed(item, undefined, false)}
-          />
-        </div>
-      ),
-    };
-  };
-
   // Navegação por seção na ilha dinâmica — dropdown reaproveitado do filtro
   // da Galeria (`opcoesSecoes`/`secaoSelecionada`/`aoMudarSecao`, mesmo
   // contrato de `opcoesFiltro`/`filtroSelecionado`/`aoMudarFiltro`, ver
   // `BarraDeNavegacao.jsx`), com scroll-spy pra rótulo "atual" e âncoras
-  // `data-secao`/`ref` em TODA fileira com título (as 4 PRINCIPAIS — com
-  // feed próprio, ver `ROTULOS_SECAO_NAV` abaixo — e as ~10 fileiras
-  // TEMÁTICAS por gênero via `entradaDeFileiraTematica`, incluídas a pedido
-  // do usuário 2026-09-28, depois de já existir só as principais). Banners
-  // (`DestaqueGrande`) ficam de fora — não têm título/seção de verdade. Duas
-  // tentativas anteriores de navegação por seção foram revertidas no mesmo
-  // dia — ver o histórico completo em `BarraDeNavegacao.jsx` (topo do
-  // arquivo). Um divisor visual entre principais/temáticas no dropdown foi
-  // tentado e removido a pedido do usuário no mesmo dia (ver
-  // `SeletorEmMenu.jsx`) — por isso não há distinção de "grupo" aqui, só a
-  // ordem de página.
+  // `data-secao`/`ref` em cada uma das 4 seções principais (rótulos em
+  // `ROTULOS_SECAO_NAV` abaixo; as fileiras temáticas e os banners saíram da
+  // Home em 2026-10-07, então a ilha lista só estas). Duas tentativas
+  // anteriores de navegação por seção foram revertidas — ver o histórico em
+  // `BarraDeNavegacao.jsx` (topo do arquivo).
   //
   // `refsSecao`: mapa mutável `chave -> elemento` (não `useState`, a lista
   // de refs não precisa re-renderizar nada por si só) preenchido pelo `ref`
@@ -689,15 +530,12 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // está intersectando — é o mesmo efeito de "em qual seção o topo da
   // viewport já entrou".
   //
-  // `ROTULOS_SECAO_NAV`: só as 4 principais têm rótulo fixo aqui (não vem de
-  // `rotularFileiras`) — as temáticas usam o próprio `fileira.rotulo` (já
-  // traduzido, ver `entradaDeFileiraTematica` acima), sem precisar de um
-  // segundo mapa.
+  // `ROTULOS_SECAO_NAV`: `chave` da seção -> rótulo na ilha.
   const ROTULOS_SECAO_NAV = {
     'proximas-estreias': 'Próximas estreias',
-    'continuar-assistindo': 'Continuar assistindo',
+    'continuar-assistindo': 'Continue de onde parou',
     'top-10': 'Top 10 em alta',
-    'novos-lancamentos': 'Novos lançamentos',
+    'novos-lancamentos': 'Acabou de sair',
   };
   const refsSecao = useRef({});
   const refSecao = useCallback(
@@ -726,37 +564,31 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // nó pronto (com `key`). Só entram as que de fato vão renderizar (lista não
   // vazia). Montado no corpo do render (não `useMemo`): são poucos objetos +
   // JSX leve.
+  //
+  // As 4 seções principais abrem a página (redesenho de 2026-10-07, direção
+  // "B + Top 10 em palco" do artefato de design): continuar → Top 10 → lançamentos
+  // → estreias. Do mais pessoal ao mais geral, e dentro do geral do "agora"
+  // pro "em breve". Cada uma tem título grande (`SecaoDaHome`, ou `destaque` na
+  // `FileiraDeCards` do "continuar").
+  // Posição de cada estreia dentro do seu dia (`primeiro`/`ultimo`) pra
+  // `SlotDoDiaDeEstreia` desenhar a marca do dia acima dos cards.
+  const posicaoNoDiaDeEstreia = new Map(
+    agruparPorDiaDeEstreia(proximaTemporadaOrdenada).flatMap((grupo) =>
+      grupo.itens.map((item, indice) => [
+        chaveDoItemDoFeed(item),
+        { data: grupo.data, primeiro: indice === 0, ultimo: indice === grupo.itens.length - 1 },
+      ])
+    )
+  );
+
   const fileirasDaHome = [
-    (proximaTemporada.dados ?? []).length > 0 && {
-      chave: 'proximas-estreias',
-      node: (
-        <div key="proximas-estreias" ref={refSecao('proximas-estreias')} data-secao="proximas-estreias">
-          <FileiraDeCards
-            titulo="Próximas estreias"
-            itens={proximaTemporadaOrdenada}
-            tamanho="pequeno"
-            comSombra={false}
-            chaveDoItem={chaveDoItemDoFeed}
-            renderItem={(item) => {
-              const chave = chaveDoItemDoFeed(item);
-              return (
-                <CartaoDeEstreia
-                  item={item}
-                  salvo={estreiaEstaSalva(item)}
-                  salvando={chaveSalvandoEstreia === chave}
-                  aoSalvar={() => alternarEstreiaSalva(item)}
-                />
-              );
-            }}
-          />
-        </div>
-      ),
-    },
     itensContinuar.length > 0 && {
       chave: 'continuar-assistindo',
       // `chaveDoItem` por `anime_id` (não mais `episodio_id`, que agora vem
       // nulo no ramo `capturavel` sem episódio) — um card por anime, ver
-      // `backend/api/servicos/progresso.py`.
+      // `backend/api/servicos/progresso.py`. Fileira rolável (não grade): a
+      // lista inteira fica acessível, sem teto de itens; `destaque` mantém o
+      // título na escala das outras seções principais.
       node: (
         <div
           key="continuar-assistindo"
@@ -764,7 +596,9 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
           data-secao="continuar-assistindo"
         >
           <FileiraDeCards
-            titulo="Continuar assistindo"
+            titulo="Continue de onde parou"
+            descricao="Seus animes em andamento, a um clique do próximo episódio."
+            destaque
             itens={itensContinuar}
             tamanho="episodio"
             comSombra={false}
@@ -787,107 +621,80 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
       chave: 'top-10',
       node: (
         <div key="top-10" ref={refSecao('top-10')} data-secao="top-10">
-          <FileiraDeCards
-            titulo="Top 10 em alta"
-            itens={top10}
-            tamanho="pequeno"
-            comSombra={false}
-            chaveDoItem={chaveDoItemDoFeed}
-            // Numeral do Top 10: selo escuro com blur (`bg-black/80
-            // backdrop-blur-md`, mesmo tratamento do badge "Assistido" de
-            // `components/AnimeCard.jsx`) no canto superior esquerdo do pôster
-            // (`z-10`) — substitui a variante anterior de numeral grande
-            // translúcido sangrando pra fora do canto (`-left-6 -top-4`, sem
-            // fundo próprio), que ficava difícil de ler sobre capas claras.
-            // `aria-hidden`/`pointer-events-none`: decorativo, não rouba o
-            // clique. Vai como `sobreposicao` do AnimeCard (irmão do card no
-            // wrapper). `IconeEmAlta` (chama) ao lado do número: mesmo ícone da
-            // pill "#N em alta" do hero (inicio/CarrosselDestaques.jsx).
-            // `h-8`/`h-5 w-5`/`text-sm` (não mais `h-9`/`h-6 w-6`/`text-[18px]`,
-            // pedido explícito do usuário, 2026-09-21): mesmo padrão de tamanho
-            // das pills de `components/AnimeCard.jsx` (Assistido/Já no
-            // catálogo/EP.n/episódio novo).
-            renderItem={(item, indice) =>
-              renderCardDoFeed(
-                item,
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-2 top-2 z-10 flex h-8 px-3.5 items-center gap-1 rounded-2xl bg-black/80 backdrop-blur-md"
-                >
-                  <IconeEmAlta className="h-5 w-5" />
-                  <span className="text-sm font-semibold text-white">#{indice + 1}</span>
-                </div>
-              )
-            }
-          />
+          <SecaoDaHome titulo="Top 10 em alta" descricao="Os dez títulos mais vistos agora.">
+            <PalcoDeEmAlta
+              itens={top10}
+              chaveDoItem={chaveDoItemDoFeed}
+              aoAbrirSinopse={setSinopseNaIlha}
+              sinopseAberta={sinopseNaIlha != null}
+              aoAtivar={materializarEIrPara}
+              desabilitado={chaveEmMaterializacao != null}
+            />
+          </SecaoDaHome>
         </div>
-      ),
-    },
-    acaoSemParar && entradaDeFileiraTematica(acaoSemParar),
-    bannerDestaque && {
-      chave: 'banner-destaque',
-      node: (
-        <DestaqueGrande
-          key="banner-destaque"
-          item={bannerDestaque}
-          rank={(emAlta.dados ?? []).indexOf(bannerDestaque) + 1}
-          aoAtivar={() => materializarEIrPara(bannerDestaque)}
-          desabilitado={chaveEmMaterializacao != null}
-        />
       ),
     },
     (novosLancamentos.dados ?? []).length > 0 && {
       chave: 'novos-lancamentos',
       node: (
-        <div key="novos-lancamentos" ref={refSecao('novos-lancamentos')} data-secao="novos-lancamentos">
-          <FileiraDeCards
-            titulo="Novos lançamentos"
-            itens={novosLancamentos.dados}
-            tamanho="pequeno"
-            comSombra={false}
-            chaveDoItem={chaveDoItemDoFeed}
-            renderItem={(item) => (
-              <AnimeCard
-                anime={item}
-                aoAtivar={() => materializarEIrPara(item)}
-                desabilitado={chaveEmMaterializacao != null}
-                episodioLancado={item.episodio_lancado}
-              />
-            )}
-          />
+        <div
+          key="novos-lancamentos"
+          ref={refSecao('novos-lancamentos')}
+          data-secao="novos-lancamentos"
+          className="pt-2"
+        >
+          <SecaoDaHome titulo="Acabou de sair" descricao="Episódios novos que acabaram de entrar no ar.">
+            <ListaDeLancamentos
+              itens={novosLancamentos.dados}
+              chaveDoItem={chaveDoItemDoFeed}
+              aoAtivar={materializarEIrPara}
+              desabilitado={chaveEmMaterializacao != null}
+            />
+          </SecaoDaHome>
         </div>
       ),
     },
-    ...restoFileirasTematicasGrupo1.map(entradaDeFileiraTematica),
-    ...fileirasTematicasGrupo2.map(entradaDeFileiraTematica),
-    segundoBannerDestaque && {
-      chave: 'segundo-banner-destaque',
+    (proximaTemporada.dados ?? []).length > 0 && {
+      chave: 'proximas-estreias',
       node: (
-        <DestaqueGrande
-          key="segundo-banner-destaque"
-          item={segundoBannerDestaque}
-          rank={(emAlta.dados ?? []).indexOf(segundoBannerDestaque) + 1}
-          aoAtivar={() => materializarEIrPara(segundoBannerDestaque)}
-          desabilitado={chaveEmMaterializacao != null}
-        />
+        <div key="proximas-estreias" ref={refSecao('proximas-estreias')} data-secao="proximas-estreias">
+          <SecaoDaHome
+            titulo="Próximas estreias"
+            descricao="Salve no catálogo para acompanhar os títulos que ainda vão estrear."
+          >
+            <FileiraDeCards
+              semCabecalho
+              titulo="Lista de próximas estreias"
+              itens={proximaTemporadaOrdenada}
+              tamanho="pequeno"
+              comSombra={false}
+              chaveDoItem={chaveDoItemDoFeed}
+              renderItem={(item) => (
+                <SlotDoDiaDeEstreia {...posicaoNoDiaDeEstreia.get(chaveDoItemDoFeed(item))}>
+                  <CartaoDeEstreia
+                    item={item}
+                    salvo={estreiaEstaSalva(item)}
+                    salvando={chaveSalvandoEstreia === chaveDoItemDoFeed(item)}
+                    aoSalvar={() => alternarEstreiaSalva(item)}
+                    semTextoDeData={posicaoNoDiaDeEstreia.get(chaveDoItemDoFeed(item))?.data != null}
+                  />
+                </SlotDoDiaDeEstreia>
+              )}
+            />
+          </SecaoDaHome>
+        </div>
       ),
     },
-    ...fileirasTematicasGrupo3.map(entradaDeFileiraTematica),
   ].filter(Boolean);
 
-  // `opcoesSecoes`: TODA fileira com título que renderizou nesta carga
-  // (`fileirasDaHome` já filtrou lista vazia), NA MESMA ORDEM de
-  // `fileirasDaHome` — ordem de render = ordem de scroll da página, o que o
-  // dropdown e o scroll-spy abaixo assumem. Rótulo vem de `ROTULOS_SECAO_NAV`
-  // (principais) ou de `fileira.rotulo` (temáticas, ver
-  // `entradaDeFileiraTematica` acima); banners não têm nenhum dos dois e
-  // caem fora no `.filter(Boolean)`.
-  const opcoesSecoes = fileirasDaHome
-    .map((fileira) => {
-      const rotulo = ROTULOS_SECAO_NAV[fileira.chave] ?? fileira.rotulo;
-      return rotulo ? { valor: fileira.chave, rotulo } : null;
-    })
-    .filter(Boolean);
+  // `opcoesSecoes`: as seções que renderizaram nesta carga (`fileirasDaHome` já
+  // filtrou lista vazia), NA MESMA ORDEM de `fileirasDaHome` — ordem de render
+  // = ordem de scroll da página, o que o dropdown e o scroll-spy abaixo
+  // assumem. Rótulo vem de `ROTULOS_SECAO_NAV`.
+  const opcoesSecoes = fileirasDaHome.map((fileira) => ({
+    valor: fileira.chave,
+    rotulo: ROTULOS_SECAO_NAV[fileira.chave],
+  }));
 
   // Reobserva quando a lista de seções presentes muda (feed carregou/mudou)
   // — a dep usa a lista de chaves serializada (join) pra não re-rodar o
@@ -1005,6 +812,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                 itens={animesFiltrados}
                 tamanho="pequeno"
                 comSombra={false}
+                comAnimacao={false}
                 chaveDoItem={(anime) => anime.id}
                 renderItem={(anime) => <AnimeCard anime={anime} />}
               />
@@ -1016,7 +824,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                 style={{ paddingInline: PADDING_TITULO_GRADE }}
                 className="mt-12 text-2xl font-semibold text-white"
               >
-                Adicionar da biblioteca
+                Adicionar ao catálogo
               </h2>
               {/* Textos de estado — wrapper só repõe o `paddingInline`; a grade
                   de resultados fica FORA dele (o `paddingInline` dobraria o
@@ -1029,7 +837,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                 )}
                 {termoBuscaSubmetido === '' && (
                   <p className="mt-[22px] text-sm text-ink-muted">
-                    Aperte Enter para buscar na biblioteca.
+                    Aperte Enter para buscar novos animes e adicionar ao catálogo.
                   </p>
                 )}
                 {termoBuscaSubmetido !== '' && resultadosDesatualizados && (
@@ -1038,14 +846,14 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                   </p>
                 )}
                 {buscaBibliotecaAtiva && buscaBiblioteca.carregando && (
-                  <p className="mt-[22px] text-sm text-ink-muted">Buscando na biblioteca…</p>
+                  <p className="mt-[22px] text-sm text-ink-muted">Buscando animes…</p>
                 )}
                 {buscaBibliotecaAtiva && buscaBiblioteca.erro && (
                   <div
                     role="alert"
                     className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
                   >
-                    Não foi possível buscar na biblioteca.{' '}
+                    Não foi possível buscar animes.{' '}
                     <button type="button" onClick={buscaBiblioteca.recarregar} className="underline">
                       Tentar novamente
                     </button>
@@ -1056,7 +864,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                   !buscaBiblioteca.erro &&
                   resultadosBiblioteca.length === 0 && (
                     <p className="mt-[22px] text-sm text-ink-muted">
-                      Nada encontrado na biblioteca para “{termoBuscaSubmetido}”.
+                      Nenhum anime novo encontrado para “{termoBuscaSubmetido}”.
                     </p>
                   )}
               </div>
@@ -1068,6 +876,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                     itens={resultadosBiblioteca}
                     tamanho="pequeno"
                     comSombra={false}
+                    comAnimacao={false}
                     chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
                     renderItem={(item) => {
                       const chave = item.anilist_id ?? item.titulo_romaji;
@@ -1150,22 +959,12 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
               // Sem padding horizontal nem `max-w` de propósito — o carrossel
               // é full-bleed (encosta nas bordas da viewport); os estados de
               // carregando/erro do feed seguem na coluna `max-w-6xl`.
-              // `-mb-26` (6.5rem — reduzido de `-mb-28`/7rem a pedido do
-              // usuário, 2026-09-23): puxa a fileira seguinte pra dentro do
-              // fade da base do hero, deixando o título dela + o topo dos
-              // cards "espiar" sob o gradiente (padrão AnimeFire), com um
-              // pouco mais de respiro entre as bolinhas de paginação
-              // (`lg:bottom-[14.3vh]`, inalterada) e o título "Próximas
-              // estreias" do que o valor anterior. Pré-requisito pro título
-              // não sumir: o <div>
-              // das fileiras abaixo tem `relative z-10` — sem isso o `<h2>` da
-              // primeira fileira (`position:static`) fica ATRÁS do banner/
-              // gradiente do slide, que são `position:absolute` e pintam
-              // depois. Com o `z-10` o título pinta sobre a base escura do
-              // hero e fica legível. O gradiente é `pointer-events-none`,
-              // então a sobreposição não rouba clique dos cards. Casado com
-              // `pt-0` no <div> das fileiras.
-              <section className="-mt-22 -mb-26">
+              // Sem `-mb-*` (2026-10-07, pedido do usuário): o carrossel ocupa a
+              // tela inteira e nenhuma seção "espia" por baixo dele — antes um
+              // `-mb-26` puxava a primeira fileira pra dentro do fade da base
+              // do hero (padrão AnimeFire). O respiro até a primeira seção vem
+              // do `pt-12` do <div> das fileiras abaixo.
+              <section className="-mt-22">
                 <CarrosselDestaques
                   itens={emAlta.dados}
                   aoMaterializar={materializarEIrPara}
@@ -1194,7 +993,9 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                 hero e lista vem do `-mb-32` da <section> acima (peek da
                 primeira fileira sob o fade). Sem carrossel (feed vazio/erro),
                 `space-y-10`/`pb-20` e o `pt-22` do <main> já dão respiro. */}
-            <div className="relative z-10 space-y-10 pb-20 pt-0">
+            {/* `pt-12`: respiro entre o fim do hero (tela cheia, sem peek da
+                primeira seção) e o título grande da primeira seção. */}
+            <div className="relative z-10 space-y-14 pb-20 pt-4">
               {fileirasDaHome.map((fileira) => fileira.node)}
             </div>
 

@@ -10,6 +10,8 @@ import {
   INTERVALO_ROTACAO_MS,
   TAMANHO_DA_JANELA,
 } from './janelaDeDestaques.js';
+import { rotuloHojeAmanha } from './rotuloHojeAmanha.js';
+import { ATRIBUTO_PAUSA_POR_MOUSE, useHoverAposFechar } from './useHoverAposFechar.js';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
 import { traduzirGenero } from './generos.js';
 import BlocoConteudoHero from './BlocoConteudoHero.jsx';
@@ -87,29 +89,32 @@ const INTERVALO_MS = 10000;
 export const SOMBRA_SLIDE_ATIVO =
   'rgba(0,0,0,0.69) 0 26px 30px -10px, rgba(0,0,0,0.73) 0 16px 10px -10px';
 
-// `numeric: 'auto'` dá "amanhã"/"hoje" em vez de "em 1 dia"/"em 0 dias".
-// Instância única de módulo — recriar por render é caro.
-const rtf = new Intl.RelativeTimeFormat('pt-BR', { numeric: 'auto' });
+// Instâncias únicas de módulo — recriar `Intl.*` por render é caro.
+const fmtDiaEMes = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'short' });
+const fmtDiaDaSemana = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' });
 
-// Texto relativo em dias até `iso`. Só chamado com data futura (dias >= 0).
-function relativo(iso) {
-  const dias = Math.round((new Date(iso) - new Date()) / 86400000);
-  return rtf.format(dias, 'day');
+// "Hoje", "Amanhã" e, depois disso, a data ("qua, 15 out") — o mesmo critério da
+// marca do dia de "Próximas estreias" (`rotuloHojeAmanha`).
+function quandoSai(data) {
+  return (
+    rotuloHojeAmanha(data) ??
+    `${fmtDiaDaSemana.format(data).replace('.', '')}, ${fmtDiaEMes.format(data).replace('.', '')}`
+  );
 }
 
 // Texto do próximo episódio a partir de `proximo_ep_em`/`proximo_ep_numero`.
 // Sem data (ausente, ou já no passado/dado inválido — ex. `status_lancamento
 // === 'finalizado'`) retorna null e a linha simplesmente não renderiza, nunca
-// "Invalid Date"/"NaN dias". `relativo`/`rtf` acima continuam locais.
+// "Invalid Date"/"NaN dias".
 export function textoProximoEpisodio(item) {
   const epEm = item.proximo_ep_em;
   if (!epEm) return null;
   const data = new Date(epEm);
   if (Number.isNaN(data.getTime()) || data <= new Date()) return null;
-  const quando = relativo(epEm);
+  const quando = quandoSai(data);
   return item.proximo_ep_numero != null
-    ? `Ep.${item.proximo_ep_numero} ${quando}`
-    : `Novo episódio ${quando}`;
+    ? `Ep.${item.proximo_ep_numero} - ${quando}`
+    : `Novo episódio · ${quando}`;
 }
 
 // Backdrops do TMDB chegam do feed em `w1280` (ver backend/integrations/tmdb.py
@@ -233,6 +238,23 @@ export function gradienteHeroTopoEBase(cor) {
   return `${gradienteSuave('to bottom', cor, 60)}, ${gradienteHero(cor)}`;
 }
 
+// Sombra do bloco de texto do palco do Top 10 (`PalcoDeEmAlta.jsx`), também usada
+// no carrossel pra os dois destaques terem a mesma leitura: fade preto de toda a
+// largura embaixo (52% da altura) mais um escurecimento à esquerda, onde fica o
+// texto; o topo e a direita do banner ficam sem escurecer. Os parâmetros têm os
+// valores do palco; o carrossel, de imagem maior e texto maior, passa uma versão
+// mais escura (uma sombra só atrás do bloco, sem a faixa à esquerda, ficou ruim
+// de ler). Inline pelo mesmo motivo de `SOMBRA_SLIDE_ATIVO` (parser de gradiente
+// do Tailwind v4).
+export function gradienteDeDestaque({
+  alcanceBase = 52,
+  alfaEsquerda = 0.65,
+  alfaMeio = 0.36,
+  fimEsquerda = 55,
+} = {}) {
+  return `${gradienteSuave('to top', '#000', alcanceBase)}, linear-gradient(to right, rgba(0, 0, 0, ${alfaEsquerda}), rgba(0, 0, 0, ${alfaMeio}) 28%, transparent ${fimEsquerda}%)`;
+}
+
 // Botão primário do hero (pílula clara, texto escuro, ícone play) — geometria
 // medida ao vivo no AnimeFire. Compartilhado entre o `<Link>` (anime já
 // catalogado) e o `<button>` de materialização (item do feed), e reusado por
@@ -316,6 +338,7 @@ export default function CarrosselDestaques({
   // — aberta, congela o auto-avanço e a rotação da janela, senão o slide
   // trocaria por baixo de quem está lendo.
   const emPausa = pausado || sinopseAberta;
+  useHoverAposFechar(Boolean(sinopseAberta), setPausado);
   const movimentoReduzido = usePrefersReducedMotion();
 
   // Navegação por passo, com wrap por módulo — sem cópias, o wrap não precisa
@@ -429,13 +452,21 @@ export default function CarrosselDestaques({
     if (evento.detail > 0) evento.currentTarget.blur();
   };
 
+  // O mouse só pausa o auto-avanço em cima do bloco de texto, das setas e das
+  // bolinhas — não mais na tela inteira do hero (que agora ocupa toda a
+  // viewport e travava a rotação com o cursor parado em qualquer ponto). Foco
+  // de teclado continua pausando no contêiner todo (`onFocus` da <section>).
+  const pausarComMouse = {
+    onMouseEnter: () => setPausado(true),
+    onMouseLeave: () => setPausado(false),
+    [ATRIBUTO_PAUSA_POR_MOUSE]: '',
+  };
+
   return (
     <section
       aria-roledescription="carrossel"
       aria-labelledby={idTitulo}
       onKeyDown={aoTeclar}
-      onMouseEnter={() => setPausado(true)}
-      onMouseLeave={() => setPausado(false)}
       onFocus={() => setPausado(true)}
       onBlur={() => setPausado(false)}
     >
@@ -448,13 +479,6 @@ export default function CarrosselDestaques({
           {base.map((item, i) => {
             const ativo = i === indiceAtivo;
             const titulo = item.titulo_romaji || item.titulo_ingles;
-            // Título alternativo (o outro idioma) pro subtítulo nativo — só
-            // aparece se existir E divergir do exibido.
-            const tituloAlternativo =
-              titulo === item.titulo_romaji ? item.titulo_ingles : item.titulo_romaji;
-            const mostrarAlternativo =
-              Boolean(tituloAlternativo) && tituloAlternativo !== titulo;
-            const catalogado = item.anime_id != null;
             // Posição no ranking do feed `em-alta` (já vem ordenado). O item é a
             // MESMA referência de objeto (a janela não clona item), então
             // `indexOf` casa. -1 (não deve acontecer) → sem pill.
@@ -463,23 +487,6 @@ export default function CarrosselDestaques({
             const semBanner = !item.banner_url && Boolean(item.capa_url);
             const fonteImagem = item.banner_url || item.capa_url || null;
             const primeiroDestaque = i === 0;
-
-            const proximoEpisodio = textoProximoEpisodio(item);
-            const generosTraduzidos = (item.generos ?? [])
-              .slice(0, 3)
-              .map((g) => traduzirGenero(g));
-            // Fatos rotulados (Ano/Gêneros/Próximo episódio) — MESMO formato
-            // Rótulo/Valor do painel de fatos de paginas/PaginaDoAnime.jsx
-            // (pedido explícito do usuário: alinhar o design do carrossel
-            // com o novo header da página do anime). Substitui a antiga linha
-            // `meta` de texto corrido ("ano • gêneros").
-            const fatos = [
-              item.ano_estreia != null ? { rotulo: 'Ano', valor: String(item.ano_estreia) } : null,
-              generosTraduzidos.length > 0
-                ? { rotulo: 'Gêneros', valor: generosTraduzidos.join(', ') }
-                : null,
-              proximoEpisodio ? { rotulo: 'Próximo episódio', valor: proximoEpisodio } : null,
-            ].filter(Boolean);
 
             return (
               <li
@@ -523,7 +530,7 @@ export default function CarrosselDestaques({
                     // AnimeFire) — a essa altura (`h-svh`) o `object-cover`
                     // centralizado cortaria rosto/cabeça dos personagens
                     // no banner.
-                    className="absolute inset-0 h-full w-full object-cover object-top"
+                    className="absolute inset-0 h-full w-full object-cover object-[100%_0%]"
                   />
                 )}
 
@@ -562,133 +569,32 @@ export default function CarrosselDestaques({
                     // `#000`: cor do `<main>` da Home (paginas/Inicio.jsx,
                     // `bg-black`) — o hero dissolve nela, não mais no antigo
                     // `#17171b` (ver rationale em gradienteHero acima).
-                    background: semBanner ? gradienteHeroSemBanner('#000') : gradienteHero('#000'),
+                    background: gradienteDeDestaque({
+                      alcanceBase: 70,
+                      alfaEsquerda: 0.85,
+                      alfaMeio: 0.55,
+                      fimEsquerda: 65,
+                    }),
                   }}
                 />
 
-                {/* Bloco de conteúdo — esqueleto compartilhado com o header de
-                    paginas/PaginaDoAnime.jsx (./BlocoConteudoHero.jsx: pills →
-                    título/subtítulo → sinopse → meta → CTA). Aqui só o
+                {/* Bloco de conteúdo — `ConteudoDeDestaque` (abaixo), compartilhado
+                    com o palco do Top 10 e montado sobre ./BlocoConteudoHero.jsx
+                    (pills → título/subtítulo → sinopse → meta → CTA). Aqui só o
                     posicionamento é próprio do slide: ancorado embaixo-
                     esquerda, largura limitada a `45vw` no desktop, texto
                     empurrado pro rodapé do hero (geometria medida ao vivo no
                     AnimeFire). Sem `pointer-events-none`: tem botão/link
                     dentro; os textos puros não roubam clique de nada (não há
                     mais overlay de slide). */}
-                <BlocoConteudoHero
+                <ConteudoDeDestaque
+                  {...pausarComMouse}
+                  item={item}
+                  rank={rank}
                   className="absolute inset-x-0 bottom-0 max-w-[90%] pb-10 sm:max-w-[70%] sm:pb-14 lg:max-w-[45vw] lg:pb-[18vh] xl:pb-[20vh]"
-                  pills={[
-                    rank > 0 && (
-                      <span key="rank" className={CLASSE_PILL_HERO}>
-                        <IconeEmAlta />
-                        {`#${rank} em alta`}
-                      </span>
-                    ),
-                    catalogado && (
-                      <span key="catalogado" className={CLASSE_PILL_HERO}>
-                        Anime no Catálogo
-                      </span>
-                    ),
-                  ].filter(Boolean)}
-                  titulo={
-                    <h3 className="mb-1 line-clamp-2 text-2xl font-extrabold text-white sm:text-4xl lg:text-5xl lg:leading-[1.2]">
-                      {catalogado ? (
-                        <Link
-                          to={`/anime/${item.anime_id}`}
-                          className="rounded-sm outline-none"
-                        >
-                          {titulo}
-                        </Link>
-                      ) : (
-                        titulo
-                      )}
-                    </h3>
-                  }
-                  tituloSecundario={
-                    mostrarAlternativo && (
-                      <p className="line-clamp-1 text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
-                        {tituloAlternativo}
-                      </p>
-                    )
-                  }
-                  // Só o feed "em alta" traz sinopse (`AnimeEmAltaSaida.sinopse`).
-                  // Escondida abaixo de `sm` porque no mobile o slide é curto
-                  // demais e a sinopse empurraria o CTA pra fora (a página do
-                  // anime não tem esse limite — o hero dela cresce).
-                  sinopse={item.sinopse}
-                  ocultarSinopseNoMobile
-                  // O botão só aparece se o `line-clamp` cortou texto (decisão
-                  // do `BlocoConteudoHero`); só o slide ativo é focável
-                  // (`inert` nos demais).
-                  acaoSinopse={
-                    <button
-                      type="button"
-                      onClick={(evento) => {
-                        aoAbrirSinopse({
-                          titulo,
-                          tituloSecundario: mostrarAlternativo ? tituloAlternativo : null,
-                          texto: item.sinopse,
-                          // O dialog devolve o foco ao botão que o abriu; aberto
-                          // por mouse/toque, isso deixaria a <section> "com foco
-                          // dentro" (ver `desfocarSePonteiro`).
-                          porPonteiro: evento.detail > 0,
-                        });
-                      }}
-                      aria-haspopup="dialog"
-                      className="-mt-0.5 inline-flex min-h-9 cursor-pointer items-center text-sm font-bold text-neon outline-none transition-colors hover:text-white focus-visible:underline"
-                    >
-                      Ler sinopse completa
-                    </button>
-                  }
-                  // Fatos rotulados (Ano/Gêneros/Próximo episódio) ACIMA do
-                  // botão — o AnimeFire não mostra essa linha no hero, mas o
-                  // usuário quis mantê-la e vê-la nesta posição. MESMO
-                  // formato Rótulo/Valor do painel de fatos de
-                  // paginas/PaginaDoAnime.jsx (pedido explícito do usuário).
-                  metaExtra={
-                    fatos.length > 0 && (
-                      <div className="flex flex-wrap gap-6">
-                        {fatos.map((fato) => (
-                          <div key={fato.rotulo} className="flex flex-col gap-0.5">
-                            <span className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
-                              {fato.rotulo}
-                            </span>
-                            <span className="text-sm font-bold text-white sm:text-base">
-                              {fato.valor}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  }
-                  cta={
-                    catalogado ? (
-                      <Link
-                        to={`/anime/${item.anime_id}`}
-                        aria-label={`${titulo} — assistir agora`}
-                        // `mt-2` extra (além do `gap-4` do esqueleto entre
-                        // seções) só aqui — pedido explícito do usuário pra
-                        // afastar o CTA dos fatos logo acima. Direto no
-                        // elemento, não em `CLASSE_BOTAO_HERO`, pra não afetar
-                        // os outros usos da constante.
-                        className={`${CLASSE_BOTAO_HERO} mt-8`}
-                      >
-                        <IconePlay width={20} height={20} fill="currentColor" />
-                        Assistir agora
-                      </Link>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => aoMaterializar(item)}
-                        disabled={materializando}
-                        aria-label={materializando ? undefined : `Adicionar ${titulo} ao catálogo`}
-                        className={`${CLASSE_BOTAO_HERO} mt-8`}
-                      >
-                        <IconePlay width={20} height={20} fill="currentColor" />
-                        {materializando ? 'Adicionando…' : 'Adicionar ao Catálogo'}
-                      </button>
-                    )
-                  }
+                  aoAbrirSinopse={aoAbrirSinopse}
+                  aoMaterializar={aoMaterializar}
+                  materializando={materializando}
                 />
               </li>
             );
@@ -705,7 +611,8 @@ export default function CarrosselDestaques({
               }}
               aria-label="Destaque anterior"
               aria-controls={idSlides}
-              className="absolute inset-y-0 left-0 z-10 flex w-[3.8vw] min-w-10 cursor-pointer items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
+              {...pausarComMouse}
+              className="absolute inset-y-0 left-0 z-10 flex w-[3.8vw] min-w-10 cursor-pointer items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 hover:opacity-100 motion-reduce:transition-none"
             >
               <IconeSeta direcao="esquerda" />
             </button>
@@ -717,13 +624,15 @@ export default function CarrosselDestaques({
               }}
               aria-label="Próximo destaque"
               aria-controls={idSlides}
-              className="absolute inset-y-0 right-0 z-10 flex w-[3.8vw] min-w-10 cursor-pointer items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 group-hover:opacity-100 motion-reduce:transition-none"
+              {...pausarComMouse}
+              className="absolute inset-y-0 right-0 z-10 flex w-[3.8vw] min-w-10 cursor-pointer items-center justify-center text-white/60 opacity-0 outline-none transition-opacity hover:text-neon focus-visible:opacity-100 hover:opacity-100 motion-reduce:transition-none"
             >
               <IconeSeta direcao="direita" />
             </button>
 
-            {/* Paginação SOBREPOSTA na imagem, dentro do hero (`bottom-[14.3vh]`
-                no desktop, medido no AnimeFire; mais baixo no mobile, onde o
+            {/* Paginação SOBREPOSTA na imagem, dentro do hero (`bottom-[6vh]`
+                no desktop — era 14.3vh, medido no AnimeFire, até o hero virar
+                tela cheia sem seção espiando por baixo, 2026-10-07; mais baixo no mobile, onde o
                 bloco de conteúdo fica colado no rodapé e ocuparia essa faixa).
                 Bullet ativo vira uma barrinha de PROGRESSO enquanto o
                 auto-avanço está rodando — mostra quanto falta pra trocar de
@@ -742,7 +651,10 @@ export default function CarrosselDestaques({
                 (`w-8`, subiu de `w-6` pra caber a barra) mantêm o alvo de
                 clique e o rótulo, uniforme pra todas as bolinhas (sem pulo de
                 layout quando uma vira a ativa). */}
-            <div className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 gap-2 lg:bottom-[14.3vh]">
+            <div
+              {...pausarComMouse}
+              className="absolute bottom-6 left-1/2 z-20 flex -translate-x-1/2 gap-2 lg:bottom-[6vh]"
+            >
               {base.map((item, i) => {
                 const ehAtiva = i === indiceAtivo;
                 return (
@@ -801,5 +713,163 @@ export default function CarrosselDestaques({
         )}
       </div>
     </section>
+  );
+}
+
+// Bloco de conteúdo de um destaque do feed `em-alta` (pills → título →
+// sinopse → fatos → CTA) — fonte única do visual, usada pelo slide do carrossel
+// (esta página) e pelo palco do Top 10 (`PalcoDeEmAlta.jsx`). `compacto` é a
+// versão do palco: mesmos tamanhos de título, sinopse e botão, mas só o
+// essencial — sem pills, subtítulo nem fatos.
+// O que muda de um uso pro outro entra por prop: `className` (posição),
+// `aoAbrirSinopse`, `aoMaterializar`/`materializando` (CTA de item fora do
+// catálogo) e `rank` (pill "#N em alta"; ≤ 0 não mostra). Handlers extras
+// (ex. `onMouseEnter` do carrossel) vão pro contêiner via `...propsDoContainer`.
+export function ConteudoDeDestaque({
+  item,
+  rank = 0,
+  compacto = false,
+  className,
+  aoAbrirSinopse,
+  aoMaterializar,
+  materializando,
+  ...propsDoContainer
+}) {
+  const titulo = item.titulo_romaji || item.titulo_ingles;
+  // Título alternativo (o outro idioma) pro subtítulo nativo — só aparece se
+  // existir E divergir do exibido.
+  const tituloAlternativo = titulo === item.titulo_romaji ? item.titulo_ingles : item.titulo_romaji;
+  const mostrarAlternativo = Boolean(tituloAlternativo) && tituloAlternativo !== titulo;
+  const catalogado = item.anime_id != null;
+
+  const proximoEpisodio = textoProximoEpisodio(item);
+  const generosTraduzidos = (item.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
+  // Fatos rotulados (Ano/Gêneros/Próximo episódio) — MESMO formato
+  // Rótulo/Valor do painel de fatos de paginas/PaginaDoAnime.jsx (pedido
+  // explícito do usuário: alinhar o design do carrossel com o novo header da
+  // página do anime). Substitui a antiga linha `meta` de texto corrido
+  // ("ano • gêneros").
+  const fatos = [
+    item.ano_estreia != null ? { rotulo: 'Ano', valor: String(item.ano_estreia) } : null,
+    generosTraduzidos.length > 0 ? { rotulo: 'Gêneros', valor: generosTraduzidos.join(', ') } : null,
+    proximoEpisodio ? { rotulo: 'Próximo episódio', valor: proximoEpisodio } : null,
+  ].filter(Boolean);
+
+  // `mt-8` extra (além do `gap-4` do esqueleto) só na versão cheia — pedido
+  // explícito do usuário pra afastar o CTA dos fatos logo acima. Direto aqui,
+  // não em `CLASSE_BOTAO_HERO`, pra não afetar os outros usos da constante.
+  const classeCta = `${CLASSE_BOTAO_HERO} ${compacto ? 'mt-1' : 'mt-8'}`;
+
+  return (
+    <BlocoConteudoHero
+      {...propsDoContainer}
+      compacto={compacto}
+      className={className}
+      pills={
+        compacto
+          ? []
+          : [
+              rank > 0 && (
+                <span key="rank" className={CLASSE_PILL_HERO}>
+                  <IconeEmAlta />
+                  {`#${rank} em alta`}
+                </span>
+              ),
+              catalogado && (
+                <span key="catalogado" className={CLASSE_PILL_HERO}>
+                  Anime no Catálogo
+                </span>
+              ),
+            ].filter(Boolean)
+      }
+      titulo={
+        <h3 className="mb-1 line-clamp-2 text-2xl font-extrabold text-white sm:text-4xl lg:text-5xl lg:leading-[1.2]">
+          {catalogado ? (
+            <Link to={`/anime/${item.anime_id}`} className="rounded-sm outline-none">
+              {titulo}
+            </Link>
+          ) : (
+            titulo
+          )}
+        </h3>
+      }
+      tituloSecundario={
+        !compacto &&
+        mostrarAlternativo && (
+          <p className="line-clamp-1 text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
+            {tituloAlternativo}
+          </p>
+        )
+      }
+      // Só o feed "em alta" traz sinopse (`AnimeEmAltaSaida.sinopse`). Escondida
+      // abaixo de `sm` porque no mobile o slide é curto demais e a sinopse
+      // empurraria o CTA pra fora (a página do anime não tem esse limite — o
+      // hero dela cresce).
+      sinopse={item.sinopse}
+      ocultarSinopseNoMobile
+      // O botão só aparece se o `line-clamp` cortou texto (decisão do
+      // `BlocoConteudoHero`); no carrossel só o slide ativo é focável (`inert`
+      // nos demais).
+      acaoSinopse={
+        <button
+          type="button"
+          onClick={(evento) => {
+            aoAbrirSinopse({
+              titulo,
+              tituloSecundario: mostrarAlternativo ? tituloAlternativo : null,
+              texto: item.sinopse,
+              // O dialog devolve o foco ao botão que o abriu; aberto por
+              // mouse/toque, isso deixaria o contêiner "com foco dentro" (ver
+              // `desfocarSePonteiro` no carrossel).
+              porPonteiro: evento.detail > 0,
+            });
+          }}
+          aria-haspopup="dialog"
+          className="-mt-0.5 inline-flex min-h-9 cursor-pointer items-center text-sm font-bold text-neon outline-none transition-colors hover:text-white focus-visible:underline"
+        >
+          Ler sinopse completa
+        </button>
+      }
+      // Fatos ACIMA do botão — o AnimeFire não mostra essa linha no hero, mas o
+      // usuário quis mantê-la e vê-la nesta posição.
+      metaExtra={
+        !compacto &&
+        fatos.length > 0 && (
+          <div className="flex flex-wrap gap-6">
+            {fatos.map((fato) => (
+              <div key={fato.rotulo} className="flex flex-col gap-0.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
+                  {fato.rotulo}
+                </span>
+                <span className="text-sm font-bold text-white sm:text-base">{fato.valor}</span>
+              </div>
+            ))}
+          </div>
+        )
+      }
+      cta={
+        catalogado ? (
+          <Link
+            to={`/anime/${item.anime_id}`}
+            aria-label={`${titulo} — assistir agora`}
+            className={classeCta}
+          >
+            <IconePlay width={20} height={20} fill="currentColor" />
+            Assistir agora
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => aoMaterializar(item)}
+            disabled={materializando}
+            aria-label={materializando ? undefined : `Adicionar ${titulo} ao catálogo`}
+            className={classeCta}
+          >
+            <IconePlay width={20} height={20} fill="currentColor" />
+            {materializando ? 'Adicionando…' : 'Adicionar ao Catálogo'}
+          </button>
+        )
+      }
+    />
   );
 }

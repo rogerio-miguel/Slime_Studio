@@ -82,11 +82,21 @@ export default function FileiraDeCards({
   idRotulo,
   tamanho = 'grande',
   comSombra = true,
+  // `destaque`: título na escala das `SecaoDaHome` (seções principais da Home),
+  // com `descricao` opcional embaixo — a fileira rolável vira uma seção
+  // principal sem perder as setas/paginação.
+  destaque = false,
+  descricao,
+  // `semCabecalho`: a seção que contém a fileira já tem o título visível (ex.
+  // `SecaoDaHome`), então o `<h2>` fica só pra leitor de tela e o indicador de
+  // página vira as bolinhas do `destaque` (centradas depois dos cards).
+  semCabecalho = false,
 }) {
   const idGerado = useId();
   const idTitulo = idRotulo ?? idGerado;
   const idTrilha = useId();
   const trilhaRef = useRef(null);
+  const secaoRef = useRef(null);
   const movimentoReduzido = usePrefersReducedMotion();
 
   const lista = itens ?? [];
@@ -139,6 +149,33 @@ export default function FileiraDeCards({
       );
     }
   }, []);
+
+  // Pré-carrega as capas da fileira inteira assim que ela chega perto da tela.
+  // Os cards usam `loading="lazy"`, e o navegador só busca a imagem quando ela
+  // está a ~1000px da janela: com a fileira à vista, as páginas seguintes ainda
+  // não tinham baixado e, ao clicar na seta ou numa bolinha, os cards entravam
+  // em branco e a imagem "pulava" depois (medido: 9 de 20 capas carregadas com
+  // a fileira de estreias na tela). Trocar `lazy` -> `eager` numa <img> já
+  // existente dispara o download na hora; o glow do hover (`aria-hidden`) fica
+  // de fora, ele só precisa existir quando há hover.
+  useEffect(() => {
+    const secao = secaoRef.current;
+    if (!secao || typeof IntersectionObserver === 'undefined') return undefined;
+    const observador = new IntersectionObserver(
+      (entradas) => {
+        if (!entradas.some((entrada) => entrada.isIntersecting)) return;
+        trilhaRef.current
+          ?.querySelectorAll('img[loading="lazy"]:not([aria-hidden="true"])')
+          .forEach((imagem) => {
+            imagem.loading = 'eager';
+          });
+        observador.disconnect();
+      },
+      { rootMargin: '400px 0px' }
+    );
+    observador.observe(secao);
+    return () => observador.disconnect();
+  }, [lista.length]);
 
   // Uma medição no mount, a cada mudança no tamanho da lista (feed pode
   // recarregar com mais/menos itens e mudar se há transbordo) e a cada troca
@@ -210,7 +247,7 @@ export default function FileiraDeCards({
   const classesRevelar = 'group-hover/fileira:opacity-100 focus-visible:opacity-100';
 
   return (
-    <section aria-labelledby={idTitulo}>
+    <section ref={secaoRef} aria-labelledby={idTitulo}>
       {/* Sem `margin-bottom`: o respiro até os cards vem do `pt` da trilha.
           `PADDING_TITULO` (./tamanhoDeCard.js) alinha o título (e as pílulas,
           no extremo oposto da MESMA linha) com a borda do CARD — hoje só o
@@ -222,20 +259,43 @@ export default function FileiraDeCards({
           no primeiro/último `<li>`, então as bordas de fora continuam
           coincidindo com o gutter/título como nos outros tamanhos. Vai no
           `style` pelo mesmo motivo do `flex-basis` abaixo. */}
-      <div
-        style={{ paddingInline: PADDING_TITULO }}
-        className="flex items-center gap-4"
-      >
-        <h2 id={idTitulo} className="text-[22px] font-bold text-[#dbdcde]">
+      {semCabecalho ? (
+        <h2 id={idTitulo} className="sr-only">
           {titulo}
         </h2>
-        <PilulasDePaginacao
-          atual={paginacao.atual}
-          total={paginacao.total}
-          titulo={titulo}
-          aoClicar={irParaPagina}
-        />
-      </div>
+      ) : (
+        <div
+          style={{ paddingInline: PADDING_TITULO }}
+          className="flex items-center gap-4"
+        >
+          <h2
+            id={idTitulo}
+            className={
+              destaque
+                ? 'text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-5xl'
+                : 'text-[22px] font-bold text-[#dbdcde]'
+            }
+          >
+            {titulo}
+          </h2>
+          {!destaque && (
+            <PilulasDePaginacao
+              atual={paginacao.atual}
+              total={paginacao.total}
+              titulo={titulo}
+              aoClicar={irParaPagina}
+            />
+          )}
+        </div>
+      )}
+      {descricao && (
+        <p
+          style={{ paddingInline: PADDING_TITULO }}
+          className="mt-2 text-sm font-bold text-ink-muted sm:text-base"
+        >
+          {descricao}
+        </p>
+      )}
 
       {/* `group/fileira relative`: revela as setas no hover/foco e ancora o
           posicionamento absoluto delas. Grupo NOMEADO — os cards dentro têm
@@ -342,7 +402,51 @@ export default function FileiraDeCards({
           <IconeSeta direcao="direita" />
         </button>
       </div>
+      {(destaque || semCabecalho) && (
+        <PontosDePaginacao
+          atual={paginacao.atual}
+          total={paginacao.total}
+          titulo={titulo}
+          aoClicar={irParaPagina}
+        />
+      )}
     </section>
+  );
+}
+
+// Paginação da fileira em `destaque`: centralizada DEPOIS dos cards, no desenho
+// das bolinhas do carrossel hero (`CarrosselDestaques.jsx` — ativa vira barra
+// `w-8`, as outras ficam `w-2`), só que sem o preenchimento de progresso: a
+// fileira não avança sozinha. `-mt-2` compensa parte do `-mb-[44px]` da trilha
+// (ver comentário lá), que deixaria as bolinhas longe demais dos cards.
+function PontosDePaginacao({ atual, total, titulo, aoClicar }) {
+  if (total <= 1) return null;
+  return (
+    <div className="-mt-2 flex justify-center gap-2">
+      {Array.from({ length: total }, (_, indice) => {
+        const ehAtiva = indice === atual;
+        return (
+          <button
+            key={indice}
+            type="button"
+            onClick={(evento) => {
+              aoClicar(indice);
+              if (evento.detail > 0) evento.currentTarget.blur();
+            }}
+            aria-label={`Página ${indice + 1} de ${total}: ${titulo}`}
+            aria-current={ehAtiva ? 'true' : undefined}
+            className="group/dot flex h-6 w-8 cursor-pointer items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-neon"
+          >
+            <span
+              aria-hidden="true"
+              className={`block h-2 rounded-full transition-all duration-300 ease-out motion-reduce:transition-none ${
+                ehAtiva ? 'w-8 bg-neon' : 'w-2 bg-white/25 group-hover/dot:bg-white/50'
+              }`}
+            />
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
