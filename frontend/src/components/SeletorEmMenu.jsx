@@ -301,7 +301,10 @@ export default function SeletorEmMenu({
           // `ocuparLarguraDoPai`, senão `left-0 min-w-full` (o próprio
           // botão gatilho, comportamento default/Galeria) — ver comentário
           // de `ocuparLarguraDoPai` no topo do arquivo.
-          className={`absolute top-full z-20 mt-1 border border-border-chrome rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50 ${
+          // `overflow-hidden`: o fundo de hover/foco da 1ª e da última opção é um
+          // retângulo e, sem o recorte, ficava sobrando para fora dos cantos
+          // arredondados do menu.
+          className={`absolute top-full z-20 mt-1 overflow-hidden border border-border-chrome rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50 ${
             ocuparLarguraDoPai ? 'inset-x-0' : 'left-0 min-w-full'
           }`}
         >
