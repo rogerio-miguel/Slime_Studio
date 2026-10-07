@@ -29,6 +29,11 @@ export default function BlocoConteudoHero({
   meta,
   metaExtra,
   cta,
+  // `compacto`: menos espaço entre as seções do bloco (palco do Top 10).
+  compacto = false,
+  // Handlers do contêiner (ex. `onMouseEnter`/`onMouseLeave` do carrossel, que
+  // pausa o auto-avanço só com o mouse em cima do bloco).
+  ...propsDoContainer
 }) {
   const sinopseRef = useRef(null);
   const [sinopseCortada, setSinopseCortada] = useState(false);
@@ -46,8 +51,9 @@ export default function BlocoConteudoHero({
 
   return (
     <div
-      className={`flex flex-col items-start gap-4 ${className ?? ''}`}
+      className={`flex flex-col items-start ${compacto ? 'gap-1.5' : 'gap-4'} ${className ?? ''}`}
       style={{ paddingInline: PADDING_TITULO }}
+      {...propsDoContainer}
     >
       {pills && pills.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">{pills}</div>

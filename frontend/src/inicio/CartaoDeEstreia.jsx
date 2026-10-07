@@ -111,6 +111,9 @@ export default function CartaoDeEstreia({
   salvo,
   salvando,
   aoSalvar,
+  // `true` quando quem chama já mostra a data por fora (marca do dia em
+  // `inicio/SlotDoDiaDeEstreia.jsx`) — evita repetir a mesma data embaixo do título.
+  semTextoDeData = false,
   modoSelecao = false,
   selecionado = false,
   aoAlternarSelecao,
@@ -175,9 +178,11 @@ export default function CartaoDeEstreia({
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-white transition-colors lg:text-base">
             {titulo}
           </h3>
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-            {textoDeEstreia(item)}
-          </p>
+          {!semTextoDeData && (
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              {textoDeEstreia(item)}
+            </p>
+          )}
         </div>
       </div>
       {modoSelecao && (

@@ -41,6 +41,23 @@ export function ordenarPorEstreia(itens) {
   return [...(itens ?? [])].sort((a, b) => dataChaveDeEstreia(a) - dataChaveDeEstreia(b));
 }
 
+// Agrupa por DIA local de estreia, em ordem crescente; quem não tem data fica
+// no último grupo (`data: null`). Parte de `ordenarPorEstreia`, então a ordem
+// dentro de cada dia é a do feed e o grupo sem data nasce por último.
+export function agruparPorDiaDeEstreia(itens) {
+  const grupos = new Map();
+  for (const item of ordenarPorEstreia(itens)) {
+    const instante = dataChaveDeEstreia(item);
+    const data = Number.isFinite(instante) ? new Date(instante) : null;
+    const chave = data
+      ? `${data.getFullYear()}-${data.getMonth()}-${data.getDate()}`
+      : 'sem-data';
+    if (!grupos.has(chave)) grupos.set(chave, { chave, data, itens: [] });
+    grupos.get(chave).itens.push(item);
+  }
+  return [...grupos.values()];
+}
+
 // Top N da temporada. O feed já chega ordenado por trending/popularidade da
 // AniList — NÃO adicionar sort aqui, é de propósito; só recorta os primeiros n.
 export function topDaTemporada(itens, n = 10) {
