@@ -1122,6 +1122,7 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
         "sinopse": None,
         "formato": None,
         "episodio_lancado": None,
+        "episodio_lancado_em": None,
     }
 
 

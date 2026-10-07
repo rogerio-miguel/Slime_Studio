@@ -142,6 +142,10 @@ class AnimeEmAlta:
     # no default `None`. A Home usa pra rotular o card ("EP.N") sem imagem
     # específica do episódio (o card usa a capa do anime, não o still).
     episodio_lancado: int | None = None
+    # Instante (UTC aware) em que esse episódio foi ao ar (`AiringSchedule.
+    # airingAt`) — mesma origem e mesmo feed de `episodio_lancado`. A Home agrupa
+    # "Acabou de sair" por dia com isso (Hoje/Ontem/...) e mostra a hora.
+    episodio_lancado_em: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

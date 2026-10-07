@@ -301,6 +301,9 @@ class AnimeEmAltaSaida(BaseModel):
     # episodio_lancado`) — só o feed `/novos-lancamentos` preenche; os demais
     # ficam no default `None`. Frontend usa pra rotular o card ("EP.N").
     episodio_lancado: int | None = None
+    # Quando esse episódio foi ao ar (UTC) — só `/novos-lancamentos` preenche.
+    # Frontend agrupa por dia local e mostra a hora.
+    episodio_lancado_em: datetime | None = None
 
 
 class FileiraTematicaSaida(BaseModel):
