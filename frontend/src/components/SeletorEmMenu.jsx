@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 import { duracaoTotalDaTroca, pixelarTroca } from './ilha/pixelarTroca.js';
+import FiltrosDePixelizacao from './ilha/FiltrosDePixelizacao.jsx';
 
 // Duração-base da troca de texto do rótulo (ilha/pixelarTroca.js); a largura do
 // rótulo anima junto, nesse mesmo tempo.
@@ -373,33 +374,7 @@ export default function SeletorEmMenu({
               {textoSaindo}
             </span>
           )}
-          {/* Filtros de pixelização (ilha/pixelarTroca.js): A pixeliza o texto que
-              sai, B o que entra. Célula de 2px é o estado neutro. */}
-          <svg
-            ref={svgDosFiltrosRef}
-            width="0"
-            height="0"
-            aria-hidden="true"
-            focusable="false"
-            className="pointer-events-none absolute"
-          >
-            {['A', 'B'].map((letra) => (
-              <filter
-                key={letra}
-                id={`pix${letra}-${sufixoDoFiltro}`}
-                x="0"
-                y="0"
-                width="100%"
-                height="100%"
-              >
-                <feFlood data-p="flood" x="0" y="0" width="2" height="2" />
-                <feComposite data-p="comp" width="2" height="2" />
-                <feTile result="celulas" />
-                <feComposite in="SourceGraphic" in2="celulas" operator="in" />
-                <feMorphology data-p="morph" operator="dilate" radius="1" />
-              </filter>
-            ))}
-          </svg>
+          <FiltrosDePixelizacao svgRef={svgDosFiltrosRef} sufixo={sufixoDoFiltro} />
         </span>
         {/* Medidor invisível: mede a largura do texto ALVO (não o exibido,
             ver comentário de `larguraRotulo` acima) fora do fluxo normal —
