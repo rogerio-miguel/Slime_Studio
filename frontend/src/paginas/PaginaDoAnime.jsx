@@ -28,13 +28,14 @@ import { useSeletorDeBanner } from '../hooks/useSeletorDeBanner.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import BlocoConteudoHero from '../inicio/BlocoConteudoHero.jsx';
 import {
-  gradienteHero,
+  gradienteDeDestaque,
   imagemEmAltaResolucao,
   CLASSE_PILL_HERO,
 } from '../inicio/CarrosselDestaques.jsx';
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { textoDeProximaTemporada, tituloBaseDeTemporada } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
+import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
 
@@ -866,7 +867,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           Disney+, porque a grade de episódios em modo grade tem sombra
           própria no pôster que "precisava" do cinza pra aparecer; a sombra
           continua lá, só deixou de ditar o fundo da página). É a MESMA cor em
-          que o gradiente do hero (`gradienteHero('#000')` abaixo) se dissolve
+          que o gradiente do hero (`gradienteDeDestaque` abaixo, sobre `#000`) se dissolve
           sem emenda — mudar um sem o outro reabre a costura visível que
           motivou trocar `GRADIENTE_HERO`/`GRADIENTE_HERO_SEM_BANNER` de
           constante fixa pra função parametrizada por cor (ver
@@ -932,18 +933,22 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
               className="absolute inset-0 h-full w-full object-cover object-top"
             />
           )}
-          {/* Gradiente empilhado — o mesmo `::before` do carrossel
-              (`gradienteHero`, fonte única em inicio/CarrosselDestaques.jsx):
-              3 camadas na cor EXATA do fundo da página, dissolvendo o pé do
-              hero no `bg-black` do <main> sem emenda — `'#000'`, o MESMO valor
-              que a Home passa à mesma função. Stops em 60/55/70% (pedido
-              explícito do usuário, aplicado na função compartilhada — o
-              carrossel da Home segue o mesmo design agora, não uma variante
-              local). Inline no `style` porque o parser de multi-gradiente
-              arbitrário do Tailwind v4 não é confiável. */}
+          {/* Sombra do carrossel da Home (`gradienteDeDestaque`, fonte única em
+              inicio/CarrosselDestaques.jsx, com os MESMOS parâmetros do slide —
+              pedido explícito do usuário): fade preto na base, que dissolve o
+              pé do hero no `bg-black` do <main> sem emenda, mais a faixa
+              escura à esquerda atrás do texto. Inline no `style` porque o
+              parser de gradiente arbitrário do Tailwind v4 não é confiável. */}
           <div
             className="pointer-events-none absolute inset-0"
-            style={{ background: gradienteHero('#000') }}
+            style={{
+              background: gradienteDeDestaque({
+                alcanceBase: 70,
+                alfaEsquerda: 0.85,
+                alfaMeio: 0.55,
+                fimEsquerda: 65,
+              }),
+            }}
           />
 
           {/* Bloco de conteúdo — esqueleto compartilhado com o carrossel da
@@ -1265,21 +1270,29 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             busca em si — essa já degrada pra `[]` sem erro no backend) sai
             DENTRO do gutter da fileira, não do wrapper acima. */}
         <div className="relative z-10 mt-14">
-          <FileiraDeCards
-            titulo="Animes Como Este"
-            itens={relacionados.dados ?? []}
-            tamanho="pequeno"
-            comSombra={false}
-            chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
-            renderItem={(item) => (
-              <AnimeCard
-                anime={item}
-                aoAtivar={() => materializarRelacionado(item)}
-                desabilitado={relacionadoEmVoo != null && relacionadoEmVoo === item.anilist_id}
-                indicarCatalogado
+          {(relacionados.dados ?? []).length > 0 && (
+            <SecaoDaHome
+              titulo="Animes como este"
+              descricao="Recomendações da comunidade para quem gostou deste título."
+            >
+              <FileiraDeCards
+                semCabecalho
+                titulo="Lista de animes como este"
+                itens={relacionados.dados}
+                tamanho="pequeno"
+                comSombra={false}
+                chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
+                renderItem={(item) => (
+                  <AnimeCard
+                    anime={item}
+                    aoAtivar={() => materializarRelacionado(item)}
+                    desabilitado={relacionadoEmVoo != null && relacionadoEmVoo === item.anilist_id}
+                    indicarCatalogado
+                  />
+                )}
               />
-            )}
-          />
+            </SecaoDaHome>
+          )}
           {erroRelacionado && (
             <p role="alert" style={{ paddingInline: PADDING_TITULO }} className="text-sm text-red-400">
               {erroRelacionado}
