@@ -63,7 +63,7 @@ function tituloCurto(titulo) {
 // `falhou`/`falhou_extracao`/`aguardando_intervencao`). Migrado de
 // `components/Toasts.jsx` (pedido do usuário, 2026-09-27): antes um toast
 // solto no canto da tela, agora a mesma cápsula da navbar, com PRIORIDADE
-// MÁXIMA na fila de `BarraDeNavegacao.jsx::mensagemIlha` — falha não se
+// MÁXIMA na fila de `hooks/useFilaDaIlha.js` — falha não se
 // autorresolve como um "pronto", então tampa até a notificação de sucesso
 // enquanto estiver visível. Clique (`aoClicarErroCapturaIlha`) leva pra
 // página do anime (`job.anime_id`), mesmo alvo de `aoClicarStatusCapturaIlha`

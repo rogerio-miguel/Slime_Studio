@@ -12,6 +12,9 @@ const LARGURA_MAXIMA_PX = 704;
 const MARGEM_PX = 12;
 const RAIO_PAINEL_PX = 28;
 const EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
+// `px-3` dos dois lados da cápsula (BarraDeNavegacao.jsx).
+const PADDING_X_CAPSULA_PX = 24;
+const FUNDO_PAINEL_PADRAO = 'rgb(10 12 16 / 0.94)';
 
 // `sm` do Tailwind: abaixo dele o `<ul>` central da navbar (onde mora a
 // cápsula) some, então a sinopse cai no <dialog> de SinopseNaIlha.jsx.
@@ -48,7 +51,41 @@ export function useCapsulaVisivel() {
 // painel e devolvido ao botão de origem, Esc fecha, Tab não escapa (o painel não
 // tem nada focável dentro — sem botão X, pedido do usuário) e a rolagem da
 // página trava (useTravaDeRolagem.js, sem mexer no layout).
-export function useSinopseNaCapsula({ ativa, atrasoAbrirMs, capsulaRef, aoFechar, movimentoReduzido }) {
+//
+// Também hospeda o painel de filtros da Galeria (mesma transformação). Com
+// `interativo` o painel TEM controles: Tab circula entre eles em vez de ficar
+// preso na região. `fundoExpandido` troca o fundo do painel aberto (o dos filtros
+// é sólido; o da sinopse deixa uns 6% de transparência), `larguraMaximaPx` a
+// largura do painel e `larguraAoFechar` a largura natural que a cápsula terá
+// depois de fechada (só quando o conteúdo do cabeçalho muda com o painel aberto,
+// como o resumo do filtro): sem ela, a volta ao fluxo daria um salto de largura.
+// `travarRolagem` (padrão `true`): a sinopse é leitura e prende a página; o painel
+// de filtros passa `false` — dá pra rolar a grade com o painel aberto e ver o
+// resultado de cada escolha (sem isso o painel parecia modal sem ser).
+// `topoFinalPx`: onde fica o topo do painel aberto na tela (padrão: a margem). A
+// navbar passa o topo da ilha, pra o painel nascer alinhado com o logo e a busca
+// e crescer só pra baixo.
+// `manterPosicao`: o painel abre centrado na tela, só pra baixo e pros lados, e o
+// cabeçalho (link + gatilho) vai do lugar de repouso ao centro do painel em linha
+// reta, sem balançar (`crescimentoDoCabecalhoPx` = quanto ele alarga/encolhe com o
+// painel aberto: "Ordem e filtros" difere do resumo). Centralizar o cabeçalho
+// numa cápsula que cresce assimétrica o fazia balançar ~10px no meio da animação;
+// prendê-lo no lugar de repouso deslocava o painel quando o resumo é longo.
+export function useSinopseNaCapsula({
+  ativa,
+  atrasoAbrirMs,
+  capsulaRef,
+  aoFechar,
+  movimentoReduzido,
+  interativo = false,
+  fundoExpandido = FUNDO_PAINEL_PADRAO,
+  larguraMaximaPx = LARGURA_MAXIMA_PX,
+  larguraAoFechar,
+  manterPosicao = false,
+  crescimentoDoCabecalhoPx = 0,
+  travarRolagem = true,
+  topoFinalPx = MARGEM_PX,
+}) {
   const [fase, setFase] = useState('fechado');
   const [geometria, setGeometria] = useState(null);
   // O texto precisa rolar: só decidido DEPOIS do painel assentar. Liberar
@@ -75,23 +112,42 @@ export function useSinopseNaCapsula({ ativa, atrasoAbrirMs, capsulaRef, aoFechar
         const caixa = capsulaRef.current?.getBoundingClientRect();
         if (!caixa || caixa.width === 0) return;
         const largura = document.documentElement.clientWidth;
-        const larguraFinal = Math.min(LARGURA_MAXIMA_PX, largura - 2 * MARGEM_PX);
+        const larguraFinal = Math.min(larguraMaximaPx, largura - 2 * MARGEM_PX);
+        // Offsets relativos ao <li> (o `absolute` ancora nele), que está
+        // exatamente onde a cápsula estava.
+        const cabecalhoAberto = caixa.width - PADDING_X_CAPSULA_PX + crescimentoDoCabecalhoPx;
+        // Aberta a partir da pílula fechada (sem `px-3`), a cápsula ganha o padding
+        // ao virar painel e o devolve na volta (`voltaAPilula`).
+        const paddingAtual = parseFloat(getComputedStyle(capsulaRef.current).paddingLeft) || 0;
         abridorRef.current = document.activeElement;
         setGeometria({
           largura: caixa.width,
+          acrescimoDePadding: paddingAtual === 0 ? PADDING_X_CAPSULA_PX : 0,
           altura: caixa.height,
           larguraFinal,
-          // Offsets relativos ao <li> (o `absolute` ancora nele), que está
-          // exatamente onde a cápsula estava.
           esquerdaFinal: Math.max(MARGEM_PX, (largura - larguraFinal) / 2) - caixa.left,
-          topoFinal: MARGEM_PX - caixa.top,
+          // Sobra de cada lado do cabeçalho no painel, fora o `px-3` da cápsula.
+          deslocamentoDoCabecalho: Math.max(
+            0,
+            (larguraFinal - cabecalhoAberto) / 2 - PADDING_X_CAPSULA_PX / 2,
+          ),
+          topoFinal: topoFinalPx - caixa.top,
         });
         setFase('ancorado');
       },
       movimentoReduzido ? 0 : atrasoAbrirMs,
     );
     return () => clearTimeout(temporizador);
-  }, [ativa, fase, atrasoAbrirMs, capsulaRef, movimentoReduzido]);
+  }, [
+    ativa,
+    fase,
+    atrasoAbrirMs,
+    capsulaRef,
+    movimentoReduzido,
+    larguraMaximaPx,
+    topoFinalPx,
+    crescimentoDoCabecalhoPx,
+  ]);
 
   useEffect(() => {
     if (fase !== 'ancorado') return undefined;
@@ -121,7 +177,20 @@ export function useSinopseNaCapsula({ ativa, atrasoAbrirMs, capsulaRef, aoFechar
         fechar();
       } else if (evento.key === 'Tab') {
         evento.preventDefault();
-        regiaoRef.current?.focus({ preventScroll: true });
+        const regiao = regiaoRef.current;
+        const focaveis = interativo
+          ? [...(regiao?.querySelectorAll('button:not([disabled])') ?? [])]
+          : [];
+        if (focaveis.length === 0) {
+          regiao?.focus({ preventScroll: true });
+          return;
+        }
+        const atual = focaveis.indexOf(document.activeElement);
+        const proximo =
+          atual === -1
+            ? evento.shiftKey ? focaveis.length - 1 : 0
+            : (atual + (evento.shiftKey ? -1 : 1) + focaveis.length) % focaveis.length;
+        focaveis[proximo].focus({ preventScroll: true });
       }
     };
     document.addEventListener('keydown', aoTeclar);
@@ -130,7 +199,7 @@ export function useSinopseNaCapsula({ ativa, atrasoAbrirMs, capsulaRef, aoFechar
       setRolavel(false);
       document.removeEventListener('keydown', aoTeclar);
     };
-  }, [fase, fechar, movimentoReduzido]);
+  }, [fase, fechar, movimentoReduzido, interativo]);
 
   useEffect(() => {
     if (fase !== 'recolhendo') return undefined;
@@ -151,15 +220,22 @@ export function useSinopseNaCapsula({ ativa, atrasoAbrirMs, capsulaRef, aoFechar
     if (!ativa && fase !== 'fechado' && fase !== 'recolhendo') setFase('fechado');
   }, [ativa, fase]);
 
-  useTravaDeRolagem(fase !== 'fechado', regiaoRef);
+  useTravaDeRolagem(travarRolagem && fase !== 'fechado', regiaoRef);
 
   const ancorada = fase !== 'fechado';
   const expandida = fase === 'aberto';
+  const recolhendo = fase === 'recolhendo';
+  const larguraDeRepouso =
+    recolhendo && larguraAoFechar ? larguraAoFechar : geometria?.largura;
+  // Aberta a partir da pílula fechada, a volta devolve também o padding e o fundo
+  // da pílula junto com o encolhimento; deixar pra depois dava um salto no fim.
+  const voltaAPilula = recolhendo && geometria?.acrescimoDePadding > 0;
   const duracao = movimentoReduzido ? '0s' : `${PAINEL_MS}ms`;
 
   return {
     ancorada,
     expandida,
+    recolhendo,
     rolavel,
     // Largura do texto = painel menos o padding horizontal da cápsula (`px-3`):
     // fixa, pra o texto NÃO reflowar enquanto a cápsula cresce (o excesso fica
@@ -167,9 +243,25 @@ export function useSinopseNaCapsula({ ativa, atrasoAbrirMs, capsulaRef, aoFechar
     larguraConteudo: geometria ? geometria.larguraFinal - 24 : undefined,
     fechar,
     regiaoRef,
+    // Margem esquerda do cabeçalho: leva o link ao centro do painel na mesma
+    // transição da cápsula (soma linear, então ele anda em linha reta). Zero com
+    // o painel fechado.
+    estiloCabecalho: manterPosicao
+      ? {
+          marginLeft: expandida ? geometria.deslocamentoDoCabecalho : 0,
+          transition: `margin-left ${duracao} ${EASE}`,
+        }
+      : undefined,
     // <li>: reserva o lugar da cápsula e serve de âncora do `absolute`.
     estiloItem: ancorada
-      ? { position: 'relative', opacity: 1, width: geometria.largura, height: geometria.altura }
+      ? {
+          position: 'relative',
+          opacity: 1,
+          width: larguraDeRepouso,
+          height: geometria.altura,
+          // Acompanha a cápsula na volta, senão o <ul> (centralizado) pularia.
+          transition: `width ${duracao} ${EASE}`,
+        }
       : undefined,
     // Cápsula: mesmo retângulo ancorado; expandida, vira o painel.
     estiloCapsula: ancorada
@@ -178,24 +270,30 @@ export function useSinopseNaCapsula({ ativa, atrasoAbrirMs, capsulaRef, aoFechar
           zIndex: 10,
           top: expandida ? geometria.topoFinal : 0,
           left: expandida ? geometria.esquerdaFinal : 0,
-          width: expandida ? geometria.larguraFinal : geometria.largura,
+          width: expandida ? geometria.larguraFinal : larguraDeRepouso,
+          ...(voltaAPilula ? { padding: 0 } : null),
           // Raio em px (não `rounded-full`, 9999px) e fora da transição enquanto
           // só ancorado: senão o raio "sai" de 9999px e a pílula vira um
           // estádio durante quase todo o crescimento.
           borderRadius: expandida || fase === 'recolhendo' ? RAIO_PAINEL_PX : geometria.altura / 2,
-          backgroundColor: expandida ? 'rgb(10 12 16 / 0.94)' : 'rgb(255 255 255 / 0.05)',
+          backgroundColor: expandida
+            ? fundoExpandido
+            : voltaAPilula
+              ? 'rgb(255 255 255 / 0)'
+              : 'rgb(255 255 255 / 0.05)',
           boxShadow: expandida
             ? '0 0 0 1px rgb(255 255 255 / 0.08), 0 24px 60px rgb(0 0 0 / 0.55)'
             : '0 0 0 1px rgb(255 255 255 / 0), 0 24px 60px rgb(0 0 0 / 0)',
           overflow: 'hidden',
-          transitionProperty: `top, left, width, background-color, box-shadow${
+          // `padding`: aberta da pílula fechada, o `px-3` entra junto da forma.
+          transitionProperty: `top, left, width, background-color, box-shadow, padding${
             fase === 'ancorado' ? '' : ', border-radius'
           }`,
           // O fundo escurece mais rápido que a forma: no meio do caminho o painel
           // não pode deixar a arte da página aparecer por baixo.
           transitionDuration: movimentoReduzido
             ? '0s'
-            : `${PAINEL_MS}ms, ${PAINEL_MS}ms, ${PAINEL_MS}ms, 220ms, ${PAINEL_MS}ms, ${PAINEL_MS}ms`,
+            : `${PAINEL_MS}ms, ${PAINEL_MS}ms, ${PAINEL_MS}ms, 220ms, ${PAINEL_MS}ms, ${PAINEL_MS}ms, ${PAINEL_MS}ms`,
           transitionTimingFunction: EASE,
         }
       : undefined,

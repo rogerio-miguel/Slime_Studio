@@ -9,17 +9,28 @@ import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 import { agruparEmFranquias } from '../inicio/franquia.js';
+import {
+  contarPorGenero,
+  filtrarFranquias,
+  FILTRO_PROXIMAS_ESTREIAS,
+  OPCOES_DE_ORDEM,
+  ORDEM_PADRAO,
+  ordenarFranquias,
+} from '../inicio/filtrosDeCatalogo.js';
+import { traduzirGenero } from '../inicio/generos.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
+import { usePreferencia } from '../player/hooks/usePreferencia.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
 
 // Rótulos em `core/enums.py::StatusLancamento` (backend) — mesmos valores
 // StrEnum, traduzidos aqui pra exibição no filtro de status. Cunhados aqui,
-// sem rótulo pré-existente no frontend a reaproveitar.
+// sem rótulo pré-existente no frontend a reaproveitar. `nao_lancado` aparece
+// como "Próximas estreias" (mesmo nome da fileira da Home).
 const ROTULOS_STATUS_LANCAMENTO = {
   em_lancamento: 'Em lançamento',
   finalizado: 'Finalizado',
-  nao_lancado: 'Não lançado',
+  nao_lancado: 'Próximas estreias',
   cancelado: 'Cancelado',
   hiato: 'Em hiato',
 };
@@ -33,6 +44,7 @@ const ROTULOS_STATUS_LANCAMENTO = {
 // ser sempre visível (era um apêndice fixo embaixo da grade) e passou a só
 // aparecer quando este valor está selecionado.
 const VALOR_FILTRO_VIDEOS_LOCAIS = 'videos-locais';
+const CHAVE_DA_ORDEM = 'slime.galeria.ordem';
 
 // Poll leve pós-carga (`listarAnimes({aquecer:true})`, abaixo): a sondagem da
 // fonte real e o aquecimento de `status_lancamento` que `?aquecer=true`
@@ -54,14 +66,6 @@ const _MAX_TENTATIVAS_POLL_AQUECIMENTO = 16;
 // (BarraDeNavegacao.jsx) fica visível antes de sumir sozinha — pedido do
 // usuário, 2026-09-27.
 const DURACAO_NOTIFICACAO_NOVOS_EPS_MS = 5000;
-
-// Ordem fixa da grade — sem dropdown de ordenação (removido a pedido do
-// usuário: com filtro de status/assistido já cobrindo o caso de uso, o
-// dropdown não agregava nada). Nunca muta `lista` (mesma convenção de
-// inicio/fileiras.js) — devolve sempre uma cópia nova.
-function ordenarPorTitulo(lista) {
-  return [...lista].sort((a, b) => a.titulo.localeCompare(b.titulo, 'pt-BR'));
-}
 
 // Rota "/animes" — catálogo completo. Sem cadastro manual aqui: o catálogo
 // é populado materializando itens do feed de provedor externo na Home
@@ -179,6 +183,20 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   }, [aquecendo]);
 
   const [filtroSelecionado, setFiltroSelecionado] = useState('');
+  // A ordem escolhida só persiste em "Todos" — e persiste de verdade: fica salva
+  // no navegador (`slime.galeria.ordem`) e volta ao reabrir a página. Em qualquer
+  // outro filtro dá pra trocar, mas ela vale só enquanto aquele filtro está ativo
+  // (`mudarFiltro` zera `ordemAvulsa`) e volta à de "Todos" ao sair. Valor salvo
+  // que não existe mais nas opções cai no padrão.
+  const [ordemSalva, setOrdemEmTodos] = usePreferencia(CHAVE_DA_ORDEM, ORDEM_PADRAO);
+  const ordemEmTodos = OPCOES_DE_ORDEM.some((opcao) => opcao.valor === ordemSalva)
+    ? ordemSalva
+    : ORDEM_PADRAO;
+  const [ordemAvulsa, setOrdemAvulsa] = useState(null);
+  const [generosSelecionados, setGenerosSelecionados] = useState(() => new Set());
+  // Painel de filtros da ilha (BarraDeNavegacao.jsx): fica `true` até a animação
+  // de volta terminar (`aoFechar`), não só até o pedido de fechar.
+  const [painelAberto, setPainelAberto] = useState(false);
 
   // Último scrollY conhecido ANTES da troca de filtro. Não dá pra usar
   // `window.scrollY` dentro do `useLayoutEffect` abaixo pra decidir se o
@@ -230,7 +248,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
       window.scrollTo(0, 0);
       ultimoScrollYRef.current = 0;
     }
-  }, [filtroSelecionado]);
+  }, [filtroSelecionado, generosSelecionados, ordemEmTodos, ordemAvulsa]);
 
   // Opções construídas a partir do catálogo já carregado — nunca hardcoded:
   // um status que não aparece em nenhum anime não vira opção morta no
@@ -267,7 +285,6 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
         rotulo: ROTULOS_STATUS_LANCAMENTO[status] ?? status,
       })),
       { valor: 'assistido:sim', rotulo: 'Assistidos' },
-      { valor: 'assistido:nao', rotulo: 'Não assistidos' },
       // Último da lista: não é eixo do catálogo de animes, é o modo de
       // visualização à parte (ver comentário de `VALOR_FILTRO_VIDEOS_LOCAIS`
       // no topo do arquivo). Guard de `length` aqui também: sem vídeo local
@@ -284,6 +301,55 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   // todas as temporadas — ver `inicio/franquia.js`. Client-side: `GET /api/animes`
   // só ganhou `serie_ancora`/`numero_temporada`, a lista é pequena (uso pessoal).
   const franquias = useMemo(() => agruparEmFranquias(animes ?? []), [animes]);
+
+  // Gêneros do catálogo (nunca hardcoded, como os status acima). A seleção que
+  // sobrou de um gênero que saiu do catálogo (anime removido) é descartada aqui,
+  // senão filtraria tudo sem nenhum botão visível pra desfazer.
+  const listaDeGeneros = useMemo(
+    () => [...new Set(franquias.flatMap((franquia) => franquia.generos))],
+    [franquias],
+  );
+  const generosAtivos = useMemo(
+    () => new Set([...generosSelecionados].filter((genero) => listaDeGeneros.includes(genero))),
+    [generosSelecionados, listaDeGeneros],
+  );
+  const alternarGenero = useCallback((genero) => {
+    setGenerosSelecionados((anterior) => {
+      const novo = new Set(anterior);
+      if (novo.has(genero)) novo.delete(genero);
+      else novo.add(genero);
+      return novo;
+    });
+  }, []);
+
+  const emVideosLocais = filtroSelecionado === VALOR_FILTRO_VIDEOS_LOCAIS;
+  const emProximasEstreias = filtroSelecionado === FILTRO_PROXIMAS_ESTREIAS;
+  const ordemEfetiva =
+    filtroSelecionado === '' ? ordemEmTodos : (ordemAvulsa ?? ORDEM_PADRAO);
+  const selecaoAtiva = filtroSelecionado !== '' || generosAtivos.size > 0;
+  const mudarOrdem = filtroSelecionado === '' ? setOrdemEmTodos : setOrdemAvulsa;
+  const mudarFiltro = useCallback((valor) => {
+    setFiltroSelecionado(valor);
+    setOrdemAvulsa(null);
+  }, []);
+  const filtrosAtivos =
+    (filtroSelecionado !== '' ? 1 : 0) +
+    generosAtivos.size +
+    (ordemEfetiva !== ORDEM_PADRAO ? 1 : 0);
+  // Clique no link "Meu Catálogo", em degraus (BarraDeNavegacao.jsx): primeiro
+  // limpa o filtro e os gêneros e guarda a ordem de "Todos" (preferência salva);
+  // com isso limpo, o clique seguinte volta a ordem ao padrão; depois rola ao
+  // topo. "Limpar tudo" do painel faz os dois primeiros passos de uma vez.
+  const ordemSalvaAtiva = ordemEmTodos !== ORDEM_PADRAO;
+  const limparSelecao = useCallback(() => {
+    mudarFiltro('');
+    setGenerosSelecionados(new Set());
+  }, [mudarFiltro]);
+  const limparOrdem = useCallback(() => setOrdemEmTodos(ORDEM_PADRAO), [setOrdemEmTodos]);
+  const limparFiltros = useCallback(() => {
+    limparSelecao();
+    limparOrdem();
+  }, [limparSelecao, limparOrdem]);
 
   // Notificação "novos episódios" na ilha dinâmica (pedido do usuário,
   // 2026-09-27) — dispara depois que a verificação nos extratores termina
@@ -351,9 +417,9 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   // coisas convivendo (a notificação anunciava exatamente o que o filtro
   // agora mostra).
   const aoClicarNotificacaoNovosEps = useCallback(() => {
-    setFiltroSelecionado('novos:sim');
+    mudarFiltro('novos:sim');
     setNotificacaoNovosEps(false);
-  }, []);
+  }, [mudarFiltro]);
 
   // `statusCapturaIlha`/`capturaProntaIlha`/`erroCapturaIlha`: os três sinais
   // de captura da ilha, GLOBAL (qualquer anime do app) — hook compartilhado
@@ -361,33 +427,70 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   // toasts "concluído"/erro que existiam em components/Toasts.jsx (removido
   // por completo, 2026-09-27 — os dois migraram pra cá).
 
-  // Busca -> filtro -> ordem fixa por título, sempre client-side sobre as
-  // franquias já agrupadas (sem chamada de API nova). `filtroSelecionado`
+  // Busca -> filtro -> gêneros -> ordem, sempre client-side sobre as
+  // franquias já agrupadas (sem chamada de API nova). Gêneros somam ao filtro
+  // (precisa ter TODOS os marcados) e `filtroSelecionado`
   // decide o eixo pelo prefixo (ver `opcoesFiltro` acima): status bate se
   // QUALQUER temporada da franquia bate; assistido usa o agregado da
   // franquia inteira (`franquia.assistido`, inicio/franquia.js).
-  const animesExibidos = useMemo(() => {
-    let lista = franquias;
-    if (termoBuscaNormalizado) {
-      lista = lista.filter((franquia) =>
-        franquia.titulosDaFranquia.some((titulo) =>
-          titulo.toLowerCase().includes(termoBuscaNormalizado)
-        )
-      );
-    }
-    if (filtroSelecionado.startsWith('status:')) {
-      const status = filtroSelecionado.slice('status:'.length);
-      lista = lista.filter((franquia) => franquia.statusDaFranquia.includes(status));
-    } else if (filtroSelecionado.startsWith('assistido:')) {
-      const assistido = filtroSelecionado.slice('assistido:'.length) === 'sim';
-      lista = lista.filter((franquia) => franquia.assistido === assistido);
-    } else if (filtroSelecionado === 'novos:sim') {
-      lista = lista.filter((franquia) => franquia.episodios_novos > 0);
-    }
-    return ordenarPorTitulo(lista);
-  }, [franquias, termoBuscaNormalizado, filtroSelecionado]);
+  const animesExibidos = useMemo(
+    () =>
+      ordenarFranquias(
+        filtrarFranquias(franquias, {
+          termo: termoBuscaNormalizado,
+          filtro: filtroSelecionado,
+          generos: generosAtivos,
+        }),
+        ordemEfetiva,
+        filtroSelecionado,
+      ),
+    [franquias, termoBuscaNormalizado, filtroSelecionado, generosAtivos, ordemEfetiva],
+  );
 
-  // Modo "Gerenciar" (ilha dinâmica, BarraDeNavegacao.jsx): seleção em lote do
+  // Painel de filtros da ilha (ilha/RegiaoDoPainelDeFiltros.jsx). Em "Vídeos
+  // locais" não há ordem nem gênero (a grade é de arquivos, não do catálogo) e em
+  // "Próximas estreias" a ordem é fixa (data da temporada futura): a seção some.
+  // O gênero mostra quantos animes sobrariam ao marcá-lo; contagem 0 apaga o botão.
+  const contagemPorGenero = useMemo(
+    () =>
+      emVideosLocais
+        ? null
+        : contarPorGenero(
+            franquias,
+            { termo: termoBuscaNormalizado, filtro: filtroSelecionado, generos: generosAtivos },
+            listaDeGeneros,
+          ),
+    [emVideosLocais, franquias, termoBuscaNormalizado, filtroSelecionado, generosAtivos, listaDeGeneros],
+  );
+  const opcoesGeneros = useMemo(
+    () =>
+      listaDeGeneros
+        .map((genero) => ({
+          valor: genero,
+          rotulo: traduzirGenero(genero),
+          contagem: contagemPorGenero?.get(genero) ?? 0,
+        }))
+        .sort((a, b) => a.rotulo.localeCompare(b.rotulo, 'pt-BR')),
+    [listaDeGeneros, contagemPorGenero],
+  );
+  const resumoDoPainel = useMemo(() => {
+    const rotuloDoFiltro = opcoesFiltro.find((opcao) => opcao.valor === filtroSelecionado)?.rotulo;
+    const partes = [rotuloDoFiltro ?? 'Todos'];
+    if (!emVideosLocais && !emProximasEstreias) {
+      partes.push(OPCOES_DE_ORDEM.find((opcao) => opcao.valor === ordemEfetiva).curto);
+    }
+    if (!emVideosLocais && generosAtivos.size > 0) {
+      partes.push(generosAtivos.size === 1 ? '1 gênero' : `${generosAtivos.size} gêneros`);
+    }
+    return partes.join(' · ');
+  }, [opcoesFiltro, filtroSelecionado, emVideosLocais, emProximasEstreias, ordemEfetiva, generosAtivos]);
+  const totalNoPainel = emVideosLocais ? VIDEOS_LOCAIS.length : animesExibidos.length;
+  const rotuloDoTotal = emVideosLocais
+    ? totalNoPainel === 1 ? 'vídeo' : 'vídeos'
+    : totalNoPainel === 1 ? 'anime' : 'animes';
+
+  // Modo de remoção (ilha dinâmica, BarraDeNavegacao.jsx; entra pelo "Remover" do
+  // painel de filtros): seleção em lote do
   // catálogo e remoção com a confirmação dentro da própria ilha — substituiu o
   // botão de remover por card e o `DialogoDeConfirmacao`. Fases: 'inativo' →
   // 'selecionando' → 'confirmando' → 'removendo' → 'concluido' (sai sozinho do modo) ou 'erro' (fica até o usuário fechar). `selecionados` guarda
@@ -500,30 +603,21 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   return (
     <>
       {/* Ilha dinâmica (BarraDeNavegacao.jsx): ÚNICA via de filtro da página
-          agora (o SeletorEmMenu que ficava na fileira "Meu Catálogo |
-          Filtrar" foi removido, 2026-09-27) — só ativa depois que a página
-          rola além de `LIMIAR_ILHA_PX`, então no topo (scroll 0) o filtro
-          fica indisponível; gap aceito pelo usuário. Só passa os três props
-          de filtro quando o catálogo está carregado e não vazio (mesma
-          guarda do `<GradeDeCatalogo>` abaixo) — sem isso não há o que
-          filtrar. `notificacaoNovosEps`/`verificandoNovosEps`/
-          `statusCapturaIlha`/`capturaProntaIlha`/`erroCapturaIlha` são os
-          únicos props que NÃO seguem essa guarda: os dois primeiros já
-          implicam catálogo carregado (`aquecendo` só liga depois de
-          `!carregando`; `notificacaoNovosEps` só depois que `franquias`
-          existe, ver efeitos acima); os três de captura nem dependem do
-          catálogo — vêm direto do WS global (`jobsPorEpisodio`, App.jsx via
-          hooks/useStatusDeCapturaIlha.js), qualquer anime do app, catálogo
-          carregado ou não. Prioridade de qual mensagem a cápsula mostra
-          quando mais de uma está ativa ao mesmo tempo: ver comentário de
-          `mensagemIlha` em BarraDeNavegacao.jsx. */}
+          (o SeletorEmMenu da fileira "Meu Catálogo | Filtrar" foi removido,
+          2026-09-27) e aberta já no scroll 0 (`ilhaAbertaNoTopo`). Só passa o
+          painel de filtros e a remoção quando o catálogo está carregado e não vazio (mesma
+          guarda do `<GradeDeCatalogo>` abaixo) — sem isso não há o que filtrar.
+          Os sinais de captura vêm do WS global (hooks/useStatusDeCapturaIlha.js)
+          e não dependem do catálogo. Ordem e espera das notificações:
+          hooks/useFilaDaIlha.js. */}
       <BarraDeNavegacao
         transparente
         termoBusca={termoBusca}
         aoMudarBusca={setTermoBusca}
         opcoesFiltro={!carregando && !erro && animes?.length > 0 ? opcoesFiltro : undefined}
+        ilhaAbertaNoTopo={!carregando && !erro && animes?.length > 0}
         filtroSelecionado={filtroSelecionado}
-        aoMudarFiltro={setFiltroSelecionado}
+        aoMudarFiltro={mudarFiltro}
         notificacaoNovosEps={notificacaoNovosEps}
         aoClicarNotificacaoNovosEps={aoClicarNotificacaoNovosEps}
         verificandoNovosEps={aquecendo}
@@ -533,6 +627,35 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
         aoClicarCapturaProntaIlha={aoClicarCapturaProntaIlha}
         erroCapturaIlha={erroCapturaIlha}
         aoClicarErroCapturaIlha={aoClicarErroCapturaIlha}
+        painelDeFiltros={
+          !carregando && !erro && animes?.length > 0
+            ? {
+                aberto: painelAberto,
+                aoAbrir: () => setPainelAberto(true),
+                aoFechar: () => setPainelAberto(false),
+                resumo: resumoDoPainel,
+                filtrosAtivos,
+                aoLimpar: limparFiltros,
+                selecaoAtiva,
+                aoLimparSelecao: limparSelecao,
+                ordemSalvaAtiva,
+                aoLimparOrdem: limparOrdem,
+                aoRemover: () => setFase('selecionando'),
+                total: `${totalNoPainel} ${rotuloDoTotal}`,
+                ordenacao:
+                  emVideosLocais || emProximasEstreias
+                    ? null
+                    : { opcoes: OPCOES_DE_ORDEM, valor: ordemEfetiva, aoMudar: mudarOrdem },
+                generos: emVideosLocais
+                  ? null
+                  : {
+                      opcoes: opcoesGeneros,
+                      selecionados: generosAtivos,
+                      aoAlternar: alternarGenero,
+                    },
+              }
+            : undefined
+        }
         gerenciar={
           !carregando && !erro && animes?.length > 0
             ? {
@@ -540,7 +663,6 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
                 qtdSelecionados,
                 textoConfirmacao: qtdSelecionados > 0 ? textoConfirmacao : '',
                 resultado,
-                aoAlternar: () => (fase === 'inativo' ? setFase('selecionando') : sairDoGerenciar()),
                 aoSelecionarTodos: () => setSelecionados(new Set(animesExibidos.map((anime) => anime.id))),
                 aoPedirRemocao: () => setFase('confirmando'),
                 aoCancelarRemocao: () => setFase('selecionando'),
@@ -605,11 +727,22 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
               )}
 
               {!carregando && !erro && animes?.length > 0 && animesExibidos.length === 0 && (
-                <p className="mt-[22px] text-sm text-ink-muted">
-                  {termoBusca.trim()
-                    ? `Nenhum anime encontrado para “${termoBusca.trim()}”.`
-                    : 'Nenhum anime encontrado com os filtros selecionados.'}
-                </p>
+                <div className="flex flex-col items-center gap-4 py-24 text-center">
+                  <p className="text-base font-semibold text-ink-muted">
+                    {termoBusca.trim()
+                      ? `Nenhum anime encontrado para “${termoBusca.trim()}”.`
+                      : 'Nenhum anime encontrado com os filtros selecionados.'}
+                  </p>
+                  {filtrosAtivos > 0 && (
+                    <button
+                      type="button"
+                      onClick={limparFiltros}
+                      className="h-8 cursor-pointer rounded-full border border-neon bg-neon-soft px-4 text-sm font-semibold text-white outline-none transition-colors hover:bg-neon/30 focus-visible:border-white"
+                    >
+                      Limpar filtros
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 

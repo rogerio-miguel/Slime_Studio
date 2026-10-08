@@ -141,6 +141,12 @@ export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
 //   - `titulosDaFranquia`: títulos crus de todas as temporadas (busca textual).
 //   - `idsDaFranquia`: ids de todas as temporadas (remoção da franquia inteira).
 //   - `contagemDeTemporadas`: quantas temporadas no grupo.
+//   - `adicionado_em`: o `criado_em` mais recente entre as temporadas (a franquia
+//     sobe em "Adicionados recentemente" quando QUALQUER temporada entra, não só
+//     a que a representa).
+//   - `temporadaFutura`: a temporada `nao_lancado` de menor número (ou `null`) —
+//     o que o filtro "Próximas estreias" do catálogo ordena por data
+//     (inicio/filtrosDeCatalogo.js).
 export function agruparEmFranquias(animes) {
   const pai = new Map();
   const acha = (no) => {
@@ -182,6 +188,10 @@ function temporadaAcessivel(temporada) {
   return Boolean(temporada.tem_episodios) || temporada.status_lancamento !== 'nao_lancado';
 }
 
+// ISO 8601 compara como texto; ignora temporadas sem data.
+const dataMaisRecente = (datas) =>
+  datas.filter(Boolean).reduce((maior, atual) => (maior === null || atual > maior ? atual : maior), null);
+
 function montarFranquia(temporadas) {
   const maisRecente = (maior, atual) =>
     (atual.numero_temporada ?? 0) > (maior.numero_temporada ?? 0) ? atual : maior;
@@ -211,5 +221,13 @@ function montarFranquia(temporadas) {
     titulosDaFranquia: temporadas.map((t) => t.titulo),
     idsDaFranquia: temporadas.map((t) => t.id),
     contagemDeTemporadas: temporadas.length,
+    adicionado_em: dataMaisRecente(temporadas.map((t) => t.criado_em)),
+    temporadaFutura: temporadas
+      .filter((t) => t.status_lancamento === 'nao_lancado')
+      .reduce(
+        (menor, t) =>
+          menor === null || (t.numero_temporada ?? 0) < (menor.numero_temporada ?? 0) ? t : menor,
+        null,
+      ),
   };
 }

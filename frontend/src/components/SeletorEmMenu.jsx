@@ -1,8 +1,15 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
+import { duracaoTotalDaTroca, pixelarTroca } from './ilha/pixelarTroca.js';
 
-const DURACAO_CROSSFADE_ROTULO_MS = 220;
+// Duração-base da troca de texto do rótulo (ilha/pixelarTroca.js); a largura do
+// rótulo anima junto, nesse mesmo tempo.
+const DURACAO_TROCA_ROTULO_MS = 320;
+// Espera extra da entrada pixelada na abertura da ilha: o fade da cápsula
+// (coreografiaDaIlha.js) começa com atraso e o texto só vira pixel nítido
+// depois de já visível.
+const ATRASO_ENTRADA_NA_ABERTURA_MS = 120;
 const EASE_LARGURA_ROTULO = 'cubic-bezier(0.4, 0, 0.2, 1)';
 
 // Dropdown de valor único genérico — mesmo padrão de acessibilidade de
@@ -45,10 +52,10 @@ const EASE_LARGURA_ROTULO = 'cubic-bezier(0.4, 0, 0.2, 1)';
 // `mensagemSobreposta`/`aoClicarMensagem` (opcionais, usados só pela
 // notificação "novos episódios" da ilha dinâmica em BarraDeNavegacao.jsx):
 // pedido explícito do usuário, 2026-09-27, pra notificação ficar IGUAL ao
-// filtro — mesma fonte/cor/tamanho e MESMO crossfade que já roda pra trocar
+// filtro — mesma fonte/cor/tamanho e MESMA troca que já roda pra trocar
 // de rótulo, em vez de um elemento à parte com estilo próprio. Por isso a
 // mensagem não é um componente irmão: é só outro valor possível de
-// `textoAlvo` abaixo, o crossfade nem sabe a diferença. Enquanto presente,
+// `textoAlvo` abaixo, a troca nem sabe a diferença. Enquanto presente,
 // clique chama `aoClicarMensagem` no lugar de abrir o menu (a notificação
 // não é um dropdown).
 //
@@ -59,6 +66,14 @@ const EASE_LARGURA_ROTULO = 'cubic-bezier(0.4, 0, 0.2, 1)';
 // `components/Toasts.jsx` (que usava vermelho num toast à parte); aqui
 // reaproveita o âmbar já estabelecido como "isto precisa de atenção" em vez
 // de introduzir uma terceira cor de alerta no app.
+//
+// `comoGatilho` (opcional, `{ rotulo, aberto, aoClicar, rotuloAberto,
+// rotuloRepouso, aoMedirRotulos }`): o botão deixa de abrir o dropdown e vira só o
+// gatilho de um painel que a ilha hospeda (filtros da Galeria,
+// `ilha/RegiaoDoPainelDeFiltros.jsx`). Mantém a troca/largura do rótulo e a
+// sobreposição das notificações, que um botão à parte perderia. Os três últimos
+// campos (opcionais) fazem `aoMedirRotulos({ aberto, repouso })` informar a largura
+// instantânea de cada rótulo (ver `medidorRotuloAbertoRef`).
 export default function SeletorEmMenu({
   id,
   // Default `[]`: chamadores só-mensagem (status/notificação de captura da
@@ -74,7 +89,10 @@ export default function SeletorEmMenu({
   mensagemSobreposta,
   aoClicarMensagem,
   tomMensagem,
+  ilhaAberta = false,
   ocuparLarguraDoPai = false,
+  aoMudarAberto,
+  comoGatilho,
 }) {
   const [aberto, setAberto] = useState(false);
   const [indiceAtivo, setIndiceAtivo] = useState(0);
@@ -91,39 +109,87 @@ export default function SeletorEmMenu({
   const movimentoReduzido = usePrefersReducedMotion();
 
   // `textoAlvo`: mensagem sobreposta tem prioridade sobre o rótulo da opção
-  // — o crossfade abaixo reage a QUALQUER mudança deste valor, seja troca de
+  // — a troca abaixo reage a QUALQUER mudança deste valor, seja troca de
   // filtro ou a notificação aparecendo/sumindo, sem precisar saber a causa.
-  const textoAlvo = mensagemSobreposta ?? (prefixo ? `${prefixo} | ${opcaoSelecionada?.rotulo}` : opcaoSelecionada?.rotulo);
+  const textoAlvo =
+    mensagemSobreposta ??
+    comoGatilho?.rotulo ??
+    (prefixo ? `${prefixo} | ${opcaoSelecionada?.rotulo}` : opcaoSelecionada?.rotulo);
 
-  // Crossfade no texto do botão quando `textoAlvo` muda (pedido do usuário,
-  // 2026-09-27) — sem isto a troca era instantânea. `textoExibido` só
-  // atualiza no MEIO do fade: o toggle de `desvanecendo` (true na mudança,
-  // false 150ms depois, junto com o texto novo) dispara as duas metades —
-  // fade-out seguido de fade-in — com uma única classe `transition-opacity`.
-  // Ignora a primeira renderização (senão o texto inicial já entraria
-  // desvanecendo). Sob `prefers-reduced-motion`, pula o fade inteiro
-  // (atualiza na hora): só neutralizar a duração via CSS deixaria o texto em
-  // branco parado pelos 150ms sem nenhum motivo funcional, pior que não
-  // animar.
+  // Troca de texto do botão quando `textoAlvo` muda: "upscale pixelado" (pedido do
+  // usuário, 2026-10-08, no lugar do crossfade de 2026-09-27) — o antigo vira pixel
+  // e some, o novo chega em baixa resolução e ganha nitidez (ilha/pixelarTroca.js).
+  // `textoExibido` já vira o novo na hora e o antigo fica em `textoSaindo` só
+  // durante a troca. Ignora a primeira
+  // renderização (senão o texto inicial já entraria rolando). Sob
+  // `prefers-reduced-motion` a troca é instantânea.
   const [textoExibido, setTextoExibido] = useState(textoAlvo);
-  const [desvanecendo, setDesvanecendo] = useState(false);
+  const [textoSaindo, setTextoSaindo] = useState(null);
   const primeiraRenderizacaoRotuloRef = useRef(true);
+  const entradaPendenteRef = useRef(false);
+  const textoExibidoRef = useRef(textoExibido);
+  useEffect(() => {
+    textoExibidoRef.current = textoExibido;
+  });
   useEffect(() => {
     if (primeiraRenderizacaoRotuloRef.current) {
       primeiraRenderizacaoRotuloRef.current = false;
       return undefined;
     }
-    if (movimentoReduzido) {
+    if (movimentoReduzido || entradaPendenteRef.current) {
       setTextoExibido(textoAlvo);
       return undefined;
     }
-    setDesvanecendo(true);
-    const tempo = setTimeout(() => {
-      setTextoExibido(textoAlvo);
-      setDesvanecendo(false);
-    }, DURACAO_CROSSFADE_ROTULO_MS);
-    return () => clearTimeout(tempo);
+    setTextoSaindo(textoExibidoRef.current);
+    setTextoExibido(textoAlvo);
+    const fim = setTimeout(
+      () => setTextoSaindo(null),
+      duracaoTotalDaTroca(DURACAO_TROCA_ROTULO_MS) + 20,
+    );
+    return () => clearTimeout(fim);
   }, [textoAlvo, movimentoReduzido]);
+
+  // Os filtros de pixelização são por instância (`id` único): vários seletores
+  // convivem na página e cada um anima o seu tamanho de célula.
+  const sufixoDoFiltro = useId().replace(/:/g, '');
+  const svgDosFiltrosRef = useRef(null);
+  const entrandoRef = useRef(null);
+  const saindoRef = useRef(null);
+  useLayoutEffect(() => {
+    if (textoSaindo == null) return undefined;
+    return pixelarTroca({
+      entra: entrandoRef.current,
+      sai: saindoRef.current,
+      svg: svgDosFiltrosRef.current,
+      sufixo: sufixoDoFiltro,
+      ms: DURACAO_TROCA_ROTULO_MS,
+    });
+  }, [textoSaindo, textoExibido, sufixoDoFiltro]);
+
+  // Ilha abrindo: o rótulo chega em pixel e ganha nitidez (sem texto antigo
+  // saindo, que ainda não estava visível). Vale também quando o texto muda junto
+  // com a abertura (Galeria: o resumo do painel nasce quando o catálogo carrega):
+  // `entradaPendenteRef` faz a troca daquele quadro virar só a entrada. Se uma
+  // troca já estava em curso ao abrir (sinopse), ela segue sozinha.
+  const ilhaEstavaAbertaRef = useRef(ilhaAberta);
+  useLayoutEffect(() => {
+    if (ilhaAberta && !ilhaEstavaAbertaRef.current) {
+      entradaPendenteRef.current = textoSaindo == null && !movimentoReduzido;
+    }
+    ilhaEstavaAbertaRef.current = ilhaAberta;
+    if (!ilhaAberta) entradaPendenteRef.current = false;
+    if (!entradaPendenteRef.current || textoSaindo != null || textoExibido !== textoAlvo) {
+      return undefined;
+    }
+    entradaPendenteRef.current = false;
+    return pixelarTroca({
+      entra: entrandoRef.current,
+      svg: svgDosFiltrosRef.current,
+      sufixo: sufixoDoFiltro,
+      ms: DURACAO_TROCA_ROTULO_MS,
+      atrasoMs: ATRASO_ENTRADA_NA_ABERTURA_MS,
+    });
+  }, [ilhaAberta, movimentoReduzido, textoSaindo, textoExibido, textoAlvo, sufixoDoFiltro]);
 
   // Bug medido ao vivo (2026-09-27, ver conversa): sem isto, o `<span>` do
   // rótulo tinha largura AUTOMÁTICA (auto-encolhe/estica pro texto que
@@ -137,7 +203,7 @@ export default function SeletorEmMenu({
   // notificação. Fix: mede a largura do texto ALVO (não o exibido) num
   // `<span>` invisível fora do fluxo (`medidorRef`), e anima a largura do
   // `<span>` visível até esse valor — a mudança de tamanho vira uma transição
-  // suave em vez de um salto, sincronizada com o próprio crossfade (mesma
+  // suave em vez de um salto, sincronizada com a própria troca (mesma
   // duração, metade "encolhe/estica" enquanto o texto está invisível,
   // metade final já no tamanho certo quando o texto some/aparece).
   const medidorRef = useRef(null);
@@ -157,6 +223,39 @@ export default function SeletorEmMenu({
     observador.observe(medidor);
     return () => observador.disconnect();
   }, [textoAlvo]);
+
+  // Larguras INSTANTÂNEAS dos dois rótulos do gatilho de painel (o do painel
+  // aberto e o de repouso): o pai calcula a largura de destino da cápsula ao
+  // fechar a partir delas. Medir o rótulo visível não serve — a largura dele anima,
+  // e um destino que muda a cada quadro reinicia a transição da cápsula.
+  const medidorRotuloAbertoRef = useRef(null);
+  const medidorRotuloRepousoRef = useRef(null);
+  const aoMedirRotulos = comoGatilho?.aoMedirRotulos;
+  const rotuloAberto = comoGatilho?.rotuloAberto;
+  const rotuloRepouso = comoGatilho?.rotuloRepouso;
+  useLayoutEffect(() => {
+    const noAberto = medidorRotuloAbertoRef.current;
+    const noRepouso = medidorRotuloRepousoRef.current;
+    if (!noAberto || !noRepouso || !aoMedirRotulos) return undefined;
+    const medir = () => {
+      if (noAberto.offsetWidth > 0 && noRepouso.offsetWidth > 0) {
+        aoMedirRotulos({ aberto: noAberto.offsetWidth, repouso: noRepouso.offsetWidth });
+      }
+    };
+    medir();
+    const observador = new ResizeObserver(medir);
+    observador.observe(noAberto);
+    observador.observe(noRepouso);
+    return () => observador.disconnect();
+  }, [aoMedirRotulos, rotuloAberto, rotuloRepouso]);
+
+  // Avisa o pai quando o menu abre/fecha (a ilha segura as notificações enquanto
+  // um menu está aberto). O cleanup cobre o desmonte com o menu aberto, senão o
+  // pai ficaria achando que ele segue aberto.
+  useEffect(() => {
+    aoMudarAberto?.(aberto);
+    return () => aoMudarAberto?.(false);
+  }, [aberto, aoMudarAberto]);
 
   useEffect(() => {
     if (!aberto) return undefined;
@@ -230,18 +329,22 @@ export default function SeletorEmMenu({
         id={id}
         ref={gatilhoRef}
         type="button"
-        aria-haspopup={mensagemSobreposta ? undefined : 'menu'}
-        aria-expanded={mensagemSobreposta ? undefined : aberto}
+        aria-haspopup={mensagemSobreposta ? undefined : comoGatilho ? 'dialog' : 'menu'}
+        aria-expanded={mensagemSobreposta ? undefined : comoGatilho ? comoGatilho.aberto : aberto}
         aria-controls={aberto && !mensagemSobreposta ? idMenu : undefined}
         onClick={() => {
           if (mensagemSobreposta) {
             aoClicarMensagem?.();
             return;
           }
+          if (comoGatilho) {
+            comoGatilho.aoClicar();
+            return;
+          }
           setAberto((estava) => !estava);
         }}
         onKeyDown={(evento) => {
-          if (evento.key === 'ArrowDown' && !aberto && !mensagemSobreposta) {
+          if (evento.key === 'ArrowDown' && !aberto && !mensagemSobreposta && !comoGatilho) {
             evento.preventDefault();
             setAberto(true);
           }
@@ -255,14 +358,48 @@ export default function SeletorEmMenu({
         <span
           style={{
             width: larguraRotulo != null ? `${larguraRotulo}px` : undefined,
-            transitionDuration: `${DURACAO_CROSSFADE_ROTULO_MS}ms, ${DURACAO_CROSSFADE_ROTULO_MS}ms`,
-            transitionTimingFunction: `linear, ${EASE_LARGURA_ROTULO}`,
+            transitionDuration: `${DURACAO_TROCA_ROTULO_MS}ms`,
+            transitionTimingFunction: EASE_LARGURA_ROTULO,
           }}
-          className={`inline-block overflow-hidden whitespace-nowrap transition-[opacity,width] motion-reduce:transition-none ${
-            desvanecendo ? 'opacity-0' : 'opacity-100'
-          }`}
+          className="relative inline-block overflow-hidden whitespace-nowrap transition-[width] motion-reduce:transition-none"
         >
-          {textoExibido}
+          {/* O novo fica no fluxo (dá a altura da linha); o antigo é `absolute`
+              e só existe durante a troca. `key` remonta o novo a cada troca. */}
+          <span key={textoExibido} ref={entrandoRef} className="block">
+            {textoExibido}
+          </span>
+          {textoSaindo != null && (
+            <span ref={saindoRef} aria-hidden="true" className="absolute inset-x-0 top-0">
+              {textoSaindo}
+            </span>
+          )}
+          {/* Filtros de pixelização (ilha/pixelarTroca.js): A pixeliza o texto que
+              sai, B o que entra. Célula de 2px é o estado neutro. */}
+          <svg
+            ref={svgDosFiltrosRef}
+            width="0"
+            height="0"
+            aria-hidden="true"
+            focusable="false"
+            className="pointer-events-none absolute"
+          >
+            {['A', 'B'].map((letra) => (
+              <filter
+                key={letra}
+                id={`pix${letra}-${sufixoDoFiltro}`}
+                x="0"
+                y="0"
+                width="100%"
+                height="100%"
+              >
+                <feFlood data-p="flood" x="0" y="0" width="2" height="2" />
+                <feComposite data-p="comp" width="2" height="2" />
+                <feTile result="celulas" />
+                <feComposite in="SourceGraphic" in2="celulas" operator="in" />
+                <feMorphology data-p="morph" operator="dilate" radius="1" />
+              </filter>
+            ))}
+          </svg>
         </span>
         {/* Medidor invisível: mede a largura do texto ALVO (não o exibido,
             ver comentário de `larguraRotulo` acima) fora do fluxo normal —
@@ -274,6 +411,24 @@ export default function SeletorEmMenu({
         >
           {textoAlvo}
         </span>
+        {comoGatilho?.aoMedirRotulos && (
+          <>
+            <span
+              ref={medidorRotuloAbertoRef}
+              aria-hidden="true"
+              className="pointer-events-none invisible absolute whitespace-nowrap"
+            >
+              {rotuloAberto}
+            </span>
+            <span
+              ref={medidorRotuloRepousoRef}
+              aria-hidden="true"
+              className="pointer-events-none invisible absolute whitespace-nowrap"
+            >
+              {rotuloRepouso}
+            </span>
+          </>
+        )}
         {/* Sem chevron com mensagem sobreposta (pedido do usuário,
             2026-09-27) — não é um dropdown nesse estado, a seta sugeriria
             que dá pra abrir algo. */}
@@ -283,7 +438,7 @@ export default function SeletorEmMenu({
             height={14}
             aria-hidden="true"
             strokeWidth="4"
-            className={`shrink-0 transition-transform ${aberto ? 'rotate-180' : ''}`}
+            className={`shrink-0 transition-transform ${aberto || comoGatilho?.aberto ? 'rotate-180' : ''}`}
           />
         )}
       </button>

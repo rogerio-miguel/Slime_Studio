@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { BotaoDaIlha, DivisorDaIlha } from './BarraDeNavegacao.jsx';
+import { BotaoDaIlha, DivisorDaIlha } from './ilha/ElementosDaIlha.jsx';
 
 // Modo "Trocar banner" da página do anime (estado em `hooks/useSeletorDeBanner.js`),
 // inteiro dentro da ilha dinâmica da navbar (`BarraDeNavegacao` `modoDaIlha`):
