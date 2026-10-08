@@ -70,11 +70,10 @@ html {
    bater") — ANTES a lâmina nascia fechada (0deg) e abria sozinha (0%-15%)
    antes de bater; agora já NASCE aberta (-24deg em 0%), segura um instante
    (30%) e bate com leve overshoot pra frente (50%), assentando com um
-   pequeno recuo (70%) antes de fechar de vez (100%). Bate JUNTO com a
-   montagem do ícone (sem `animation-delay` — testado com atraso e
-   revertido no mesmo dia, "deixa como estava antes"). Replay controlado
-   pelo componente (classe só entra quando `animar` é true), não um loop
-   `infinite` aqui. */
+   pequeno recuo (70%) antes de fechar de vez (100%). Começa quando o ícone
+   começa a ganhar nitidez (`animation-delay` = atraso de entrada da troca
+   pixelada). Replay controlado pelo componente (classe só entra quando o
+   ícone está montado), não um loop `infinite` aqui. */
 @keyframes claquete-clap {
   0% {
     transform: rotate(-24deg);
@@ -94,12 +93,8 @@ html {
 }
 
 /* `claquete-fecha` (flourish de fechamento da lâmina na volta ícone→nome)
-   foi REMOVIDO (pedido do usuário, 2026-09-26): a volta deixou de desmontar
-   o ícone em pedaços/letras — agora é um crossfade simples (ícone inteiro
-   soma/some, palavra aparece por fade, ver `IconeClaquete` e
-   `DURACAO_ICONE_SOME_MS` em `LogoSlimeStudio.jsx`), sem flourish próprio
-   pra essa direção. Histórico da animação removida: `git log -p` neste
-   arquivo. */
+   foi REMOVIDO (2026-09-26); a troca nome↔ícone hoje é a dissolução
+   pixelada de `LogoSlimeStudio.jsx`. Histórico: `git log -p` neste arquivo. */
 
 /* Conteúdo da ilha (BarraDeNavegacao.jsx) reentrando ao trocar filtro ↔
    gerenciar ou de fase: o atraso deixa a largura da cápsula começar a
