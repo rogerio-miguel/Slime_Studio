@@ -19,7 +19,7 @@ import { traduzirGenero } from './generos.js';
 // pedido: "estreia em <ano>" é a fileira toda que sabe MENOS, não mais cedo —
 // cai no mesmo `Infinity` de quem não tem nenhum sinal, ficando sempre no
 // final junto dos dois.
-function dataChaveDeEstreia(item) {
+export function dataChaveDeEstreia(item) {
   if (item.proximo_ep_em) {
     const data = new Date(item.proximo_ep_em);
     if (!Number.isNaN(data.getTime())) return data.getTime();

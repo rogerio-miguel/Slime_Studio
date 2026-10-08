@@ -833,7 +833,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           alguns segundos) — GLOBAL (qualquer anime, não só este), mesmo hook
           de Galeria.jsx (hooks/useStatusDeCapturaIlha.js). Prioridade de qual
           mensagem a cápsula mostra quando mais de uma está ativa: ver
-          comentário de `mensagemIlha` em BarraDeNavegacao.jsx. */}
+          hooks/useFilaDaIlha.js. */}
       <BarraDeNavegacao
         sinopse={
           sinopseEmFoco
