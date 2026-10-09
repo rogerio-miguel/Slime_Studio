@@ -64,6 +64,12 @@ class EpisodioRemoto:
     # _sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`).
     titulo: str | None = None
     sinopse: str | None = None
+    # `True` quando o adapter recortou a temporada pelo marcador da própria fonte
+    # (`numero` já é por temporada). Sem isto, `api/servicos/fontes.py::
+    # _recortar_se_fonte_achatada` não distingue um recorte nativo que traz mais
+    # episódios que a AniList (extras/especiais da temporada) de uma fonte
+    # achatada, e cortaria o excedente como se fosse temporada seguinte.
+    recortado_pela_fonte: bool = False
 
 
 class FormatoDeMidia(StrEnum):

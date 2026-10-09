@@ -276,7 +276,10 @@ class AnimeFireProvider(ExtratorDeSite):
             )
             return []
 
-        return [replace(ep, numero=numero_na_temp) for numero_na_temp, ep in alvo]
+        return [
+            replace(ep, numero=numero_na_temp, recortado_pela_fonte=True)
+            for numero_na_temp, ep in alvo
+        ]
 
     def _mapa_primeiro_episodio_por_temporada(
         self, temporadas: object, url: str

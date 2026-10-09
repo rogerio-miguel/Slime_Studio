@@ -319,6 +319,11 @@ async def _recortar_se_fonte_achatada(
     também o teto (`offset + total`); em exibição fica sem teto, porque os
     próximos episódios a estrear ainda pertencem a ela.
 
+    Lista que o adapter já recortou pelo marcador da fonte
+    (`EpisodioRemoto.recortado_pela_fonte`) não passa pelo corte por offset (que a
+    reduziria ao excedente); só perde o que passa do total da AniList, em
+    temporada fechada (`_aparar_excedente_de_temporada_fechada`).
+
     Sem contagem esperada ou sem temporada pedida (`numero_temporada` nulo) não
     há como decidir — devolve `episodios` intacto, mesma degradação segura que o
     adapter já aplica.
@@ -331,6 +336,11 @@ async def _recortar_se_fonte_achatada(
     if anime.numero_temporada is None or esperados is None:
         return episodios
     total_temporada, em_aberto = esperados
+
+    if any(ep.recortado_pela_fonte for ep in episodios):
+        return await _aparar_excedente_de_temporada_fechada(
+            sessionmaker, anime, episodios, total_temporada, em_aberto
+        )
 
     numeros = {ep.numero for ep in episodios if ep.numero is not None}
     folga = 1 if em_aberto else 0
@@ -382,6 +392,24 @@ async def _recortar_se_fonte_achatada(
         len(recortados),
     )
     return recortados
+
+
+async def _aparar_excedente_de_temporada_fechada(
+    sessionmaker: _SessionMaker,
+    anime: Anime,
+    episodios: list[EpisodioRemoto],
+    total_temporada: int,
+    em_aberto: bool,
+) -> list[EpisodioRemoto]:
+    """Descarta o que a fonte arquiva além do total da AniList numa temporada
+    fechada — OVAs/especiais que o site (ex. MeusAnimes) guarda como "episódio
+    13…16" da temporada: não existem no TMDB nem na AniList como episódio dela e
+    chegariam à grade sem nome, sinopse nem still. Temporada em exibição não tem
+    teto (a fonte pode estar à frente). Rótulo não numérico (`numero=None`) fica."""
+    if em_aberto or all(ep.numero is None or ep.numero <= total_temporada for ep in episodios):
+        return episodios
+    teto = total_temporada + await _total_das_partes_irmas(sessionmaker, anime)
+    return [ep for ep in episodios if ep.numero is None or ep.numero <= teto]
 
 
 async def _info_do_tmdb(

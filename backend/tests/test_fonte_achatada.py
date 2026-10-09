@@ -1,6 +1,7 @@
 """`api/servicos/fontes.py::_recortar_se_fonte_achatada` — fonte que devolve a
 franquia inteira numerada de forma contínua (AnimeFire sem `season` por episódio)."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -99,6 +100,27 @@ async def test_temporada_dividida_em_partes_soma_os_totais(monkeypatch, offset_d
     anime = _anime(total_episodios_anilist=12)
 
     assert await fontes._recortar_se_fonte_achatada(None, anime, _eps(24)) == _eps(24)
+
+
+async def test_recorte_nativo_de_temporada_fechada_apara_o_que_passa_do_total(offset_de):
+    # Go-toubun T2: MeusAnimes já recortou a temporada (16 eps = 12 + 4 OVAs arquivadas
+    # nela) e a AniList declara 12. O corte por offset NÃO roda (deixaria só 13..16);
+    # só o excedente cai.
+    offset_de(12)
+    anime = _anime(total_episodios_anilist=12)
+    nativos = [replace(ep, recortado_pela_fonte=True) for ep in _eps(16)]
+
+    aparados = await fontes._recortar_se_fonte_achatada(None, anime, nativos)
+
+    assert [ep.numero for ep in aparados] == list(range(1, 13))
+
+
+async def test_recorte_nativo_em_exibicao_nao_apara(offset_de):
+    offset_de(12)
+    anime = _anime(status_lancamento=StatusLancamento.EM_LANCAMENTO, proximo_ep_numero=3)
+    nativos = [replace(ep, recortado_pela_fonte=True) for ep in _eps(4)]
+
+    assert await fontes._recortar_se_fonte_achatada(None, anime, nativos) == nativos
 
 
 def test_seletor_colapsa_partes_da_mesma_temporada_numa_entrada():
