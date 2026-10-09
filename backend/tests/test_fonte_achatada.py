@@ -123,6 +123,15 @@ async def test_recorte_nativo_em_exibicao_nao_apara(offset_de):
     assert await fontes._recortar_se_fonte_achatada(None, anime, nativos) == nativos
 
 
+async def test_lista_so_com_episodios_de_temporadas_anteriores_vira_vazia(offset_de):
+    # Hyouken T2 em exibição (1 ep no ar): o dublado do MeusAnimes só tem a T1 (12 eps)
+    # e o adapter a devolve inteira. Não é conteúdo da T2.
+    offset_de(12)
+    anime = _anime(status_lancamento=StatusLancamento.EM_LANCAMENTO, proximo_ep_numero=2)
+
+    assert await fontes._recortar_se_fonte_achatada(None, anime, _eps(12)) == []
+
+
 def test_seletor_colapsa_partes_da_mesma_temporada_numa_entrada():
     from api.rotas.animes import _temporadas_e_proxima
 

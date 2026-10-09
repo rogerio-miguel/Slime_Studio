@@ -363,6 +363,20 @@ async def _recortar_se_fonte_achatada(
         return ep.numero is not None and ep.numero > offset and (teto is None or ep.numero <= teto)
 
     if not any(_no_intervalo(ep) for ep in episodios):
+        if offset > 0 and max(numeros) <= offset:
+            # Lista mais longa que a temporada e inteira dentro das anteriores: é
+            # o conteúdo delas (ex. dublado do MeusAnimes só com a T1, que o
+            # adapter devolve inteiro por ter uma única temporada carimbada).
+            logger.info(
+                "fonte para %r temporada %d só tem episódios de temporadas anteriores "
+                "(%d distintos, máx %d <= offset %d) — temporada ausente na fonte",
+                anime.titulo,
+                anime.numero_temporada,
+                len(numeros),
+                max(numeros),
+                offset,
+            )
+            return [ep for ep in episodios if ep.numero is None]
         logger.warning(
             "fonte achatada para %r temporada %d (%d episódios distintos > %d "
             "esperados pela AniList) mas offset acumulado (%d) não cobriu nenhum "
