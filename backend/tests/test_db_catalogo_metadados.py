@@ -808,3 +808,37 @@ async def test_obter_ou_criar_anime_id_existente_nao_recalcula_numero_temporada(
     async with sessionmaker() as sessao:
         anime = await sessao.get(Anime, anime_id)
         assert anime.numero_temporada == 1
+
+
+async def test_obter_ou_criar_anime_id_slug_colidido_com_outro_anilist_id_vira_nova_linha(
+    sessionmaker: _SessionMaker,
+):
+    # "∬" some no slug: T2 teria o mesmo slug da T1 e cairia na linha dela.
+    t1 = await _criar_anime(
+        sessionmaker,
+        titulo="Go-toubun no Hanayome",
+        slug="go-toubun-no-hanayome",
+        anilist_id=103572,
+    )
+
+    t2 = await obter_ou_criar_anime_id(
+        sessionmaker, "Go-toubun no Hanayome ∬", 2021, anilist_id=109261
+    )
+    t2_de_novo = await obter_ou_criar_anime_id(
+        sessionmaker, "Go-toubun no Hanayome ∬", 2021, anilist_id=109261
+    )
+
+    assert t2 != t1
+    assert t2_de_novo == t2
+    async with sessionmaker() as sessao:
+        assert (await sessao.get(Anime, t2)).slug == "go-toubun-no-hanayome-109261"
+
+
+async def test_obter_ou_criar_anime_id_slug_existente_sem_anilist_id_e_reaproveitado(
+    sessionmaker: _SessionMaker,
+):
+    anime_id = await _criar_anime(sessionmaker, titulo="Slime", slug="slime")
+
+    resultado = await obter_ou_criar_anime_id(sessionmaker, "Slime", 2018, anilist_id=1)
+
+    assert resultado == anime_id
