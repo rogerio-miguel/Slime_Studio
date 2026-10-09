@@ -255,6 +255,18 @@ export function gradienteDeDestaque({
   return `${gradienteSuave('to top', '#000', alcanceBase)}, linear-gradient(to right, rgba(0, 0, 0, ${alfaEsquerda}), rgba(0, 0, 0, ${alfaMeio}) 28%, transparent ${fimEsquerda}%)`;
 }
 
+// Fade do hero no padrão da Crunchyroll (/pt-br/discover, medido 2026-10-09):
+// a camada de arte tem proporção 16:9 (mais alta que o hero), ancorada no topo
+// e SEM recorte embaixo — vaza por trás da seção seguinte. Um overlay preto
+// `transparent 50% → #000 100%` na altura TOTAL da arte (não só na parte
+// visível do hero) mais um escurecimento à esquerda pro texto. Inline: parser
+// de multi-gradiente do Tailwind v4.
+export const GRADIENTE_DO_HERO =
+  'linear-gradient(transparent 50%, #000 100%), linear-gradient(to right, rgba(0, 0, 0, 0.85) 0, rgba(0, 0, 0, 0.5) 30%, transparent 55%)';
+// Altura da camada de arte com banner: 16:9 da largura da tela, nunca menor que
+// o hero. Sem banner (degradê + pôster centrado) a camada fica na altura do hero.
+export const ALTURA_DA_ARTE = 'max(100%, 56.25vw)';
+
 // Botão primário do hero (pílula clara, texto escuro, ícone play) — geometria
 // medida ao vivo no AnimeFire. Compartilhado entre o `<Link>` (anime já
 // catalogado) e o `<button>` de materialização (item do feed), e reusado por
@@ -474,7 +486,7 @@ export default function CarrosselDestaques({
         Destaques da temporada
       </h2>
 
-      <div className="group relative h-svh min-h-[480px] overflow-hidden">
+      <div className="group relative h-svh min-h-[480px]">
         <ul id={idSlides} aria-live={autoAvancando ? 'off' : 'polite'} className="absolute inset-0">
           {base.map((item, i) => {
             const ativo = i === indiceAtivo;
@@ -495,103 +507,99 @@ export default function CarrosselDestaques({
                 aria-roledescription="slide"
                 aria-label={`${i + 1} de ${n}: ${titulo}`}
                 inert={!ativo}
-                // `semBanner`: cor dominante da capa (AniList `coverImage.color`)
-                // como base do degradê `FUNDO_SEM_BANNER`. `bg-surface`
-                // continua de fallback quando `capa_cor` é null — item do
-                // Kitsu, ou `color: null` da própria AniList — com o degradê
-                // por cima dele.
-                style={
-                  semBanner
-                    ? {
-                        ...(item.capa_cor ? { backgroundColor: item.capa_cor } : {}),
-                        backgroundImage: FUNDO_SEM_BANNER,
-                      }
-                    : undefined
-                }
                 // Crossfade: todos os slides empilhados na mesma área
                 // (`absolute inset-0`, herdada do `h-svh` do wrapper — ver
                 // acima), só a opacity muda. `pointer-events-none` no inativo
                 // é redundante com `inert` (que já tira do hit-test), mas
                 // documenta a intenção de forma explícita no próprio className.
-                className={`absolute inset-0 overflow-hidden bg-surface transition-opacity duration-700 ease-in-out motion-reduce:transition-none ${
+                className={`absolute inset-0 transition-opacity duration-700 ease-in-out motion-reduce:transition-none ${
                   ativo ? 'opacity-100' : 'pointer-events-none opacity-0'
                 }`}
               >
-                {/* Com banner, é a arte horizontal. Sem banner não há imagem
-                    de fundo: o degradê do <li> + o grão abaixo fazem o
-                    fundo (a capa borrada daqui foi aposentada). */}
-                {fonteImagem && !semBanner && (
-                  <img
-                    src={imagemEmAltaResolucao(fonteImagem)}
-                    alt=""
-                    loading={primeiroDestaque ? undefined : 'lazy'}
-                    decoding={primeiroDestaque ? undefined : 'async'}
-                    // `object-top`: ancora a imagem pelo topo (medido no
-                    // AnimeFire) — a essa altura (`h-svh`) o `object-cover`
-                    // centralizado cortaria rosto/cabeça dos personagens
-                    // no banner.
-                    className="absolute inset-0 h-full w-full object-cover object-[100%_0%]"
-                  />
-                )}
+                {/* Camada de arte (imagem/degradê + grão + pôster + overlay de fade).
+                    Ancorada no topo e mais alta que o hero quando há banner —
+                    vaza por trás da seção seguinte (ver ALTURA_DA_ARTE).
+                    `semBanner`: cor dominante da capa (AniList `coverImage.color`)
+                    como base do degradê `FUNDO_SEM_BANNER`; `bg-surface` é o
+                    fallback quando `capa_cor` é null (item do Kitsu, ou
+                    `color: null` da AniList). */}
+                <div
+                  className={`absolute inset-x-0 top-0 ${semBanner && !item.capa_cor ? 'bg-surface' : ''}`}
+                  style={{
+                    height: semBanner ? '100%' : ALTURA_DA_ARTE,
+                    ...(semBanner
+                      ? {
+                          ...(item.capa_cor ? { backgroundColor: item.capa_cor } : {}),
+                          backgroundImage: FUNDO_SEM_BANNER,
+                        }
+                      : {}),
+                  }}
+                >
+                  {/* Com banner, é a arte horizontal. Sem banner não há imagem
+                      de fundo: o degradê desta camada + o grão abaixo fazem o
+                      fundo (a capa borrada daqui foi aposentada). */}
+                  {fonteImagem && !semBanner && (
+                    <img
+                      src={imagemEmAltaResolucao(fonteImagem)}
+                      alt=""
+                      loading={primeiroDestaque ? undefined : 'lazy'}
+                      decoding={primeiroDestaque ? undefined : 'async'}
+                      // `object-top`: ancora a imagem pelo topo (medido no
+                      // AnimeFire) — a essa altura (`h-svh`) o `object-cover`
+                      // centralizado cortaria rosto/cabeça dos personagens
+                      // no banner.
+                      className="absolute inset-0 h-full w-full object-cover object-[100%_0%]"
+                    />
+                  )}
 
-                {/* Sem banner (`semBanner`): o fundo é o degradê da cor dominante
-                    (`item.capa_cor`, via `style` no `<li>` acima) + grão. Só
-                    de `lg` pra cima o pôster entra NÍTIDO como card na
-                    lateral direita (oposta ao texto) — abaixo disso não há
-                    largura pro pôster ao lado do texto: fica só cor +
-                    gradiente + título. */}
-                {semBanner && (
+                  {/* Sem banner (`semBanner`): o fundo é o degradê da cor dominante
+                      (`item.capa_cor`, via `style` no `<li>` acima) + grão. Só
+                      de `lg` pra cima o pôster entra NÍTIDO como card na
+                      lateral direita (oposta ao texto) — abaixo disso não há
+                      largura pro pôster ao lado do texto: fica só cor +
+                      gradiente + título. */}
+                  {semBanner && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 opacity-[0.09] mix-blend-overlay"
+                      style={{ backgroundImage: GRAO_SEM_BANNER }}
+                    />
+                  )}
+                  {semBanner && (
+                    <img
+                      src={item.capa_url}
+                      alt=""
+                      loading={primeiroDestaque ? undefined : 'lazy'}
+                      decoding={primeiroDestaque ? undefined : 'async'}
+                      className="absolute right-22 top-1/2 hidden aspect-[2/3] h-[70%] -translate-y-1/2 rounded-xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 lg:block"
+                    />
+                  )}
+
+                  {/* Overlay de fade + escurecimento à esquerda (::after da
+                      Crunchyroll): na altura total da arte, não do hero. */}
                   <div
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-0 opacity-[0.09] mix-blend-overlay"
-                    style={{ backgroundImage: GRAO_SEM_BANNER }}
+                    className="pointer-events-none absolute inset-0"
+                    style={{ background: GRADIENTE_DO_HERO }}
                   />
-                )}
-                {semBanner && (
-                  <img
-                    src={item.capa_url}
-                    alt=""
-                    loading={primeiroDestaque ? undefined : 'lazy'}
-                    decoding={primeiroDestaque ? undefined : 'async'}
-                    className="absolute right-22 top-1/2 hidden aspect-[2/3] h-[70%] -translate-y-1/2 rounded-xl object-cover shadow-2xl shadow-black/60 ring-1 ring-white/10 lg:block"
-                  />
-                )}
-
-                {/* Gradiente empilhado (::before do AnimeFire) — 3 camadas
-                    inline (multi-gradiente arbitrário não é confiável no
-                    Tailwind v4). Sem banner, uma 4ª camada à esquerda pro
-                    texto continuar legível sobre o degradê. Substitui
-                    o card com bordas/sombra flutuante do layout anterior —
-                    aqui a imagem+gradiente É a seção. */}
-                <div
-                  className="pointer-events-none absolute inset-0"
-                  style={{
-                    // `#000`: cor do `<main>` da Home (paginas/Inicio.jsx,
-                    // `bg-black`) — o hero dissolve nela, não mais no antigo
-                    // `#17171b` (ver rationale em gradienteHero acima).
-                    background: gradienteDeDestaque({
-                      alcanceBase: 70,
-                      alfaEsquerda: 0.85,
-                      alfaMeio: 0.55,
-                      fimEsquerda: 65,
-                    }),
-                  }}
-                />
+                </div>
 
                 {/* Bloco de conteúdo — `ConteudoDeDestaque` (abaixo), compartilhado
                     com o palco do Top 10 e montado sobre ./BlocoConteudoHero.jsx
                     (pills → título/subtítulo → sinopse → meta → CTA). Aqui só o
                     posicionamento é próprio do slide: ancorado embaixo-
-                    esquerda, largura limitada a `45vw` no desktop, texto
-                    empurrado pro rodapé do hero (geometria medida ao vivo no
-                    AnimeFire). Sem `pointer-events-none`: tem botão/link
+                    esquerda no mobile; de `lg` pra cima o CENTRO vertical do
+                    bloco fica fixo em 53% do hero (blocos de alturas
+                    diferentes — título de 1 ou 2 linhas, sem sinopse —
+                    ficavam com o centro em alturas diferentes quando
+                    ancorados pelo rodapé), largura limitada a `45vw`. Sem `pointer-events-none`: tem botão/link
                     dentro; os textos puros não roubam clique de nada (não há
                     mais overlay de slide). */}
                 <ConteudoDeDestaque
                   {...pausarComMouse}
                   item={item}
                   rank={rank}
-                  className="absolute inset-x-0 bottom-0 max-w-[90%] pb-10 sm:max-w-[70%] sm:pb-14 lg:max-w-[45vw] lg:pb-[18vh] xl:pb-[20vh]"
+                  className="absolute inset-x-0 bottom-0 max-w-[90%] pb-10 sm:max-w-[70%] sm:pb-14 lg:bottom-auto lg:top-[53%] lg:max-w-[45vw] lg:-translate-y-1/2 lg:pb-0"
                   aoAbrirSinopse={aoAbrirSinopse}
                   aoMaterializar={aoMaterializar}
                   materializando={materializando}

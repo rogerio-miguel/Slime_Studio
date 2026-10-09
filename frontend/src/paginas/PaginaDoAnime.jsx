@@ -28,7 +28,8 @@ import { useSeletorDeBanner } from '../hooks/useSeletorDeBanner.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import BlocoConteudoHero from '../inicio/BlocoConteudoHero.jsx';
 import {
-  gradienteDeDestaque,
+  ALTURA_DA_ARTE,
+  GRADIENTE_DO_HERO,
   imagemEmAltaResolucao,
   CLASSE_PILL_HERO,
 } from '../inicio/CarrosselDestaques.jsx';
@@ -874,7 +875,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           Disney+, porque a grade de episódios em modo grade tem sombra
           própria no pôster que "precisava" do cinza pra aparecer; a sombra
           continua lá, só deixou de ditar o fundo da página). É a MESMA cor em
-          que o gradiente do hero (`gradienteDeDestaque` abaixo, sobre `#000`) se dissolve
+          que o gradiente do hero (`GRADIENTE_DO_HERO` abaixo, sobre `#000`) se dissolve
           sem emenda — mudar um sem o outro reabre a costura visível que
           motivou trocar `GRADIENTE_HERO`/`GRADIENTE_HERO_SEM_BANNER` de
           constante fixa pra função parametrizada por cor (ver
@@ -926,37 +927,35 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             `flex flex-col justify-end`: o bloco de conteúdo vive no rodapé e
             o <header> cresce (não corta) se a sinopse empurrar — dentro do
             teto que o clamp já garante. */}
-        <header className="relative -mt-24 -mb-32 flex h-svh min-h-[480px] flex-col justify-end overflow-hidden bg-surface">
-          {(seletorDeBanner.urlDaPrevia || anime?.banner_path) && (
-            <img
-              // `imagemEmAltaResolucao` sobe o backdrop do TMDB de w1280 pra
-              // `original` — mesma função e mesmo motivo do hero do carrossel
-              // (w1280 sob `object-cover` num hero >=1920px é upscale visível);
-              // URL de outra origem passa intacta. `object-top`: a essa altura
-              // o `object-cover` centralizado cortaria a cabeça dos
-              // personagens no banner.
-              src={seletorDeBanner.urlDaPrevia ?? imagemEmAltaResolucao(anime.banner_path)}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover object-top"
-            />
-          )}
-          {/* Sombra do carrossel da Home (`gradienteDeDestaque`, fonte única em
-              inicio/CarrosselDestaques.jsx, com os MESMOS parâmetros do slide —
-              pedido explícito do usuário): fade preto na base, que dissolve o
-              pé do hero no `bg-black` do <main> sem emenda, mais a faixa
-              escura à esquerda atrás do texto. Inline no `style` porque o
-              parser de gradiente arbitrário do Tailwind v4 não é confiável. */}
+        <header className="relative -mt-24 -mb-32 flex h-svh min-h-[480px] flex-col justify-end bg-surface">
+          {/* Camada de arte, MESMO tratamento do slide do carrossel da Home
+              (inicio/CarrosselDestaques.jsx, padrão Crunchyroll): 16:9 da
+              largura, ancorada no topo e SEM recorte embaixo (o <header> não
+              tem `overflow-hidden`) — vaza por trás da barra de ações/grade
+              que o `-mb-32` já puxa pra cima. O overlay `transparent 50% →
+              #000 100%` cobre a altura TOTAL da arte, não só a do hero, mais a
+              faixa escura à esquerda atrás do texto. Sem banner a camada fica
+              na altura do hero, pra o fade fechar no preto na borda dele.
+              `imagemEmAltaResolucao` sobe o backdrop do TMDB de w1280 pra
+              `original` (w1280 sob `object-cover` num hero >=1920px é upscale
+              visível); URL de outra origem passa intacta. `object-top`: o
+              `object-cover` centralizado cortaria a cabeça dos personagens. */}
           <div
-            className="pointer-events-none absolute inset-0"
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0"
             style={{
-              background: gradienteDeDestaque({
-                alcanceBase: 70,
-                alfaEsquerda: 0.85,
-                alfaMeio: 0.55,
-                fimEsquerda: 65,
-              }),
+              height: seletorDeBanner.urlDaPrevia || anime?.banner_path ? ALTURA_DA_ARTE : '100%',
             }}
-          />
+          >
+            {(seletorDeBanner.urlDaPrevia || anime?.banner_path) && (
+              <img
+                src={seletorDeBanner.urlDaPrevia ?? imagemEmAltaResolucao(anime.banner_path)}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover object-top"
+              />
+            )}
+            <div className="absolute inset-0" style={{ background: GRADIENTE_DO_HERO }} />
+          </div>
 
           {/* Bloco de conteúdo — esqueleto compartilhado com o carrossel da
               Home (inicio/BlocoConteudoHero.jsx: pills → título/subtítulo →
