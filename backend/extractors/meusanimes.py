@@ -458,7 +458,10 @@ def _recortar_bloco(
         return []
 
     bloco_alvo = blocos[temporadas.index(temporada)]
-    return [replace(ep, numero=n) if n is not None else ep for _t, n, ep in bloco_alvo]
+    return [
+        replace(ep, numero=n, recortado_pela_fonte=True) if n is not None else ep
+        for _t, n, ep in bloco_alvo
+    ]
 
 
 def _ordenar_episodios(episodios: list[EpisodioRemoto]) -> list[EpisodioRemoto]:
