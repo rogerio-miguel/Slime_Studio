@@ -40,31 +40,52 @@ html {
   background: #000;
 }
 
-/* Barra de rolagem do sistema (página e regiões internas). Trilho
-   transparente sobre o fundo preto; polegar discreto que acende no azul neon
-   no hover/arrasto. Largura fixa de 12px (a nativa varia por SO) — o trilho
-   transparente com `background-clip: padding-box` + borda dá o polegar fino
-   sem encolher a área clicável. */
-::-webkit-scrollbar {
+/* Barra de rolagem do sistema (regiões internas; a da página é a sobreposta de
+   components/BarraDeRolagem.jsx). Geometria copiada da do Gemini (medida no CSS
+   deles): faixa de 12px, polegar de 8px (borda transparente de 2px + 
+   `background-clip`), mínimo de 48px, sem trilho nem botões, invisível em
+   repouso e só aparece quando o mouse está sobre a região. Hover/arrasto no
+   polegar acende o neon do projeto (pedido do usuário). */
+::-webkit-scrollbar,
+::-webkit-scrollbar-corner {
   width: 12px;
   height: 12px;
-}
-::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background-color: #2a2d35;
-  border: 3px solid transparent;
+  min-height: 48px;
+  min-width: 48px;
+  border: 2px solid transparent;
   border-radius: 9999px;
-  background-clip: padding-box;
+  background-color: transparent;
+  background-clip: content-box;
+}
+:hover::-webkit-scrollbar-thumb {
+  background-color: #2a2d35;
 }
 ::-webkit-scrollbar-thumb:hover,
 ::-webkit-scrollbar-thumb:active {
   background-color: var(--color-neon);
 }
-::-webkit-scrollbar-corner {
-  background: transparent;
+::-webkit-scrollbar-button {
+  width: 0;
+  height: 0;
 }
+/* Posição do polegar da barra da página (components/BarraDeRolagem.jsx):
+   animação atrelada à rolagem do viewport, de 0 até o curso (--curso, em px,
+   definido pelo componente). Roda no compositor, então não trava com a thread
+   principal ocupada; `animation-timeline` vem DEPOIS do shorthand `animation`,
+   que o reseta. */
+@keyframes polegar-da-pagina {
+  to {
+    transform: translateY(var(--curso));
+  }
+}
+.polegar-da-pagina {
+  animation: polegar-da-pagina linear both;
+  animation-timeline: scroll(root block);
+}
+
 /* A barra da PÁGINA é a sobreposta de components/BarraDeRolagem.jsx — a nativa
    ocupa uma coluna própria (faixa preta). As regiões internas seguem com a
    nativa estilizada acima. */
@@ -79,6 +100,9 @@ html::-webkit-scrollbar {
 @supports not selector(::-webkit-scrollbar) {
   * {
     scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  :hover {
     scrollbar-color: #2a2d35 transparent;
   }
 }
