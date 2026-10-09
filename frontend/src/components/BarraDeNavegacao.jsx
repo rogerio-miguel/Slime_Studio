@@ -341,7 +341,7 @@ export default function BarraDeNavegacao({
         style={{ ...estilos.forma, ...painel.estiloCapsula }}
         // `relative`: âncora do menu do dropdown (`ocuparLarguraDoPai`).
         className={`relative flex flex-col rounded-full transition-[background-color,padding] motion-reduce:transition-none ${
-          capsulaExpandidaIlha || painel.ancorada ? 'bg-white/5 px-3 py-1' : 'px-0 py-0'
+          capsulaExpandidaIlha || painel.ancorada ? 'bg-[#0d0d0d] px-3 py-1' : 'px-0 py-0'
         }`}
       >
         {/* Cabeçalho (link + conteúdo da ilha) numa grade de uma linha só, para

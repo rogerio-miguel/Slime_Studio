@@ -14,6 +14,9 @@ const RAIO_PAINEL_PX = 28;
 const EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
 // `px-3` dos dois lados da cápsula (BarraDeNavegacao.jsx).
 const PADDING_X_CAPSULA_PX = 24;
+// Sólido (branco 5% sobre o preto da navbar opaca): no scroll 0 a navbar é
+// transparente e um fundo translúcido deixaria a arte do hero vazar pela cápsula.
+const FUNDO_DA_ILHA = 'rgb(13 13 13)';
 const FUNDO_PAINEL_PADRAO = 'rgb(10 12 16 / 0.94)';
 
 // `sm` do Tailwind: abaixo dele o `<ul>` central da navbar (onde mora a
@@ -280,7 +283,7 @@ export function useSinopseNaCapsula({
             ? fundoExpandido
             : voltaAPilula
               ? 'rgb(255 255 255 / 0)'
-              : 'rgb(255 255 255 / 0.05)',
+              : FUNDO_DA_ILHA,
           boxShadow: expandida
             ? '0 0 0 1px rgb(255 255 255 / 0.08), 0 24px 60px rgb(0 0 0 / 0.55)'
             : '0 0 0 1px rgb(255 255 255 / 0), 0 24px 60px rgb(0 0 0 / 0)',
