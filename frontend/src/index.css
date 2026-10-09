@@ -40,6 +40,49 @@ html {
   background: #000;
 }
 
+/* Barra de rolagem do sistema (página e regiões internas). Trilho
+   transparente sobre o fundo preto; polegar discreto que acende no azul neon
+   no hover/arrasto. Largura fixa de 12px (a nativa varia por SO) — o trilho
+   transparente com `background-clip: padding-box` + borda dá o polegar fino
+   sem encolher a área clicável. */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: #2a2d35;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--color-neon);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* A barra da PÁGINA é a sobreposta de components/BarraDeRolagem.jsx — a nativa
+   ocupa uma coluna própria (faixa preta). As regiões internas seguem com a
+   nativa estilizada acima. */
+html {
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar {
+  display: none;
+}
+/* Firefox não tem ::-webkit-scrollbar. No Chrome 121+ `scrollbar-color`
+   desativa os pseudo-elementos acima, por isso só entra onde eles não existem. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a2d35 transparent;
+  }
+}
+
 /* Preenchimento da bolinha ativa do carrossel hero (inicio/CarrosselDestaques.jsx)
    — mostra quanto falta pro auto-avanço trocar de slide. Duração (10000ms) tem
    que casar com `INTERVALO_MS` de lá; sem link automático entre os dois (CSS
