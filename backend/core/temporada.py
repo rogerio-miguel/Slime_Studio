@@ -19,10 +19,11 @@ descarta); não deduplicar os dois construindo um sobre o outro.
 import re
 from dataclasses import dataclass
 
-# Mapa de numeral romano reconhecido -> número da temporada. Só II/III/IV:
+# Mapa de numeral romano reconhecido (e "∬", T2 de Go-toubun no Hanayome) -> número
+# da temporada. Só II/III/IV:
 # "I" sozinho colide demais com outras coisas (inicial de nome, algarismo
 # solto) e não há anime no catálogo com 5+ temporadas nomeadas em romano.
-_MAPA_ROMANO = {"II": 2, "III": 3, "IV": 4}
+_MAPA_ROMANO = {"II": 2, "III": 3, "IV": 4, "∬": 2}
 
 # Marcadores que ANCORAM o número da temporada (viram `numero` no retorno) e
 # marcadores que só são descartados do título (Part/Cour/TV/ano) mas nunca
@@ -41,7 +42,7 @@ _REGEX_MARCADOR_TEMPORADA = re.compile(
       | (?P<num_n_season>\d+)(?:st|nd|rd|th)\s+Season         # "3rd Season"
       | (?P<num_temporada_a>\d+)\s*ª\s*Temporada              # "3ª Temporada"
       | Temporada\s+(?P<num_temporada_b>\d+)                  # "Temporada 3"
-      | (?P<romano>II|III|IV)                                 # "II" / "III" / "IV" ao final
+      | (?P<romano>II|III|IV|∬)                               # "II" / "III" / "IV" / "∬" ao final
       | Part\s+\d+                                            # "Part 2" (descarta, sem número)
       | Cour\s+\d+                                            # "Cour 2" (descarta, sem número)
       | \(TV\)                                                # "(TV)" (descarta)

@@ -76,7 +76,11 @@ async def criar_anime(
             detail="conteúdo adulto não é suportado",
         )
     anime_id = await obter_ou_criar_anime_id(
-        sessionmaker, corpo.titulo, corpo.ano, formato_midia=corpo.formato
+        sessionmaker,
+        corpo.titulo,
+        corpo.ano,
+        formato_midia=corpo.formato,
+        anilist_id=corpo.anilist_id,
     )
     await servico_descoberta.enriquecer_anime_criado(
         sessionmaker,

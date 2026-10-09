@@ -31,6 +31,7 @@ async def obter_ou_criar_anime_id(
     ano: int | None,
     *,
     formato_midia: str | None = None,
+    anilist_id: int | None = None,
 ) -> int:
     """Get-or-create por slug. `formato_midia` (`format` cru da AniList —
     `None` para série TV, "MOVIE"/"OVA"/"ONA"/"SPECIAL" caso contrário) só é
@@ -38,13 +39,29 @@ async def obter_ou_criar_anime_id(
     retroativamente alterado (mesma convenção de `ano` acima: só pega no
     primeiro cadastro). Não-nulo desliga o marcador de temporada do título
     (`separar_temporada`): filme/OVA/especial não tem posição narrativa
-    numerada, mesmo que o título tenha algo que pareça um marcador."""
+    numerada, mesmo que o título tenha algo que pareça um marcador.
+
+    `anilist_id` desambigua colisão de slug: `slugificar` descarta o que não é
+    ASCII, então "Go-toubun no Hanayome ∬" tem o mesmo slug da T1. Slug já usado
+    por linha com OUTRO `anilist_id` é outra obra — o slug novo ganha o sufixo
+    `-<anilist_id>`. Linha existente sem `anilist_id` (cadastro manual ainda não
+    enriquecido) continua sendo reaproveitada."""
     slug = slugificar(titulo)
     async with sessionmaker() as sessao:
-        resultado = await sessao.execute(select(Anime.id).where(Anime.slug == slug))
-        anime_id = resultado.scalar_one_or_none()
-        if anime_id is not None:
-            return anime_id
+        dono = (
+            await sessao.execute(select(Anime.id, Anime.anilist_id).where(Anime.slug == slug))
+        ).one_or_none()
+        if (
+            dono is not None
+            and anilist_id is not None
+            and dono.anilist_id not in (None, anilist_id)
+        ):
+            slug = f"{slug}-{anilist_id}"
+            dono = (
+                await sessao.execute(select(Anime.id, Anime.anilist_id).where(Anime.slug == slug))
+            ).one_or_none()
+        if dono is not None:
+            return dono.id
 
         numero_temporada = None if formato_midia is not None else separar_temporada(titulo)[1]
         anime = Anime(

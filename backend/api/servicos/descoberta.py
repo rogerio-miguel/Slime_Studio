@@ -1114,7 +1114,9 @@ async def _materializar_temporadas_irmas(
                 continue
 
             titulo = metadados.titulo_romaji or no.titulo
-            anime_id_irma = await obter_ou_criar_anime_id(sessionmaker, titulo, metadados.ano)
+            anime_id_irma = await obter_ou_criar_anime_id(
+                sessionmaker, titulo, metadados.ano, anilist_id=no.anilist_id
+            )
             await aplicar_metadados(sessionmaker, anime_id_irma, metadados)
 
             marcador = separar_temporada(titulo)[1]

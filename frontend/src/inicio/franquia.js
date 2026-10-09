@@ -12,7 +12,7 @@
 // que importa para agrupar (marcador no FIM do título, fronteira de token por
 // `\s+`). Errar aqui só junta/separa card de franquia — nunca afeta captura.
 const REGEX_MARCADOR_TEMPORADA =
-  /\s+(?:season\s+\d+|\d+(?:st|nd|rd|th)\s+season|\d+\s*ª\s*temporada|temporada\s+\d+|part\s+\d+|cour\s+\d+|(?:ii|iii|iv)|\(tv\)|\(\d{4}\))\s*$/i;
+  /\s+(?:season\s+\d+|\d+(?:st|nd|rd|th)\s+season|\d+\s*ª\s*temporada|temporada\s+\d+|part\s+\d+|cour\s+\d+|(?:ii|iii|iv|∬)|\(tv\)|\(\d{4}\))\s*$/i;
 
 // Descasca marcadores empilhados do fim ("... Season 3 Part 2") em laço — um
 // `.replace` só alcança o mais à direita. Devolve o título original se sobrar

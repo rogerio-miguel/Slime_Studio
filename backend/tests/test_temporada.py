@@ -32,6 +32,10 @@ def test_romano_iv():
     assert separar_temporada("Overlord IV") == ("Overlord", 4)
 
 
+def test_simbolo_integral_duplo_e_temporada_2():
+    assert separar_temporada("Go-toubun no Hanayome ∬") == ("Go-toubun no Hanayome", 2)
+
+
 def test_case_insensitive():
     assert separar_temporada("Overlord season 2") == ("Overlord", 2)
     assert separar_temporada("Overlord ii") == ("Overlord", 2)
