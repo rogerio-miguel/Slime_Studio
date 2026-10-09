@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import SeletorDeFonteDemo from './SeletorDeFonteDemo.jsx';
 import { useEventosDeJobs } from './eventos/useEventosDeJobs.js';
+import BarraDeRolagem from './components/BarraDeRolagem.jsx';
 import Player from './player/Player.jsx';
 import Inicio from './paginas/Inicio.jsx';
 import Galeria from './paginas/Galeria.jsx';
@@ -37,6 +38,7 @@ function Shell() {
 
   return (
     <>
+      <BarraDeRolagem />
       <Routes>
         <Route
           path="/"
