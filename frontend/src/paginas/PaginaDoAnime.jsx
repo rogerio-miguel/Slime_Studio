@@ -49,6 +49,13 @@ const ROTULO_VERSAO = {
   desconhecida: 'Desconhecida (site não confirma)',
 };
 
+// Frase de lista vazia: nomeia a versão ativa e lembra que a outra pode já ter
+// episódio, sem consultar a fonte de novo (ex. T2 legendada antes da dublagem).
+const AVISO_POR_VERSAO = {
+  legendado: ['legendados', 'dublada'],
+  dublado: ['dublados', 'legendada'],
+};
+
 // backend/core/enums.py::SITE_LOCAL — mesmo valor de string, espelhado aqui
 // (padrão já usado em ROTULOS_STATUS de LinhaDeEpisodio.jsx).
 const SITE_LOCAL = 'local';
@@ -1250,9 +1257,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           // publicou episódios (o anime pode já ter estreado na AniList — o
           // atraso é do site); sem `remotos.dados` (erro), o alerta vermelho
           // acima já cobre e aqui fica o texto genérico.
-          <p role="status" className="text-sm text-ink-muted">
+          <p role="status" className="text-sm font-bold text-ink-muted">
             {remotos.dados
-              ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios deste anime. Tente de novo mais tarde.`
+              ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios${AVISO_POR_VERSAO[versaoPedida] ? ` ${AVISO_POR_VERSAO[versaoPedida][0]}` : ''} deste anime. Tente de novo mais tarde${AVISO_POR_VERSAO[versaoPedida] ? ` ou veja a versão ${AVISO_POR_VERSAO[versaoPedida][1]} em "Trocar fonte"` : ''}.`
               : versaoIndisponivelNaFonte
                 ? `A versão ${(ROTULO_VERSAO[versaoPedida] ?? versaoPedida).toLowerCase()} ainda não foi publicada em nenhuma fonte. Tente de novo mais tarde.`
                 : 'Nenhum episódio encontrado.'}
