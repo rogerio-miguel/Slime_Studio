@@ -11,7 +11,7 @@ export default function AtivadorDeAnime({
   desabilitado,
   className,
   children,
-  // Handlers/atributos extras (ex. `onMouseEnter` do palco do Top 10).
+  // Handlers/atributos extras (ex. `onFocus` de um item de lista).
   ...propsExtras
 }) {
   const classes = `${className} outline-none focus-visible:ring-2 focus-visible:ring-neon`;

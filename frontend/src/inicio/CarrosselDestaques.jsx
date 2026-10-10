@@ -238,23 +238,6 @@ export function gradienteHeroTopoEBase(cor) {
   return `${gradienteSuave('to bottom', cor, 60)}, ${gradienteHero(cor)}`;
 }
 
-// Sombra do bloco de texto do palco do Top 10 (`PalcoDeEmAlta.jsx`), também usada
-// no carrossel pra os dois destaques terem a mesma leitura: fade preto de toda a
-// largura embaixo (52% da altura) mais um escurecimento à esquerda, onde fica o
-// texto; o topo e a direita do banner ficam sem escurecer. Os parâmetros têm os
-// valores do palco; o carrossel, de imagem maior e texto maior, passa uma versão
-// mais escura (uma sombra só atrás do bloco, sem a faixa à esquerda, ficou ruim
-// de ler). Inline pelo mesmo motivo de `SOMBRA_SLIDE_ATIVO` (parser de gradiente
-// do Tailwind v4).
-export function gradienteDeDestaque({
-  alcanceBase = 52,
-  alfaEsquerda = 0.65,
-  alfaMeio = 0.36,
-  fimEsquerda = 55,
-} = {}) {
-  return `${gradienteSuave('to top', '#000', alcanceBase)}, linear-gradient(to right, rgba(0, 0, 0, ${alfaEsquerda}), rgba(0, 0, 0, ${alfaMeio}) 28%, transparent ${fimEsquerda}%)`;
-}
-
 // Fade do hero no padrão da Crunchyroll (/pt-br/discover, medido 2026-10-09):
 // a camada de arte tem proporção 16:9 (mais alta que o hero), ancorada no topo
 // e SEM recorte embaixo — vaza por trás da seção seguinte. Um overlay preto
@@ -585,7 +568,7 @@ export default function CarrosselDestaques({
                 </div>
 
                 {/* Bloco de conteúdo — `ConteudoDeDestaque` (abaixo), compartilhado
-                    com o palco do Top 10 e montado sobre ./BlocoConteudoHero.jsx
+                    com o Top 10 e montado sobre ./BlocoConteudoHero.jsx
                     (pills → título/subtítulo → sinopse → meta → CTA). Aqui só o
                     posicionamento é próprio do slide: ancorado embaixo-
                     esquerda no mobile; de `lg` pra cima o CENTRO vertical do
@@ -726,9 +709,9 @@ export default function CarrosselDestaques({
 
 // Bloco de conteúdo de um destaque do feed `em-alta` (pills → título →
 // sinopse → fatos → CTA) — fonte única do visual, usada pelo slide do carrossel
-// (esta página) e pelo palco do Top 10 (`PalcoDeEmAlta.jsx`). `compacto` é a
-// versão do palco: mesmos tamanhos de título, sinopse e botão, mas só o
-// essencial — sem pills, subtítulo nem fatos.
+// (esta página) e pelo Top 10 (`CoverflowDeEmAlta.jsx`). `compacto` é a
+// versão do Top 10: mesmos tamanhos de título, sinopse e botão, mas só o
+// essencial — só a pill de ranking (sem a de catálogo) e sem fatos.
 // O que muda de um uso pro outro entra por prop: `className` (posição),
 // `aoAbrirSinopse`, `aoMaterializar`/`materializando` (CTA de item fora do
 // catálogo) e `rank` (pill "#N em alta"; ≤ 0 não mostra). Handlers extras
@@ -773,25 +756,25 @@ export function ConteudoDeDestaque({
       {...propsDoContainer}
       compacto={compacto}
       className={className}
-      pills={
-        compacto
-          ? []
-          : [
-              rank > 0 && (
-                <span key="rank" className={CLASSE_PILL_HERO}>
-                  <IconeEmAlta />
-                  {`#${rank} em alta`}
-                </span>
-              ),
-              catalogado && (
-                <span key="catalogado" className={CLASSE_PILL_HERO}>
-                  Anime no Catálogo
-                </span>
-              ),
-            ].filter(Boolean)
-      }
+      pills={[
+        rank > 0 && (
+          <span key="rank" className={CLASSE_PILL_HERO}>
+            <IconeEmAlta />
+            {`#${rank} em alta`}
+          </span>
+        ),
+        !compacto && catalogado && (
+          <span key="catalogado" className={CLASSE_PILL_HERO}>
+            Anime no Catálogo
+          </span>
+        ),
+      ].filter(Boolean)}
       titulo={
-        <h3 className="mb-1 line-clamp-2 text-2xl font-extrabold text-white sm:text-4xl lg:text-5xl lg:leading-[1.2]">
+        <h3
+          className={`mb-1 text-2xl font-extrabold text-white sm:text-4xl lg:text-5xl lg:leading-[1.2] ${
+            compacto ? 'max-w-3xl truncate' : 'line-clamp-2'
+          }`}
+        >
           {catalogado ? (
             <Link to={`/anime/${item.anime_id}`} className="rounded-sm outline-none">
               {titulo}
@@ -802,9 +785,12 @@ export function ConteudoDeDestaque({
         </h3>
       }
       tituloSecundario={
-        !compacto &&
         mostrarAlternativo && (
-          <p className="line-clamp-1 text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl">
+          <p
+            className={`text-lg font-bold text-ink-muted sm:text-xl xl:text-2xl ${
+              compacto ? 'max-w-3xl truncate' : 'line-clamp-1'
+            }`}
+          >
             {tituloAlternativo}
           </p>
         )

@@ -27,7 +27,7 @@ import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { agruparPorDiaDeEstreia, ordenarPorEstreia, topDaTemporada } from '../inicio/fileiras.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import ListaDeLancamentos from '../inicio/ListaDeLancamentos.jsx';
-import PalcoDeEmAlta from '../inicio/PalcoDeEmAlta.jsx';
+import CoverflowDeEmAlta from '../inicio/CoverflowDeEmAlta.jsx';
 import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
 import SlotDoDiaDeEstreia from '../inicio/SlotDoDiaDeEstreia.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
@@ -42,8 +42,9 @@ const LIMITE_PROXIMAS_ESTREIAS = 20;
 // fase de reveal.
 //
 // Conteúdo (branch `!buscando`): o carrossel hero seguido de 4 seções
-// principais, nesta ordem — "Continue de onde parou", "Top 10 em alta" (palco +
-// lista), "Acabou de sair" e "Próximas estreias" (redesenho de 2026-10-07).
+// principais, nesta ordem — "Continue de onde parou", "Acabou de sair", "Top 10 em
+// alta" (coverflow) e "Próximas estreias" (redesenho de 2026-10-07; Top 10 e
+// "Acabou de sair" trocaram de lugar em 2026-10-10, ver `fileirasDaHome`).
 // As fileiras temáticas por gênero e os banners `DestaqueGrande` saíram da Home
 // no mesmo dia, a pedido do usuário (os arquivos `inicio/DestaqueGrande.jsx` e
 // `inicio/fileirasTematicas.js` e o endpoint seguem existindo, só não são
@@ -565,11 +566,13 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // vazia). Montado no corpo do render (não `useMemo`): são poucos objetos +
   // JSX leve.
   //
-  // As 4 seções principais abrem a página (redesenho de 2026-10-07, direção
-  // "B + Top 10 em palco" do artefato de design): continuar → Top 10 → lançamentos
-  // → estreias. Do mais pessoal ao mais geral, e dentro do geral do "agora"
-  // pro "em breve". Cada uma tem título grande (`SecaoDaHome`, ou `destaque` na
-  // `FileiraDeCards` do "continuar").
+  // As 4 seções principais abrem a página (redesenho de 2026-10-07): continuar →
+  // lançamentos → Top 10 → estreias. Do mais pessoal ao mais geral, e dentro do
+  // geral do "agora" pro "em breve". O Top 10 vem depois de "Acabou de sair" porque
+  // sai do mesmo feed do hero (`em-alta`) e logo abaixo dele repetiria os mesmos
+  // títulos; e o coverflow é a seção mais alta, então em 3º lugar empurraria
+  // lançamentos e estreias pra baixo da dobra. Cada uma tem título grande
+  // (`SecaoDaHome`, ou `destaque` na `FileiraDeCards` do "continuar").
   // Posição de cada estreia dentro do seu dia (`primeiro`/`ultimo`) pra
   // `SlotDoDiaDeEstreia` desenhar a marca do dia acima dos cards.
   const posicaoNoDiaDeEstreia = new Map(
@@ -617,23 +620,6 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
         </div>
       ),
     },
-    top10.length > 0 && {
-      chave: 'top-10',
-      node: (
-        <div key="top-10" ref={refSecao('top-10')} data-secao="top-10">
-          <SecaoDaHome titulo="Top 10 em alta" descricao="Os dez títulos mais vistos agora.">
-            <PalcoDeEmAlta
-              itens={top10}
-              chaveDoItem={chaveDoItemDoFeed}
-              aoAbrirSinopse={setSinopseNaIlha}
-              sinopseAberta={sinopseNaIlha != null}
-              aoAtivar={materializarEIrPara}
-              desabilitado={chaveEmMaterializacao != null}
-            />
-          </SecaoDaHome>
-        </div>
-      ),
-    },
     (novosLancamentos.dados ?? []).length > 0 && {
       chave: 'novos-lancamentos',
       node: (
@@ -647,6 +633,25 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
             <ListaDeLancamentos
               itens={novosLancamentos.dados}
               chaveDoItem={chaveDoItemDoFeed}
+              aoAtivar={materializarEIrPara}
+              desabilitado={chaveEmMaterializacao != null}
+            />
+          </SecaoDaHome>
+        </div>
+      ),
+    },
+    top10.length > 0 && {
+      chave: 'top-10',
+      // `pt-14`/`pb-10` somam ao `space-y-14` do contêiner e ao `pt-8` da seção de
+      // baixo: 8rem (128px) do fim da seção de cima até o topo do pôster e 8rem do
+      // fim do bloco de texto até o título da de baixo.
+      node: (
+        <div key="top-10" ref={refSecao('top-10')} data-secao="top-10" className="pb-10 pt-14">
+          <SecaoDaHome titulo="Top 10 em alta" descricao="Os dez títulos mais vistos agora." cabecalhoOculto>
+            <CoverflowDeEmAlta
+              itens={top10}
+              chaveDoItem={chaveDoItemDoFeed}
+              aoAbrirSinopse={setSinopseNaIlha}
               aoAtivar={materializarEIrPara}
               desabilitado={chaveEmMaterializacao != null}
             />
