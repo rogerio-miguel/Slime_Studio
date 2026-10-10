@@ -6,14 +6,20 @@ import { PADDING_TITULO } from './tamanhoDeCard.js';
 // fileiras. As fileiras temáticas seguem com o título pequeno de
 // `FileiraDeCards` — a diferença de escala é de propósito, marca o que é
 // seção-âncora e o que é descoberta.
-export default function SecaoDaHome({ titulo, descricao, children }) {
+// `cabecalhoOculto`: some só visualmente (`sr-only`) — o `<section>` segue nomeado
+// pelo h2 pra leitor de tela, e a seção não perde o landmark. Sem cabeçalho também
+// não há o `pt-8` de respiro do título; o espaçamento fica com quem usa.
+export default function SecaoDaHome({ titulo, descricao, cabecalhoOculto = false, children }) {
   const idTitulo = useId();
   return (
     // `pt-8`: respiro extra entre seções principais (some ao `space-y-14` do
     // contêiner em `paginas/Inicio.jsx`) — com o título grande, só o `space-y`
-    // deixava uma seção colada na anterior, em especial depois do palco do Top 10.
-    <section aria-labelledby={idTitulo} className="pt-8">
-      <header style={{ paddingInline: PADDING_TITULO }} className="mb-6">
+    // deixava uma seção colada na anterior, em especial depois do coverflow do Top 10.
+    <section aria-labelledby={idTitulo} className={cabecalhoOculto ? undefined : 'pt-8'}>
+      <header
+        style={{ paddingInline: PADDING_TITULO }}
+        className={cabecalhoOculto ? 'sr-only' : 'mb-6'}
+      >
         <h2
           id={idTitulo}
           className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-5xl"

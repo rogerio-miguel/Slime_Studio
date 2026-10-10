@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 
 // Atributo que marca as áreas que pausam a rotação com o mouse em cima — o
-// hook abaixo procura por ele sob o cursor. Quem usa o hook como o palco do
-// Top 10 escreve o literal `data-pausa-por-mouse` direto no JSX.
+// hook abaixo procura por ele sob o cursor. Quem usa o hook, como o carrossel
+// hero, escreve o literal `data-pausa-por-mouse` direto no JSX.
 export const ATRIBUTO_PAUSA_POR_MOUSE = 'data-pausa-por-mouse';
 
 // Reavalia o "mouse em cima" quando uma sinopse acaba de fechar. Enquanto ela

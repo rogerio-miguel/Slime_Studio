@@ -127,6 +127,90 @@ html::-webkit-scrollbar {
   }
 }
 
+/* Coverflow do Top 10 (inicio/CoverflowDeEmAlta.jsx), de ponta a ponta: os dez
+   pôsteres ficam em cena e os das pontas saem pela borda da tela (`overflow-x`
+   corta). `--passo` e `--folga` (espaço extra do pôster central) são frações de
+   `--w`, então o conjunto cobre a mesma proporção da tela em qualquer largura.
+   Cada pôster é dirigido por
+   três variáveis inline: `--o` (posição relativa ao foco, negativa à esquerda),
+   `--a` (|--o|) e `--s` (sinal). Só `transform`/`opacity`/`filter` mudam na
+   troca, então roda no compositor. `overflow-x: clip` (não `hidden`) corta o
+   que vaza dos lados sem tornar o eixo Y rolável, e o reflexo abaixo do pôster
+   (`-webkit-box-reflect`, ignorado pelo Firefox) cabe na altura do coverflow. */
+.coverflow-raiz {
+  container-type: inline-size;
+}
+/* Pôster do MESMO tamanho do card `pequeno` das fileiras (inicio/tamanhoDeCard.js):
+   `--por-pagina` vem das mesmas classes (aplicadas no JSX) e a largura repete
+   `FLEX_BASIS_SLOT_COM_RESPIRO` sobre a trilha (100cqw menos o gutter de 3.7% de
+   cada lado). `cqw` e não `%` porque a altura do coverflow também depende de `--w`. */
+.coverflow {
+  --w: round(down, calc((100cqw * 0.926 - (var(--por-pagina) - 1) * 1rem) / var(--por-pagina)), 1px);
+  --passo: calc(var(--w) * 0.7);
+  --folga: calc(var(--w) * 0.3);
+  height: calc(var(--w) * 1.5 + 2.5rem);
+  perspective: 1500px;
+  perspective-origin: 50% 40%;
+  overflow-x: clip;
+  touch-action: pan-y;
+}
+.coverflow-item {
+  position: absolute;
+  left: round(down, calc(50% - var(--w) / 2), 1px);
+  top: 1rem;
+  width: var(--w);
+  aspect-ratio: 2 / 3;
+  padding: 0;
+  border: 0;
+  background: none;
+  z-index: calc(10 - var(--a));
+  opacity: max(0.4, calc(1 - var(--a) * 0.13));
+  filter: brightness(max(0.55, calc(1 - var(--a) * 0.1)));
+  transform: translateX(calc(var(--o) * var(--passo) + var(--s) * var(--folga)))
+    translateZ(calc(var(--a) * -4.5rem)) rotateY(calc(var(--s) * -50deg));
+  transition:
+    transform 0.6s cubic-bezier(0.3, 0.7, 0.2, 1),
+    opacity 0.4s,
+    filter 0.4s;
+}
+.coverflow-item[data-fora] {
+  opacity: 0;
+  pointer-events: none;
+}
+.coverflow-capa {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.7);
+  -webkit-box-reflect: below 4px linear-gradient(transparent 72%, rgb(255 255 255 / 0.16));
+}
+/* Glow do pôster em foco (mesma receita de components/BrilhoDaCapa.jsx): irmão
+   dos itens, `z-index: 0` pra ficar atrás de todos eles (o mais fundo tem 6). */
+.coverflow-brilho {
+  position: absolute;
+  left: round(down, calc(50% - var(--w) / 2), 1px);
+  top: 1rem;
+  width: var(--w);
+  aspect-ratio: 2 / 3;
+  z-index: 0;
+  border-radius: 1rem;
+  object-fit: cover;
+  pointer-events: none;
+  transform: translateY(3%) scale(1.12);
+  filter: blur(var(--blur-xl, 24px)) brightness(1.15) saturate(1.8);
+  animation: coverflow-brilho-entrada 0.6s ease-out;
+}
+@keyframes coverflow-brilho-entrada {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .coverflow-item {
+    transition: none;
+  }
+  .coverflow-brilho {
+    animation: none;
+  }
+}
+
 /* "Clap" da lâmina de cima do ícone de claquete na navbar
    (components/LogoSlimeStudio.jsx, IconeClaquete) — pedido do usuário
    2026-09-24 ("deixar ele mais vivo"). Só `transform: rotate` num <g>
