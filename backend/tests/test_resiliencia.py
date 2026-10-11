@@ -6,7 +6,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
-from core.erros import FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada, SiteEmCooldown
+from core.erros import (
+    EstruturaDoSiteMudou,
+    FalhaDeExtracao,
+    FonteNaoEncontrada,
+    SessaoRejeitada,
+    SiteEmCooldown,
+)
 from db.engine import criar_engine, criar_sessionmaker
 from fontes.adaptadores.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from fontes.rede import circuit_breaker, resiliencia, sessao_cache
@@ -96,6 +102,23 @@ async def test_chamar_com_falha_nao_retentavel_nao_conta_no_circuit_breaker(sess
     async with sessionmaker() as sessao:
         estado = await sessao.get(EstadoSite, _DOMINIO)
     assert estado is None
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, _DOMINIO) is False
+
+
+async def test_chamar_com_estrutura_do_site_mudou_nao_conta_no_circuit_breaker(sessionmaker):
+    """Parser quebrado é defeito NOSSO (o adapter precisa de conserto), não do site
+    estar fora do ar: `EstruturaDoSiteMudou` (`permite_retentativa=False`) não abre
+    cooldown nem grava `EstadoSite`, para não derrubar a fonte à toa."""
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        raise EstruturaDoSiteMudou("formato inesperado", dominio=_DOMINIO)
+
+    for _ in range(5):  # acima de qualquer limiar de falhas seguidas
+        with pytest.raises(EstruturaDoSiteMudou):
+            await resiliencia.chamar(sessionmaker, _ExtratorFalso(), operacao)
+
+    async with sessionmaker() as sessao:
+        assert await sessao.get(EstadoSite, _DOMINIO) is None
     assert await circuit_breaker.esta_em_cooldown(sessionmaker, _DOMINIO) is False
 
 

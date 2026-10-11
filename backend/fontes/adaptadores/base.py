@@ -8,6 +8,7 @@ validação (`ruff` só), então a garantia de contrato completo precisa vir de
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -37,8 +38,10 @@ class EpisodioRemoto:
       temporadas, quando a fonte tem esse conceito) quando `temporada is None`.
       Casa com `Episodio.numero` no primeiro caso.
     - `rotulo` é sempre o texto/label cru da fonte (ex.: "7", "07", "Especial")
-      e NUNCA é reescrito — é a chave de dedup de cada adapter (rótulos com zero
-      à esquerda não são necessariamente o mesmo episódio) e PODE divergir de
+      e NUNCA é reescrito — é a chave de dedup do AnimeFire e do AnimesDrive
+      (rótulos com zero à esquerda não são necessariamente o mesmo episódio); o
+      MeusAnimes deduplica por `url`, porque lá o rótulo é o número por temporada
+      e repete entre temporadas. PODE divergir de
       `numero`: no AnimeFire continua sendo o número absoluto da série; no
       MeusAnimes, o número por temporada cru da URL. `api/servicos/jobs.py`
       deriva `Episodio.numero_fonte` de `int(rotulo)`.
@@ -70,6 +73,23 @@ class EpisodioRemoto:
     # episódios que a AniList (extras/especiais da temporada) de uma fonte
     # achatada, e cortaria o excedente como se fosse temporada seguinte.
     recortado_pela_fonte: bool = False
+
+
+def ordenar_episodios(episodios: Iterable[EpisodioRemoto]) -> list[EpisodioRemoto]:
+    """Numéricos em ordem crescente primeiro, rótulos não numéricos
+    (`numero=None`) depois — sem seção separada na listagem (decisão do produto),
+    só não intercalados entre os numéricos. Sem `rotulo` na chave: `sorted` é
+    estável, então dois rótulos com o mesmo `numero` (ex. "7"/"07", ou temporadas
+    achatadas sem marcador) mantêm a ordem em que apareceram na página — usar
+    `rotulo` como desempate colocaria "07" antes de "7" (comparação lexicográfica),
+    uma ordem arbitrária e não a "natural" da fonte."""
+    return sorted(
+        episodios,
+        key=lambda episodio: (
+            episodio.numero is None,
+            episodio.numero if episodio.numero is not None else 0,
+        ),
+    )
 
 
 class FormatoDeMidia(StrEnum):
@@ -172,6 +192,12 @@ class ExtratorDeSite(ABC):
         - a fonte expõe VÁRIAS temporadas e nenhuma bate `temporada` → `[]` com
           `logger.warning` listando as disponíveis (esta temporada não existe
           nesta fonte).
+
+        Listagem vazia: `[]` só quando a fonte dá um sinal estruturado de que
+        não há episódio (ex. a API do AnimeFire devolvendo `episodes: []` para
+        anime ainda não estreado). Em adapter que lê HTML, página sem nenhum
+        episódio não distingue "ainda não publicou" de "o seletor quebrou" e
+        levanta `EstruturaDoSiteMudou`.
         """
 
     @abstractmethod

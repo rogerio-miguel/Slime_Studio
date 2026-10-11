@@ -46,14 +46,19 @@ import logging
 import re
 import time
 import urllib.parse
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
-from fontes.adaptadores.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
+from fontes.adaptadores.base import (
+    EpisodioRemoto,
+    ExtratorDeSite,
+    LinkDeMidia,
+    ResultadoBusca,
+    ordenar_episodios,
+)
 from fontes.adaptadores.qualidade import NivelDeQualidade, qualidade_do_rotulo
 from fontes.adaptadores.versao import inferir_versao
 from fontes.rede.cliente import ClienteComCaptura, ClienteDeSite, responde
@@ -284,7 +289,7 @@ class AnimesDriveProvider(ExtratorDeSite):
                     slug_a,
                     slug_b,
                 )
-                return _ordenar_episodios(episodios_das_duas_versoes)
+                return ordenar_episodios(episodios_das_duas_versoes)
 
         # Fica com o grupo maior — a lista do próprio anime — e diz o que
         # descartou, em vez de devolver duas versões misturadas. Empate mantém o
@@ -309,7 +314,7 @@ class AnimesDriveProvider(ExtratorDeSite):
             len(por_rotulo),
         )
 
-        return _ordenar_episodios(por_rotulo.values())
+        return ordenar_episodios(por_rotulo.values())
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:
         """Resolve a melhor mídia utilizável do episódio.
@@ -619,20 +624,3 @@ def _diferem_so_por_marcador_de_versao(slug_a: str, slug_b: str) -> bool:
     `listar_episodios` para distinguir "duas versões do mesmo anime" de
     "dois grupos genuinamente diferentes na mesma página"."""
     return _slug_sem_marcador_de_versao(slug_a) == _slug_sem_marcador_de_versao(slug_b)
-
-
-def _ordenar_episodios(episodios: Iterable[EpisodioRemoto]) -> list[EpisodioRemoto]:
-    """Numéricos em ordem crescente primeiro, rótulos não numéricos
-    (numero=None) depois — sem seção separada na listagem (decisão do
-    produto), só não intercalados entre os numéricos. Sem `rotulo` na chave:
-    `sorted` é estável, então dois rótulos com o mesmo `numero` (ex. "7"/"07")
-    mantêm a ordem em que apareceram na página — usar `rotulo` como
-    desempate colocaria "07" antes de "7" (comparação lexicográfica,
-    '0' < '7'), uma ordem arbitrária e não a "natural" da fonte."""
-    return sorted(
-        episodios,
-        key=lambda episodio: (
-            episodio.numero is None,
-            episodio.numero if episodio.numero is not None else 0,
-        ),
-    )

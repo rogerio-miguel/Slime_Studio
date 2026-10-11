@@ -296,13 +296,21 @@ class AnimeFireProvider(ExtratorDeSite):
         mapa: dict[int, int] = {}
         for temporada in temporadas:
             try:
-                mapa[temporada["number"]] = temporada["first_episode_number"]
+                numero = temporada["number"]
+                primeiro_episodio = temporada["first_episode_number"]
             except (TypeError, KeyError) as excecao:
                 raise EstruturaDoSiteMudou(
                     f"temporada do AnimeFire sem 'number'/'first_episode_number' em {url}:"
                     f" {excecao}",
                     dominio=self.dominio,
                 ) from excecao
+            if not _eh_inteiro(numero) or not _eh_inteiro(primeiro_episodio):
+                raise EstruturaDoSiteMudou(
+                    f"temporada do AnimeFire com 'number'/'first_episode_number' não numéricos"
+                    f" em {url}: {numero!r}/{primeiro_episodio!r}",
+                    dominio=self.dominio,
+                )
+            mapa[numero] = primeiro_episodio
         return mapa
 
     def _episodios_do_item(
@@ -328,6 +336,14 @@ class AnimeFireProvider(ExtratorDeSite):
                 dominio=self.dominio,
             ) from excecao
 
+        if not _eh_inteiro(numero_na_temporada):
+            # Sem isto, `number` string virava `TypeError` cru na conta abaixo, fora
+            # da taxonomia de erros de extração.
+            raise EstruturaDoSiteMudou(
+                f"episódio {id_episodio!r} do AnimeFire com 'number' não numérico"
+                f" em {url}: {numero_na_temporada!r}",
+                dominio=self.dominio,
+            )
         primeiro_episodio = primeiro_episodio_por_temporada.get(numero_da_temporada)
         if primeiro_episodio is None:
             raise EstruturaDoSiteMudou(
@@ -514,3 +530,8 @@ class AnimeFireProvider(ExtratorDeSite):
             if stream.get("is_mtl") is not True:
                 return stream
         return candidatos[0]
+
+
+def _eh_inteiro(valor: object) -> bool:
+    """`int` de verdade; `bool` é subclasse de `int` e não é número de episódio."""
+    return isinstance(valor, int) and not isinstance(valor, bool)
