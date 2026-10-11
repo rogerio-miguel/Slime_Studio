@@ -1,6 +1,7 @@
 """Persistência do estado de verificação (`VerificacaoDeAnime`) — a política de
 backoff é de `core/ciclo_de_vida.py`; aqui só leitura e gravação."""
 
+import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
@@ -11,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.ciclo_de_vida import CONTA_COMO_FALHA_DO_ANIME, proxima_tentativa
 from core.enums import ResultadoDeVerificacao, TarefaDeVerificacao
 from models.verificacao_de_anime import VerificacaoDeAnime
+
+logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -97,6 +100,16 @@ async def registrar_resultado(
             await sessao.commit()
         except IntegrityError:
             await sessao.rollback()  # FK: o anime foi removido no meio da tentativa
+            return
+    logger.info(
+        "verificacao anime_id=%s tarefa=%s resultado=%s falhas=%s proxima_em=%s dominio=%s",
+        anime_id,
+        tarefa.value,
+        resultado.value,
+        falhas,
+        campos["proxima_em"].isoformat(),
+        dominio,
+    )
 
 
 async def dominios_aguardando_sessao(
