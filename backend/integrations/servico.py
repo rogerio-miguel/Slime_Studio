@@ -1328,8 +1328,15 @@ async def _com_arte[T](registro: T, *, titulo: str | None, ano: int | None) -> T
     if arte is None:
         return registro
 
+    # `banner_com_titulo_url` só existe em `AnimeEmAlta`; `MetadadosDeAnime` não o carrega.
+    extras = (
+        {"banner_com_titulo_url": arte.banner_com_titulo_url or registro.banner_com_titulo_url}
+        if hasattr(registro, "banner_com_titulo_url")
+        else {}
+    )
     return replace(
         registro,
+        **extras,
         banner_url=arte.banner_url if arte.banner_url is not None else registro.banner_url,
         sinopse=escolher_sinopse(
             registro.sinopse,
