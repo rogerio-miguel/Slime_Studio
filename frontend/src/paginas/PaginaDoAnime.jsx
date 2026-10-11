@@ -8,21 +8,18 @@ import {
   listarEpisodios,
   listarEpisodiosRemotos,
   listarRelacionados,
-  listarVerificacoes,
   marcarTodosAssistidos,
   obterAnime,
   removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
-import AvisoDeFonteParada from '../components/AvisoDeFonteParada.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
 import { SeletorDeBannerNaIlha } from '../components/SeletorDeBanner.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
-import LinhaDeVerificacao from '../components/LinhaDeVerificacao.jsx';
 import MenuDeAcoesDoAnime from '../components/MenuDeAcoesDoAnime.jsx';
 import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
 import { nomeDaFonte } from '../fontes.js';
@@ -182,7 +179,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   // vazia, sem precisar de estado de erro/loading explícito aqui (conteúdo
   // suplementar best-effort, mesmo espírito do backend).
   const relacionados = useRecurso(() => listarRelacionados(animeId), [animeId]);
-  const verificacoes = useRecurso(() => listarVerificacoes(animeId), [animeId]);
 
   // Ativação de um card de "Relacionados" ainda não catalogado: materializa
   // no catálogo local (`POST /api/admin/animes`, get-or-create por slug) e
@@ -1030,26 +1026,18 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
               </button>
             }
             metaExtra={
+              fatos.length > 0 &&
               !animeNaoEncontrado && (
-                <>
-                  {fatos.length > 0 && (
-                    <div className="flex flex-wrap gap-6">
-                      {fatos.map((fato) => (
-                        <div key={fato.rotulo} className="flex flex-col gap-0.5">
-                          <span className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
-                            {fato.rotulo}
-                          </span>
-                          <span className="text-sm font-bold text-white sm:text-base">{fato.valor}</span>
-                        </div>
-                      ))}
+                <div className="flex flex-wrap gap-6">
+                  {fatos.map((fato) => (
+                    <div key={fato.rotulo} className="flex flex-col gap-0.5">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-ink-muted">
+                        {fato.rotulo}
+                      </span>
+                      <span className="text-sm font-bold text-white sm:text-base">{fato.valor}</span>
                     </div>
-                  )}
-                  <LinhaDeVerificacao verificacao={verificacoes.dados?.[0]} />
-                  <AvisoDeFonteParada
-                    fonteParada={anime?.fonte_parada}
-                    aoTrocarFonte={() => setTrocandoFonte(true)}
-                  />
-                </>
+                  ))}
+                </div>
               )
             }
           />

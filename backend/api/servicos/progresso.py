@@ -39,7 +39,7 @@ primeira temporada `EM_LANCAMENTO` sem episódio local (anime recém-estreado,
 sem anterior na franquia) — entra assim que a fonte é resolvida (abrir a página
 do anime) e a sondagem preenche `episodios_na_fonte`. Já a temporada nova de
 franquia, sem `FonteAnime` ainda, só vira card depois que a sondagem de reparo
-(`sondagem.versoes_para_resolver_fonte`) resolver a fonte em segundo
+(`sondagem.versoes_de_reparo_de_temporadas_novas`) resolver a fonte em segundo
 plano.
 
 `episodio_novo` (badge "Novo ep", `components/CartaoContinuarAssistindo.jsx::
@@ -439,26 +439,20 @@ async def listar_continuar_assistindo(
         # catálogo (quem nunca foi assistido não aparece aqui de qualquer
         # forma). Reaproveita 100% da infra de `agendar_sondagens` (TTL de 6h,
         # semáforo global, teto por lote, dedupe) — fire-and-forget, não
-        # bloqueia esta resposta. Anime ainda sem fonte (temporada nova, fonte
-        # perdida) entra como resolução, com a mesma política da Galeria.
+        # bloqueia esta resposta. Temporada nova ainda sem fonte entra como
+        # reparo (palpite de versão herdado da anterior, gate de status
+        # ignorado), o mesmo caminho da Galeria.
         versoes_de_sondagem = await servico_sondagem.versoes_de_sondagem_por_anime(
             sessao, ids_ativos
         )
-        em_espera = await servico_sondagem.ids_em_espera(sessao, ids_ativos)
-        a_resolver = await servico_sondagem.versoes_para_resolver_fonte(
-            sessao,
-            animes_por_id.values(),
-            versoes_de_sondagem,
-            com_episodios=ids_com_episodio,
-            temporadas_novas=novas,
-            em_espera=em_espera,
+        versoes_de_reparo = await servico_sondagem.versoes_de_reparo_de_temporadas_novas(
+            sessao, novas, versoes_de_sondagem
         )
         servico_sondagem.agendar_sondagens(
             sessionmaker,
             list(animes_por_id.values()),
-            {**versoes_de_sondagem, **a_resolver},
-            a_resolver=frozenset(a_resolver),
-            em_espera=em_espera,
+            {**versoes_de_sondagem, **versoes_de_reparo},
+            ignorar_gate_de_status=frozenset(versoes_de_reparo),
         )
         sondagem_em_andamento = servico_sondagem.sondagem_em_andamento(ids_ativos)
 

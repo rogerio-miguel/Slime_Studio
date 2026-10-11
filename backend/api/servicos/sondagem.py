@@ -6,7 +6,7 @@ contagem em `Anime.episodios_na_fonte`/`fonte_verificada_*`
 (`db.catalogo.atualizar_contagem_na_fonte`). Família de adapter distinta da de
 `api/servicos/descoberta.py`, que orquestra `integrations/` (metadados de
 provedor externo por API JSON pública): aqui é scraping de site com bypass
-anti-bot, custo real por anime — daí o intervalo longo, o teto por lote e o semáforo
+anti-bot, custo real por anime — daí o TTL longo, o teto por lote e o semáforo
 global que serializa os scrapes.
 
 Mesmo padrão de refresh oportunista de F4b
@@ -19,8 +19,9 @@ entra no banco para a PRÓXIMA leitura do catálogo, não para esta. Não import
 
 import asyncio
 import logging
-from collections.abc import Collection, Iterable
-from datetime import UTC, date, datetime, timedelta
+import time
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -29,30 +30,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.servicos import descoberta
 from api.servicos.fontes import resolver_e_listar
 from api.servicos.jobs import versao_episodio_da_fonte
-from core.ciclo_de_vida import (
-    RetratoDoAnime,
-    deve_resolver_fonte,
-    deve_sondar_fonte,
-    proxima_sondagem_apos_sucesso,
-)
-from core.enums import (
-    ResultadoDeVerificacao,
-    TarefaDeVerificacao,
-    TipoEpisodio,
-    VersaoDeFonte,
-    VersaoEpisodio,
-)
-from core.erros import (
-    FalhaDeExtracao,
-    FonteAmbigua,
-    FonteNaoEncontrada,
-    SessaoRejeitada,
-    SiteEmCooldown,
-    VersaoIndisponivelError,
-)
-from db import verificacao
+from core.enums import StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
+from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from db.catalogo import atualizar_contagem_na_fonte
-from extractors.resiliencia import em_segundo_plano
 from extractors.servico import filtrar_por_versao
 from models.anime import Anime
 from models.episodio import Episodio
@@ -63,11 +43,9 @@ logger = logging.getLogger(__name__)
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 # Sondagem é scraping de site (caro: bypass anti-bot, uma requisição por anime).
-# QUANDO sondar de novo é do backoff persistido (`verificacao_de_anime.proxima_em`,
-# cadência ancorada no episódio, `ciclo_de_vida.proxima_sondagem_apos_sucesso`),
-# aplicado por quem chama via `em_espera`. Este espaçamento é só a rede de
-# segurança para quem chama sem `em_espera` ou tem carimbo sem registro (legado).
-_ESPACAMENTO_MINIMO_S = 30 * 60
+# TTL de 6h entre sondagens do mesmo anime — sem scheduler, só carona na leitura
+# do catálogo (mesma filosofia de `descoberta._TTL_LANCAMENTO_S`).
+_TTL_SONDAGEM_S = 6 * 3600
 
 # Teto de sondagens disparadas por uma única passada de `agendar_sondagens` —
 # abrir o catálogo não pode enfileirar um scrape por anime em lançamento.
@@ -84,16 +62,33 @@ _semaforo_de_sondagem = asyncio.Semaphore(1)
 # `add_done_callback`.
 _sondagens_em_voo: dict[int, asyncio.Task] = {}
 
+# Cooldown de reparo de fonte perdida que falhou (`versoes_para_reresolver_
+# fonte_perdida`, 2026-09-19): sem NENHUMA `FonteAnime` mapeada, a resolução
+# varre TODOS os extratores com várias variantes de título — bem mais cara que
+# uma sondagem normal (que reusa o site já mapeado e falha rápido se ele
+# estiver fora do ar). Sem este cooldown, um anime que não é encontrado em
+# lugar nenhum (ex.: site descontinuou o título) repetia essa varredura
+# inteira a cada `?aquecer=true` — inclusive o `recarregar()` que a própria
+# Galeria dispara ao terminar de esperar o aquecimento anterior. Em memória de
+# processo (mesmo padrão de `_sondagens_em_voo`): reinicia com o processo, o
+# que é aceitável — o pior caso é uma nova tentativa após um restart, não um
+# vazamento permanente.
+_TTL_FALHA_REPARO_DE_FONTE_S = 3600
+_falhas_de_reparo_de_fonte: dict[int, float] = {}
 
-async def ids_em_espera(sessao: AsyncSession, ids: Iterable[int]) -> frozenset[int]:
-    """`anime_id`s dentre `ids` em backoff de sondagem (falha recente, persistida
-    em `verificacao_de_anime`). Quem chama passa o resultado a `agendar_sondagens`
-    (`em_espera`) e ao reparo de fonte perdida: sem isto, um anime que falha
-    (ex. Cloudflare rejeitando a sessão) seria retentado a cada abertura da
-    Galeria e ocuparia vaga do teto por lote sem nunca ceder lugar. Cobre também
-    a varredura cara de reparo (sem `FonteAnime` mapeada), que antes tinha um
-    cooldown em memória próprio."""
-    return await verificacao.ids_em_espera(sessao, ids, TarefaDeVerificacao.FONTE)
+
+def _reparo_de_fonte_em_cooldown(anime_id: int) -> bool:
+    expira_em = _falhas_de_reparo_de_fonte.get(anime_id)
+    return expira_em is not None and time.monotonic() < expira_em
+
+
+def ids_fora_de_cooldown_de_reparo(ids: Iterable[int]) -> list[int]:
+    """Filtra `ids` removendo os que tiveram uma tentativa de reparo de fonte
+    perdida sem sucesso há menos de `_TTL_FALHA_REPARO_DE_FONTE_S` — chamado
+    por `api/rotas/animes.py::listar_animes` ANTES de derivar palpites de
+    versão (`versoes_para_reresolver_fonte_perdida`), pra nem gastar a query
+    de episódios com um anime que está de cooldown."""
+    return [anime_id for anime_id in ids if not _reparo_de_fonte_em_cooldown(anime_id)]
 
 
 # `VersaoDeFonte` (estado do mapeamento) -> `VersaoEpisodio` pedível a
@@ -184,14 +179,26 @@ async def versoes_confirmadas_mais_recentes_por_anime(
     return {anime_id: versao_episodio_da_fonte(versao) for anime_id, versao in escolha.items()}
 
 
-async def _versao_dos_episodios_capturados(
+async def versoes_para_reresolver_fonte_perdida(
     sessao: AsyncSession, ids: Iterable[int]
 ) -> dict[int, VersaoEpisodio]:
-    """`{anime_id: versão a PEDIR}` derivada do `Episodio.versao` mais recente já
-    capturado (mesmo mapa de `versao_de_sondagem`: `DESCONHECIDA`/`NAO_DIFERENCIADA`
-    nunca é pedível, vira `LEGENDADO`). É só um palpite que dá à busca ao vivo um
-    ponto de partida; `resolver_fonte_do_anime` confirma a versão real assim que
-    reencontra o anime num site. Anime sem episódio não aparece."""
+    """`{anime_id: versão a PEDIR}` pra animes com `Episodio` capturado mas
+    ZERO linha em `FonteAnime` — caso real (2026-09-15, migração
+    `26791d90cb31_invalida_fonte_anime_do_animefire_one`): o domínio antigo do
+    AnimeFire saiu do ar e a migração apagou em lote as linhas de `fonte_anime`
+    que apontavam pra ele, esperando que a resolução rodasse nova ao vivo "na
+    próxima tentativa". Só que sem NENHUMA fonte mapeada pra consultar,
+    `versoes_de_sondagem_por_anime` nunca tem entrada pra esses animes, e
+    `agendar_sondagens` os pula (`anime.id not in versoes`) pra sempre — a
+    única forma de reparar era abrir a página do anime manualmente. `ids`
+    aqui já vem filtrado por quem chama (`api/rotas/animes.py::listar_animes`)
+    pros que TÊM episódio mas não têm entrada em `versoes_de_sondagem_por_anime`.
+
+    Deriva a versão a pedir do `Episodio.versao` mais recente já capturado
+    (mesmo mapa de `versao_de_sondagem`: `DESCONHECIDA`/`NAO_DIFERENCIADA`
+    nunca é pedível, vira `LEGENDADO`) — é só um palpite pra dar à busca ao
+    vivo um ponto de partida; `resolver_fonte_do_anime` ainda pode confirmar
+    a versão real assim que reencontrar o anime num site."""
     lista_ids = list(ids)
     if not lista_ids:
         return {}
@@ -214,47 +221,29 @@ async def _versao_dos_episodios_capturados(
     }
 
 
-async def versoes_para_resolver_fonte(
+async def versoes_de_reparo_de_temporadas_novas(
     sessao: AsyncSession,
-    animes: Iterable[Anime],
+    novas: dict[int, int],
     versoes_existentes: dict[int, VersaoEpisodio],
-    *,
-    com_episodios: Collection[int],
-    temporadas_novas: dict[int, int],
-    em_espera: frozenset[int],
-    hoje: date | None = None,
 ) -> dict[int, VersaoEpisodio]:
-    """`{anime_id: versão a PEDIR}` dos animes SEM nenhuma `FonteAnime`
-    (`versoes_existentes` não os tem) que a política manda resolver
-    (`core.ciclo_de_vida.deve_resolver_fonte`): fonte perdida, temporada nova e
-    estreia/anime em exibição sem fonte. Sem entrada em `versoes_existentes`,
-    `agendar_sondagens` os pularia pra sempre — a resolução (varredura cara, todos
-    os sites) persiste a fonte como efeito colateral e o anime passa a ser sondado
-    normalmente. Quem falhou há pouco (`em_espera`) fica de fora.
-
-    Palpite de versão, em ordem: episódios do próprio anime; episódios da
-    temporada anterior (`temporadas_novas`: `{nova: anterior}`); `LEGENDADO`.
-    `com_episodios`: ids com ao menos um `Episodio`."""
-    hoje = hoje or date.today()
-    candidatos = {
-        anime.id
-        for anime in animes
-        if anime.id not in versoes_existentes
-        and anime.id not in em_espera
-        and deve_resolver_fonte(
-            RetratoDoAnime.de(anime),
-            hoje,
-            tem_episodios=anime.id in com_episodios,
-            temporada_nova=anime.id in temporadas_novas,
-        )
-    }
-    anteriores = {temporadas_novas[aid] for aid in candidatos if aid in temporadas_novas}
-    palpites = await _versao_dos_episodios_capturados(sessao, candidatos | anteriores)
+    """`{anime_id da temporada nova: versão a PEDIR}` pras temporadas de
+    `lancamentos.temporadas_novas` que ainda não têm `FonteAnime` (temporada
+    nunca capturada → nunca resolveu fonte → `agendar_sondagens` a pularia pra
+    sempre e o badge/prateleira nunca saberiam que ela já estreou). O palpite
+    de versão herda a da temporada anterior (`versoes_para_reresolver_fonte_
+    perdida` sobre ela); mesma semântica de reparo — varredura cara, por isso
+    respeita `ids_fora_de_cooldown_de_reparo` e quem chama passa o resultado em
+    `ignorar_gate_de_status`."""
+    sem_fonte = ids_fora_de_cooldown_de_reparo(
+        anime_id for anime_id in novas if anime_id not in versoes_existentes
+    )
+    palpites = await versoes_para_reresolver_fonte_perdida(
+        sessao, {novas[anime_id] for anime_id in sem_fonte}
+    )
     return {
-        anime_id: palpites.get(anime_id)
-        or palpites.get(temporadas_novas.get(anime_id))
-        or VersaoEpisodio.LEGENDADO
-        for anime_id in candidatos
+        anime_id: palpites[novas[anime_id]]
+        for anime_id in sem_fonte
+        if novas[anime_id] in palpites
     }
 
 
@@ -263,34 +252,31 @@ def agendar_sondagens(
     animes: list[Anime],
     versoes: dict[int, VersaoEpisodio],
     *,
-    a_resolver: frozenset[int] = frozenset(),
-    em_espera: frozenset[int] = frozenset(),
-    max_sondagens: int = _MAX_SONDAGENS_POR_LOTE,
+    ignorar_gate_de_status: frozenset[int] = frozenset(),
 ) -> None:
     """Dispara, sem bloquear, a sondagem da fonte real dos animes em lançamento
-    cuja contagem está velha (> `_ESPACAMENTO_MINIMO_S`) ou ausente — no máximo
-    `max_sondagens` (padrão `_MAX_SONDAGENS_POR_LOTE`) por passada, os de carimbo
-    mais antigo primeiro.
+    cuja contagem está velha (> `_TTL_SONDAGEM_S`) ou ausente — no máximo
+    `_MAX_SONDAGENS_POR_LOTE` por passada, os de carimbo mais antigo primeiro.
     Fire-and-forget: o resultado entra no banco para a próxima leitura do
     catálogo, não para esta (mesmo padrão de
     `descoberta.agendar_refresh_de_lancamento`).
 
-    `em_espera`: ids em backoff por falha recente (`ids_em_espera`) — pulados
-    ANTES do teto por lote, senão os mesmos animes presos ocupariam as vagas.
-
-    `a_resolver`: ids sem `FonteAnime` que a política já mandou resolver
-    (`versoes_para_resolver_fonte` → `deve_resolver_fonte`) — pulam o gate de fase
-    daqui, que vale só para quem já tem fonte (um `FINALIZADO` com episódio e sem
-    fonte precisa ser tentado mesmo fora da janela pós-fim). Autolimitado: uma vez
-    resolvido, o anime ganha uma `FonteAnime` e deixa o conjunto na passada
-    seguinte.
+    `ignorar_gate_de_status`: ids que pulam o gate de status de lançamento por
+    completo — uso exclusivo do reparo de `versoes_para_reresolver_fonte_perdida`
+    (`api/rotas/animes.py::listar_animes`): um anime `FINALIZADO` sem NENHUMA
+    `FonteAnime` mapeada também precisa ser tentado (a resolução persiste a
+    fonte perdida como efeito colateral, ver `_sondar_e_persistir`), não só o
+    caso "FINALIZADO mas incompleto" de `_finalizado_incompleto`. Autolimitado
+    igual ao resto: uma vez resolvido, o anime ganha uma `FonteAnime` e some
+    do conjunto de candidatos na próxima passada (`versoes_de_sondagem_por_anime`
+    já cobre ele normalmente dali em diante).
 
     100% síncrona, zero I/O. No-op silencioso (nenhuma destas condições é
     anormal, então sem log) quando não há event loop rodando, ou para cada anime
-    cuja fase (`core.ciclo_de_vida.deve_sondar_fonte`) não pede sondagem E que não
-    está em `a_resolver`; não tem fonte mapeada nem palpite de versão
-    (`anime.id not in versoes`); contagem verificada há pouco
-    (`_ESPACAMENTO_MINIMO_S`); ou já tem uma
+    cujo: status de lançamento não é `EM_LANCAMENTO`/nulo E não é o caso
+    `FINALIZADO` incompleto de `_finalizado_incompleto` (ver ali) E não está em
+    `ignorar_gate_de_status`; não tem fonte mapeada nem palpite de versão
+    (`anime.id not in versoes`); contagem ainda dentro do TTL; ou já tem uma
     sondagem em voo.
     """
     try:
@@ -298,19 +284,20 @@ def agendar_sondagens(
     except RuntimeError:
         return
 
-    limite = datetime.now(UTC) - timedelta(seconds=_ESPACAMENTO_MINIMO_S)
-    hoje = date.today()
+    limite = datetime.now(UTC) - timedelta(seconds=_TTL_SONDAGEM_S)
     candidatos = sorted(animes, key=_ordem_de_sondagem)
 
     agendadas = 0
     for anime in candidatos:
-        if agendadas >= max_sondagens:
+        if agendadas >= _MAX_SONDAGENS_POR_LOTE:
             break
-        if anime.id not in a_resolver and not deve_sondar_fonte(
-            RetratoDoAnime.de(anime), hoje
+        if (
+            anime.status_lancamento not in (StatusLancamento.EM_LANCAMENTO, None)
+            and not _finalizado_incompleto(anime)
+            and anime.id not in ignorar_gate_de_status
         ):
             continue
-        if anime.id not in versoes or anime.id in em_espera:
+        if anime.id not in versoes:
             continue
         if not descoberta.carimbo_esta_velho(anime.fonte_verificada_em, limite):
             continue
@@ -318,19 +305,18 @@ def agendar_sondagens(
             continue
 
         tarefa = loop.create_task(
-            _sondar_e_persistir(sessionmaker, anime.id, versoes[anime.id])
+            _sondar_e_persistir(
+                sessionmaker,
+                anime.id,
+                versoes[anime.id],
+                eh_reparo_de_fonte_perdida=anime.id in ignorar_gate_de_status,
+            )
         )
         _sondagens_em_voo[anime.id] = tarefa
         tarefa.add_done_callback(
             lambda _tarefa, aid=anime.id: _sondagens_em_voo.pop(aid, None)
         )
         agendadas += 1
-
-
-def quantidade_em_voo() -> int:
-    """Sondagens em andamento agora — o zelador desconta do orçamento por hora,
-    senão passadas seguidas agendariam mais enquanto as anteriores ainda rodam."""
-    return len(_sondagens_em_voo)
 
 
 def sondagem_em_andamento(ids: Iterable[int]) -> bool:
@@ -344,6 +330,30 @@ def sondagem_em_andamento(ids: Iterable[int]) -> bool:
     return any(anime_id in _sondagens_em_voo for anime_id in ids)
 
 
+def _finalizado_incompleto(anime: Anime) -> bool:
+    """`True` quando a AniList já marcou o anime `FINALIZADO`, mas a contagem
+    da fonte real ainda não alcançou o total que ela declara — caso real
+    observado (2026-09-19): o fansub sobe o(s) último(s) episódio(s) depois
+    de a AniList fechar o status, e sem esta exceção `agendar_sondagens`
+    parava de checar aquele anime PARA SEMPRE assim que ele virava
+    `FINALIZADO` (gate original: só `EM_LANCAMENTO`/`None`) — o episódio final
+    nunca mais era descoberto, e o anime sumia de "Continuar assistindo"
+    (`api/servicos/progresso.py`) sem card nenhum pra ele, mesmo com o
+    episódio disponível na fonte.
+
+    Autolimitado: assim que `episodios_na_fonte` alcança
+    `total_episodios_anilist`, esta função volta a `False` e o anime para de
+    ser re-sondado — não reabre sondagem indefinida pra show genuinamente
+    completo. `total_episodios_anilist` ausente (AniList nunca fechou a
+    contagem) não é motivo de reabertura: sem total pra comparar, não dá pra
+    saber se falta episódio."""
+    return (
+        anime.status_lancamento == StatusLancamento.FINALIZADO
+        and anime.total_episodios_anilist is not None
+        and (anime.episodios_na_fonte or 0) < anime.total_episodios_anilist
+    )
+
+
 def _ordem_de_sondagem(anime: Anime) -> tuple[bool, datetime]:
     """Chave de ordenação de `agendar_sondagens`: `fonte_verificada_em` nulo
     primeiro, depois o mais antigo — quem está há mais tempo sem contagem
@@ -352,54 +362,26 @@ def _ordem_de_sondagem(anime: Anime) -> tuple[bool, datetime]:
     return (carimbo is not None, carimbo or _CARIMBO_MINIMO)
 
 
-def _resultado_da_excecao(excecao: Exception) -> ResultadoDeVerificacao:
-    if isinstance(excecao, SiteEmCooldown):
-        return ResultadoDeVerificacao.SITE_INDISPONIVEL
-    if isinstance(excecao, SessaoRejeitada):
-        return ResultadoDeVerificacao.PRECISA_SESSAO
-    if isinstance(excecao, FonteNaoEncontrada | VersaoIndisponivelError):
-        return ResultadoDeVerificacao.NAO_ENCONTRADO
-    if isinstance(excecao, FonteAmbigua):
-        return ResultadoDeVerificacao.AMBIGUO
-    return ResultadoDeVerificacao.ERRO
-
-
-async def _registrar(
+async def _sondar_e_persistir(
     sessionmaker: _SessionMaker,
     anime_id: int,
-    resultado: ResultadoDeVerificacao,
-    detalhe: str | None = None,
-    dominio: str | None = None,
-    proxima_apos_sucesso: datetime | None = None,
-) -> None:
-    """Grava o desfecho sem deixar um erro de banco esconder o da sondagem."""
-    try:
-        await verificacao.registrar_resultado(
-            sessionmaker,
-            anime_id,
-            TarefaDeVerificacao.FONTE,
-            resultado,
-            detalhe=detalhe,
-            dominio=dominio,
-            proxima_apos_sucesso=proxima_apos_sucesso,
-        )
-    except SQLAlchemyError as excecao:
-        logger.warning("registro da verificação falhou para anime_id=%s: %s", anime_id, excecao)
-
-
-async def _sondar_e_persistir(
-    sessionmaker: _SessionMaker, anime_id: int, versao: VersaoEpisodio
+    versao: VersaoEpisodio,
+    *,
+    eh_reparo_de_fonte_perdida: bool = False,
 ) -> None:
     """Corpo da `Task` fire-and-forget de sondagem. Toda exceção esperada (fonte
     fora do ar, ambígua, versão indisponível, timeout, erro de banco) vira
     `warning` e morre aqui — nunca propaga para o event loop. `CancelledError` e
     erros inesperados propagam de propósito.
 
-    Todo desfecho é registrado em `verificacao_de_anime` (`_registrar`): o
-    backoff persistido segura o reintento de quem falha, inclusive a varredura
-    cara de reparo (SEM fonte mapeada, a busca varre todos os extratores).
-    `Anime.fonte_verificada_em` continua sendo escrito só pelo sucesso, por
-    `atualizar_contagem_na_fonte`.
+    Só o caminho de sucesso carimba: `Anime.fonte_verificada_em` é escrito apenas
+    por `atualizar_contagem_na_fonte`. Uma sondagem que falhou não mexe em coluna
+    nenhuma — a próxima passada continua vendo o carimbo antigo/nulo e tenta de
+    novo (barato: reusa o site já mapeado). `eh_reparo_de_fonte_perdida=True`
+    (vindo de `ignorar_gate_de_status` em `agendar_sondagens`) é o caso caro —
+    SEM fonte mapeada, a busca varre todos os extratores — e sua falha grava um
+    cooldown próprio (`_registrar_falha_de_reparo_de_fonte`), já que não há
+    carimbo de coluna pra segurar o reintento por si só.
 
     `total` conta apenas números REGULAR distintos (`ep.numero is not None`,
     deduplicado): mesmo recorte `tipo == REGULAR` de
@@ -414,23 +396,13 @@ async def _sondar_e_persistir(
         if anime is None:
             return
         async with _semaforo_de_sondagem:
-            with em_segundo_plano():
-                fonte = await resolver_e_listar(
-                    sessionmaker,
-                    anime,
-                    versao,
-                    resolver_canonico=True,
-                    tentar_fontes_alternativas=True,
-                )
+            fonte = await resolver_e_listar(
+                sessionmaker, anime, versao, resolver_canonico=True
+            )
         episodios = filtrar_por_versao(fonte.episodios, versao)
         total = len({ep.numero for ep in episodios if ep.numero is not None})
         await atualizar_contagem_na_fonte(
             sessionmaker, anime_id, total=total, dominio=fonte.dominio
-        )
-        # Em dia = a fonte já tem tudo o que foi ao ar antes do próximo episódio.
-        fonte_em_dia = anime.proximo_ep_numero is None or total >= anime.proximo_ep_numero - 1
-        proxima_apos_sucesso = proxima_sondagem_apos_sucesso(
-            anime.proximo_ep_em, fonte_em_dia, datetime.now(UTC)
         )
     except (
         FalhaDeExtracao,
@@ -440,17 +412,5 @@ async def _sondar_e_persistir(
         SQLAlchemyError,
     ) as excecao:
         logger.warning("sondagem de fonte falhou para anime_id=%s: %s", anime_id, excecao)
-        resultado = _resultado_da_excecao(excecao)
-        dominio = (
-            getattr(excecao, "dominio", None)
-            if resultado is ResultadoDeVerificacao.PRECISA_SESSAO
-            else None
-        )
-        await _registrar(sessionmaker, anime_id, resultado, str(excecao), dominio or None)
-    else:
-        await _registrar(
-            sessionmaker,
-            anime_id,
-            ResultadoDeVerificacao.OK,
-            proxima_apos_sucesso=proxima_apos_sucesso,
-        )
+        if eh_reparo_de_fonte_perdida:
+            _falhas_de_reparo_de_fonte[anime_id] = time.monotonic() + _TTL_FALHA_REPARO_DE_FONTE_S

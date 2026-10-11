@@ -372,29 +372,6 @@ def test_episodios_novos_zero_para_status_diferente_de_em_lancamento():
     assert episodios_novos(anime, maior_capturado=0) == 0
 
 
-def test_episodios_novos_conta_na_janela_pos_fim_de_finalizado_incompleto():
-    # a AniList já fechou o status, mas o fansub ainda sobe o último episódio:
-    # a fonte tem 11 de 12 e o usuário parou no 10 -> 1 novo
-    anime = _anime_em_memoria(
-        status_lancamento=StatusLancamento.FINALIZADO,
-        estreia_em=date.today() - timedelta(weeks=12),
-        total_episodios_anilist=12,
-        episodios_na_fonte=11,
-    )
-    assert episodios_novos(anime, maior_capturado=10) == 1
-
-
-def test_episodios_novos_zero_para_finalizado_incompleto_fora_da_janela_pos_fim():
-    # 12 de 13 há anos (especial contado no total): arquivo, nunca badge
-    anime = _anime_em_memoria(
-        status_lancamento=StatusLancamento.FINALIZADO,
-        estreia_em=date(2015, 1, 9),
-        total_episodios_anilist=13,
-        episodios_na_fonte=12,
-    )
-    assert episodios_novos(anime, maior_capturado=0) == 0
-
-
 def test_episodios_novos_zero_quando_contagem_da_fonte_nula():
     anime = _anime_em_memoria(
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
@@ -446,7 +423,6 @@ async def _criar_anime_catalogado(
     episodios_na_fonte: int | None = None,
     fonte_verificada_em: datetime | None = None,
     proximo_ep_em: datetime | None = None,
-    proximo_ep_numero: int | None = None,
     estreia_em: date | None = None,
     generos: list[str] | None = None,
     formato_midia: str | None = None,
@@ -464,7 +440,6 @@ async def _criar_anime_catalogado(
             episodios_na_fonte=episodios_na_fonte,
             fonte_verificada_em=fonte_verificada_em,
             proximo_ep_em=proximo_ep_em,
-            proximo_ep_numero=proximo_ep_numero,
             estreia_em=estreia_em,
             generos=generos,
         )
@@ -1012,66 +987,6 @@ async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(
     assert "episodios_novos" not in resposta.json()
 
 
-async def test_obter_anime_detalhe_expoe_fonte_parada_quando_a_fonte_nao_alcanca_a_anilist(
-    cliente: AsyncClient, sessionmaker_api: _SessionMaker
-):
-    # AniList: próximo é o ep 6, em 3 dias -> já saíram 5; o 5º saiu há ~4 dias
-    # (7 d antes do próximo). A fonte, sondada há 1 h, tem só 3.
-    anime_id = await _criar_anime_catalogado(
-        sessionmaker_api,
-        "Anime Fonte Parada",
-        status_lancamento=StatusLancamento.EM_LANCAMENTO,
-        episodios_na_fonte=3,
-        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
-        proximo_ep_numero=6,
-        proximo_ep_em=datetime.now(UTC) + timedelta(days=3),
-    )
-    await _mapear_fonte(sessionmaker_api, anime_id, dominio="animefire.one")
-
-    corpo = (await cliente.get(f"/api/animes/{anime_id}")).json()
-
-    assert corpo["fonte_parada"]["episodio_esperado"] == 5
-    assert 90 <= corpo["fonte_parada"]["atraso_horas"] <= 100
-
-
-async def test_obter_anime_detalhe_sem_fonte_parada_quando_a_fonte_esta_em_dia(
-    cliente: AsyncClient, sessionmaker_api: _SessionMaker
-):
-    anime_id = await _criar_anime_catalogado(
-        sessionmaker_api,
-        "Anime Fonte Em Dia",
-        status_lancamento=StatusLancamento.EM_LANCAMENTO,
-        episodios_na_fonte=5,
-        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
-        proximo_ep_numero=6,
-        proximo_ep_em=datetime.now(UTC) + timedelta(days=3),
-    )
-    await _mapear_fonte(sessionmaker_api, anime_id)
-
-    corpo = (await cliente.get(f"/api/animes/{anime_id}")).json()
-
-    assert corpo["fonte_parada"] is None
-
-
-async def test_obter_anime_detalhe_nao_acusa_fonte_parada_em_fonte_dublada(
-    cliente: AsyncClient, sessionmaker_api: _SessionMaker
-):
-    anime_id = await _criar_anime_catalogado(
-        sessionmaker_api,
-        "Anime Dublado Atrasado",
-        status_lancamento=StatusLancamento.EM_LANCAMENTO,
-        episodios_na_fonte=2,
-        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
-        proximo_ep_numero=6,
-        proximo_ep_em=datetime.now(UTC) + timedelta(days=3),
-    )
-    await _mapear_fonte(sessionmaker_api, anime_id, versao=VersaoDeFonte.DUBLADO)
-
-    corpo = (await cliente.get(f"/api/animes/{anime_id}")).json()
-
-    assert corpo["fonte_parada"] is None
-
-
 async def test_obter_anime_detalhe_expoe_banner_e_capa_cor(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
@@ -1262,7 +1177,7 @@ def _espiar_sondagem(
     toca extractor/rede real."""
     chamadas: list[tuple[int, VersaoEpisodio]] = []
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
         chamadas.append((anime.id, versao))
         if erro is not None:
             raise erro
@@ -1319,7 +1234,7 @@ async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(
         "Anime Fonte Fresca",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=2,
-        fonte_verificada_em=datetime.now(UTC) - timedelta(minutes=10),
+        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 

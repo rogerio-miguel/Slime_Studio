@@ -29,13 +29,7 @@ from bs4 import BeautifulSoup
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada
-from extractors.base import (
-    EpisodioRemoto,
-    ExtratorDeSite,
-    LinkDeMidia,
-    ResultadoBusca,
-    ordenar_episodios,
-)
+from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
 from extractors.blogger import resolver_token
 from extractors.cliente import ClienteDeSite
 from extractors.versao import inferir_versao
@@ -238,7 +232,7 @@ class MeusAnimesProvider(ExtratorDeSite):
             identificador,
             len(episodios),
         )
-        return ordenar_episodios(episodios)
+        return _ordenar_episodios(episodios)
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:
         """Resolve a mídia do episódio 100% por HTTP:
@@ -469,3 +463,17 @@ def _recortar_bloco(
         for _t, n, ep in bloco_alvo
     ]
 
+
+def _ordenar_episodios(episodios: list[EpisodioRemoto]) -> list[EpisodioRemoto]:
+    """Ordena por `numero` crescente (já ABSOLUTO entre temporadas quando o
+    marcador é confiável — ver `_numerar_absoluto`); rótulos não numéricos
+    (`numero=None`) vão pro fim, sem seção separada, só não intercalados.
+    `sorted` é estável, então episódios de mesmo `numero` — só acontece quando
+    várias temporadas foram achatadas sem marcador — mantêm a ordem de documento."""
+    return sorted(
+        episodios,
+        key=lambda episodio: (
+            episodio.numero is None,
+            episodio.numero if episodio.numero is not None else 0,
+        ),
+    )
