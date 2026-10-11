@@ -17,8 +17,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import sondagem
 from api.servicos.fontes import FonteComEpisodios
-from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
-from core.erros import FalhaDeExtracao, FonteAmbigua
+from core.enums import (
+    ResultadoDeVerificacao,
+    StatusLancamento,
+    TarefaDeVerificacao,
+    VersaoDeFonte,
+    VersaoEpisodio,
+)
+from core.erros import (
+    FalhaDeExtracao,
+    FonteAmbigua,
+    FonteNaoEncontrada,
+    SessaoRejeitada,
+    SiteEmCooldown,
+    VersaoIndisponivelError,
+)
 from fontes.adaptadores.base import EpisodioRemoto
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
@@ -503,3 +516,130 @@ async def test_semaforo_serializa_sondagens(
     assert len(eventos) == 4
     assert eventos.index(f"sai-{a1}") == eventos.index(f"entra-{a1}") + 1
     assert eventos.index(f"sai-{a2}") == eventos.index(f"entra-{a2}") + 1
+
+
+# --- backoff persistido (verificacao_de_anime) ---
+
+
+async def _verificacao_de(sessionmaker: _SessionMaker, anime_id: int):
+    from models.verificacao_de_anime import VerificacaoDeAnime
+
+    async with sessionmaker() as sessao:
+        return await sessao.get(VerificacaoDeAnime, (anime_id, TarefaDeVerificacao.FONTE))
+
+
+def _falhar_sondagem(monkeypatch: pytest.MonkeyPatch, excecao: Exception) -> list[int]:
+    chamadas: list[int] = []
+
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+        chamadas.append(anime.id)
+        raise excecao
+
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
+    return chamadas
+
+
+@pytest.mark.parametrize(
+    ("excecao", "esperado"),
+    [
+        (SessaoRejeitada("cloudflare"), ResultadoDeVerificacao.PRECISA_SESSAO),
+        (SiteEmCooldown("em cooldown"), ResultadoDeVerificacao.SITE_INDISPONIVEL),
+        (FonteNaoEncontrada("404"), ResultadoDeVerificacao.NAO_ENCONTRADO),
+        (VersaoIndisponivelError(VersaoEpisodio.DUBLADO), ResultadoDeVerificacao.NAO_ENCONTRADO),
+        (FonteAmbigua("site.io", []), ResultadoDeVerificacao.AMBIGUO),
+        (FalhaDeExtracao("genérica"), ResultadoDeVerificacao.ERRO),
+        (TimeoutError("lento"), ResultadoDeVerificacao.ERRO),
+    ],
+)
+async def test_falha_de_sondagem_e_registrada_com_o_resultado_certo(
+    sessionmaker_api: _SessionMaker,
+    monkeypatch: pytest.MonkeyPatch,
+    excecao: Exception,
+    esperado: ResultadoDeVerificacao,
+):
+    _falhar_sondagem(monkeypatch, excecao)
+    anime_id = await _criar_anime(
+        sessionmaker_api, "falha", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+
+    animes = await _carregar(sessionmaker_api, anime_id)
+    sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
+    await _drenar_sondagens()
+
+    linha = await _verificacao_de(sessionmaker_api, anime_id)
+    assert linha.ultimo_resultado is esperado
+    assert linha.proxima_em > datetime.now(UTC)
+
+
+async def test_sucesso_de_sondagem_e_registrado(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    _espiar_sondagem(monkeypatch)
+    anime_id = await _criar_anime(
+        sessionmaker_api, "ok", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+
+    animes = await _carregar(sessionmaker_api, anime_id)
+    sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
+    await _drenar_sondagens()
+
+    linha = await _verificacao_de(sessionmaker_api, anime_id)
+    assert linha.ultimo_resultado is ResultadoDeVerificacao.OK
+    assert linha.falhas_consecutivas == 0
+
+
+async def test_anime_que_falhou_nao_e_retentado_dentro_do_backoff(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Caso real (anime 163): Cloudflare rejeita a sessão e a Galeria não pode
+    retentar a cada abertura."""
+    chamadas = _falhar_sondagem(monkeypatch, SessaoRejeitada("cloudflare"))
+    anime_id = await _criar_anime(
+        sessionmaker_api, "preso", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+    animes = await _carregar(sessionmaker_api, anime_id)
+
+    sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
+    await _drenar_sondagens()
+    async with sessionmaker_api() as sessao:
+        em_espera = await sondagem.ids_em_espera(sessao, [anime_id])
+    sondagem.agendar_sondagens(
+        sessionmaker_api, animes, {anime_id: _LEG}, em_espera=em_espera
+    )
+    await _drenar_sondagens()
+
+    assert chamadas == [anime_id]
+
+
+async def test_anime_em_espera_nao_ocupa_vaga_do_teto_de_lote(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    chamadas = _espiar_sondagem(monkeypatch)
+    presos = [
+        await _criar_anime(
+            sessionmaker_api,
+            f"preso-{i}",
+            status_lancamento=StatusLancamento.EM_LANCAMENTO,
+            fonte_verificada_em=datetime(2020, 1, 1, tzinfo=UTC),  # os mais antigos: vão primeiro
+        )
+        for i in range(sondagem._MAX_SONDAGENS_POR_LOTE)
+    ]
+    livre = await _criar_anime(
+        sessionmaker_api, "livre", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+    for anime_id in [*presos, livre]:
+        await _mapear_fonte(sessionmaker_api, anime_id)
+
+    animes = await _carregar(sessionmaker_api, *presos, livre)
+    sondagem.agendar_sondagens(
+        sessionmaker_api,
+        animes,
+        {anime_id: _LEG for anime_id in [*presos, livre]},
+        em_espera=frozenset(presos),
+    )
+    await _drenar_sondagens()
+
+    assert [anime_id for anime_id, _ in chamadas] == [livre]

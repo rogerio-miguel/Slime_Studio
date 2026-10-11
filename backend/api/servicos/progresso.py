@@ -453,6 +453,7 @@ async def listar_continuar_assistindo(
             list(animes_por_id.values()),
             {**versoes_de_sondagem, **versoes_de_reparo},
             ignorar_gate_de_status=frozenset(versoes_de_reparo),
+            em_espera=await servico_sondagem.ids_em_espera(sessao, ids_ativos),
         )
         sondagem_em_andamento = servico_sondagem.sondagem_em_andamento(ids_ativos)
 
