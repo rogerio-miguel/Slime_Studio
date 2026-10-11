@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.enums import VersaoDeFonte, VersaoEpisodio
+from core.enums import OrigemDeFonte, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, SessaoRejeitada, SiteEmCooldown
 from core.texto import slugificar
 from extractors import circuit_breaker
@@ -257,6 +257,8 @@ async def proximo_site_para(
             escolhido.identificador,
             versao_de_fonte,
             prioridade=indice,
+            origem=OrigemDeFonte.AUTOMATICA,
+            titulo_no_site=escolhido.titulo_exibicao,
         )
         return FonteResolvida(
             dominio=extrator.dominio,
@@ -459,6 +461,8 @@ async def _resolver_no_site_que_diferencia(
         escolhido.identificador,
         versao_confirmada,
         prioridade=indice,
+        origem=OrigemDeFonte.AUTOMATICA,
+        titulo_no_site=escolhido.titulo_exibicao,
     )
 
     # Dado grátis: a outra versão veio na mesma busca — se ela também
@@ -493,6 +497,8 @@ async def _resolver_no_site_que_diferencia(
                 escolhido_outra.identificador,
                 _MAPA_VERSAO_EPISODIO_PARA_FONTE[outra_versao],
                 prioridade=indice,
+                origem=OrigemDeFonte.AUTOMATICA,
+                titulo_no_site=escolhido_outra.titulo_exibicao,
                 bump_recencia=False,
             )
 
@@ -527,6 +533,8 @@ async def _resolver_no_site_nao_diferenciado(
         escolhido.identificador,
         VersaoDeFonte.NAO_DIFERENCIADA,
         prioridade=indice,
+        origem=OrigemDeFonte.AUTOMATICA,
+        titulo_no_site=escolhido.titulo_exibicao,
     )
     return FonteResolvida(
         dominio=extrator.dominio,
@@ -644,6 +652,8 @@ async def confirmar_fonte(
         candidato.identificador,
         versao_da_fonte,
         prioridade=prioridade,
+        origem=OrigemDeFonte.MANUAL,
+        titulo_no_site=candidato.titulo_exibicao,
     )
     return FonteResolvida(
         dominio=dominio, identificador=candidato.identificador, versao_da_fonte=versao_da_fonte
@@ -669,8 +679,13 @@ async def _gravar_fonte_anime(
     versao: VersaoDeFonte,
     *,
     prioridade: int,
+    origem: OrigemDeFonte,
+    titulo_no_site: str,
     bump_recencia: bool = True,
 ) -> None:
+    """`origem`: quem decidiu. Uma escrita AUTOMATICA nunca rebaixa uma linha
+    MANUAL já existente; MANUAL promove a linha. `titulo_no_site`: o título do card
+    escolhido (evidência)."""
     async with sessionmaker() as sessao:
         existente = await sessao.get(FonteAnime, (anime_id, dominio, versao))
         if existente is None:
@@ -691,6 +706,8 @@ async def _gravar_fonte_anime(
                     versao=versao,
                     identificador_no_site=identificador,
                     prioridade=prioridade,
+                    origem=origem,
+                    titulo_no_site=titulo_no_site,
                     resolvido_em=(
                         datetime.now(UTC) if bump_recencia else _RESOLVIDO_EM_OPORTUNISTA
                     ),
@@ -714,6 +731,9 @@ async def _gravar_fonte_anime(
                     raise
         existente.identificador_no_site = identificador
         existente.prioridade = prioridade
+        existente.titulo_no_site = titulo_no_site
+        if origem is OrigemDeFonte.MANUAL:
+            existente.origem = OrigemDeFonte.MANUAL
         # Reconfirmar um domínio já mapeado (ex.: "Trocar fonte" de volta
         # pra um site usado antes) também é uma escolha manual do
         # usuário agora — sem bumpar `resolvido_em`, `_resolver_em_mapeadas`

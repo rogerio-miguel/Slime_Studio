@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
-from core.enums import VersaoDeFonte, VersaoEpisodio
+from core.enums import OrigemDeFonte, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, SessaoRejeitada, SiteEmCooldown
 from db.engine import criar_engine, criar_sessionmaker
 from extractors import resiliencia, resolucao
@@ -1106,3 +1106,66 @@ async def test_resolver_e_listar_relanca_a_falha_do_site_em_vez_de_versao_indisp
         await fontes.resolver_e_listar(sessionmaker, anime, _VERSAO, resolver_canonico=False)
 
     assert excecao.value is sessao_rejeitada
+
+
+# --- origem e evidência do mapeamento ---
+
+
+async def _fonte_gravada(sessionmaker, anime_id, dominio, versao) -> FonteAnime:
+    async with sessionmaker() as sessao:
+        return await sessao.get(FonteAnime, (anime_id, dominio, versao))
+
+
+async def test_resolucao_automatica_grava_origem_automatica_e_o_titulo_do_card(
+    sessionmaker, monkeypatch
+):
+    extrator = _ExtratorFalso("site-a.io", candidatos=[_CARD_SLIME])
+    monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+
+    await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    fonte = await _fonte_gravada(
+        sessionmaker, anime.id, "site-a.io", VersaoDeFonte.NAO_DIFERENCIADA
+    )
+    assert fonte.origem is OrigemDeFonte.AUTOMATICA
+    assert fonte.titulo_no_site == "Slime Datta Ken"
+
+
+async def test_confirmar_fonte_grava_origem_manual_e_promove_linha_automatica(
+    sessionmaker, monkeypatch
+):
+    extrator = _ExtratorFalso("site-a.io", candidatos=[_CARD_SLIME])
+    monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)  # AUTOMATICA
+
+    escolhido = ResultadoBusca(
+        titulo_exibicao="Slime Datta Ken (Dublado)", identificador="outro", url="y"
+    )
+    await resolucao.confirmar_fonte(sessionmaker, anime, "site-a.io", escolhido)
+
+    fonte = await _fonte_gravada(
+        sessionmaker, anime.id, "site-a.io", VersaoDeFonte.NAO_DIFERENCIADA
+    )
+    assert fonte.origem is OrigemDeFonte.MANUAL
+    assert fonte.identificador_no_site == "outro"
+    assert fonte.titulo_no_site == "Slime Datta Ken (Dublado)"
+
+
+async def test_escrita_automatica_nao_rebaixa_fonte_manual(sessionmaker):
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    versao = VersaoDeFonte.LEGENDADO
+    await resolucao._gravar_fonte_anime(
+        sessionmaker, anime.id, "site-a.io", "id-1", versao,
+        prioridade=0, origem=OrigemDeFonte.MANUAL, titulo_no_site="Escolha do usuário",
+    )
+
+    await resolucao._gravar_fonte_anime(
+        sessionmaker, anime.id, "site-a.io", "id-1", versao,
+        prioridade=0, origem=OrigemDeFonte.AUTOMATICA, titulo_no_site="Escolha do usuário",
+        bump_recencia=False,
+    )
+
+    fonte = await _fonte_gravada(sessionmaker, anime.id, "site-a.io", versao)
+    assert fonte.origem is OrigemDeFonte.MANUAL
