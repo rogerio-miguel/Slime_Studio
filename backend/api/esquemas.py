@@ -10,7 +10,15 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, field_validator
 
-from core.enums import StatusEpisodio, StatusJob, StatusLancamento, TipoEpisodio, VersaoEpisodio
+from core.enums import (
+    ResultadoDeVerificacao,
+    StatusEpisodio,
+    StatusJob,
+    StatusLancamento,
+    TarefaDeVerificacao,
+    TipoEpisodio,
+    VersaoEpisodio,
+)
 
 _IDENTIFICADOR_PROIBIDO = re.compile(r"[?#\\\s\x00-\x1f]|(^|/)\.\.(/|$)")
 
@@ -634,6 +642,26 @@ class SiteSaida(BaseModel):
     cooldown_ate: datetime
     ultima_falha_em: datetime | None
     ultimo_erro: str | None
+
+
+# --- verificações (api/rotas/verificacoes.py) ---
+
+
+class VerificacaoSaida(BaseModel):
+    """Estado da última verificação periódica de um anime (`VerificacaoDeAnime`):
+    responde "por que este anime não foi sondado agora?"."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    anime_id: int
+    tarefa: TarefaDeVerificacao
+    ultimo_resultado: ResultadoDeVerificacao
+    ultima_tentativa_em: datetime
+    ultimo_sucesso_em: datetime | None
+    proxima_em: datetime
+    falhas_consecutivas: int
+    dominio: str | None
+    detalhe: str | None
 
 
 # --- saúde/operação (api/rotas/saude.py) ---

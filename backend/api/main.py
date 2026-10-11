@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.eventos import Assinantes, MonitorDeFila
-from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
+from api.rotas import animes, episodios, jobs, saude, sites, thumb, verificacoes, ws
 from api.seguranca import CabecalhosDeSeguranca, LimitesDeTaxa, ProtecaoDeOrigem
 from api.servicos import cache_de_feeds
 from api.servicos.zelador import Zelador
@@ -124,6 +124,7 @@ def criar_app(config: Config) -> FastAPI:
     app.include_router(episodios.router_admin)
     app.include_router(thumb.router)
     app.include_router(sites.router)
+    app.include_router(verificacoes.router)
     app.include_router(ws.router)
 
     _registrar_handlers_de_excecao(app)

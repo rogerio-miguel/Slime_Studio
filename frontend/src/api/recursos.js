@@ -48,6 +48,12 @@ export function obterAnime(animeId) {
   return requisitar(`/api/animes/${animeId}`);
 }
 
+// Estado da sondagem de fonte do anime (`[]` se nunca foi sondado): quando foi
+// verificado, quando tenta de novo e o desfecho da última tentativa.
+export function listarVerificacoes(animeId) {
+  return requisitar(`/api/admin/verificacoes?anime_id=${animeId}`);
+}
+
 export function listarEpisodios(animeId) {
   return requisitar(`/api/animes/${animeId}/episodios`);
 }
