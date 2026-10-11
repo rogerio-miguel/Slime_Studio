@@ -6,7 +6,7 @@ contagem em `Anime.episodios_na_fonte`/`fonte_verificada_*`
 (`db.catalogo.atualizar_contagem_na_fonte`). Família de adapter distinta da de
 `api/servicos/descoberta.py`, que orquestra `integrations/` (metadados de
 provedor externo por API JSON pública): aqui é scraping de site com bypass
-anti-bot, custo real por anime — daí o TTL longo, o teto por lote e o semáforo
+anti-bot, custo real por anime — daí o intervalo longo, o teto por lote e o semáforo
 global que serializa os scrapes.
 
 Mesmo padrão de refresh oportunista de F4b
@@ -19,7 +19,7 @@ entra no banco para a PRÓXIMA leitura do catálogo, não para esta. Não import
 
 import asyncio
 import logging
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
@@ -29,7 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.servicos import descoberta
 from api.servicos.fontes import resolver_e_listar
 from api.servicos.jobs import versao_episodio_da_fonte
-from core.ciclo_de_vida import INTERVALO_APOS_SUCESSO, RetratoDoAnime, deve_sondar_fonte
+from core.ciclo_de_vida import (
+    RetratoDoAnime,
+    deve_resolver_fonte,
+    deve_sondar_fonte,
+    proxima_sondagem_apos_sucesso,
+)
 from core.enums import (
     ResultadoDeVerificacao,
     TarefaDeVerificacao,
@@ -58,9 +63,11 @@ logger = logging.getLogger(__name__)
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 # Sondagem é scraping de site (caro: bypass anti-bot, uma requisição por anime).
-# TTL de 6h entre sondagens do mesmo anime — sem scheduler, só carona na leitura
-# do catálogo (mesma filosofia de `descoberta._TTL_LANCAMENTO_S`).
-_TTL_SONDAGEM_S = int(INTERVALO_APOS_SUCESSO.total_seconds())
+# QUANDO sondar de novo é do backoff persistido (`verificacao_de_anime.proxima_em`,
+# cadência ancorada no episódio, `ciclo_de_vida.proxima_sondagem_apos_sucesso`),
+# aplicado por quem chama via `em_espera`. Este espaçamento é só a rede de
+# segurança para quem chama sem `em_espera` ou tem carimbo sem registro (legado).
+_ESPACAMENTO_MINIMO_S = 30 * 60
 
 # Teto de sondagens disparadas por uma única passada de `agendar_sondagens` —
 # abrir o catálogo não pode enfileirar um scrape por anime em lançamento.
@@ -177,26 +184,14 @@ async def versoes_confirmadas_mais_recentes_por_anime(
     return {anime_id: versao_episodio_da_fonte(versao) for anime_id, versao in escolha.items()}
 
 
-async def versoes_para_reresolver_fonte_perdida(
+async def _versao_dos_episodios_capturados(
     sessao: AsyncSession, ids: Iterable[int]
 ) -> dict[int, VersaoEpisodio]:
-    """`{anime_id: versão a PEDIR}` pra animes com `Episodio` capturado mas
-    ZERO linha em `FonteAnime` — caso real (2026-09-15, migração
-    `26791d90cb31_invalida_fonte_anime_do_animefire_one`): o domínio antigo do
-    AnimeFire saiu do ar e a migração apagou em lote as linhas de `fonte_anime`
-    que apontavam pra ele, esperando que a resolução rodasse nova ao vivo "na
-    próxima tentativa". Só que sem NENHUMA fonte mapeada pra consultar,
-    `versoes_de_sondagem_por_anime` nunca tem entrada pra esses animes, e
-    `agendar_sondagens` os pula (`anime.id not in versoes`) pra sempre — a
-    única forma de reparar era abrir a página do anime manualmente. `ids`
-    aqui já vem filtrado por quem chama (`api/rotas/animes.py::listar_animes`)
-    pros que TÊM episódio mas não têm entrada em `versoes_de_sondagem_por_anime`.
-
-    Deriva a versão a pedir do `Episodio.versao` mais recente já capturado
-    (mesmo mapa de `versao_de_sondagem`: `DESCONHECIDA`/`NAO_DIFERENCIADA`
-    nunca é pedível, vira `LEGENDADO`) — é só um palpite pra dar à busca ao
-    vivo um ponto de partida; `resolver_fonte_do_anime` ainda pode confirmar
-    a versão real assim que reencontrar o anime num site."""
+    """`{anime_id: versão a PEDIR}` derivada do `Episodio.versao` mais recente já
+    capturado (mesmo mapa de `versao_de_sondagem`: `DESCONHECIDA`/`NAO_DIFERENCIADA`
+    nunca é pedível, vira `LEGENDADO`). É só um palpite que dá à busca ao vivo um
+    ponto de partida; `resolver_fonte_do_anime` confirma a versão real assim que
+    reencontra o anime num site. Anime sem episódio não aparece."""
     lista_ids = list(ids)
     if not lista_ids:
         return {}
@@ -219,32 +214,47 @@ async def versoes_para_reresolver_fonte_perdida(
     }
 
 
-async def versoes_de_reparo_de_temporadas_novas(
+async def versoes_para_resolver_fonte(
     sessao: AsyncSession,
-    novas: dict[int, int],
+    animes: Iterable[Anime],
     versoes_existentes: dict[int, VersaoEpisodio],
+    *,
+    com_episodios: Collection[int],
+    temporadas_novas: dict[int, int],
+    em_espera: frozenset[int],
+    hoje: date | None = None,
 ) -> dict[int, VersaoEpisodio]:
-    """`{anime_id da temporada nova: versão a PEDIR}` pras temporadas de
-    `lancamentos.temporadas_novas` que ainda não têm `FonteAnime` (temporada
-    nunca capturada → nunca resolveu fonte → `agendar_sondagens` a pularia pra
-    sempre e o badge/prateleira nunca saberiam que ela já estreou). O palpite
-    de versão herda a da temporada anterior (`versoes_para_reresolver_fonte_
-    perdida` sobre ela); mesma semântica de reparo — varredura cara, por isso
-    pula quem está em backoff (`ids_em_espera`) e quem chama passa o resultado
-    em `ignorar_gate_de_status`."""
-    em_espera = await ids_em_espera(sessao, novas)
-    sem_fonte = [
-        anime_id
-        for anime_id in novas
-        if anime_id not in versoes_existentes and anime_id not in em_espera
-    ]
-    palpites = await versoes_para_reresolver_fonte_perdida(
-        sessao, {novas[anime_id] for anime_id in sem_fonte}
-    )
+    """`{anime_id: versão a PEDIR}` dos animes SEM nenhuma `FonteAnime`
+    (`versoes_existentes` não os tem) que a política manda resolver
+    (`core.ciclo_de_vida.deve_resolver_fonte`): fonte perdida, temporada nova e
+    estreia/anime em exibição sem fonte. Sem entrada em `versoes_existentes`,
+    `agendar_sondagens` os pularia pra sempre — a resolução (varredura cara, todos
+    os sites) persiste a fonte como efeito colateral e o anime passa a ser sondado
+    normalmente. Quem falhou há pouco (`em_espera`) fica de fora.
+
+    Palpite de versão, em ordem: episódios do próprio anime; episódios da
+    temporada anterior (`temporadas_novas`: `{nova: anterior}`); `LEGENDADO`.
+    `com_episodios`: ids com ao menos um `Episodio`."""
+    hoje = hoje or date.today()
+    candidatos = {
+        anime.id
+        for anime in animes
+        if anime.id not in versoes_existentes
+        and anime.id not in em_espera
+        and deve_resolver_fonte(
+            RetratoDoAnime.de(anime),
+            hoje,
+            tem_episodios=anime.id in com_episodios,
+            temporada_nova=anime.id in temporadas_novas,
+        )
+    }
+    anteriores = {temporadas_novas[aid] for aid in candidatos if aid in temporadas_novas}
+    palpites = await _versao_dos_episodios_capturados(sessao, candidatos | anteriores)
     return {
-        anime_id: palpites[novas[anime_id]]
-        for anime_id in sem_fonte
-        if novas[anime_id] in palpites
+        anime_id: palpites.get(anime_id)
+        or palpites.get(temporadas_novas.get(anime_id))
+        or VersaoEpisodio.LEGENDADO
+        for anime_id in candidatos
     }
 
 
@@ -253,12 +263,12 @@ def agendar_sondagens(
     animes: list[Anime],
     versoes: dict[int, VersaoEpisodio],
     *,
-    ignorar_gate_de_status: frozenset[int] = frozenset(),
+    a_resolver: frozenset[int] = frozenset(),
     em_espera: frozenset[int] = frozenset(),
     max_sondagens: int = _MAX_SONDAGENS_POR_LOTE,
 ) -> None:
     """Dispara, sem bloquear, a sondagem da fonte real dos animes em lançamento
-    cuja contagem está velha (> `_TTL_SONDAGEM_S`) ou ausente — no máximo
+    cuja contagem está velha (> `_ESPACAMENTO_MINIMO_S`) ou ausente — no máximo
     `max_sondagens` (padrão `_MAX_SONDAGENS_POR_LOTE`) por passada, os de carimbo
     mais antigo primeiro.
     Fire-and-forget: o resultado entra no banco para a próxima leitura do
@@ -268,21 +278,19 @@ def agendar_sondagens(
     `em_espera`: ids em backoff por falha recente (`ids_em_espera`) — pulados
     ANTES do teto por lote, senão os mesmos animes presos ocupariam as vagas.
 
-    `ignorar_gate_de_status`: ids que pulam o gate de status de lançamento por
-    completo — uso exclusivo do reparo de `versoes_para_reresolver_fonte_perdida`
-    (`api/rotas/animes.py::listar_animes`): um anime `FINALIZADO` sem NENHUMA
-    `FonteAnime` mapeada também precisa ser tentado (a resolução persiste a
-    fonte perdida como efeito colateral, ver `_sondar_e_persistir`), não só a
-    janela pós-fim de `core.ciclo_de_vida`. Autolimitado
-    igual ao resto: uma vez resolvido, o anime ganha uma `FonteAnime` e some
-    do conjunto de candidatos na próxima passada (`versoes_de_sondagem_por_anime`
-    já cobre ele normalmente dali em diante).
+    `a_resolver`: ids sem `FonteAnime` que a política já mandou resolver
+    (`versoes_para_resolver_fonte` → `deve_resolver_fonte`) — pulam o gate de fase
+    daqui, que vale só para quem já tem fonte (um `FINALIZADO` com episódio e sem
+    fonte precisa ser tentado mesmo fora da janela pós-fim). Autolimitado: uma vez
+    resolvido, o anime ganha uma `FonteAnime` e deixa o conjunto na passada
+    seguinte.
 
     100% síncrona, zero I/O. No-op silencioso (nenhuma destas condições é
     anormal, então sem log) quando não há event loop rodando, ou para cada anime
     cuja fase (`core.ciclo_de_vida.deve_sondar_fonte`) não pede sondagem E que não
-    está em `ignorar_gate_de_status`; não tem fonte mapeada nem palpite de versão
-    (`anime.id not in versoes`); contagem ainda dentro do TTL; ou já tem uma
+    está em `a_resolver`; não tem fonte mapeada nem palpite de versão
+    (`anime.id not in versoes`); contagem verificada há pouco
+    (`_ESPACAMENTO_MINIMO_S`); ou já tem uma
     sondagem em voo.
     """
     try:
@@ -290,7 +298,7 @@ def agendar_sondagens(
     except RuntimeError:
         return
 
-    limite = datetime.now(UTC) - timedelta(seconds=_TTL_SONDAGEM_S)
+    limite = datetime.now(UTC) - timedelta(seconds=_ESPACAMENTO_MINIMO_S)
     hoje = date.today()
     candidatos = sorted(animes, key=_ordem_de_sondagem)
 
@@ -298,7 +306,7 @@ def agendar_sondagens(
     for anime in candidatos:
         if agendadas >= max_sondagens:
             break
-        if anime.id not in ignorar_gate_de_status and not deve_sondar_fonte(
+        if anime.id not in a_resolver and not deve_sondar_fonte(
             RetratoDoAnime.de(anime), hoje
         ):
             continue
@@ -362,6 +370,7 @@ async def _registrar(
     resultado: ResultadoDeVerificacao,
     detalhe: str | None = None,
     dominio: str | None = None,
+    proxima_apos_sucesso: datetime | None = None,
 ) -> None:
     """Grava o desfecho sem deixar um erro de banco esconder o da sondagem."""
     try:
@@ -372,6 +381,7 @@ async def _registrar(
             resultado,
             detalhe=detalhe,
             dominio=dominio,
+            proxima_apos_sucesso=proxima_apos_sucesso,
         )
     except SQLAlchemyError as excecao:
         logger.warning("registro da verificação falhou para anime_id=%s: %s", anime_id, excecao)
@@ -417,6 +427,11 @@ async def _sondar_e_persistir(
         await atualizar_contagem_na_fonte(
             sessionmaker, anime_id, total=total, dominio=fonte.dominio
         )
+        # Em dia = a fonte já tem tudo o que foi ao ar antes do próximo episódio.
+        fonte_em_dia = anime.proximo_ep_numero is None or total >= anime.proximo_ep_numero - 1
+        proxima_apos_sucesso = proxima_sondagem_apos_sucesso(
+            anime.proximo_ep_em, fonte_em_dia, datetime.now(UTC)
+        )
     except (
         FalhaDeExtracao,
         FonteAmbigua,
@@ -433,4 +448,9 @@ async def _sondar_e_persistir(
         )
         await _registrar(sessionmaker, anime_id, resultado, str(excecao), dominio or None)
     else:
-        await _registrar(sessionmaker, anime_id, ResultadoDeVerificacao.OK)
+        await _registrar(
+            sessionmaker,
+            anime_id,
+            ResultadoDeVerificacao.OK,
+            proxima_apos_sucesso=proxima_apos_sucesso,
+        )

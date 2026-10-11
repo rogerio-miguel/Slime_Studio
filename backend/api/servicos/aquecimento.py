@@ -35,42 +35,30 @@ async def aquecer_catalogo(
     Zero `await` de rede aqui: só leituras de banco para montar o agendamento."""
     ids = [anime.id for anime in animes]
     versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
-    # Reparo de fonte perdida (2026-09-15, migração
-    # `26791d90cb31_invalida_fonte_anime_do_animefire_one`): anime com episódio
-    # capturado mas ZERO `FonteAnime` mapeada nunca ganha entrada em
-    # `versoes_de_sondagem_por_anime` (não há fonte pra consultar) e
-    # `agendar_sondagens` o pularia pra sempre — só um `versao_confirmada_
-    # mais_recente` nulo pro badge Dublado/Legendado sumir do card sem nenhum
-    # jeito automático de voltar. Palpite de versão vem do próprio episódio já
-    # capturado; `ignorar_gate_de_status` deixa isto tentar mesmo pra anime
-    # `FINALIZADO` (o gate normal de status não se aplica aqui — é reparo
-    # pontual, não sondagem contínua de contagem).
-    # `em_espera` (backoff persistido) corta quem falhou há pouco, inclusive a
-    # varredura cara (todos os extratores, sem fonte mapeada pra atalhar) — sem
-    # isto, um anime não encontrado em lugar nenhum repetia a varredura inteira.
+    # Anime SEM nenhuma `FonteAnime` não entra em `versoes` e a sondagem o
+    # pularia pra sempre; a política (`deve_resolver_fonte`) manda resolver a
+    # fonte de quem a perdeu (migração `26791d90cb31`), de temporada nova de
+    # franquia que o usuário terminou e de estreia/anime em exibição nunca aberto.
+    # `em_espera` (backoff persistido) corta quem falhou há pouco — a varredura é
+    # cara (todos os sites) e um anime não encontrado em lugar nenhum a repetia
+    # a cada visita.
     em_espera = await servico_sondagem.ids_em_espera(sessao, ids)
-    ids_sem_fonte_com_episodios = [
-        aid for aid in ids if aid in com_episodios and aid not in versoes and aid not in em_espera
-    ]
-    versoes_de_reparo = await servico_sondagem.versoes_para_reresolver_fonte_perdida(
-        sessao, ids_sem_fonte_com_episodios
-    )
-    # Temporada nova de franquia que o usuário terminou: sem episódio local não há
-    # fonte mapeada, então o badge nunca acenderia sozinho — mesmo reparo acima,
-    # com palpite de versão herdado da temporada anterior.
     novas = await servico_lancamentos.temporadas_novas(sessao, grupos_de_franquia)
-    versoes_de_temporadas_novas = await servico_sondagem.versoes_de_reparo_de_temporadas_novas(
-        sessao, novas, versoes
+    a_resolver = await servico_sondagem.versoes_para_resolver_fonte(
+        sessao,
+        animes,
+        versoes,
+        com_episodios=com_episodios,
+        temporadas_novas=novas,
+        em_espera=em_espera,
     )
-    versoes_de_reparo = {**versoes_de_reparo, **versoes_de_temporadas_novas}
-    versoes = {**versoes, **versoes_de_reparo}
 
     argumentos_de_teto = {} if max_sondagens is None else {"max_sondagens": max_sondagens}
     servico_sondagem.agendar_sondagens(
         sessionmaker,
         animes,
-        versoes,
-        ignorar_gate_de_status=frozenset(versoes_de_reparo),
+        {**versoes, **a_resolver},
+        a_resolver=frozenset(a_resolver),
         em_espera=em_espera,
         **argumentos_de_teto,
     )
