@@ -320,16 +320,46 @@ def _resolver_em_mapeadas(
     if not capazes:
         return None
     mais_recente = max(capazes, key=lambda f: f.resolvido_em)
+    return _fonte_resolvida_de(mais_recente, versao_confirmada)
+
+
+def _fonte_resolvida_de(linha: FonteAnime, versao_confirmada: VersaoDeFonte) -> FonteResolvida:
     versao_da_fonte = (
         versao_confirmada
-        if mais_recente.versao == versao_confirmada
+        if linha.versao == versao_confirmada
         else VersaoDeFonte.NAO_DIFERENCIADA
     )
     return FonteResolvida(
-        dominio=mais_recente.site_dominio,
-        identificador=mais_recente.identificador_no_site,
+        dominio=linha.site_dominio,
+        identificador=linha.identificador_no_site,
         versao_da_fonte=versao_da_fonte,
     )
+
+
+async def fontes_mapeadas_alternativas(
+    sessionmaker: _SessionMaker, anime: Anime, versao: VersaoEpisodio, *, excluir_dominio: str
+) -> list[FonteResolvida]:
+    """Demais fontes JÁ MAPEADAS capazes de servir `versao` (mesma regra de
+    `_resolver_em_mapeadas`), uma por domínio, da mais recente para a mais antiga,
+    sem `excluir_dominio`. Sem rede: só lê `FonteAnime`. Serve de fallback quando a
+    fonte escolhida está fora do ar ou bloqueada (ex. Cloudflare rejeitando a
+    sessão) mas o anime também está mapeado em outro site."""
+    versao_confirmada = _MAPA_VERSAO_EPISODIO_PARA_FONTE[versao]
+    mapeadas = await _fontes_mapeadas_ordenadas(sessionmaker, anime.id)
+    capazes = sorted(
+        (
+            f
+            for f in mapeadas
+            if f.site_dominio != excluir_dominio
+            and f.versao in (versao_confirmada, VersaoDeFonte.NAO_DIFERENCIADA)
+        ),
+        key=lambda f: f.resolvido_em,
+        reverse=True,
+    )
+    por_dominio = {}
+    for linha in capazes:
+        por_dominio.setdefault(linha.site_dominio, linha)
+    return [_fonte_resolvida_de(linha, versao_confirmada) for linha in por_dominio.values()]
 
 
 def _proxima_mapeada_capaz(

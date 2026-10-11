@@ -921,3 +921,41 @@ async def test_proximo_site_para_versao_desconhecida_ignora_capacidade_de_versao
     assert resultado == resolucao.FonteResolvida(
         dominio="site-b.io", identificador="b", versao_da_fonte=VersaoDeFonte.DUBLADO
     )
+
+
+async def test_fontes_mapeadas_alternativas_so_capazes_uma_por_dominio_da_mais_recente(
+    sessionmaker,
+):
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    agora = datetime.now(UTC)
+
+    def _linha(dominio, versao, identificador, dias_atras):
+        return FonteAnime(
+            anime_id=anime.id,
+            site_dominio=dominio,
+            versao=versao,
+            identificador_no_site=identificador,
+            prioridade=0,
+            resolvido_em=agora - timedelta(days=dias_atras),
+        )
+
+    async with sessionmaker() as sessao:
+        sessao.add_all(
+            [
+                _linha("escolhido.io", VersaoDeFonte.LEGENDADO, "e", 0),
+                _linha("b.io", VersaoDeFonte.LEGENDADO, "b-velha", 5),
+                _linha("b.io", VersaoDeFonte.NAO_DIFERENCIADA, "b-nova", 2),
+                _linha("c.io", VersaoDeFonte.DUBLADO, "c-so-dublado", 1),  # incapaz
+                _linha("d.io", VersaoDeFonte.NAO_DIFERENCIADA, "d", 9),
+            ]
+        )
+        await sessao.commit()
+
+    alternativas = await resolucao.fontes_mapeadas_alternativas(
+        sessionmaker, anime, VersaoEpisodio.LEGENDADO, excluir_dominio="escolhido.io"
+    )
+
+    assert alternativas == [
+        resolucao.FonteResolvida("b.io", "b-nova", VersaoDeFonte.NAO_DIFERENCIADA),
+        resolucao.FonteResolvida("d.io", "d", VersaoDeFonte.NAO_DIFERENCIADA),
+    ]

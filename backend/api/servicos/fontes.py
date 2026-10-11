@@ -38,7 +38,13 @@ from api.servicos.catalogo import agrupar_franquias
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from extractors.base import EpisodioRemoto
-from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
+from extractors.resolucao import (
+    ConfirmacaoNecessaria,
+    FonteResolvida,
+    VersaoIndisponivel,
+    fontes_mapeadas_alternativas,
+    resolver_fonte_do_anime,
+)
 from extractors.servico import filtrar_por_versao, listar_episodios_em
 from integrations import servico as servico_metadados
 from integrations.base import InfoDeEpisodio, TitulosDeAnime
@@ -102,6 +108,7 @@ async def resolver_e_listar(
     versao: VersaoEpisodio,
     *,
     resolver_canonico: bool,
+    tentar_fontes_alternativas: bool = False,
 ) -> FonteComEpisodios:
     """Resolve a fonte (site) de `anime` e lista os episódios da temporada
     `anime.numero_temporada` — o núcleo comum da exibição
@@ -118,6 +125,11 @@ async def resolver_e_listar(
     `POST /api/admin/animes/{id}/fontes/confirmar` e reenvia. `VersaoIndisponivel`
     vira `VersaoIndisponivelError`. Timeout de qualquer etapa de rede vira
     `FalhaDeExtracao` retentável (o orçamento é nosso, não uma falha do site).
+
+    `tentar_fontes_alternativas` (só a sondagem liga): se listar a fonte escolhida
+    falha, tenta as demais fontes JÁ MAPEADAS capazes da mesma versão, da mais
+    recente para a mais antiga, e só então propaga o primeiro erro. A exibição e
+    a captura seguem sem isto — lá o usuário escolheu a fonte e quer vê-la falhar.
 
     NÃO filtra por versão nem sobrepõe stills — cada chamador aplica o que
     precisa sobre `episodios`.
@@ -156,22 +168,9 @@ async def resolver_e_listar(
     if isinstance(resolvida, VersaoIndisponivel):
         raise VersaoIndisponivelError(resolvida.versao)
 
-    try:
-        episodios = await asyncio.wait_for(
-            listar_episodios_em(
-                sessionmaker,
-                resolvida.dominio,
-                resolvida.identificador,
-                anime.numero_temporada,
-            ),
-            timeout=_TETO_LISTAGEM_REMOTA_S,
-        )
-    except TimeoutError as excecao:
-        raise FalhaDeExtracao(
-            f"listagem de episódios excedeu o teto de {_TETO_LISTAGEM_REMOTA_S}s",
-            dominio=resolvida.dominio,
-            permite_retentativa=True,
-        ) from excecao
+    resolvida, episodios = await _listar_com_alternativas(
+        sessionmaker, anime, versao, resolvida, tentar_fontes_alternativas
+    )
 
     episodios = await _recortar_se_fonte_achatada(sessionmaker, anime, episodios)
 
@@ -181,6 +180,61 @@ async def resolver_e_listar(
         versao_da_fonte=resolvida.versao_da_fonte,
         episodios=episodios,
     )
+
+
+async def _listar_episodios_da_fonte(
+    sessionmaker: _SessionMaker, anime: Anime, fonte: FonteResolvida
+) -> list[EpisodioRemoto]:
+    try:
+        return await asyncio.wait_for(
+            listar_episodios_em(
+                sessionmaker, fonte.dominio, fonte.identificador, anime.numero_temporada
+            ),
+            timeout=_TETO_LISTAGEM_REMOTA_S,
+        )
+    except TimeoutError as excecao:
+        raise FalhaDeExtracao(
+            f"listagem de episódios excedeu o teto de {_TETO_LISTAGEM_REMOTA_S}s",
+            dominio=fonte.dominio,
+            permite_retentativa=True,
+        ) from excecao
+
+
+async def _listar_com_alternativas(
+    sessionmaker: _SessionMaker,
+    anime: Anime,
+    versao: VersaoEpisodio,
+    escolhida: FonteResolvida,
+    tentar_alternativas: bool,
+) -> tuple[FonteResolvida, list[EpisodioRemoto]]:
+    try:
+        return escolhida, await _listar_episodios_da_fonte(sessionmaker, anime, escolhida)
+    except FalhaDeExtracao as primeira_falha:
+        if not tentar_alternativas:
+            raise
+        alternativas = await fontes_mapeadas_alternativas(
+            sessionmaker, anime, versao, excluir_dominio=escolhida.dominio
+        )
+        for alternativa in alternativas:
+            try:
+                episodios = await _listar_episodios_da_fonte(sessionmaker, anime, alternativa)
+            except FalhaDeExtracao as falha:
+                logger.info(
+                    "fonte alternativa %s também falhou para anime_id=%s: %s",
+                    alternativa.dominio,
+                    anime.id,
+                    falha,
+                )
+                continue
+            logger.info(
+                "fonte %s falhou para anime_id=%s (%s); usando %s",
+                escolhida.dominio,
+                anime.id,
+                primeira_falha,
+                alternativa.dominio,
+            )
+            return alternativa, episodios
+        raise primeira_falha
 
 
 async def listar_episodios_remotos(
