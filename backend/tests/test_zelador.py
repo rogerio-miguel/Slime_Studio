@@ -9,9 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import aquecimento, sondagem, zelador
 from api.servicos.horarios import LeitorDeHorarios
-from core.enums import ResultadoDeVerificacao, StatusLancamento, TarefaDeVerificacao
-from db import verificacao
+from core.enums import (
+    ResultadoDeVerificacao,
+    StatusLancamento,
+    TarefaDeVerificacao,
+    VersaoDeFonte,
+)
+from core.erros import SessaoRejeitada
+from db import aberturas_de_navegador, verificacao
+from extractors import circuit_breaker, sessao_cache
 from models.anime import Anime
+from models.fonte_anime import FonteAnime
+from models.verificacao_de_anime import VerificacaoDeAnime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 _AGORA = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -151,3 +160,216 @@ async def test_aquecer_catalogo_repassa_o_teto_de_sondagens(
         )
 
     assert vistos == [sondagem._MAX_SONDAGENS_POR_LOTE, 3]
+
+
+# --- renovação de sessão com navegador ---
+
+_COM_JANELA = (
+    'janelas_do_navegador = ["12:00-13:30"]\nteto_diario_de_aberturas = 2\nzelador_ativo = true'
+)
+_DENTRO_DA_JANELA = datetime(2026, 10, 11, 12, 30, tzinfo=UTC)
+_FORA_DA_JANELA = datetime(2026, 10, 11, 15, 0, tzinfo=UTC)
+_SITE = "bloqueado.io"
+
+
+@pytest.fixture
+def navegador(monkeypatch: pytest.MonkeyPatch):
+    """Substitui a listagem que abriria o navegador; `abertas` registra as chamadas."""
+    estado = type("Estado", (), {"abertas": [], "falhar": False})()
+
+    async def _listar(sessionmaker, dominio, identificador, temporada):
+        estado.abertas.append((dominio, identificador))
+        if estado.falhar:
+            raise SessaoRejeitada("cloudflare", dominio=dominio)
+        return []
+
+    monkeypatch.setattr(zelador, "listar_episodios_em", _listar)
+    return estado
+
+
+async def _anime_esperando_sessao(sessionmaker: _SessionMaker, quando: datetime) -> int:
+    anime_id = await _criar_anime(sessionmaker, "esperando")
+    async with sessionmaker() as sessao:
+        sessao.add(
+            FonteAnime(
+                anime_id=anime_id,
+                site_dominio=_SITE,
+                versao=VersaoDeFonte.LEGENDADO,
+                identificador_no_site="id-no-site",
+                prioridade=0,
+            )
+        )
+        await sessao.commit()
+    await verificacao.registrar_resultado(
+        sessionmaker,
+        anime_id,
+        TarefaDeVerificacao.FONTE,
+        ResultadoDeVerificacao.PRECISA_SESSAO,
+        dominio=_SITE,
+        agora=quando,
+    )
+    return anime_id
+
+
+async def _proxima_em(sessionmaker: _SessionMaker, anime_id: int) -> datetime:
+    async with sessionmaker() as sessao:
+        linha = await sessao.get(VerificacaoDeAnime, (anime_id, TarefaDeVerificacao.FONTE))
+        return linha.proxima_em
+
+
+async def _aberturas(sessionmaker: _SessionMaker) -> int:
+    async with sessionmaker() as sessao:
+        return await aberturas_de_navegador.aberturas_desde(
+            sessao, datetime(2000, 1, 1, tzinfo=UTC)
+        )
+
+
+async def test_dentro_da_janela_abre_o_navegador_registra_e_libera_os_animes(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    anime_id = await _anime_esperando_sessao(sessionmaker_api, _DENTRO_DA_JANELA)
+    assert await _proxima_em(sessionmaker_api, anime_id) > _DENTRO_DA_JANELA
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, _COM_JANELA))
+
+    await z.executar_passada(_DENTRO_DA_JANELA)
+
+    assert navegador.abertas == [(_SITE, "id-no-site")]
+    assert await _aberturas(sessionmaker_api) == 1
+    assert await _proxima_em(sessionmaker_api, anime_id) <= _DENTRO_DA_JANELA
+    assert aquecimentos  # a sondagem dos liberados roda na mesma passada
+
+
+async def test_fora_da_janela_nao_abre_o_navegador(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    anime_id = await _anime_esperando_sessao(sessionmaker_api, _FORA_DA_JANELA)
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, _COM_JANELA))
+
+    await z.executar_passada(_FORA_DA_JANELA)
+
+    assert navegador.abertas == []
+    assert await _aberturas(sessionmaker_api) == 0
+    assert await _proxima_em(sessionmaker_api, anime_id) > _FORA_DA_JANELA
+
+
+async def test_sem_janelas_configuradas_o_navegador_nunca_abre(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    await _anime_esperando_sessao(sessionmaker_api, _DENTRO_DA_JANELA)
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, "zelador_ativo = true"))
+
+    await z.executar_passada(_DENTRO_DA_JANELA)
+
+    assert navegador.abertas == []
+
+
+async def test_teto_diario_de_aberturas_e_respeitado(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    await _anime_esperando_sessao(sessionmaker_api, _DENTRO_DA_JANELA)
+    for _ in range(2):  # teto = 2, já usado hoje
+        await aberturas_de_navegador.registrar_abertura(
+            sessionmaker_api, "outro.io", _DENTRO_DA_JANELA - timedelta(hours=3)
+        )
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, _COM_JANELA))
+
+    await z.executar_passada(_DENTRO_DA_JANELA)
+
+    assert navegador.abertas == []
+
+
+async def test_aberturas_de_ontem_nao_contam_no_teto_de_hoje(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    await _anime_esperando_sessao(sessionmaker_api, _DENTRO_DA_JANELA)
+    for _ in range(2):
+        await aberturas_de_navegador.registrar_abertura(
+            sessionmaker_api, "outro.io", _DENTRO_DA_JANELA - timedelta(days=1)
+        )
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, _COM_JANELA))
+
+    await z.executar_passada(_DENTRO_DA_JANELA)
+
+    assert len(navegador.abertas) == 1
+
+
+async def test_sessao_ja_valida_libera_sem_abrir_o_navegador(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    anime_id = await _anime_esperando_sessao(sessionmaker_api, _DENTRO_DA_JANELA)
+    await sessao_cache.salvar(sessionmaker_api, _SITE, {"cf_clearance": "x"}, "UA", ttl_s=3600)
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, _COM_JANELA))
+
+    await z.executar_passada(_DENTRO_DA_JANELA)
+
+    assert navegador.abertas == []
+    assert await _aberturas(sessionmaker_api) == 0
+    assert await _proxima_em(sessionmaker_api, anime_id) <= _DENTRO_DA_JANELA
+
+
+async def test_renovacao_que_falha_conta_no_teto_e_nao_libera(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    navegador.falhar = True
+    anime_id = await _anime_esperando_sessao(sessionmaker_api, _DENTRO_DA_JANELA)
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, _COM_JANELA))
+
+    await z.executar_passada(_DENTRO_DA_JANELA)
+
+    assert await _aberturas(sessionmaker_api) == 1
+    assert await _proxima_em(sessionmaker_api, anime_id) > _DENTRO_DA_JANELA
+
+
+async def test_site_em_cooldown_nao_abre_o_navegador(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, aquecimentos, navegador
+):
+    await _anime_esperando_sessao(sessionmaker_api, _DENTRO_DA_JANELA)
+    for _ in range(4):
+        await circuit_breaker.registrar_falha(sessionmaker_api, _SITE, RuntimeError("x"))
+    z = zelador.Zelador(sessionmaker_api, _leitor(tmp_path, _COM_JANELA))
+
+    await z.executar_passada(_DENTRO_DA_JANELA)
+
+    assert navegador.abertas == []
+
+
+async def test_sondagem_bloqueada_registra_o_dominio_que_pede_sessao(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Ponta a ponta: a falha de sessão em segundo plano carrega o domínio até o
+    registro, que é o que o zelador usa para saber qual site renovar."""
+    from extractors import resiliencia
+    from extractors.base import ExtratorDeSite
+
+    class _Site(ExtratorDeSite):
+        dominio = _SITE
+        exige_navegador = False
+
+        def buscar(self, cliente, titulo):
+            return []
+
+        def listar_episodios(self, cliente, identificador, temporada=None):
+            raise SessaoRejeitada("desafio Cloudflare")  # sem domínio, como no cliente real
+
+        def resolver_midia(self, cliente, url_episodio):
+            raise NotImplementedError
+
+    async def _resolver_e_listar(sessionmaker, anime, versao, *, resolver_canonico, **_):
+        await resiliencia.chamar(
+            sessionmaker, _Site(), lambda c: _Site().listar_episodios(c, "x")
+        )
+
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _resolver_e_listar)
+    anime_id = await _criar_anime(sessionmaker_api, "bloqueado")
+    async with sessionmaker_api() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+
+    await sondagem._sondar_e_persistir(
+        sessionmaker_api, anime.id, sondagem.VersaoEpisodio.LEGENDADO
+    )
+
+    async with sessionmaker_api() as sessao:
+        aguardando = await verificacao.dominios_aguardando_sessao(
+            sessao, TarefaDeVerificacao.FONTE
+        )
+    assert aguardando == [(_SITE, anime_id)]

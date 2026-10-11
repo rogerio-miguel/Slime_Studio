@@ -361,11 +361,17 @@ async def _registrar(
     anime_id: int,
     resultado: ResultadoDeVerificacao,
     detalhe: str | None = None,
+    dominio: str | None = None,
 ) -> None:
     """Grava o desfecho sem deixar um erro de banco esconder o da sondagem."""
     try:
         await verificacao.registrar_resultado(
-            sessionmaker, anime_id, TarefaDeVerificacao.FONTE, resultado, detalhe=detalhe
+            sessionmaker,
+            anime_id,
+            TarefaDeVerificacao.FONTE,
+            resultado,
+            detalhe=detalhe,
+            dominio=dominio,
         )
     except SQLAlchemyError as excecao:
         logger.warning("registro da verificação falhou para anime_id=%s: %s", anime_id, excecao)
@@ -419,6 +425,12 @@ async def _sondar_e_persistir(
         SQLAlchemyError,
     ) as excecao:
         logger.warning("sondagem de fonte falhou para anime_id=%s: %s", anime_id, excecao)
-        await _registrar(sessionmaker, anime_id, _resultado_da_excecao(excecao), str(excecao))
+        resultado = _resultado_da_excecao(excecao)
+        dominio = (
+            getattr(excecao, "dominio", None)
+            if resultado is ResultadoDeVerificacao.PRECISA_SESSAO
+            else None
+        )
+        await _registrar(sessionmaker, anime_id, resultado, str(excecao), dominio or None)
     else:
         await _registrar(sessionmaker, anime_id, ResultadoDeVerificacao.OK)

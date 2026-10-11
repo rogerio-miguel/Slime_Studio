@@ -4,7 +4,7 @@ backoff é de `core/ciclo_de_vida.py`; aqui só leitura e gravação."""
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -60,12 +60,14 @@ async def registrar_resultado(
     resultado: ResultadoDeVerificacao,
     *,
     detalhe: str | None = None,
+    dominio: str | None = None,
     agora: datetime | None = None,
 ) -> None:
     """Grava o desfecho de uma tentativa e agenda a próxima
     (`core.ciclo_de_vida.proxima_tentativa`). Sucesso zera as falhas seguidas;
     `SITE_INDISPONIVEL` as preserva (o culpado é o site). Anime que sumiu entre a
-    sondagem e a escrita é no-op, como em `atualizar_contagem_na_fonte`."""
+    sondagem e a escrita é no-op, como em `atualizar_contagem_na_fonte`.
+    `dominio`: site que motivou a falha (só para `PRECISA_SESSAO`)."""
     agora = agora or datetime.now(UTC)
     async with sessionmaker() as sessao:
         linha = await sessao.get(VerificacaoDeAnime, (anime_id, tarefa))
@@ -82,6 +84,7 @@ async def registrar_resultado(
             "ultimo_resultado": resultado,
             "falhas_consecutivas": falhas,
             "detalhe": detalhe[:_MAX_DETALHE] if detalhe else None,
+            "dominio": dominio,
         }
         if resultado is ResultadoDeVerificacao.OK:
             campos["ultimo_sucesso_em"] = agora
@@ -94,3 +97,48 @@ async def registrar_resultado(
             await sessao.commit()
         except IntegrityError:
             await sessao.rollback()  # FK: o anime foi removido no meio da tentativa
+
+
+async def dominios_aguardando_sessao(
+    sessao: AsyncSession, tarefa: TarefaDeVerificacao
+) -> list[tuple[str, int]]:
+    """`(domínio, um anime_id que falhou nele)` para cada site que rejeitou a
+    sessão (`PRECISA_SESSAO`), o que tem mais animes esperando primeiro. O anime
+    serve de amostra para o zelador renovar a sessão listando os episódios dele."""
+    resultado = await sessao.execute(
+        select(VerificacaoDeAnime.dominio, func.min(VerificacaoDeAnime.anime_id))
+        .where(
+            VerificacaoDeAnime.tarefa == tarefa,
+            VerificacaoDeAnime.ultimo_resultado == ResultadoDeVerificacao.PRECISA_SESSAO,
+            VerificacaoDeAnime.dominio.is_not(None),
+        )
+        .group_by(VerificacaoDeAnime.dominio)
+        .order_by(func.count().desc(), VerificacaoDeAnime.dominio)
+    )
+    return [(dominio, anime_id) for dominio, anime_id in resultado.all()]
+
+
+async def liberar_espera_por_sessao(
+    sessionmaker: _SessionMaker,
+    tarefa: TarefaDeVerificacao,
+    dominio: str,
+    agora: datetime | None = None,
+) -> int:
+    """Tira da espera os animes parados em `PRECISA_SESSAO` por `dominio`: a
+    próxima tentativa passa a ser já — a sessão acabou de ser renovada e vale por
+    pouco (TTL de 30 min), então esperar as 3h do backoff a desperdiçaria.
+    Devolve quantos foram liberados."""
+    agora = agora or datetime.now(UTC)
+    async with sessionmaker() as sessao:
+        resultado = await sessao.execute(
+            update(VerificacaoDeAnime)
+            .where(
+                VerificacaoDeAnime.tarefa == tarefa,
+                VerificacaoDeAnime.ultimo_resultado == ResultadoDeVerificacao.PRECISA_SESSAO,
+                VerificacaoDeAnime.dominio == dominio,
+                VerificacaoDeAnime.proxima_em > agora,
+            )
+            .values(proxima_em=agora)
+        )
+        await sessao.commit()
+        return resultado.rowcount

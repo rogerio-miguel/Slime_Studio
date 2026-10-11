@@ -203,6 +203,9 @@ async def chamar[T](
     except SessaoRejeitada as excecao:
         await sessao_cache.invalidar(sessionmaker, dominio)
         if segundo_plano:
+            # O cliente não sabe o domínio; quem registra a falha precisa dele
+            # para o zelador renovar a sessão do site certo.
+            excecao.dominio = excecao.dominio or dominio
             _logar_falha(dominio, nome_operacao, escalou=escalou, inicio=inicio)
             raise
         # Sem fallback quando já era o navegador: escalar pra ele de novo só

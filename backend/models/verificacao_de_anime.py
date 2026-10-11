@@ -37,5 +37,8 @@ class VerificacaoDeAnime(Base):
         nullable=False,
     )
     falhas_consecutivas: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Site que motivou a falha quando o resultado é `PRECISA_SESSAO` — é o que o
+    # zelador renova (e depois libera da espera). Nulo nos demais resultados.
+    dominio: Mapped[str | None] = mapped_column(String, nullable=True)
     # Truncado e sem URL: texto do erro para diagnóstico, nunca dado do usuário.
     detalhe: Mapped[str | None] = mapped_column(String, nullable=True)
