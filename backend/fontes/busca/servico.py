@@ -1,7 +1,7 @@
 """Busca por título em sites de streaming, com escada de variantes
 (ESPECIFICACAO.md §3A) — ponto único que o resto do backend usa pra buscar
 sem conhecer resiliência, sessão ou circuit breaker por trás. Listagem e
-download moram em `extractors/servico.py`.
+download moram em `captura/servico.py`.
 """
 
 import asyncio
@@ -13,14 +13,14 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.erros import FalhaDeExtracao
-from extractors import circuit_breaker, resiliencia
-from extractors.base import ExtratorDeSite, ResultadoBusca
-from extractors.busca.correspondencia import (
+from fontes.adaptadores.base import ExtratorDeSite, ResultadoBusca
+from fontes.adaptadores.registro import EXTRATORES, obter_extrator
+from fontes.busca.correspondencia import (
     corresponde_a_alguma_referencia,
     e_nome_do_anime,
     proximidade_a_referencias,
 )
-from extractors.registro import EXTRATORES, obter_extrator
+from fontes.rede import circuit_breaker, resiliencia
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -150,13 +150,13 @@ async def buscar_em_com_variantes(
     janelas de `_PARALELISMO_DE_VARIANTES` — ver `buscar_variantes_em_janelas`;
     o veredito segue a ordem da escada, uma janela só custa a chamada a mais) e para na primeira que
     devolver candidatos validados contra `referencias`
-    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia` — o
+    (`fontes/busca/correspondencia.py::corresponde_a_alguma_referencia` — o
     card só precisa bater com UM dos nomes do anime). Devolve o
     `ResultadoDeFonte` e a variante que funcionou (`None` quando foi a variante
     0, o título original).
 
     `ResultadoDeFonte.candidatos` volta ordenado por
-    `extractors/busca/correspondencia.py::proximidade_a_referencias`: o match
+    `fontes/busca/correspondencia.py::proximidade_a_referencias`: o match
     exato da referência mais parecida primeiro, depois os que só compartilham
     prefixo, cada grupo do comprimento mais próximo ao mais distante. Importa
     porque a sonda larga (recall pela 1ª palavra em `variantes_de_busca`) faz
@@ -180,7 +180,7 @@ async def buscar_em_com_variantes(
     Exceção ao descarte (degrau de "correspondência incerta"): se ao fim da
     escada NENHUMA variante produziu card validado, mas alguma variante que É
     um nome canônico do anime
-    (`extractors/busca/correspondencia.py::e_nome_do_anime` — sonda precisa,
+    (`fontes/busca/correspondencia.py::e_nome_do_anime` — sonda precisa,
     não prefixo curto da escada de recall) trouxe card(s), esses card(s)
     voltam num `ResultadoDeFonte(correspondencia_incerta=True)`, deduplicados
     por (`identificador`, `versao`) e truncados a `_MAXIMO_INCERTOS`. Cobre o site que
@@ -316,7 +316,7 @@ async def buscar_por_site_com_variantes(
     aparecia mesmo tendo o anime. Aqui, cada fonte chama
     `buscar_em_com_variantes` (que já valida cada candidato contra
     `referencias` via
-    `extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`,
+    `fontes/busca/correspondencia.py::corresponde_a_alguma_referencia`,
     fatia 2) em paralelo com as demais — nenhum site interrompe ou "rouba a
     vez" da busca dos outros. O resultado é a união de todas as fontes onde o
     anime realmente existe, não a rodada de variante que respondeu primeiro.

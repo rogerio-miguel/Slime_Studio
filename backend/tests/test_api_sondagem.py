@@ -19,7 +19,7 @@ from api.servicos import sondagem
 from api.servicos.fontes import FonteComEpisodios
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua
-from extractors.base import EpisodioRemoto
+from fontes.adaptadores.base import EpisodioRemoto
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
 

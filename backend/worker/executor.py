@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 # Mesma progressão documentada em ESPECIFICACAO.md §3A ("30s -> 2min -> 10min")
-# do circuit breaker por site (`extractors/circuit_breaker.py::_BACKOFF_S`) —
+# do circuit breaker por site (`fontes/rede/circuit_breaker.py::_BACKOFF_S`) —
 # mantida como constante própria aqui porque governa o *job* (retentativa de
 # um episódio específico), não o *site* (é um conceito relacionado, não o
 # mesmo dado; `_BACKOFF_S` de lá é privado ao módulo do breaker).

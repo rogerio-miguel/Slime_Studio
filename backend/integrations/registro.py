@@ -1,6 +1,6 @@
 """Registro dos provedores de metadados disponíveis — ordem da tupla é ordem
 de fallback (ESPECIFICACAO.md: AniList principal, Kitsu fallback — decisão de
-produto já fechada), mesmo papel de `extractors/registro.py`.
+produto já fechada), mesmo papel de `fontes/adaptadores/registro.py`.
 """
 
 import logging

@@ -1,4 +1,4 @@
-"""Testes de `extractors/circuit_breaker.py` contra SQLite real, sem rede."""
+"""Testes de `fontes/rede/circuit_breaker.py` contra SQLite real, sem rede."""
 
 from pathlib import Path
 
@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
 from db.engine import criar_engine, criar_sessionmaker
-from extractors import circuit_breaker
+from fontes.rede import circuit_breaker
 from models.base import Base
 
 

@@ -8,7 +8,7 @@ import pytest
 
 from api.servicos import fontes
 from core.enums import StatusLancamento
-from extractors.base import EpisodioRemoto
+from fontes.adaptadores.base import EpisodioRemoto
 
 
 def _eps(quantidade: int) -> list[EpisodioRemoto]:

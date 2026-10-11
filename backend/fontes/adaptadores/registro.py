@@ -1,5 +1,5 @@
 """Registro dos extratores disponíveis (ESPECIFICACAO.md §3A) — ordem da tupla é
-ordem de prioridade de fallback (`extractors/resolucao.py`).
+ordem de prioridade de fallback (`fontes/resolucao.py`).
 
 Ordem: AnimeFire (padrão) → MeusAnimes → AnimesDrive. A base histórica é
 ESPECIFICACAO.md §3A item 2 ("AnimeFire primeiro, AnimesDrive em seguida"); o
@@ -10,10 +10,10 @@ AnimeFire.
 """
 
 from core.erros import ErroSlimeStudio
-from extractors.animefire import AnimeFireProvider
-from extractors.animesdrive import AnimesDriveProvider
-from extractors.base import ExtratorDeSite
-from extractors.meusanimes import MeusAnimesProvider
+from fontes.adaptadores.animefire import AnimeFireProvider
+from fontes.adaptadores.animesdrive import AnimesDriveProvider
+from fontes.adaptadores.base import ExtratorDeSite
+from fontes.adaptadores.meusanimes import MeusAnimesProvider
 
 EXTRATORES: tuple[ExtratorDeSite, ...] = (
     AnimeFireProvider(),

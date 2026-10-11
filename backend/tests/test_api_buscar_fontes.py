@@ -1,16 +1,16 @@
 """Testes de `GET /api/animes/buscar-fontes` (`api/rotas/animes.py` ->
 `api/servicos/busca.py::buscar_em_todas_as_fontes_com_titulos_alternativos` ->
-`extractors/busca/servico.py::buscar_por_site_com_variantes`).
+`fontes/busca/servico.py::buscar_por_site_com_variantes`).
 
 A busca é sempre a UNIÃO das fontes onde o anime existe: resolve o anime canônico no
 provedor de metadados (`integrations.servico.buscar_titulos`) UPFRONT e consulta todos
 os sites em paralelo, cada um esgotando sua própria escada de variantes. A resposta
 traz `resultados` (um por candidato) e `fontes` (status de cada site, com motivo de
 indisponibilidade); não há mais `termo_alternativo`/`dominio_alternativo` nem parâmetro
-`escopo`. `buscar_em_com_variantes` é monkeypatchado em `extractors.busca.servico`
+`escopo`. `buscar_em_com_variantes` é monkeypatchado em `fontes.busca.servico`
 (`buscar_por_site_com_variantes` o chama pelo nome de módulo, então o patch alcança as
 duas etapas); `extrator.buscar`/`resiliencia.chamar` têm cobertura própria em
-`test_extractors_servico.py`.
+`test_captura_servico.py`.
 
 `integrations.servico.buscar_titulos` é stubado por padrão pela fixture autouse
 `_resolucao_de_titulo_canonico_sem_rede` deste arquivo (devolve `None`); testes que
@@ -22,8 +22,8 @@ capa por `integrations.servico.buscar_por_titulo` é coberto pela autouse
 import pytest
 from httpx import AsyncClient
 
-from extractors.base import ResultadoBusca
-from extractors.busca.servico import ResultadoDeFonte
+from fontes.adaptadores.base import ResultadoBusca
+from fontes.busca.servico import ResultadoDeFonte
 from integrations.base import TitulosDeAnime
 
 
@@ -58,7 +58,7 @@ async def test_buscar_fontes_titulo_vazio_nao_chama_extrator(
     async def _falha_se_chamado(sessionmaker, dominio, variantes, *, referencias):
         raise AssertionError("buscar_em_com_variantes não deveria ser chamado para título vazio")
 
-    monkeypatch.setattr("extractors.busca.servico.buscar_em_com_variantes", _falha_se_chamado)
+    monkeypatch.setattr("fontes.busca.servico.buscar_em_com_variantes", _falha_se_chamado)
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "   "})
 
@@ -84,7 +84,7 @@ async def test_buscar_fontes_falha_de_um_extrator_nao_derruba_resposta(
         return None
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "fontes.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
 
@@ -107,7 +107,7 @@ async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
 ):
     """Um site em cooldown chega a `buscar_em_com_variantes` (que checa
     cooldown por dentro, via `resiliencia.chamar` — coberto em
-    `test_extractors_servico.py`) já como `indisponivel=True`; aqui o que se
+    `test_captura_servico.py`) já como `indisponivel=True`; aqui o que se
     cobre é que a API repassa esse status intacto, sem mascarar como "não
     achei nada"."""
 
@@ -126,7 +126,7 @@ async def test_buscar_fontes_fonte_em_cooldown_aparece_como_indisponivel(
         return None
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "fontes.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_por_titulo_fake)
 
@@ -159,7 +159,7 @@ async def test_buscar_fontes_site_padrao_indisponivel_faz_fan_out_e_preserva_o_m
         return _fonte(dominio), None
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "fontes.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})
@@ -187,7 +187,7 @@ async def test_buscar_fontes_registrada_antes_do_catch_all_anime_id(
         return None
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "fontes.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     # Sem este patch, a resolução do título canônico bateria no AniList de verdade.
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -230,7 +230,7 @@ async def test_buscar_fontes_expande_com_titulo_alternativo_quando_termo_digitad
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "fontes.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
 
@@ -284,10 +284,10 @@ async def test_buscar_fontes_escopo_todas_usa_caminho_paralelo_e_preserva_domini
         return None
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
-    monkeypatch.setattr("extractors.busca.servico.buscar_em_com_variantes", _falha_se_chamado)
+    monkeypatch.setattr("fontes.busca.servico.buscar_em_com_variantes", _falha_se_chamado)
     monkeypatch.setattr("integrations.servico.buscar_titulos", _sem_titulos_de_provedor)
 
     resposta = await cliente.get(
@@ -331,7 +331,7 @@ async def test_buscar_fontes_correspondencia_incerta_vai_depois_dos_cards_valida
         return _fonte(dominio), None
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
+        "fontes.busca.servico.buscar_em_com_variantes", _buscar_em_com_variantes_fake
     )
 
     resposta = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "Qualquer"})

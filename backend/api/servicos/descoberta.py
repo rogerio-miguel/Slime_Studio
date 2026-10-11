@@ -1,6 +1,6 @@
 """Orquestração de metadados externos (`integrations/`) com o catálogo local
 — mesmo papel de `api/servicos/fontes.py`, mas para `integrations/servico.py`
-em vez de `extractors/`. Não importa `fastapi` nem Pydantic (regra de
+em vez de `fontes/`. Não importa `fastapi` nem Pydantic (regra de
 dependência da Clean Architecture, CLAUDE.md §1); `api/rotas/animes.py`
 traduz para schemas.
 """
@@ -38,7 +38,7 @@ from db.catalogo import (
     sincronizar_capas_em_lote,
     sobrescrever_arte,
 )
-from extractors.versao import remover_marcador_de_versao
+from fontes.adaptadores.versao import remover_marcador_de_versao
 from integrations import servico
 from integrations.base import AnimeEmAlta, ArteDeAnime, MetadadosDeAnime, NoDeSerie
 from models.anime import Anime
@@ -856,10 +856,10 @@ def _termo_de_busca(titulo: str) -> str:
     pioraria o match); `remover_marcador_de_versao` cuida das formas sem
     parênteses. Título que ficaria vazio volta cru.
 
-    `remover_marcador_de_versao` é domínio puro de `extractors/versao.py` (sem
+    `remover_marcador_de_versao` é domínio puro de `fontes/adaptadores/versao.py` (sem
     HTTP/framework) — reuso pontual da regra de fronteira de token, não a
     mistura de famílias de adapter que o CLAUDE.md §1 proíbe (`api/servicos/
-    sondagem.py` importa de `extractors/` pelo mesmo motivo).
+    sondagem.py` importa de `fontes/` pelo mesmo motivo).
     """
     sem_parenteses = _REGEX_SEGMENTO_PARENTETICO.sub(" ", titulo)
     termo = remover_marcador_de_versao(sem_parenteses)
@@ -1065,7 +1065,7 @@ async def _resolver_e_aplicar_serie(
 async def _materializar_temporadas_irmas(
     sessionmaker: _SessionMaker, anilist_id_clicado: int, franquia: list[NoDeSerie]
 ) -> None:
-    """Materializa (metadados apenas, sem tocar `extractors/`) toda temporada
+    """Materializa (metadados apenas, sem tocar `fontes/`) toda temporada
     da `franquia` (`servico.resolver_franquia`, lista ordenada T1..Tn) que
     ainda não está no catálogo local — o pedido do usuário de agrupar a
     franquia inteira ao clicar em qualquer uma das temporadas.

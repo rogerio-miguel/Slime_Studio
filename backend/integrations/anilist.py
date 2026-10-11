@@ -3,7 +3,7 @@
 Síncrono via `requests` (já dependência de produção do projeto —
 `pyproject.toml`); o `asyncio.to_thread`/timeout que o torna não-bloqueante
 mora só em `integrations/servico.py` (mesma separação de
-`extractors/resiliencia.py` para os extratores de site).
+`fontes/rede/resiliencia.py` para os extratores de site).
 
 Este módulo é a única fronteira onde exceção de `requests` pode existir para
 este provedor: HTTP >=400 (exceto 404, tratado como "não encontrado") vira

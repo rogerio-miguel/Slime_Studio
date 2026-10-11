@@ -1,4 +1,4 @@
-"""Testes de parsing de `extractors/meusanimes.py`, sem rede — fixtures de HTML
+"""Testes de parsing de `fontes/adaptadores/meusanimes.py`, sem rede — fixtures de HTML
 estáticas (strings neste arquivo) servidas pelo `ClienteFalso` da fixture
 `cliente_falso` (`conftest.py`)."""
 
@@ -8,9 +8,9 @@ import pytest
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada
-from extractors import meusanimes as modulo_meusanimes
-from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
-from extractors.meusanimes import MeusAnimesProvider
+from fontes.adaptadores import meusanimes as modulo_meusanimes
+from fontes.adaptadores.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
+from fontes.adaptadores.meusanimes import MeusAnimesProvider
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ _BUSCA_HTML = """
 def test_buscar_parseia_cards_com_identificador_titulo_e_versao(extrator, cliente_falso):
     """Card sem sufixo → LEGENDADO; card com " Dublado"/`-dublado` → DUBLADO.
     O card traz `<img>` de capa no markup real (fixture `_BUSCA_HTML`), mas
-    `extractors/` não resolve mais capa de anime (Fatia 3 de
+    `fontes/` não resolve mais capa de anime (Fatia 3 de
     `PLANO_ARTE_TMDB.md`) — a tag é ignorada pelo parsing."""
     url_busca = f"{extrator.BASE_URL}/?s=One+Piece"
     cliente = cliente_falso(html_por_url={url_busca: _BUSCA_HTML})

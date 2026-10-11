@@ -1,4 +1,4 @@
-"""Testes de `extractors/download.py`. `conferir_link_de_midia`/`_montar_comando`
+"""Testes de `captura/download.py`. `conferir_link_de_midia`/`_montar_comando`
 não tocam rede (monkeypatch/função pura); o download real é `@pytest.mark.integracao`
 contra um arquivo **local** de teste, nunca contra rede."""
 
@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from captura import download
 from core.enums import TipoEpisodio, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FalhaDeFerramenta
-from extractors import download
-from extractors.base import FormatoDeMidia, LinkDeMidia
+from fontes.adaptadores.base import FormatoDeMidia, LinkDeMidia
 from worker.pipeline.ferramentas import executar
 
 _FFMPEG = shutil.which("ffmpeg")

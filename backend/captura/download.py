@@ -1,6 +1,6 @@
 """Download de mídia (ESPECIFICACAO.md §3A/§3D) — agnóstico de site (D4 do plano).
 
-Só entra em cena depois que `extractors/resiliencia.py::chamar` já resolveu a
+Só entra em cena depois que `fontes/rede/resiliencia.py::chamar` já resolveu a
 `LinkDeMidia` (URL + cabeçalhos de hotlink protection) via o adapter do site;
 daqui pra frente não há mais `ClienteDeSite` nem sessão de bypass envolvidos —
 é uma checagem HTTP curta seguida de um `ffmpeg -c copy` genérico.
@@ -26,8 +26,8 @@ import requests
 
 from core.enums import TipoEpisodio, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FalhaDeFerramenta
-from extractors import rede_segura
-from extractors.base import FormatoDeMidia, LinkDeMidia
+from fontes.adaptadores.base import FormatoDeMidia, LinkDeMidia
+from fontes.rede import rede_segura
 from worker.pipeline.ferramentas import executar
 
 _TIMEOUT_S = 15

@@ -38,7 +38,7 @@ def inferir_versao(titulo_exibicao: str, identificador: str) -> VersaoEpisodio |
 def remover_marcador_de_versao(texto: str) -> str:
     """Remove o marcador de versão (dublado/dub/legendado/leg) de `texto`,
     reaproveitando a mesma fronteira de token de `inferir_versao` (sem
-    duplicar a regra). Usado por `extractors/resolucao.py` para normalizar
+    duplicar a regra). Usado por `fontes/resolucao.py` para normalizar
     título/slug antes de comparar com o slug base do anime — sem isso, "Nome
     Dublado" nunca casaria com o slug do anime cadastrado (que não carrega o
     marcador).

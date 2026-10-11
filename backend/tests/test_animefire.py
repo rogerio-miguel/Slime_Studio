@@ -1,4 +1,4 @@
-"""Testes de parsing de `extractors/animefire.py`, sem rede — `ClienteFalso`
+"""Testes de parsing de `fontes/adaptadores/animefire.py`, sem rede — `ClienteFalso`
 devolve fixtures HTML/JSON escritas à mão em `tests/fixtures/animefire/`."""
 
 import json
@@ -9,8 +9,8 @@ from conftest import ClienteFalso
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
-from extractors.animefire import AnimeFireProvider
-from extractors.base import EpisodioRemoto, FormatoDeMidia, LinkDeMidia, ResultadoBusca
+from fontes.adaptadores.animefire import AnimeFireProvider
+from fontes.adaptadores.base import EpisodioRemoto, FormatoDeMidia, LinkDeMidia, ResultadoBusca
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "animefire"
 
@@ -140,7 +140,7 @@ def test_buscar_com_audio_so_dublado_gera_uma_entrada_sem_duplicar(extrator):
 
 
 def test_buscar_ignora_poster_src_extractor_nao_resolve_mais_capa(extrator):
-    """Fatia 3 de `PLANO_ARTE_TMDB.md`: `extractors/` deixou de resolver capa
+    """Fatia 3 de `PLANO_ARTE_TMDB.md`: `fontes/` deixou de resolver capa
     de anime — `poster_src` (presente na fixture, payload real do site) é
     lido pelo parsing e simplesmente ignorado; `ResultadoBusca` não tem mais
     campo `capa_url` nenhum (enriquecimento é 100% de `api/servicos/capas.py`,
@@ -187,7 +187,7 @@ def test_buscar_com_item_sem_id_ou_title_levanta_estrutura_do_site_mudou(extrato
 
 def test_buscar_chama_buscar_termo_uma_unica_vez_com_termo_exato(extrator):
     """`buscar` não itera mais variantes internamente (responsabilidade que
-    saiu do adapter — mora em `extractors/busca/termos.py::variantes_de_busca` e,
+    saiu do adapter — mora em `fontes/busca/termos.py::variantes_de_busca` e,
     numa camada de orquestração futura, em quem itera essas variantes).
     Chama `_buscar_termo` uma única vez, com o título recebido tal como veio,
     sem truncar subtítulo."""
@@ -204,7 +204,7 @@ def test_buscar_chama_buscar_termo_uma_unica_vez_com_termo_exato(extrator):
 def test_buscar_nao_trunca_mais_internamente_quando_termo_completo_nao_acha(extrator):
     """Antes, um título com subtítulo caía para um 2º candidato truncado
     quando o completo não achava nada (`_candidatos_de_busca`, removido daqui
-    — a lógica de gerar variantes agora mora em `extractors/busca/termos.py`). Agora
+    — a lógica de gerar variantes agora mora em `fontes/busca/termos.py`). Agora
     `buscar` faz uma única tentativa — `ClienteFalso` levantaria
     `AssertionError` numa URL truncada não mapeada se o código ainda
     tentasse um 2º candidato."""

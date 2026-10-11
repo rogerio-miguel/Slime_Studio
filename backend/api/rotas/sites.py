@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.dependencias import obter_sessao, obter_sessionmaker
 from api.esquemas import SiteSaida
-from extractors import circuit_breaker
+from fontes.rede import circuit_breaker
 from models.estado_site import EstadoSite
 
 _SessionMaker = async_sessionmaker[AsyncSession]

@@ -7,11 +7,11 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from captura.download import caminho_raw
+from captura.servico import baixar_com_fallback_de_site
 from core.config import Config
 from core.enums import SITE_LOCAL
 from core.erros import FonteInvalida
-from extractors.download import caminho_raw
-from extractors.servico import baixar_com_fallback_de_site
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -23,7 +23,7 @@ async def resolver_fonte(
 ) -> Path:
     """Modo arquivo local (`episodio.site_origem == SITE_LOCAL`): confere o caminho
     já presente em `episodio.url_fonte`. Caso contrário, baixa via extrator do
-    site (com fallback entre sites — `extractors/servico.py::baixar_com_fallback_de_site`)
+    site (com fallback entre sites — `captura/servico.py::baixar_com_fallback_de_site`)
     e valida o arquivo baixado com a mesma checagem de integridade de sempre.
     """
     if episodio.site_origem == SITE_LOCAL:

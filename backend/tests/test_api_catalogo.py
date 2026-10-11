@@ -8,10 +8,10 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from captura.download import caminho_raw
 from core.config import Config
 from core.enums import StatusJob, TipoEpisodio, VersaoEpisodio
 from core.midia import diretorio_do_episodio
-from extractors.download import caminho_raw
 from models.anime import Anime
 from models.episodio import Episodio
 from models.job import Job

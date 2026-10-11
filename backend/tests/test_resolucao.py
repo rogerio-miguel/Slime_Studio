@@ -1,4 +1,4 @@
-"""Testes de `extractors/resolucao.py`, sem rede — `resiliencia.chamar` é
+"""Testes de `fontes/resolucao.py`, sem rede — `resiliencia.chamar` é
 substituído por uma versão que chama a operação direto (sem `ClienteLeve`/
 `cloudscraper`), e adapters falsos ficam em `resolucao.EXTRATORES` via
 `monkeypatch`.
@@ -17,8 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Config
 from core.enums import VersaoDeFonte, VersaoEpisodio
 from db.engine import criar_engine, criar_sessionmaker
-from extractors import resiliencia, resolucao
-from extractors.base import EpisodioRemoto, ExtratorDeSite, ResultadoBusca
+from fontes import resolucao
+from fontes.adaptadores.base import EpisodioRemoto, ExtratorDeSite, ResultadoBusca
+from fontes.rede import resiliencia
 from models.anime import Anime
 from models.base import Base
 from models.estado_site import EstadoSite

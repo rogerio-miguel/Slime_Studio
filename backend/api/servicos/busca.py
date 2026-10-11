@@ -1,7 +1,7 @@
-"""Orquestração de `GET /api/animes/buscar-fontes` que cruza `extractors/` ×
+"""Orquestração de `GET /api/animes/buscar-fontes` que cruza `fontes/` ×
 `integrations/` — único ponto que importa os dois lados da fronteira pra este
 fluxo, mesma decisão de `api/servicos/descoberta.py`/`fontes.py` (CLAUDE.md
-§1: `extractors/` NUNCA importa de `integrations/`, e vice-versa; orquestração
+§1: `fontes/` NUNCA importa de `integrations/`, e vice-versa; orquestração
 cross-camada mora aqui).
 
 Uma função pública, `buscar_em_todas_as_fontes_com_titulos_alternativos`, que
@@ -19,7 +19,7 @@ resolução de fonte da Home ficou preguiçosa, na página do anime.
 
 Infra:
 
-- `variantes_de_busca` de `extractors.busca.termos` — gerador de variantes de
+- `variantes_de_busca` de `fontes.busca.termos` — gerador de variantes de
   regex;
 - `_referencias_de_anime` (todos os nomes do anime para `referencias=` da
   validação de card) e `_termos_de_busca` (escada combinada dos idiomas);
@@ -30,7 +30,7 @@ Infra:
 - caráter best-effort do metadado de provedor: falha ou timeout nunca derruba a
   busca nos sites, que segue só com o título digitado.
 
-Candidato de busca em fonte não carrega capa: `extractors/` é só extração de
+Candidato de busca em fonte não carrega capa: `fontes/` é só extração de
 VÍDEO (`ResultadoBusca` não tem `capa_url`) e o diálogo "Trocar fonte" lista
 os candidatos só por nome/site/versão. A capa do anime é resolvida na
 materialização (`criar_anime` -> `enriquecer_anime_criado`), não aqui.
@@ -43,10 +43,10 @@ import time
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.texto import slugificar
-from extractors.busca import servico as servico_extractors
-from extractors.busca.servico import ResultadoDeFonte
-from extractors.busca.termos import escada_combinada, variantes_de_busca
-from extractors.registro import EXTRATORES
+from fontes.adaptadores.registro import EXTRATORES
+from fontes.busca import servico as servico_fontes
+from fontes.busca.servico import ResultadoDeFonte
+from fontes.busca.termos import escada_combinada, variantes_de_busca
 from integrations import servico as servico_metadados
 from integrations.base import TitulosDeAnime
 
@@ -142,9 +142,9 @@ async def _buscar_em_todas_as_fontes(
     """Devolve a UNIÃO de todas as fontes que realmente têm o anime — busca
     paralela em todos os sites, cada um esgotando sua própria escada de
     variantes de forma independente e exaustiva
-    (`extractors.busca.servico.buscar_por_site_com_variantes`): nenhum site
+    (`fontes.busca.servico.buscar_por_site_com_variantes`): nenhum site
     interrompe ou "rouba a vez" da busca dos outros. A validação de card
-    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`
+    (`fontes/busca/correspondencia.py::corresponde_a_alguma_referencia`
     sobre todos os nomes do anime) vem embutida em `buscar_em_com_variantes`.
     Serve o diálogo "Trocar fonte", que mostra as alternativas lado a lado.
 
@@ -168,7 +168,7 @@ async def _buscar_em_todas_as_fontes(
     referencias = _referencias_de_anime(titulos, titulo)
     termos = _termos_de_busca(titulos, titulo)
 
-    resultado_por_dominio = await servico_extractors.buscar_por_site_com_variantes(
+    resultado_por_dominio = await servico_fontes.buscar_por_site_com_variantes(
         sessionmaker, termos, referencias=referencias
     )
     return _completar_nao_consultados(resultado_por_dominio)
@@ -203,7 +203,7 @@ def _completar_nao_consultados(
 def _referencias_de_anime(titulos: TitulosDeAnime | None, titulo: str) -> list[str]:
     """Todos os nomes conhecidos do anime, para passar como `referencias=` à
     validação de card
-    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`): o
+    (`fontes/busca/correspondencia.py::corresponde_a_alguma_referencia`): o
     card devolvido pelo site pode estar grafado em qualquer um dos nomes do
     anime (romaji, inglês, nativo, sinônimo de provedor) e basta bater com um —
     validar só contra o título digitado rejeitaria o card certo quando o site
@@ -254,9 +254,9 @@ def _referencias_de_anime(titulos: TitulosDeAnime | None, titulo: str) -> list[s
 def _termos_de_busca(titulos: TitulosDeAnime | None, titulo: str) -> list[str]:
     """Escada de termos de busca combinada dos vários idiomas do anime, pra
     varrer os sites de extração — concatena a escada de `variantes_de_busca`
-    (`extractors/busca/termos.py`, o mesmo gerador da Fase 1) de cada idioma.
+    (`fontes/busca/termos.py`, o mesmo gerador da Fase 1) de cada idioma.
 
-    Ordem: por degrau (`extractors/busca/termos.py::escada_combinada` — todos os
+    Ordem: por degrau (`fontes/busca/termos.py::escada_combinada` — todos os
     títulos completos, depois todos os cortes, por último os prefixos) e, dentro
     do degrau, `titulo_romaji`, `titulo_ingles`, `titulo` (o digitado) — romaji
     primeiro porque os sites de streaming indexam romaji com mais frequência

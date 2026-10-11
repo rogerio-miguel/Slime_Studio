@@ -6,7 +6,7 @@ listagem e resolução de mídia, então nenhum `exige_navegador*` é declarado.
 
 A mídia sai de uma API aberta do player (`get-video.php` em
 `serv01.meusdoramas.club`), que devolve um token do Blogger
-(`blogger.com/video.g?token=...`); daí `extractors/blogger.py` resolve a URL
+(`blogger.com/video.g?token=...`); daí `fontes/adaptadores/blogger.py` resolve a URL
 direta por HTTP puro, sem navegador, com teto de 720p (itag 22 — mp4 progressivo
 muxado). As URLs de mídia do Google expiram em ~8h e ficam atadas ao IP que as
 resolveu, então a resolução é sempre feita on-demand no momento do download,
@@ -29,10 +29,10 @@ from bs4 import BeautifulSoup
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada
-from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
-from extractors.blogger import resolver_token
-from extractors.cliente import ClienteDeSite
-from extractors.versao import inferir_versao
+from fontes.adaptadores.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
+from fontes.adaptadores.blogger import resolver_token
+from fontes.adaptadores.versao import inferir_versao
+from fontes.rede.cliente import ClienteDeSite
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class MeusAnimesProvider(ExtratorDeSite):
             # 404 numa busca sem resultado é "zero resultados", não falha —
             # mesmo desfecho do AnimeFire/AnimesDrive. `info`, não `warning`:
             # decidir se todas as variantes de busca se esgotaram é de quem as
-            # itera (`extractors/busca/termos.py`), não deste método.
+            # itera (`fontes/busca/termos.py`), não deste método.
             logger.info("MeusAnimes: busca por %r não encontrou nada (404) em %s", titulo, url)
             return []
 
@@ -239,7 +239,7 @@ class MeusAnimesProvider(ExtratorDeSite):
 
         1. lê `tmdb_id`/temporada/episódio do `src` do iframe do player;
         2. `GET get-video.php` (API aberta do player) → `{"success", "videoUrl"}`;
-        3. `videoUrl` é um token do Blogger → `extractors/blogger.py` resolve a URL
+        3. `videoUrl` é um token do Blogger → `fontes/adaptadores/blogger.py` resolve a URL
            direta (teto 720p). Qualquer outra string http(s) é usada direta;
            estrutura que não seja nenhuma das duas vira `EstruturaDoSiteMudou`.
         """

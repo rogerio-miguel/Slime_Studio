@@ -1,4 +1,4 @@
-"""Testes de `extractors/sessao_cache.py` contra SQLite real (mesmo padrão de
+"""Testes de `fontes/rede/sessao_cache.py` contra SQLite real (mesmo padrão de
 `tests/test_fila.py`), sem rede."""
 
 from datetime import UTC, datetime, timedelta
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
 from db.engine import criar_engine, criar_sessionmaker
-from extractors import sessao_cache
+from fontes.rede import sessao_cache
 from models.base import Base
 from models.sessao_bypass import SessaoBypass
 

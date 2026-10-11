@@ -1,7 +1,7 @@
-"""Testes de `extractors/versao.py` — domínio puro, sem rede/fixture."""
+"""Testes de `fontes/adaptadores/versao.py` — domínio puro, sem rede/fixture."""
 
 from core.enums import VersaoEpisodio
-from extractors.versao import inferir_versao
+from fontes.adaptadores.versao import inferir_versao
 
 
 def test_marcador_dublado_no_slug_devolve_dublado():

@@ -41,10 +41,10 @@ from core.config import Config
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from db.catalogo import obter_ou_criar_anime_id
-from extractors.base import ResultadoBusca
-from extractors.registro import EXTRATORES
-from extractors.resolucao import confirmar_fonte
-from extractors.versao import inferir_versao
+from fontes.adaptadores.base import ResultadoBusca
+from fontes.adaptadores.registro import EXTRATORES
+from fontes.adaptadores.versao import inferir_versao
+from fontes.resolucao import confirmar_fonte
 from integrations import servico as servico_metadados
 from integrations.base import AnimeEmAlta
 from integrations.tmdb import url_de_banner
@@ -113,11 +113,11 @@ async def confirmar_fonte_do_anime(
     `corpo.versao` é o round-trip do que o frontend recebeu em
     `ResultadoBuscaFonteSaida.versao` pro candidato escolhido. Preferência: o
     servidor rederiva via `inferir_versao` (mesma lógica de
-    `extractors/resolucao.py::confirmar_fonte`) quando encontra marcador no
+    `fontes/resolucao.py::confirmar_fonte`) quando encontra marcador no
     texto — sites como AnimesDrive/MeusAnimes o carregam no slug/título, e aí
     o servidor não confia cegamente no cliente. Sites como AnimeFire
     diferenciam por um campo à parte da API (`audio`, sem marcador textual —
-    `extractors/animefire.py::_resultados_do_item`) e `inferir_versao` NUNCA
+    `fontes/adaptadores/animefire.py::_resultados_do_item`) e `inferir_versao` NUNCA
     encontra nada pra eles: sem esta ressalva, toda confirmação nesses sites
     era silenciosamente regravada como `LEGENDADO`, não importa o que o
     usuário escolheu (`corpo.versao`, já calculado com o sinal correto lá na
@@ -508,7 +508,7 @@ async def buscar_animes_em_fontes(
     """Busca ao vivo em sites de extração — alimenta o diálogo "Trocar fonte":
     cada site busca em paralelo, esgotando de forma independente e exaustiva sua
     própria escada de variantes, sem que um "roube a vez" do outro
-    (`extractors.busca.servico.buscar_por_site_com_variantes`). Devolve a UNIÃO
+    (`fontes.busca.servico.buscar_por_site_com_variantes`). Devolve a UNIÃO
     das fontes onde o anime existe. `fontes` traz o status de cada site
     consultado (disponível ou não, com motivo) — a UI usa isso pra distinguir
     "não achei nada" de "não consegui nem tentar" (CLAUDE.md §4, erro nunca

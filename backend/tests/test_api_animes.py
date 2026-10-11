@@ -20,8 +20,8 @@ from api.servicos.fontes import FonteComEpisodios
 from api.servicos.lancamentos import episodios_novos, maior_numero_capturado_por_anime
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao
-from extractors.base import EpisodioRemoto, ResultadoBusca
-from extractors.resolucao import ConfirmacaoNecessaria, FonteResolvida
+from fontes.adaptadores.base import EpisodioRemoto, ResultadoBusca
+from fontes.resolucao import ConfirmacaoNecessaria, FonteResolvida
 from integrations.base import AnimeEmAlta, InfoDeEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
@@ -1364,7 +1364,7 @@ async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     """AnimeFire diferencia versão por um campo à parte da API (`audio`), sem
-    marcador no slug/título (`extractors/animefire.py::_resultados_do_item`) —
+    marcador no slug/título (`fontes/adaptadores/animefire.py::_resultados_do_item`) —
     `inferir_versao(titulo_exibicao, identificador)` nunca encontra nada pra
     ele. Regressão do bug reportado: confirmar 'Dublado' voltava sempre
     'Legendado' porque o servidor rederivava e caía no default silencioso.

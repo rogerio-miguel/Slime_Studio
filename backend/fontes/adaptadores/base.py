@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from core.enums import VersaoEpisodio
-from extractors.cliente import ClienteDeSite
+from fontes.rede.cliente import ClienteDeSite
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +74,7 @@ class EpisodioRemoto:
 
 class FormatoDeMidia(StrEnum):
     """Formato do container/protocolo apontado por `LinkDeMidia.url` — vocabulário
-    de extractor, não domínio persistido (mesmo racional de `extractors/qualidade.py`:
+    de extractor, não domínio persistido (mesmo racional de `fontes/adaptadores/qualidade.py`:
     fica fora de `core/enums.py` de propósito, pois é só o site que atravessou a
     fronteira, não algo que o resto do sistema precisa conhecer).
 
@@ -126,7 +126,7 @@ class ExtratorDeSite(ABC):
 
         Granularidade separada de `exige_navegador` de propósito: subir Chromium
         em toda busca (operação mais frequente do sistema, e paralela entre sites
-        em `extractors/busca/servico.py::buscar_por_site_com_variantes`) pra atender um
+        em `fontes/busca/servico.py::buscar_por_site_com_variantes`) pra atender um
         único método seria caro sem necessidade. Concreta, não abstrata: o caso
         normal é `False` e nenhum adapter existente precisa declarar isso.
         """
@@ -137,7 +137,7 @@ class ExtratorDeSite(ABC):
         """`True` quando este site separa legendado de dublado no próprio
         markup (slug/título de anime) — capability, não comportamento: quem
         lê isso é o chamador, decidindo se a ausência de marcador detectado
-        por `extractors/versao.py::inferir_versao` vira `VersaoEpisodio.LEGENDADO`
+        por `fontes/adaptadores/versao.py::inferir_versao` vira `VersaoEpisodio.LEGENDADO`
         por convenção do site (dublado sempre marcado, legendado é o default
         silencioso) ou fica indeterminada.
 

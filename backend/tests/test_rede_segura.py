@@ -1,11 +1,11 @@
-"""Testes de `extractors/rede_segura.py` — sem rede: `resolver_dns` e `requests.get` são
+"""Testes de `fontes/rede/rede_segura.py` — sem rede: `resolver_dns` e `requests.get` são
 substituídos."""
 
 import pytest
 import requests
 
-from extractors import rede_segura
-from extractors.rede_segura import DestinoNaoPermitido, get_validando_redirects, validar_destino
+from fontes.rede import rede_segura
+from fontes.rede.rede_segura import DestinoNaoPermitido, get_validando_redirects, validar_destino
 
 
 def _dns(monkeypatch, ips_por_host: dict[str, list[str]]):

@@ -13,13 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import VersaoDeFonte, VersaoEpisodio
 from core.texto import slugificar
-from extractors import circuit_breaker
-from extractors.base import ExtratorDeSite, ResultadoBusca
-from extractors.busca.correspondencia import corresponde_a_alguma_referencia
-from extractors.busca.servico import buscar_variantes_em_janelas
-from extractors.busca.termos import escada_combinada
-from extractors.registro import EXTRATORES
-from extractors.versao import remover_marcador_de_versao
+from fontes.adaptadores.base import ExtratorDeSite, ResultadoBusca
+from fontes.adaptadores.registro import EXTRATORES
+from fontes.adaptadores.versao import remover_marcador_de_versao
+from fontes.busca.correspondencia import corresponde_a_alguma_referencia
+from fontes.busca.servico import buscar_variantes_em_janelas
+from fontes.busca.termos import escada_combinada
+from fontes.rede import circuit_breaker
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
 
@@ -72,7 +72,7 @@ async def resolver_fonte_do_anime(
 
     `titulos_alternativos` são todos os nomes conhecidos do anime (digitado,
     romaji, inglês, nativo, sinônimos), já resolvidos no provedor de metadados
-    por quem chama — `extractors/` não cruza a fronteira de `integrations/`
+    por quem chama — `fontes/` não cruza a fronteira de `integrations/`
     (CLAUDE.md §1), então a lista vem pronta de
     `api/servicos/fontes.py::listar_episodios_remotos` (via
     `api/servicos/busca.py::_referencias_de_anime`), com o título cadastrado na
@@ -150,7 +150,7 @@ async def proximo_site_para(
     pulado, não devolvido como `ConfirmacaoNecessaria`).
 
     `ja_tentados` é o conjunto de domínios já tentados nesta cadeia (mantido
-    pelo chamador, `extractors/servico.py::_proximo_com_episodio`) — inclui o
+    pelo chamador, `captura/servico.py::_proximo_com_episodio`) — inclui o
     domínio que acabou de falhar. Corte por exclusão explícita, não mais por
     `FonteAnime.prioridade` (bug corrigido: o corte antigo — "qualquer fonte
     mapeada de prioridade MAIOR que a que falhou" — dependia implicitamente
@@ -164,7 +164,7 @@ async def proximo_site_para(
     alternativa válida).
 
     `versao` aqui é `Episodio.versao` de quem está com download em andamento
-    (`extractors/servico.py::baixar_com_fallback_de_site`) — ao contrário de
+    (`captura/servico.py::baixar_com_fallback_de_site`) — ao contrário de
     `resolver_fonte_do_anime`, PODE ser `DESCONHECIDA` (episódio veio de fonte
     `NAO_DIFERENCIADA`, sem versão pedida de verdade pra preservar): nesse
     caso a busca de fallback ignora a dimensão de versão por completo
@@ -227,12 +227,12 @@ async def proximo_site_para(
 
 def _variantes_das_referencias(referencias: list[str]) -> list[str]:
     """Escada de busca combinada de TODOS os nomes do anime
-    (`extractors/busca/termos.py::escada_combinada`: por degrau — títulos
+    (`fontes/busca/termos.py::escada_combinada`: por degrau — títulos
     completos, depois cortes, depois prefixos), referências na ordem da lista
     (digitado, romaji, inglês, nativo, sinônimos), deduplicando por
     `core/texto.py::slugificar` e preservando a primeira ocorrência.
 
-    Espelha `api/servicos/busca.py::_termos_de_busca` (que `extractors/` não
+    Espelha `api/servicos/busca.py::_termos_de_busca` (que `fontes/` não
     pode importar — fronteira de `integrations/`). A posição 0 CRUA de cada
     referência sobrevive ao dedup: `_referencias_de_anime` já entrega a lista
     slug-única, então a raw-0 de uma referência nunca colide com a raw-0 de
@@ -250,7 +250,7 @@ async def _buscar_variantes(
     """Tenta cada variante da escada combinada de todos os nomes do anime
     (`_variantes_das_referencias`), na ordem, e para na primeira que devolver
     candidatos que correspondem a ALGUMA referência
-    (`extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`),
+    (`fontes/busca/correspondencia.py::corresponde_a_alguma_referencia`),
     não qualquer candidato — o bloco de recall de `variantes_de_busca` sonda por
     prefixo curto (1ª palavra), então uma variante devolve cards de outros
     animes que só compartilham o prefixo; sem o filtro,
@@ -269,7 +269,7 @@ async def _buscar_variantes(
     Exceção de `resiliencia.chamar` propaga direto, igual ao comportamento
     anterior de variante única — este helper não introduz um novo modo de
     falha, só mais tentativas antes de desistir (não confundir com
-    `extractors/busca/servico.py::buscar_em_com_variantes`, que captura
+    `fontes/busca/servico.py::buscar_em_com_variantes`, que captura
     `FalhaDeExtracao` e devolve `indisponivel`; aqui a exceção sobe de
     propósito)."""
     async for _variante, resposta in buscar_variantes_em_janelas(

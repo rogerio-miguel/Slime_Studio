@@ -1,6 +1,6 @@
 """Sondagem da fonte real (site) de um anime para contar episódios disponíveis.
 
-Orquestra `extractors/` — via `api/servicos/fontes.py::resolver_e_listar`
+Orquestra `fontes/` — via `api/servicos/fontes.py::resolver_e_listar`
 (sem o overlay de still da exibição, que a sondagem descartaria) — e grava a
 contagem em `Anime.episodios_na_fonte`/`fonte_verificada_*`
 (`db.catalogo.atualizar_contagem_na_fonte`). Família de adapter distinta da de
@@ -33,7 +33,7 @@ from api.servicos.jobs import versao_episodio_da_fonte
 from core.enums import StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from db.catalogo import atualizar_contagem_na_fonte
-from extractors.servico import filtrar_por_versao
+from fontes.listagem import filtrar_por_versao
 from models.anime import Anime
 from models.episodio import Episodio
 from models.fonte_anime import FonteAnime
@@ -92,10 +92,10 @@ def ids_fora_de_cooldown_de_reparo(ids: Iterable[int]) -> list[int]:
 
 
 # `VersaoDeFonte` (estado do mapeamento) -> `VersaoEpisodio` pedível a
-# `extractors.resolucao.resolver_fonte_do_anime`. NUNCA `DESCONHECIDA`:
+# `fontes.resolucao.resolver_fonte_do_anime`. NUNCA `DESCONHECIDA`:
 # `resolver_fonte_do_anime` levanta `ValueError` com ela. `NAO_DIFERENCIADA` ->
 # `LEGENDADO` é seguro — a resolução aceita a linha `NAO_DIFERENCIADA` e
-# `extractors.servico.filtrar_por_versao` devolve a lista inteira quando nenhum
+# `fontes.listagem.filtrar_por_versao` devolve a lista inteira quando nenhum
 # episódio da fonte traz rótulo de versão.
 _MAPA_VERSAO: dict[VersaoDeFonte, VersaoEpisodio] = {
     VersaoDeFonte.LEGENDADO: VersaoEpisodio.LEGENDADO,
@@ -128,7 +128,7 @@ async def _escolha_de_fonte_mais_recente_por_anime(
     """`{anime_id: VersaoDeFonte da linha de maior resolvido_em}` para os `ids`
     com ao menos uma linha em `FonteAnime` — a última escolha manual de fonte do
     usuário, a mesma que uma captura usaria
-    (`extractors.resolucao._resolver_em_mapeadas`). Query única, roda na sessão
+    (`fontes.resolucao._resolver_em_mapeadas`). Query única, roda na sessão
     da request. Anime sem linha em `FonteAnime` não aparece no resultado.
 
     Base compartilhada por `versoes_de_sondagem_por_anime` (traduz pra "o que

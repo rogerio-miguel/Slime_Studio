@@ -27,7 +27,7 @@ from core.erros import (
 )
 from db import catalogo
 from db.fila import criar_job as criar_job_na_fila
-from extractors.servico import filtrar_por_numero_e_versao, filtrar_por_versao
+from fontes.listagem import filtrar_por_numero_e_versao, filtrar_por_versao
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -84,14 +84,14 @@ async def criar_job_site(
     # (`fonte.versao_da_fonte`), nunca do `versao` pedido pelo cliente — a
     # invariante desta fase. Também usado para filtrar a listagem abaixo: sem
     # isso, um site que lista episódios das duas versões (mesmo risco de
-    # `extractors/servico.py::_proximo_com_episodio`) poderia gravar a URL da
+    # `captura/servico.py::_proximo_com_episodio`) poderia gravar a URL da
     # versão errada sob o rótulo certo.
     versao_do_episodio = versao_episodio_da_fonte(fonte.versao_da_fonte)
 
     correspondentes = filtrar_por_numero_e_versao(fonte.episodios, numero, versao_do_episodio)
     if len(correspondentes) > 1:
         # Mais de um rótulo remoto mapeia pro mesmo `numero` (ex. "7"/"07" —
-        # extractors/base.py::EpisodioRemoto) — o request só carrega `numero`
+        # fontes/adaptadores/base.py::EpisodioRemoto) — o request só carrega `numero`
         # (int), sem como o cliente escolher o rótulo. Escolha determinística
         # (1ª ocorrência, ordem já estável do adapter) em vez de silenciosa —
         # nunca some do log.

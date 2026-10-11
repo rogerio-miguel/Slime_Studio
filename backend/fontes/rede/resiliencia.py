@@ -7,7 +7,7 @@ cliente HTTP — o teto aqui é uma rede de segurança, não a primeira linha de
 defesa contra travamento.
 
 Também é o único lugar que escolhe **qual** cliente o adapter recebe
-(`extractors/cliente.py`): leve por padrão, navegador quando o site/operação
+(`fontes/rede/cliente.py`): leve por padrão, navegador quando o site/operação
 exige ou quando a sessão cacheada é rejeitada.
 """
 
@@ -22,18 +22,18 @@ from functools import partial
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.erros import FalhaDeExtracao, SessaoRejeitada, SiteEmCooldown
-from extractors import circuit_breaker, sessao_cache
-from extractors.base import ExtratorDeSite
-from extractors.cliente import ClienteDeSite, ClienteLeve, ClienteNavegador
+from fontes.adaptadores.base import ExtratorDeSite
+from fontes.rede import circuit_breaker, sessao_cache
+from fontes.rede.cliente import ClienteDeSite, ClienteLeve, ClienteNavegador
 
 logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 # Teto de `wait_for`: cobre o pior caso agregado de um adapter com duas chamadas
-# HTTP sequenciais (ex. `extractors/animefire.py::resolver_midia` faz
+# HTTP sequenciais (ex. `fontes/adaptadores/animefire.py::resolver_midia` faz
 # `obter_html` + `obter_json`), cada uma com o timeout de 15s que os adapters
-# passam a cada chamada de `ClienteDeSite` (`extractors/animefire.py::_TIMEOUT_S`)
+# passam a cada chamada de `ClienteDeSite` (`fontes/adaptadores/animefire.py::_TIMEOUT_S`)
 # — 2 × 15s = 30s de pior caso plausível + 15s de margem real acima disso, para
 # nunca ser o primeiro a estourar em condições normais.
 _TETO_ESPERA_S = 45
@@ -41,7 +41,7 @@ _TETO_ESPERA_S = 45
 # Teto próprio do caminho com navegador: 45s não cabe aqui. Uma resolução de
 # mídia via navegador soma cold start do Chromium, carga da página de episódio
 # com JS, e o conjunto de tentativas de servidor de
-# `extractors/animesdrive.py::resolver_midia` (modo com seletor de qualidade:
+# `fontes/adaptadores/animesdrive.py::resolver_midia` (modo com seletor de qualidade:
 # até `_MAX_CAPTURAS_POR_EPISODIO` capturas, cobertas por um único orçamento
 # `_ORCAMENTO_CAPTURAS_S`). Medido ao vivo em 2026-08-17: 3s a 17s do início da
 # navegação até a URL de mídia aparecer, no caminho de 1 candidato só — o teto
@@ -129,7 +129,7 @@ async def chamar[T](
     navegador quando a sessão cacheada é rejeitada.
 
     `exigir_navegador` é a versão por **operação** (quem passa é
-    `extractors/servico.py::baixar_episodio`, a partir de
+    `captura/servico.py::baixar_episodio`, a partir de
     `ExtratorDeSite.exige_navegador_para_midia`); `extrator.exige_navegador` é a
     versão por **site**. Qualquer uma das duas já começa no navegador, sem passar
     pelo cliente leve — diferente do fallback abaixo, que é reação a

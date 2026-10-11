@@ -89,7 +89,7 @@ async def test_thumb_cdn_de_terceiro_tmdb_e_permitido(
     cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     """`image.tmdb.org` não é `BASE_URL` de nenhum extrator, mas é a origem de
-    `poster_src`/`still_src` que `extractors/animefire.py` passa a repassar
+    `poster_src`/`still_src` que `fontes/adaptadores/animefire.py` passa a repassar
     desde a migração pra API JSON — precisa estar na allowlist mesmo assim."""
     fake = _fake_get(headers={"Content-Type": "image/jpeg"}, blocos=(b"\xff\xd8",))
     monkeypatch.setattr("requests.get", fake)

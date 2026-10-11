@@ -21,7 +21,7 @@ from api.servicos import busca as servico_busca
 from api.servicos import descoberta, sondagem
 from core.config import Config
 from db.engine import criar_engine
-from extractors import rede_segura
+from fontes.rede import rede_segura
 from integrations import anilist
 from integrations import servico as servico_metadados
 from models.base import Base

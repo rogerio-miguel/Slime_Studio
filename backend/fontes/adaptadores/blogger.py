@@ -20,7 +20,7 @@ parâmetro `dominio` deixa o chamador propagar o próprio identificador para o
 circuit breaker dele quando o parsing falha (`EstruturaDoSiteMudou`).
 
 Sem HTTP próprio: recebe o `ClienteDeSite` já injetado e, para o POST, exige a
-capacidade `ClienteComPost` (`extractors/cliente.py`) — mesma disciplina de
+capacidade `ClienteComPost` (`fontes/rede/cliente.py`) — mesma disciplina de
 `isinstance` que `animesdrive.py` aplica a `ClienteComCaptura`. Toda exceção de
 `requests` continua morrendo lá dentro; aqui só trafega `FalhaDeExtracao`.
 """
@@ -31,8 +31,8 @@ import re
 import urllib.parse
 
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
-from extractors.base import LinkDeMidia
-from extractors.cliente import ClienteComPost, ClienteDeSite
+from fontes.adaptadores.base import LinkDeMidia
+from fontes.rede.cliente import ClienteComPost, ClienteDeSite
 
 _TIMEOUT_S = 15
 

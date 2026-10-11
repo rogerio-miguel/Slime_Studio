@@ -37,9 +37,9 @@ from api.servicos.busca import _referencias_de_anime
 from api.servicos.catalogo import agrupar_franquias
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
-from extractors.base import EpisodioRemoto
-from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
-from extractors.servico import filtrar_por_versao, listar_episodios_em
+from fontes.adaptadores.base import EpisodioRemoto
+from fontes.listagem import filtrar_por_versao, listar_episodios_em
+from fontes.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
 from integrations import servico as servico_metadados
 from integrations.base import InfoDeEpisodio, TitulosDeAnime
 from models.anime import Anime
@@ -87,7 +87,7 @@ class EpisodiosRemotosResultado:
 class FonteComEpisodios:
     """Resultado de `resolver_e_listar` — a fonte resolvida mais a listagem crua
     da temporada, sem filtro de versão nem overlay de still. `versao_da_fonte` é
-    o que a fonte resolvida realmente é (`extractors.resolucao.FonteResolvida`);
+    o que a fonte resolvida realmente é (`fontes.resolucao.FonteResolvida`);
     a captura deriva `Episodio.versao` dela, nunca do que o cliente pediu."""
 
     dominio: str
@@ -303,7 +303,7 @@ async def _recortar_se_fonte_achatada(
     """Corrige fonte "achatada": quando o adapter não teve sinal próprio de
     temporada (ex. AnimeFire sem `season` divergente por episódio) e devolveu
     a série inteira em vez de recortar (`ExtratorDeSite.listar_episodios`,
-    degradação documentada em `extractors/base.py`).
+    degradação documentada em `fontes/adaptadores/base.py`).
 
     Detecção: nº de episódios com `numero` distinto excede o que a AniList
     atribui à temporada (`_episodios_esperados`) — sinal de que o recorte nativo

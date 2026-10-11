@@ -404,7 +404,7 @@ class ConfirmarFonteRequest(BaseModel):
     identificador: str = Field(max_length=300)
     titulo_exibicao: str = Field(max_length=300)
     # Só round-trip do candidato da busca: o servidor NÃO grava nem requisita esta
-    # URL (`extractors/resolucao.py::confirmar_fonte` persiste `dominio` + `identificador`).
+    # URL (`fontes/resolucao.py::confirmar_fonte` persiste `dominio` + `identificador`).
     url: str = Field(max_length=2048)
 
     @field_validator("identificador")
@@ -418,7 +418,7 @@ class ConfirmarFonteRequest(BaseModel):
         return valor
     # Round-trip do `versao` que o frontend recebeu em `ResultadoBuscaFonteSaida`
     # pro candidato escolhido — o servidor rederiva via
-    # `extractors.versao.inferir_versao` (e loga divergência) quando o site
+    # `fontes.adaptadores.versao.inferir_versao` (e loga divergência) quando o site
     # marca a versão no texto do slug/título; sites que diferenciam por um
     # campo à parte da API sem marcador textual (ex. AnimeFire, `audio`) não
     # têm como ser rederivados assim, e o servidor confia neste round-trip
@@ -428,7 +428,7 @@ class ConfirmarFonteRequest(BaseModel):
 
 class ResultadoBuscaFonteSaida(BaseModel):
     """Item de `GET /api/animes/buscar-fontes` — candidato ainda não catalogado
-    localmente, encontrado ao vivo em um site de extração (`extractors.base.
+    localmente, encontrado ao vivo em um site de extração (`fontes.adaptadores.base.
     ResultadoBusca`); `dominio` identifica de qual site veio, necessário pra
     depois confirmar a fonte (`POST /api/admin/animes/{id}/fontes/confirmar`)."""
 
@@ -437,13 +437,13 @@ class ResultadoBuscaFonteSaida(BaseModel):
     url: str
     dominio: str
     # `None` quando o site não diferencia versão ou nenhum marcador foi
-    # detectado neste candidato específico (`extractors.base.ResultadoBusca.versao`).
+    # detectado neste candidato específico (`fontes.adaptadores.base.ResultadoBusca.versao`).
     versao: VersaoEpisodio | None = None
     # Capability do site que resolveu este candidato (`ExtratorDeSite.diferencia_versao`)
     # — a UI usa isso pra decidir se oferece a escolha legendado/dublado.
     site_diferencia_versao: bool = False
     # `True` quando este candidato veio pelo degrau de "correspondência incerta"
-    # (`extractors/busca/servico.py::buscar_em_com_variantes`): o site não
+    # (`fontes/busca/servico.py::buscar_em_com_variantes`): o site não
     # devolveu NENHUM card batendo as referências canônicas do anime, mas este
     # veio de uma busca por um termo que É um nome canônico (não um prefixo
     # curto) — provável acerto sob um título que o provedor de metadados não
@@ -474,7 +474,7 @@ class BuscaEmFontesSaida(BaseModel):
 
 
 class EpisodioRemotoSaida(BaseModel):
-    """Posição na fonte remota (site) — `extractors.base.EpisodioRemoto` não expõe
+    """Posição na fonte remota (site) — `fontes.adaptadores.base.EpisodioRemoto` não expõe
     `url` aqui (uso só server-side); a grade prontos/não capturados do frontend
     cruza `numero` com `EpisodioSaida.numero` de `GET /api/animes/{id}/episodios`.
     `numero` é `None` quando `rotulo` não é puramente numérico (ex. "Especial")

@@ -1,4 +1,4 @@
-"""Testes de `extractors/resiliencia.py` contra SQLite real, sem rede."""
+"""Testes de `fontes/rede/resiliencia.py` contra SQLite real, sem rede."""
 
 from pathlib import Path
 
@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.config import Config
 from core.erros import FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada, SiteEmCooldown
 from db.engine import criar_engine, criar_sessionmaker
-from extractors import circuit_breaker, resiliencia, sessao_cache
-from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
-from extractors.cliente import ClienteDeSite
+from fontes.adaptadores.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
+from fontes.rede import circuit_breaker, resiliencia, sessao_cache
+from fontes.rede.cliente import ClienteDeSite
 from models.base import Base
 from models.estado_site import EstadoSite
 
@@ -185,7 +185,7 @@ async def test_chamar_sem_exigir_navegador_nao_sobe_navegador(sessionmaker, nave
 async def test_chamar_loga_duracao_e_operacao_no_sucesso(sessionmaker, caplog):
     """Fase E1 (PLANO_PADRONIZACAO_FONTES.md) — log estruturado de sucesso, sem
     escalada: domínio, operação, cliente e duração aparecem no log, sem URL."""
-    with caplog.at_level("INFO", logger="extractors.resiliencia"):
+    with caplog.at_level("INFO", logger="fontes.rede.resiliencia"):
         resultado = await resiliencia.chamar(
             sessionmaker, _ExtratorFalso(), lambda cliente: "ok", nome_operacao="testar"
         )
@@ -212,7 +212,7 @@ async def test_chamar_loga_escalada_com_duracao_da_etapa_leve_e_cliente_final(
             raise SessaoRejeitada("desafio Cloudflare")
         return "ok"
 
-    with caplog.at_level("INFO", logger="extractors.resiliencia"):
+    with caplog.at_level("INFO", logger="fontes.rede.resiliencia"):
         resultado = await resiliencia.chamar(
             sessionmaker, _ExtratorFalso(), operacao, nome_operacao="testar"
         )
@@ -231,7 +231,7 @@ async def test_chamar_loga_falha_direta_sem_escalada(sessionmaker, caplog):
     def operacao(cliente: ClienteDeSite) -> str:
         raise FonteNaoEncontrada("não encontrado: http://exemplo/x", dominio=_DOMINIO)
 
-    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+    with caplog.at_level("WARNING", logger="fontes.rede.resiliencia"):
         with pytest.raises(FonteNaoEncontrada):
             await resiliencia.chamar(
                 sessionmaker, _ExtratorFalso(), operacao, nome_operacao="testar"
@@ -253,7 +253,7 @@ async def test_chamar_loga_falha_de_sessao_rejeitada_sem_fallback(
     def operacao(cliente: ClienteDeSite) -> str:
         raise SessaoRejeitada("desafio Cloudflare")
 
-    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+    with caplog.at_level("WARNING", logger="fontes.rede.resiliencia"):
         with pytest.raises(SessaoRejeitada):
             await resiliencia.chamar(
                 sessionmaker,
@@ -278,7 +278,7 @@ async def test_chamar_loga_falha_apos_escalar_e_navegador_tambem_falhar(
     def operacao(cliente: ClienteDeSite) -> str:
         raise SessaoRejeitada("desafio Cloudflare")
 
-    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+    with caplog.at_level("WARNING", logger="fontes.rede.resiliencia"):
         with pytest.raises(FalhaDeExtracao):
             await resiliencia.chamar(
                 sessionmaker, _ExtratorFalso(), operacao, nome_operacao="testar"
@@ -303,6 +303,6 @@ def test_ttl_sessao_respeita_env_valida(monkeypatch):
 @pytest.mark.parametrize("valor", ["", "abc", "0", "-10", "1.5"])
 def test_ttl_sessao_cai_no_padrao_com_env_invalida(monkeypatch, caplog, valor):
     monkeypatch.setenv("SLIME_SESSAO_TTL_S", valor)
-    with caplog.at_level("WARNING", logger="extractors.resiliencia"):
+    with caplog.at_level("WARNING", logger="fontes.rede.resiliencia"):
         assert resiliencia._ttl_sessao_s() == resiliencia._TTL_SESSAO_S_PADRAO
     assert "SLIME_SESSAO_TTL_S" in caplog.text

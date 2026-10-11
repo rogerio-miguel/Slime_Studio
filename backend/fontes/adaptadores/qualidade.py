@@ -1,8 +1,8 @@
 """Classificação de rótulo de qualidade de vídeo (ESPECIFICACAO.md §3A) —
 domínio puro, sem I/O, compartilhado entre os adapters que expõem escolha de
-qualidade (`extractors/animesdrive.py`, `extractors/animefire.py`).
+qualidade (`fontes/adaptadores/animesdrive.py`, `fontes/adaptadores/animefire.py`).
 
-Mesmo caráter de `extractors/versao.py`: só lê o texto que já atravessou a
+Mesmo caráter de `fontes/adaptadores/versao.py`: só lê o texto que já atravessou a
 fronteira do site, não faz scraping novo. Vocabulário de extractor, não
 domínio persistido — fica fora de `core/enums.py` de propósito.
 """

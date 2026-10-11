@@ -1,5 +1,5 @@
 """Adapter AnimeFire (ESPECIFICACAO.md §3A) — porte de
-`Slime_Shell_Web/backend/api/animefire.py` para o contrato de `extractors/base.py`.
+`Slime_Shell_Web/backend/api/animefire.py` para o contrato de `fontes/adaptadores/base.py`.
 
 Mudanças em relação ao original: sem cliente HTTP próprio (recebe `ClienteDeSite`
 injetado), sem cache em disco (substituído por `FonteAnime`/banco), e nenhum
@@ -9,7 +9,7 @@ em vez de devolver silenciosamente uma coleção vazia.
 
 Decisão registrada: busca (`buscar`) devolvendo zero resultados **não** é erro —
 é o caso normal de "este título não existe neste site", usado por
-`extractors/resolucao.py` para cair para o próximo site da lista de prioridade.
+`fontes/resolucao.py` para cair para o próximo site da lista de prioridade.
 """
 
 import logging
@@ -20,15 +20,15 @@ from urllib.parse import parse_qs, urlparse
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from core.texto import slugificar
-from extractors.base import (
+from fontes.adaptadores.base import (
     EpisodioRemoto,
     ExtratorDeSite,
     FormatoDeMidia,
     LinkDeMidia,
     ResultadoBusca,
 )
-from extractors.cliente import ClienteDeSite
-from extractors.versao import inferir_versao
+from fontes.adaptadores.versao import inferir_versao
+from fontes.rede.cliente import ClienteDeSite
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class AnimeFireProvider(ExtratorDeSite):
 
         if not resultados:
             # info, não warning: com a busca em paralelo em todos os sites
-            # (extractors/busca/servico.py::buscar_por_site_com_variantes), um título
+            # (fontes/busca/servico.py::buscar_por_site_com_variantes), um título
             # existir só num dos dois é o caso comum, não uma falha — não dá
             # pra distinguir "não achei mesmo" de "estrutura mudou" só por
             # contagem zero, então não escala pra warning (isso viraria

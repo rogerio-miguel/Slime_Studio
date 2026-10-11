@@ -1,4 +1,4 @@
-"""Testes de `extractors/cliente.py::ClienteNavegador` sem rede e sem Chromium —
+"""Testes de `fontes/rede/cliente.py::ClienteNavegador` sem rede e sem Chromium —
 a página do DrissionPage é substituída por um dublê que devolve pacotes de rede
 pré-programados.
 
@@ -13,8 +13,8 @@ import pytest
 from DrissionPage.errors import BaseError
 
 from core.erros import FalhaDeExtracao, SessaoRejeitada
-from extractors import cliente as modulo_cliente
-from extractors.cliente import ClienteNavegador
+from fontes.rede import cliente as modulo_cliente
+from fontes.rede.cliente import ClienteNavegador
 
 
 class _RequisicaoFalsa:
@@ -442,7 +442,7 @@ def test_modo_headless_sem_env_em_linux_sem_display_e_headless_com_aviso(monkeyp
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setattr(sys, "platform", "linux")
 
-    with caplog.at_level("WARNING", logger="extractors.cliente"):
+    with caplog.at_level("WARNING", logger="fontes.rede.cliente"):
         assert modulo_cliente._modo_headless() is True
 
     assert "sem servidor de display" in caplog.text
@@ -516,7 +516,7 @@ def test_user_agent_com_erro_de_dom_cai_na_constante_e_loga(caplog):
     pagina = _PaginaFalsa([[]], ua_do_dom=_ErroDrissionFalso("falha simulada ao ler o DOM"))
     cliente._pagina = pagina
 
-    with caplog.at_level("WARNING", logger="extractors.cliente"):
+    with caplog.at_level("WARNING", logger="fontes.rede.cliente"):
         assert cliente.user_agent() == modulo_cliente._USER_AGENT_NAVEGADOR
 
     assert "UA real do DOM" in caplog.text
@@ -641,7 +641,7 @@ def test_aguardar_desafio_que_nunca_limpa_retorna_true_com_warning(monkeypatch, 
     cliente = ClienteNavegador(headless=True)
     pagina = _PaginaFalsa([[]], html="<html>window._cf_chl_opt = {};</html>")
 
-    with caplog.at_level("WARNING", logger="extractors.cliente"):
+    with caplog.at_level("WARNING", logger="fontes.rede.cliente"):
         resultado = cliente._aguardar_desafio_cloudflare(
             pagina, limite=modulo_cliente.time.monotonic() + modulo_cliente._ESPERA_DESAFIO_S
         )

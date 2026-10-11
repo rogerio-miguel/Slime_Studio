@@ -37,7 +37,7 @@ class Anime(Base):
     # Ordinal NARRATIVO da temporada dentro da franquia (1, 2, 3…) — NÃO o `n`
     # do endpoint TMDB (era esse o sentido antigo). `NULL` significa
     # "desconhecido" e, no contrato do adapter de fonte
-    # (`extractors/base.py::ExtratorDeSite.listar_episodios`), `NULL` NUNCA
+    # (`fontes/adaptadores/base.py::ExtratorDeSite.listar_episodios`), `NULL` NUNCA
     # recorta a listagem — devolve a fonte inteira (degradação segura).
     # Derivado do marcador do título (`core/temporada.py::separar_temporada`) na
     # criação do anime (`db.catalogo.obter_ou_criar_anime_id`); o walk de

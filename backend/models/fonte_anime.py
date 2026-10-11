@@ -4,7 +4,7 @@ PK `(anime_id, site_dominio, versao)`: um mesmo site pode ter uma linha
 mapeada por versão (`VersaoDeFonte.LEGENDADO`/`DUBLADO`, confirmadas) mais,
 opcionalmente, uma linha `NAO_DIFERENCIADA` (site que não separa versão no
 markup) — nunca duas linhas colidindo na mesma versão para o mesmo site
-(Fase 2 da modelagem dublado/legendado, `extractors/resolucao.py`).
+(Fase 2 da modelagem dublado/legendado, `fontes/resolucao.py`).
 """
 
 from datetime import UTC, datetime

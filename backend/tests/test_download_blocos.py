@@ -1,5 +1,5 @@
 """Testes do download em blocos (Range requests) para `*.googlevideo.com` de
-`extractors/download.py`. Sem rede real: `_get_bloco` (a única chamada HTTP, isolada
+`captura/download.py`. Sem rede real: `_get_bloco` (a única chamada HTTP, isolada
 como `_baixar_amostra`) é substituída por `monkeypatch` e devolve um dublê de
 `requests.Response`."""
 
@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 import requests
 
+from captura import download
 from core.erros import FalhaDeExtracao, FalhaDeFerramenta
-from extractors import download
-from extractors.base import LinkDeMidia
+from fontes.adaptadores.base import LinkDeMidia
 
 
 class RespostaFalsa:

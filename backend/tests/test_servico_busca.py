@@ -1,8 +1,8 @@
 """Testes de `api/servicos/busca.py::buscar_em_todas_as_fontes_com_titulos_alternativos`
 (e dos helpers puros de termos/referências), sem rede — `integrations.servico.
-buscar_titulos` e `extractors.busca.servico.buscar_por_site_com_variantes` são
+buscar_titulos` e `fontes.busca.servico.buscar_por_site_com_variantes` são
 monkeypatchados nos nomes de módulo (mesmo padrão de `tests/test_api_buscar_fontes.py`),
-pois `busca.py` os chama via `servico_metadados`/`servico_extractors`, que apontam
+pois `busca.py` os chama via `servico_metadados`/`servico_fontes`, que apontam
 pro mesmo objeto de módulo.
 
 A função devolve `list[ResultadoDeFonte]` — a UNIÃO das fontes que têm o anime, sem
@@ -19,10 +19,10 @@ import pytest
 
 from api.servicos import busca as servico_busca
 from core.erros import FalhaDeMetadados
-from extractors.base import ResultadoBusca
-from extractors.busca.servico import ResultadoDeFonte
-from extractors.busca.termos import variantes_de_busca
-from extractors.registro import EXTRATORES
+from fontes.adaptadores.base import ResultadoBusca
+from fontes.adaptadores.registro import EXTRATORES
+from fontes.busca.servico import ResultadoDeFonte
+from fontes.busca.termos import variantes_de_busca
 from integrations.base import TitulosDeAnime
 
 
@@ -60,7 +60,7 @@ async def test_todas_termo_de_provedor_entra_na_escada_quando_o_digitado_nao_ach
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -106,7 +106,7 @@ async def test_todas_escada_combinada_une_romaji_e_ingles_numa_rodada_so(
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=ingles)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -160,7 +160,7 @@ async def test_todas_titulo_ingles_do_provedor_alcanca_site_pendente(
         return TitulosDeAnime(titulo_romaji="Dogul Wang", titulo_ingles="Tomb Raider King")
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -206,7 +206,7 @@ async def test_todas_faz_uma_rodada_so_quando_todos_os_sites_acham(
         return TitulosDeAnime(titulo_romaji="Naruto", titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -241,7 +241,7 @@ async def test_todas_toda_vazia_e_preservada(monkeypatch: pytest.MonkeyPatch):
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -277,7 +277,7 @@ async def test_todas_falha_de_metadados_nao_propaga_e_busca_so_com_o_digitado(
         raise FalhaDeMetadados("todos os provedores de metadados falharam")
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_falha)
@@ -315,7 +315,7 @@ async def test_todas_todos_os_sites_indisponiveis_ainda_resolve_o_canonico_upfro
         return TitulosDeAnime(titulo_romaji="Naruto Shippuuden", titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -475,7 +475,7 @@ def _contador_de_buscas(monkeypatch: pytest.MonkeyPatch, fontes: list[ResultadoD
         return {fonte.dominio: fonte for fonte in fontes}
 
     monkeypatch.setattr("integrations.servico.buscar_titulos", _sem_titulos)
-    monkeypatch.setattr(servico_busca.servico_extractors, "buscar_por_site_com_variantes", _buscar)
+    monkeypatch.setattr(servico_busca.servico_fontes, "buscar_por_site_com_variantes", _buscar)
     return chamadas
 
 

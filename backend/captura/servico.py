@@ -1,7 +1,7 @@
-"""Listagem de episódios e download com fallback entre sites (ESPECIFICACAO.md
-§3A) — ponto único que o resto do backend usa pra listar/baixar sem conhecer
-resiliência, sessão ou circuit breaker por trás. A busca por título mora em
-`extractors/busca/servico.py`.
+"""Download com fallback entre sites (ESPECIFICACAO.md §3A) — ponto único que o
+resto do backend usa pra baixar sem conhecer resiliência, sessão ou circuit
+breaker por trás. A listagem mora em `fontes/listagem.py` e a busca por título em
+`fontes/busca/servico.py`.
 """
 
 import asyncio
@@ -13,12 +13,15 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from captura import download
 from core.config import Config
 from core.enums import VersaoEpisodio
 from core.erros import FalhaDeExtracao
-from extractors import download, resiliencia, resolucao
-from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia
-from extractors.registro import obter_extrator
+from fontes import resolucao
+from fontes.adaptadores.base import ExtratorDeSite, LinkDeMidia
+from fontes.adaptadores.registro import obter_extrator
+from fontes.listagem import filtrar_por_numero_e_versao, listar_episodios_em
+from fontes.rede import resiliencia
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -28,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Teto de `wait_for` para `_conferir_link_de_midia`: acima do timeout de 15s que
 # `download.conferir_link_de_midia` passa para a checagem HTTP curta
-# (`extractors/download.py::_TIMEOUT_S`), mesmo padrão de
-# `extractors/resiliencia.py::_TETO_ESPERA_S` — rede de segurança, não primeira
+# (`captura/download.py::_TIMEOUT_S`), mesmo padrão de
+# `fontes/rede/resiliencia.py::_TETO_ESPERA_S` — rede de segurança, não primeira
 # linha de defesa contra travamento.
 _TETO_ESPERA_CONFERENCIA_S = 30
 
@@ -51,7 +54,7 @@ _TETO_ESPERA_CONFERENCIA_S = 30
 # Fase E1 tiver dados reais de distribuição de duração da cadeia.
 #
 # Limitação do `wait_for` sobre `asyncio.to_thread`: cancelar não mata a
-# thread do SO já em voo (`extractors/resiliencia.py`), só o aguardo por ela —
+# thread do SO já em voo (`fontes/rede/resiliencia.py`), só o aguardo por ela —
 # na pior das hipóteses ela roda até terminar sozinha.
 #
 # Estourar este teto não é "site lento", é "gastamos tempo demais tentando
@@ -66,18 +69,6 @@ async def _dentro_do_prazo[T](corotina: Coroutine[Any, Any, T], prazo: float) ->
     imediato (`wait_for` ainda agenda e cancela a corrotina corretamente, sem
     "coroutine was never awaited")."""
     return await asyncio.wait_for(corotina, timeout=max(prazo - time.monotonic(), 0))
-
-
-async def listar_episodios_em(
-    sessionmaker: _SessionMaker, dominio: str, identificador: str, temporada: int | None
-) -> list[EpisodioRemoto]:
-    extrator = obter_extrator(dominio)
-    return await resiliencia.chamar(
-        sessionmaker,
-        extrator,
-        lambda cliente: extrator.listar_episodios(cliente, identificador, temporada),
-        nome_operacao="listar_episodios",
-    )
 
 
 async def baixar_episodio(
@@ -111,7 +102,7 @@ async def baixar_episodio(
             nome_operacao="resolver_midia",
             # Único ponto do sistema que consome `exige_navegador_para_midia`:
             # `resolver_midia` é a operação que pode precisar do JS da página rodando
-            # (`extractors/base.py`), busca e listagem não.
+            # (`fontes/adaptadores/base.py`), busca e listagem não.
             exigir_navegador=extrator.exige_navegador_para_midia,
         )
         await asyncio.to_thread(download.exigir_url_de_midia_segura, link.url)
@@ -138,7 +129,7 @@ async def _conferir_link_de_midia(link: LinkDeMidia) -> None:
     """`download.conferir_link_de_midia` faz uma requisição `requests` síncrona de
     até 15s — sem `to_thread`, isso bloquearia o event loop dentro desta função
     `async`. Mesmo padrão de `to_thread`+`wait_for` de
-    `extractors/resiliencia.py::_executar`."""
+    `fontes/rede/resiliencia.py::_executar`."""
     try:
         await asyncio.wait_for(
             asyncio.to_thread(download.conferir_link_de_midia, link),
@@ -318,7 +309,7 @@ async def _proximo_com_episodio(
         correspondentes = filtrar_por_numero_e_versao(episodios_remotos, numero_episodio, versao)
         if len(correspondentes) > 1:
             # Mais de um rótulo mapeia pro mesmo `numero` (ex. "7"/"07" —
-            # extractors/base.py::EpisodioRemoto) — o contrato de fallback só
+            # fontes/adaptadores/base.py::EpisodioRemoto) — o contrato de fallback só
             # carrega `numero_episodio` (int), sem como desambiguar por
             # rótulo aqui. Escolha determinística (1ª ocorrência, ordem já
             # estável do adapter) em vez de silenciosa — nunca some do log.
@@ -334,40 +325,3 @@ async def _proximo_com_episodio(
             return proxima_fonte.dominio, correspondente.url
 
         ja_tentados.add(proxima_fonte.dominio)
-
-
-def filtrar_por_numero_e_versao(
-    episodios: list[EpisodioRemoto], numero: int, versao: VersaoEpisodio
-) -> list[EpisodioRemoto]:
-    """Casa por `numero` primeiro (comportamento base), depois delega o filtro
-    de versão a `filtrar_por_versao`.
-
-    Pública (não `_`-prefixada) porque também é usada por
-    `api/servicos/jobs.py::criar_job_site` — mesmo risco de pegar o rótulo da
-    versão errada existe lá (`resultado.dominio`/`resultado.identificador`
-    pode listar episódios das duas versões, ex. página do AnimesDrive que
-    cobre ambas)."""
-    correspondentes = [ep for ep in episodios if ep.numero == numero]
-    return filtrar_por_versao(correspondentes, versao)
-
-
-def filtrar_por_versao(
-    episodios: list[EpisodioRemoto], versao: VersaoEpisodio
-) -> list[EpisodioRemoto]:
-    """Quando a versão pedida é confirmada (LEGENDADO/DUBLADO) e a listagem
-    rotula pelo menos um episódio (`ep.versao is not None` — site que
-    diferencia, ex. AnimesDrive), EXIGE `ep.versao == versao`: a listagem tem
-    episódios das duas versões e não filtrar pegaria a versão errada
-    silenciosamente. Sites que não rotulam (`ep.versao` sempre `None`) ou
-    `versao == DESCONHECIDA` devolvem a lista sem filtrar (comportamento
-    anterior a esta fase).
-
-    Pública (não `_`-prefixada) pelo mesmo motivo de `filtrar_por_numero_e_versao`
-    — usada por mais de um módulo (`api/servicos/fontes.py::listar_episodios_remotos`)."""
-    if versao == VersaoEpisodio.DESCONHECIDA:
-        return episodios
-
-    rotulados = [ep for ep in episodios if ep.versao is not None]
-    if not rotulados:
-        return episodios
-    return [ep for ep in rotulados if ep.versao == versao]

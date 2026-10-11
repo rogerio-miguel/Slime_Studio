@@ -1,4 +1,4 @@
-"""Sub-pacote de busca em fontes de streaming (`extractors/busca/`).
+"""Sub-pacote de busca em fontes de streaming (`fontes/busca/`).
 
 Três módulos, importados sempre direto do submódulo (sem re-export aqui):
 
