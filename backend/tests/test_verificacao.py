@@ -103,3 +103,19 @@ async def test_todo_resultado_e_gravavel(sessionmaker_api: _SessionMaker, result
     anime_id = await _criar_anime(sessionmaker_api)
     await verificacao.registrar_resultado(sessionmaker_api, anime_id, _FONTE, resultado, agora=_T0)
     assert (await _linha(sessionmaker_api, anime_id)).ultimo_resultado is resultado
+
+
+async def test_tentativas_desde_conta_so_a_janela_e_a_tarefa(sessionmaker_api: _SessionMaker):
+    recente = await _criar_anime(sessionmaker_api, "recente")
+    antigo = await _criar_anime(sessionmaker_api, "antigo")
+    await verificacao.registrar_resultado(
+        sessionmaker_api, recente, _FONTE, R.OK, agora=_T0 - timedelta(minutes=5)
+    )
+    await verificacao.registrar_resultado(
+        sessionmaker_api, antigo, _FONTE, R.ERRO, agora=_T0 - timedelta(hours=3)
+    )
+
+    async with sessionmaker_api() as sessao:
+        total = await verificacao.tentativas_desde(sessao, _FONTE, _T0 - timedelta(hours=1))
+
+    assert total == 1

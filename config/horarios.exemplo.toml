@@ -1,0 +1,21 @@
+# Horários do zelador de fontes — o que ele pode fazer sozinho e quando.
+#
+# Copie para `horarios.toml` (ao lado deste arquivo) e ajuste: é o `horarios.toml`
+# que vale, e ele fica fora do git. Sem ele, valem os valores abaixo.
+# O arquivo é relido a cada ciclo do zelador: editar vale na hora, sem reiniciar
+# a API. Se ficar inválido (erro de sintaxe, chave desconhecida, horário mal
+# formado), o zelador mantém a última configuração válida e avisa no log.
+
+# Liga/desliga o zelador inteiro (sondagem automática das fontes).
+zelador_ativo = true
+
+# Janelas, no horário local do computador, em que o zelador pode abrir o
+# navegador (Chrome visível) para renovar a sessão do Cloudflare quando o site
+# bloqueia o cliente leve. Fora delas ele só usa o cliente leve e deixa o anime
+# pendente até a próxima janela. "HH:MM-HH:MM"; janela que cruza a meia-noite
+# ("22:00-02:00") vale. Lista vazia = o navegador nunca abre sozinho.
+janelas_do_navegador = ["12:00-13:30", "19:00-21:30"]
+
+# Máximo de vezes por dia (a partir da meia-noite local) que o zelador abre o
+# navegador. 0 = nunca.
+teto_diario_de_aberturas = 3
