@@ -21,7 +21,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -30,7 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.servicos import descoberta
 from api.servicos.fontes import resolver_e_listar
 from api.servicos.jobs import versao_episodio_da_fonte
-from core.enums import StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
+from core.ciclo_de_vida import RetratoDoAnime, deve_sondar_fonte
+from core.enums import TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from db.catalogo import atualizar_contagem_na_fonte
 from fontes.listagem import filtrar_por_versao
@@ -265,17 +266,16 @@ def agendar_sondagens(
     completo — uso exclusivo do reparo de `versoes_para_reresolver_fonte_perdida`
     (`api/rotas/animes.py::listar_animes`): um anime `FINALIZADO` sem NENHUMA
     `FonteAnime` mapeada também precisa ser tentado (a resolução persiste a
-    fonte perdida como efeito colateral, ver `_sondar_e_persistir`), não só o
-    caso "FINALIZADO mas incompleto" de `_finalizado_incompleto`. Autolimitado
+    fonte perdida como efeito colateral, ver `_sondar_e_persistir`), não só a
+    janela pós-fim de `core.ciclo_de_vida`. Autolimitado
     igual ao resto: uma vez resolvido, o anime ganha uma `FonteAnime` e some
     do conjunto de candidatos na próxima passada (`versoes_de_sondagem_por_anime`
     já cobre ele normalmente dali em diante).
 
     100% síncrona, zero I/O. No-op silencioso (nenhuma destas condições é
     anormal, então sem log) quando não há event loop rodando, ou para cada anime
-    cujo: status de lançamento não é `EM_LANCAMENTO`/nulo E não é o caso
-    `FINALIZADO` incompleto de `_finalizado_incompleto` (ver ali) E não está em
-    `ignorar_gate_de_status`; não tem fonte mapeada nem palpite de versão
+    cuja fase (`core.ciclo_de_vida.deve_sondar_fonte`) não pede sondagem E que não
+    está em `ignorar_gate_de_status`; não tem fonte mapeada nem palpite de versão
     (`anime.id not in versoes`); contagem ainda dentro do TTL; ou já tem uma
     sondagem em voo.
     """
@@ -285,16 +285,15 @@ def agendar_sondagens(
         return
 
     limite = datetime.now(UTC) - timedelta(seconds=_TTL_SONDAGEM_S)
+    hoje = date.today()
     candidatos = sorted(animes, key=_ordem_de_sondagem)
 
     agendadas = 0
     for anime in candidatos:
         if agendadas >= _MAX_SONDAGENS_POR_LOTE:
             break
-        if (
-            anime.status_lancamento not in (StatusLancamento.EM_LANCAMENTO, None)
-            and not _finalizado_incompleto(anime)
-            and anime.id not in ignorar_gate_de_status
+        if anime.id not in ignorar_gate_de_status and not deve_sondar_fonte(
+            RetratoDoAnime.de(anime), hoje
         ):
             continue
         if anime.id not in versoes:
@@ -328,30 +327,6 @@ def sondagem_em_andamento(ids: Iterable[int]) -> bool:
     `agendar_sondagens` na mesma passada: cobre tanto a sondagem que acabou de
     ser agendada agora quanto uma já em voo de uma passada anterior."""
     return any(anime_id in _sondagens_em_voo for anime_id in ids)
-
-
-def _finalizado_incompleto(anime: Anime) -> bool:
-    """`True` quando a AniList já marcou o anime `FINALIZADO`, mas a contagem
-    da fonte real ainda não alcançou o total que ela declara — caso real
-    observado (2026-09-19): o fansub sobe o(s) último(s) episódio(s) depois
-    de a AniList fechar o status, e sem esta exceção `agendar_sondagens`
-    parava de checar aquele anime PARA SEMPRE assim que ele virava
-    `FINALIZADO` (gate original: só `EM_LANCAMENTO`/`None`) — o episódio final
-    nunca mais era descoberto, e o anime sumia de "Continuar assistindo"
-    (`api/servicos/progresso.py`) sem card nenhum pra ele, mesmo com o
-    episódio disponível na fonte.
-
-    Autolimitado: assim que `episodios_na_fonte` alcança
-    `total_episodios_anilist`, esta função volta a `False` e o anime para de
-    ser re-sondado — não reabre sondagem indefinida pra show genuinamente
-    completo. `total_episodios_anilist` ausente (AniList nunca fechou a
-    contagem) não é motivo de reabertura: sem total pra comparar, não dá pra
-    saber se falta episódio."""
-    return (
-        anime.status_lancamento == StatusLancamento.FINALIZADO
-        and anime.total_episodios_anilist is not None
-        and (anime.episodios_na_fonte or 0) < anime.total_episodios_anilist
-    )
 
 
 def _ordem_de_sondagem(anime: Anime) -> tuple[bool, datetime]:
