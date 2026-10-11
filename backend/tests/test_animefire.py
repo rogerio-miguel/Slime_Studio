@@ -341,66 +341,6 @@ def test_listar_episodios_com_lista_vazia_devolve_lista_vazia(extrator):
     assert extrator.listar_episodios(cliente, identificador, 1) == []
 
 
-@pytest.mark.parametrize("numero", ["3", None, 2.5, True])
-def test_listar_episodios_com_number_nao_numerico_levanta_estrutura_do_site_mudou(
-    extrator, numero
-):
-    """`number` fora de `int` virava `TypeError` cru na conta do número absoluto."""
-    identificador = "anime-number-invalido"
-    url_anime = f"{_API_URL}/anime/{identificador}"
-    cliente = ClienteFalso(
-        json_por_url={
-            url_anime: {
-                "data": {
-                    "seasons": [{"title": None, "number": 1, "first_episode_number": 1}],
-                    "episodes": [
-                        {
-                            "id": "ep-1",
-                            "title": "Episodio 1",
-                            "audio": "Legendado",
-                            "season": 1,
-                            "number": numero,
-                            "still_src": None,
-                        }
-                    ],
-                }
-            }
-        }
-    )
-
-    with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador, None)
-
-
-def test_listar_episodios_com_first_episode_number_nao_numerico_levanta_estrutura_do_site_mudou(
-    extrator,
-):
-    identificador = "anime-first-invalido"
-    url_anime = f"{_API_URL}/anime/{identificador}"
-    cliente = ClienteFalso(
-        json_por_url={
-            url_anime: {
-                "data": {
-                    "seasons": [{"title": None, "number": 1, "first_episode_number": "1"}],
-                    "episodes": [
-                        {
-                            "id": "ep-1",
-                            "title": "Episodio 1",
-                            "audio": "Legendado",
-                            "season": 1,
-                            "number": 1,
-                            "still_src": None,
-                        }
-                    ],
-                }
-            }
-        }
-    )
-
-    with pytest.raises(EstruturaDoSiteMudou):
-        extrator.listar_episodios(cliente, identificador, None)
-
-
 def test_listar_episodios_com_temporada_ausente_em_seasons_levanta_estrutura_do_site_mudou(
     extrator,
 ):

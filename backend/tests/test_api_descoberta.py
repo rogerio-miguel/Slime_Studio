@@ -57,7 +57,7 @@ def _sondagem_da_fonte_sem_rede(monkeypatch: pytest.MonkeyPatch):
     a `Task` nunca tocar extractor/rede. Testes que precisam espiar a chamada
     re-`setattr`am por cima."""
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
         return _fonte(dominio="stub.io", episodios=[])
 
     monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
@@ -1109,9 +1109,7 @@ async def test_obter_anime_agenda_sondagem_de_fonte_sem_regredir_refresh_de_lanc
         lancamentos.append(anilist_id)
         return None
 
-    async def _sondar_fake(
-        sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas
-    ):
+    async def _sondar_fake(sessionmaker, anime, versao, *, resolver_canonico):
         sondagens.append(anime.id)
         return _fonte(dominio="stub.io", episodios=[])
 

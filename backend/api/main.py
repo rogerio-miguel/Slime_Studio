@@ -5,8 +5,6 @@ routers e handlers de exceção. Sem app global: testes injetam `Config` de test
 carregá-la sozinho).
 """
 
-import asyncio
-import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -20,10 +18,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.eventos import Assinantes, MonitorDeFila
-from api.rotas import animes, episodios, jobs, saude, sites, thumb, verificacoes, ws
+from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
 from api.seguranca import CabecalhosDeSeguranca, LimitesDeTaxa, ProtecaoDeOrigem
 from api.servicos import cache_de_feeds
-from api.servicos.zelador import Zelador
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
@@ -85,16 +82,10 @@ def criar_app(config: Config) -> FastAPI:
         app.state.assinantes = assinantes
         app.state.limites = LimitesDeTaxa()
         app.state.monitor = monitor
-        zelador = Zelador(sessionmaker)
-        app.state.zelador = zelador
-        tarefa_do_zelador = asyncio.create_task(zelador.rodar(), name="zelador-de-fontes")
 
         try:
             yield
         finally:
-            tarefa_do_zelador.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await tarefa_do_zelador
             await monitor.parar()
             await engine.dispose()
 
@@ -124,7 +115,6 @@ def criar_app(config: Config) -> FastAPI:
     app.include_router(episodios.router_admin)
     app.include_router(thumb.router)
     app.include_router(sites.router)
-    app.include_router(verificacoes.router)
     app.include_router(ws.router)
 
     _registrar_handlers_de_excecao(app)

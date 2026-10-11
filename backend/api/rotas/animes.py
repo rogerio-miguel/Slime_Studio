@@ -4,7 +4,7 @@ alta" de metadados externos via `integrations/`).
 """
 
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -26,12 +26,10 @@ from api.esquemas import (
     EscolherBannerRequest,
     FileiraTematicaSaida,
     FonteConsultadaSaida,
-    FonteParadaSaida,
     ResultadoBuscaFonteSaida,
     TemporadaIrmaSaida,
 )
 from api.seguranca import limitar
-from api.servicos import aquecimento
 from api.servicos import busca as servico_busca
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
@@ -39,7 +37,6 @@ from api.servicos import fontes as servico_fontes
 from api.servicos import jobs as servico_jobs
 from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
-from core.ciclo_de_vida import RetratoDoAnime, fase_do_anime, fonte_parada
 from core.config import Config
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
@@ -290,7 +287,12 @@ async def listar_animes(
     # original (seletor de temporada, `agrupar_franquias`/`_temporadas_e_proxima`)
     # em vez de aparecer como card solto — exceto quando a franquia não tem
     # temporada normal catalogada (`visiveis_no_catalogo`), senão somem da grade.
-    animes, grupos_de_franquia = await servico_catalogo.animes_do_catalogo(sessao)
+    grupos_de_franquia = await servico_catalogo.agrupar_franquias(sessao)
+    resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
+    animes = servico_catalogo.visiveis_no_catalogo(
+        (a for a in resultado.scalars() if not eh_conteudo_adulto(a.generos)),
+        grupos_de_franquia,
+    )
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
@@ -313,9 +315,43 @@ async def listar_animes(
     # Home reflete a última passada da Galeria. Zero `await` de rede aqui: a
     # query de versões só alimenta o agendamento, que é síncrono.
     if aquecer:
-        await aquecimento.aquecer_catalogo(
-            sessionmaker, sessao, animes, grupos_de_franquia, com_episodios
+        versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
+        # Reparo de fonte perdida (2026-09-15, migração
+        # `26791d90cb31_invalida_fonte_anime_do_animefire_one`): anime com
+        # episódio capturado mas ZERO `FonteAnime` mapeada nunca ganha entrada
+        # em `versoes_de_sondagem_por_anime` (não há fonte pra consultar) e
+        # `agendar_sondagens` o pulava pra sempre — só um `versao_confirmada_
+        # mais_recente` nulo pro badge Dublado/Legendado sumir do card sem
+        # nenhum jeito automático de voltar. Palpite de versão vem do próprio
+        # episódio já capturado; `ignorar_gate_de_status` deixa isto tentar
+        # mesmo pra anime `FINALIZADO` (o gate normal de status não se aplica
+        # aqui — é reparo pontual, não sondagem contínua de contagem).
+        # `ids_fora_de_cooldown_de_reparo` corta quem falhou a varredura cara
+        # (todos os extratores, sem fonte mapeada pra atalhar) há pouco tempo —
+        # sem isto, um anime não encontrado em lugar nenhum repetia a
+        # varredura inteira a cada `?aquecer=true`.
+        ids_sem_fonte_com_episodios = servico_sondagem.ids_fora_de_cooldown_de_reparo(
+            aid for aid in ids if aid in com_episodios and aid not in versoes
         )
+        versoes_de_reparo = await servico_sondagem.versoes_para_reresolver_fonte_perdida(
+            sessao, ids_sem_fonte_com_episodios
+        )
+        # Temporada nova de franquia que o usuário terminou: sem episódio local
+        # não há fonte mapeada, então o badge nunca acenderia sozinho — mesmo
+        # reparo acima, com palpite de versão herdado da temporada anterior.
+        novas = await servico_lancamentos.temporadas_novas(sessao, grupos_de_franquia)
+        versoes_de_temporadas_novas = await servico_sondagem.versoes_de_reparo_de_temporadas_novas(
+            sessao, novas, versoes
+        )
+        versoes_de_reparo = {**versoes_de_reparo, **versoes_de_temporadas_novas}
+        versoes = {**versoes, **versoes_de_reparo}
+        servico_sondagem.agendar_sondagens(
+            sessionmaker,
+            animes,
+            versoes,
+            ignorar_gate_de_status=frozenset(versoes_de_reparo),
+        )
+        servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
     # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios`,
     # `assistido` e `episodios_atuais` são derivados e precisam ser injetados à
@@ -546,12 +582,7 @@ async def obter_anime(
         if mais_recente is not None
         else {}
     )
-    servico_sondagem.agendar_sondagens(
-        sessionmaker,
-        [anime],
-        versoes_de_sondagem,
-        em_espera=await servico_sondagem.ids_em_espera(sessao, [anime.id]),
-    )
+    servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
     grupos = await servico_catalogo.agrupar_franquias(sessao)
     temporadas, proxima_temporada = _temporadas_e_proxima(
         anime.id, anime.numero_temporada, grupos[anime.id]
@@ -580,7 +611,6 @@ async def obter_anime(
         numero_temporada=anime.numero_temporada,
         temporadas=temporadas,
         proxima_temporada=proxima_temporada,
-        fonte_parada=_fonte_parada_de(anime, versao_confirmada_mais_recente),
     )
 
 
@@ -641,32 +671,6 @@ async def listar_relacionados_do_anime(
         for item, aid in pares
         if aid is None or aid not in ids_do_seletor
     ]
-
-
-def _fonte_parada_de(
-    anime: Anime, versao_ativa: VersaoEpisodio | None
-) -> FonteParadaSaida | None:
-    """Indício de fonte parada para a página do anime. Fonte dublada fica de fora:
-    o dub atrasa em relação à AniList por natureza, então a comparação seria
-    alarme falso."""
-    if versao_ativa is VersaoEpisodio.DUBLADO:
-        return None
-    agora = datetime.now(UTC)
-    parada = fonte_parada(
-        fase_do_anime(RetratoDoAnime.de(anime), date.today()),
-        proximo_ep_numero=anime.proximo_ep_numero,
-        proximo_ep_em=anime.proximo_ep_em,
-        episodios_na_fonte=anime.episodios_na_fonte,
-        fonte_verificada_em=anime.fonte_verificada_em,
-        agora=agora,
-    )
-    if parada is None:
-        return None
-    return FonteParadaSaida(
-        episodio_esperado=parada.episodio_esperado,
-        atraso_horas=int(parada.atraso.total_seconds() // 3600),
-        dominio=anime.fonte_verificada_dominio,
-    )
 
 
 def _ids_do_seletor_de_temporada(

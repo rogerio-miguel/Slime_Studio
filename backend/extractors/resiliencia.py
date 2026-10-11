@@ -15,9 +15,7 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 
@@ -108,24 +106,6 @@ def _ttl_sessao_s() -> int:
     return valor
 
 
-# Modo de segundo plano: trabalho que ninguém pediu agora (sondagem periódica de
-# fonte) nunca abre o navegador — o Turnstile só passa em janela visível e isso
-# não pode acontecer no meio do uso. Fica num `ContextVar` (e não num parâmetro)
-# porque a chamada atravessa resolução, listagem e `chamar` sem que nenhuma
-# camada intermediária precise saber; `asyncio` copia o contexto ao criar a
-# `Task`, então vale para tudo que a sondagem dispara.
-_segundo_plano: ContextVar[bool] = ContextVar("resiliencia_segundo_plano", default=False)
-
-
-@contextmanager
-def em_segundo_plano() -> Iterator[None]:
-    token = _segundo_plano.set(True)
-    try:
-        yield
-    finally:
-        _segundo_plano.reset(token)
-
-
 @dataclass(frozen=True, slots=True)
 class _Execucao[T]:
     """Resultado da operação **mais** o material de sessão, colhido antes de o
@@ -162,12 +142,6 @@ async def chamar[T](
     por um cookie vencido, que é esperado e não indica bloqueio (ESPECIFICACAO.md
     §9, risco "sessão de bypass expirada").
 
-    Em segundo plano (`em_segundo_plano`) o navegador está proibido: sessão
-    rejeitada (ou site que exige navegador) levanta `SessaoRejeitada` SEM contar
-    no circuit breaker — não é falha do site, só falta uma sessão que o usuário
-    (ou a janela de horário do zelador) ainda não renovou. Contar abriria um
-    cooldown que bloquearia também as ações do usuário naquele site.
-
     Instrumentação (Fase E1, PLANO_PADRONIZACAO_FONTES.md): `nome_operacao` é só
     um rótulo pra log, o chamador escolhe a string (ex. "buscar",
     "listar_episodios", "resolver_midia") — nunca URL, que pode carregar token
@@ -181,12 +155,7 @@ async def chamar[T](
     if await circuit_breaker.esta_em_cooldown(sessionmaker, dominio):
         raise SiteEmCooldown(f"{dominio} em cooldown", dominio=dominio)
 
-    segundo_plano = _segundo_plano.get()
     usar_navegador = exigir_navegador or extrator.exige_navegador
-    if segundo_plano and usar_navegador:
-        raise SessaoRejeitada(
-            f"{dominio} exige navegador, indisponível em segundo plano", dominio=dominio
-        )
     escalou = False
     if usar_navegador:
         fabrica = ClienteNavegador
@@ -202,12 +171,6 @@ async def chamar[T](
         execucao = await _executar(fabrica, operacao, timeout_s=_teto_de(usar_navegador))
     except SessaoRejeitada as excecao:
         await sessao_cache.invalidar(sessionmaker, dominio)
-        if segundo_plano:
-            # O cliente não sabe o domínio; quem registra a falha precisa dele
-            # para o zelador renovar a sessão do site certo.
-            excecao.dominio = excecao.dominio or dominio
-            _logar_falha(dominio, nome_operacao, escalou=escalou, inicio=inicio)
-            raise
         # Sem fallback quando já era o navegador: escalar pra ele de novo só
         # repetiria a mesma tentativa com o mesmo resultado.
         if not permitir_navegador or usar_navegador:

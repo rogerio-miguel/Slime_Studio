@@ -10,15 +10,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, field_validator
 
-from core.enums import (
-    ResultadoDeVerificacao,
-    StatusEpisodio,
-    StatusJob,
-    StatusLancamento,
-    TarefaDeVerificacao,
-    TipoEpisodio,
-    VersaoEpisodio,
-)
+from core.enums import StatusEpisodio, StatusJob, StatusLancamento, TipoEpisodio, VersaoEpisodio
 
 _IDENTIFICADOR_PROIBIDO = re.compile(r"[?#\\\s\x00-\x1f]|(^|/)\.\.(/|$)")
 
@@ -329,15 +321,6 @@ class FileiraTematicaSaida(BaseModel):
     itens: list[AnimeEmAltaSaida]
 
 
-class FonteParadaSaida(BaseModel):
-    """Indício de que a fonte do anime parou de publicar (ver
-    `core.ciclo_de_vida.fonte_parada`): a página sugere "Trocar fonte"."""
-
-    episodio_esperado: int
-    atraso_horas: int
-    dominio: str | None = None
-
-
 class AnimeDetalheSaida(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -395,9 +378,6 @@ class AnimeDetalheSaida(BaseModel):
     # `None` quando não há nenhuma nesse estado. `estreia_em`/`ano` do objeto
     # vêm preenchidos só aqui.
     proxima_temporada: TemporadaIrmaSaida | None = None
-    # Presente só quando a fonte tem menos episódios do que a AniList diz que já
-    # saíram há mais de 48 h (`core.ciclo_de_vida.fonte_parada`); `None` no resto.
-    fonte_parada: FonteParadaSaida | None = None
 
 
 class CandidatoDeBannerSaida(BaseModel):
@@ -654,26 +634,6 @@ class SiteSaida(BaseModel):
     cooldown_ate: datetime
     ultima_falha_em: datetime | None
     ultimo_erro: str | None
-
-
-# --- verificações (api/rotas/verificacoes.py) ---
-
-
-class VerificacaoSaida(BaseModel):
-    """Estado da última verificação periódica de um anime (`VerificacaoDeAnime`):
-    responde "por que este anime não foi sondado agora?"."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    anime_id: int
-    tarefa: TarefaDeVerificacao
-    ultimo_resultado: ResultadoDeVerificacao
-    ultima_tentativa_em: datetime
-    ultimo_sucesso_em: datetime | None
-    proxima_em: datetime
-    falhas_consecutivas: int
-    dominio: str | None
-    detalhe: str | None
 
 
 # --- saúde/operação (api/rotas/saude.py) ---

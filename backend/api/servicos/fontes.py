@@ -27,7 +27,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, replace
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # `_referencias_de_anime` reusado de `busca.py` (mesmo par de módulos de
@@ -38,13 +38,7 @@ from api.servicos.catalogo import agrupar_franquias
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from extractors.base import EpisodioRemoto
-from extractors.resolucao import (
-    ConfirmacaoNecessaria,
-    FonteResolvida,
-    VersaoIndisponivel,
-    fontes_mapeadas_alternativas,
-    resolver_fonte_do_anime,
-)
+from extractors.resolucao import ConfirmacaoNecessaria, VersaoIndisponivel, resolver_fonte_do_anime
 from extractors.servico import filtrar_por_versao, listar_episodios_em
 from integrations import servico as servico_metadados
 from integrations.base import InfoDeEpisodio, TitulosDeAnime
@@ -108,7 +102,6 @@ async def resolver_e_listar(
     versao: VersaoEpisodio,
     *,
     resolver_canonico: bool,
-    tentar_fontes_alternativas: bool = False,
 ) -> FonteComEpisodios:
     """Resolve a fonte (site) de `anime` e lista os episódios da temporada
     `anime.numero_temporada` — o núcleo comum da exibição
@@ -123,14 +116,8 @@ async def resolver_e_listar(
     `ConfirmacaoNecessaria` (mais de um candidato, sem match exato) vira
     `FonteAmbigua`; o cliente resolve via
     `POST /api/admin/animes/{id}/fontes/confirmar` e reenvia. `VersaoIndisponivel`
-    vira `VersaoIndisponivelError` — ou a falha de um site que não pôde ser consultado,
-    pois então a versão não está provadamente ausente. Timeout de qualquer etapa de rede vira
+    vira `VersaoIndisponivelError`. Timeout de qualquer etapa de rede vira
     `FalhaDeExtracao` retentável (o orçamento é nosso, não uma falha do site).
-
-    `tentar_fontes_alternativas` (só a sondagem liga): se listar a fonte escolhida
-    falha, tenta as demais fontes JÁ MAPEADAS capazes da mesma versão, da mais
-    recente para a mais antiga, e só então propaga o primeiro erro. A exibição e
-    a captura seguem sem isto — lá o usuário escolheu a fonte e quer vê-la falhar.
 
     NÃO filtra por versão nem sobrepõe stills — cada chamador aplica o que
     precisa sobre `episodios`.
@@ -167,16 +154,24 @@ async def resolver_e_listar(
             ],
         )
     if isinstance(resolvida, VersaoIndisponivel):
-        # Sites que não puderam ser consultados: não dá pra dizer que a versão
-        # "não existe", então a falha deles sobe no lugar (ex. `SessaoRejeitada`
-        # vira PRECISA_SESSAO na sondagem, `SiteEmCooldown` vira SITE_INDISPONIVEL).
-        if resolvida.falha_principal is not None:
-            raise resolvida.falha_principal
         raise VersaoIndisponivelError(resolvida.versao)
 
-    resolvida, episodios = await _listar_com_alternativas(
-        sessionmaker, anime, versao, resolvida, tentar_fontes_alternativas
-    )
+    try:
+        episodios = await asyncio.wait_for(
+            listar_episodios_em(
+                sessionmaker,
+                resolvida.dominio,
+                resolvida.identificador,
+                anime.numero_temporada,
+            ),
+            timeout=_TETO_LISTAGEM_REMOTA_S,
+        )
+    except TimeoutError as excecao:
+        raise FalhaDeExtracao(
+            f"listagem de episódios excedeu o teto de {_TETO_LISTAGEM_REMOTA_S}s",
+            dominio=resolvida.dominio,
+            permite_retentativa=True,
+        ) from excecao
 
     episodios = await _recortar_se_fonte_achatada(sessionmaker, anime, episodios)
 
@@ -186,61 +181,6 @@ async def resolver_e_listar(
         versao_da_fonte=resolvida.versao_da_fonte,
         episodios=episodios,
     )
-
-
-async def _listar_episodios_da_fonte(
-    sessionmaker: _SessionMaker, anime: Anime, fonte: FonteResolvida
-) -> list[EpisodioRemoto]:
-    try:
-        return await asyncio.wait_for(
-            listar_episodios_em(
-                sessionmaker, fonte.dominio, fonte.identificador, anime.numero_temporada
-            ),
-            timeout=_TETO_LISTAGEM_REMOTA_S,
-        )
-    except TimeoutError as excecao:
-        raise FalhaDeExtracao(
-            f"listagem de episódios excedeu o teto de {_TETO_LISTAGEM_REMOTA_S}s",
-            dominio=fonte.dominio,
-            permite_retentativa=True,
-        ) from excecao
-
-
-async def _listar_com_alternativas(
-    sessionmaker: _SessionMaker,
-    anime: Anime,
-    versao: VersaoEpisodio,
-    escolhida: FonteResolvida,
-    tentar_alternativas: bool,
-) -> tuple[FonteResolvida, list[EpisodioRemoto]]:
-    try:
-        return escolhida, await _listar_episodios_da_fonte(sessionmaker, anime, escolhida)
-    except FalhaDeExtracao as primeira_falha:
-        if not tentar_alternativas:
-            raise
-        alternativas = await fontes_mapeadas_alternativas(
-            sessionmaker, anime, versao, excluir_dominio=escolhida.dominio
-        )
-        for alternativa in alternativas:
-            try:
-                episodios = await _listar_episodios_da_fonte(sessionmaker, anime, alternativa)
-            except FalhaDeExtracao as falha:
-                logger.info(
-                    "fonte alternativa %s também falhou para anime_id=%s: %s",
-                    alternativa.dominio,
-                    anime.id,
-                    falha,
-                )
-                continue
-            logger.info(
-                "fonte %s falhou para anime_id=%s (%s); usando %s",
-                escolhida.dominio,
-                anime.id,
-                primeira_falha,
-                alternativa.dominio,
-            )
-            return alternativa, episodios
-        raise primeira_falha
 
 
 async def listar_episodios_remotos(
@@ -259,7 +199,7 @@ async def listar_episodios_remotos(
     fonte = await resolver_e_listar(sessionmaker, anime, versao, resolver_canonico=True)
     episodios = filtrar_por_versao(fonte.episodios, versao)
     offset = await _offset_de_temporada(sessionmaker, anime)
-    episodios = await _sobrepor_stills_de_episodios(sessionmaker, anime, episodios, offset or 0)
+    episodios = await _sobrepor_stills_de_episodios(sessionmaker, anime, episodios, offset)
     return EpisodiosRemotosResultado(dominio=fonte.dominio, episodios=episodios)
 
 
@@ -297,76 +237,47 @@ async def _titulo_base_da_franquia(sessionmaker: _SessionMaker, anime: Anime) ->
     return titulo_ancora if titulo_ancora is not None else anime.titulo
 
 
-def _somar_temporadas_anteriores(
-    linhas: list[tuple[int, int | None]], numero_temporada: int
-) -> int | None:
-    """Soma os totais das temporadas `1..numero_temporada-1` a partir de
-    `(numero_temporada, total_episodios_anilist)` das linhas catalogadas — ou
-    `None` quando a soma não é confiável: alguma temporada anterior não está
-    catalogada, ou alguma de suas linhas (uma "Part" também é uma linha) não tem
-    total. Contar a que falta como 0 deslocava o recorte em silêncio."""
-    totais_por_temporada: dict[int, list[int | None]] = {}
-    for numero, total in linhas:
-        totais_por_temporada.setdefault(numero, []).append(total)
-    soma = 0
-    for numero in range(1, numero_temporada):
-        totais = totais_por_temporada.get(numero)
-        if not totais or not all(totais):
-            return None
-        soma += sum(totais)
-    return soma
-
-
-async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int | None:
+async def _offset_de_temporada(sessionmaker: _SessionMaker, anime: Anime) -> int:
     """Nº absoluto do 1º episódio desta temporada na franquia, menos 1 — a soma
-    de `total_episodios_anilist` das temporadas anteriores (mesmo `serie_ancora`).
-    `0` para a 1ª temporada ou anime sem `numero_temporada`. `None` quando o
-    offset não é determinável (`_somar_temporadas_anteriores`, ou temporada >1 sem
-    `serie_ancora`): quem usa para CORTAR lista não deve cortar com um valor
-    chutado; quem só tenta um palpite de still trata `None` como 0.
+    de `total_episodios_anilist` das temporadas irmãs (mesmo `serie_ancora`) com
+    `numero_temporada` menor. `0` para a 1ª temporada, anime sem `serie_ancora`,
+    ou irmãs sem contagem.
 
-    Serve ao recorte de fonte achatada e ao overlay de still: o TMDB às vezes
-    modela a franquia inteira numa season só (ex. Kusuriya no Hitorigoto — 2
-    temporadas na AniList, 1 season de 48 no TMDB), então pedir a still por
-    `(numero_temporada, numero_por_temporada)` devolve vazio. Com o offset, o
-    overlay pede pelo número ABSOLUTO e deixa a `TabelaDeTemporadas` do TMDB
-    achar a season certa (funciona tanto pro TMDB achatado quanto pro dividido)."""
-    if not anime.numero_temporada or anime.numero_temporada <= 1:
+    Serve só ao overlay de still: o TMDB às vezes modela a franquia inteira numa
+    season só (ex. Kusuriya no Hitorigoto — 2 temporadas na AniList, 1 season de
+    48 no TMDB), então pedir a still por `(numero_temporada, numero_por_temporada)`
+    devolve vazio. Com o offset, o overlay pede pelo número ABSOLUTO e deixa a
+    `TabelaDeTemporadas` do TMDB achar a season certa (funciona tanto pro TMDB
+    achatado quanto pro dividido)."""
+    if not anime.serie_ancora or not anime.numero_temporada or anime.numero_temporada <= 1:
         return 0
-    if not anime.serie_ancora:
-        return None
     async with sessionmaker() as sessao:
-        resultado = await sessao.execute(
-            select(Anime.numero_temporada, Anime.total_episodios_anilist).where(
+        total = await sessao.scalar(
+            select(func.coalesce(func.sum(Anime.total_episodios_anilist), 0)).where(
                 Anime.serie_ancora == anime.serie_ancora,
                 Anime.numero_temporada.is_not(None),
                 Anime.numero_temporada < anime.numero_temporada,
             )
         )
-    return _somar_temporadas_anteriores(
-        [(numero, total) for numero, total in resultado.all()], anime.numero_temporada
-    )
+    return int(total or 0)
 
 
-async def _total_das_partes_irmas(sessionmaker: _SessionMaker, anime: Anime) -> int | None:
+async def _total_das_partes_irmas(sessionmaker: _SessionMaker, anime: Anime) -> int:
     """Soma de `total_episodios_anilist` das OUTRAS linhas TV da mesma franquia
     com o mesmo `numero_temporada` (ex. "2nd Season" e "2nd Season Part 2").
     Agrupa por `agrupar_franquias` (slug do título base OU `serie_ancora`), não
-    só por `serie_ancora`, que nessas partes costuma divergir. `None` quando
-    alguma parte não tem total: o teto da temporada ficaria subestimado e o
-    recorte descartaria episódios dela."""
+    só por `serie_ancora`, que nessas partes costuma divergir."""
     if anime.numero_temporada is None or anime.formato_midia is not None:
         return 0
     async with sessionmaker() as sessao:
         grupos = await agrupar_franquias(sessao)
-    totais = [
-        linha.total_episodios_anilist
+    return sum(
+        linha.total_episodios_anilist or 0
         for linha in grupos.get(anime.id, [])
         if linha.id != anime.id
         and linha.numero_temporada == anime.numero_temporada
         and linha.formato_midia is None
-    ]
-    return sum(totais) if all(totais) else None
+    )
 
 
 def _episodios_esperados(anime: Anime) -> tuple[int, bool] | None:
@@ -439,20 +350,11 @@ async def _recortar_se_fonte_achatada(
     # temporada em "Part 1"/"Part 2" (linhas separadas, mesmo `numero_temporada`)
     # enquanto o site serve as duas juntas — o total da temporada é a soma.
     if not em_aberto:
-        partes = await _total_das_partes_irmas(sessionmaker, anime)
-        if partes is None:
-            _avisar_recorte_indeterminado(anime, "uma parte da temporada sem total na AniList")
-            return episodios
-        total_temporada += partes
+        total_temporada += await _total_das_partes_irmas(sessionmaker, anime)
         if len(numeros) <= total_temporada:
             return episodios
 
     offset = await _offset_de_temporada(sessionmaker, anime)
-    if offset is None:
-        _avisar_recorte_indeterminado(
-            anime, "temporada anterior não catalogada ou sem total na AniList"
-        )
-        return episodios
     if em_aberto and offset == 0:
         return episodios
     teto = None if em_aberto else offset + total_temporada
@@ -506,17 +408,6 @@ async def _recortar_se_fonte_achatada(
     return recortados
 
 
-def _avisar_recorte_indeterminado(anime: Anime, motivo: str) -> None:
-    """Fonte achatada que NÃO dá para recortar com segurança: a lista segue inteira
-    (numeração contínua da série) em vez de cortada no lugar errado."""
-    logger.warning(
-        "fonte achatada para %r temporada %s sem recorte: %s — mantendo a lista inteira",
-        anime.titulo,
-        anime.numero_temporada,
-        motivo,
-    )
-
-
 async def _aparar_excedente_de_temporada_fechada(
     sessionmaker: _SessionMaker,
     anime: Anime,
@@ -531,11 +422,7 @@ async def _aparar_excedente_de_temporada_fechada(
     teto (a fonte pode estar à frente). Rótulo não numérico (`numero=None`) fica."""
     if em_aberto or all(ep.numero is None or ep.numero <= total_temporada for ep in episodios):
         return episodios
-    partes = await _total_das_partes_irmas(sessionmaker, anime)
-    if partes is None:
-        _avisar_recorte_indeterminado(anime, "uma parte da temporada sem total na AniList")
-        return episodios
-    teto = total_temporada + partes
+    teto = total_temporada + await _total_das_partes_irmas(sessionmaker, anime)
     return [ep for ep in episodios if ep.numero is None or ep.numero <= teto]
 
 
