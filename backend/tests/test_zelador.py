@@ -373,3 +373,78 @@ async def test_sondagem_bloqueada_registra_o_dominio_que_pede_sessao(
             sessao, TarefaDeVerificacao.FONTE
         )
     assert aguardando == [(_SITE, anime_id)]
+
+
+# --- laço e lifespan ---
+
+
+async def test_laco_espera_antes_da_primeira_passada_e_repete(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import asyncio
+
+    passadas: list[float] = []
+    z = zelador.Zelador(
+        sessionmaker_api,
+        _leitor(tmp_path, "zelador_ativo = true"),
+        intervalo_s=0.05,
+        espera_inicial_s=0.2,
+    )
+    loop = asyncio.get_running_loop()
+    inicio = loop.time()
+
+    async def _passada(agora=None):
+        passadas.append(loop.time() - inicio)
+
+    monkeypatch.setattr(z, "executar_passada", _passada)
+    tarefa = asyncio.create_task(z.rodar())
+    await asyncio.sleep(0.45)
+    tarefa.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await tarefa
+
+    assert passadas[0] >= 0.2  # esperou a partida assentar
+    assert len(passadas) >= 3  # e seguiu repetindo
+
+
+async def test_passada_que_falha_nao_derruba_o_laco(
+    sessionmaker_api: _SessionMaker, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+):
+    import asyncio
+
+    chamadas: list[int] = []
+    z = zelador.Zelador(
+        sessionmaker_api,
+        _leitor(tmp_path, "zelador_ativo = true"),
+        intervalo_s=0.02,
+        espera_inicial_s=0,
+    )
+
+    async def _passada(agora=None):
+        chamadas.append(1)
+        raise RuntimeError("banco fora do ar")
+
+    monkeypatch.setattr(z, "executar_passada", _passada)
+    with caplog.at_level("ERROR", logger="api.servicos.zelador"):
+        tarefa = asyncio.create_task(z.rodar())
+        await asyncio.sleep(0.15)
+        tarefa.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await tarefa
+
+    assert len(chamadas) >= 2
+    assert "passada falhou" in caplog.text
+
+
+async def test_lifespan_sobe_o_zelador_e_o_cancela_ao_desligar(config_api):
+    import asyncio
+
+    from api.main import criar_app
+
+    aplicativo = criar_app(config_api)
+    async with aplicativo.router.lifespan_context(aplicativo):
+        assert isinstance(aplicativo.state.zelador, zelador.Zelador)
+        tarefas = [t for t in asyncio.all_tasks() if t.get_name() == "zelador-de-fontes"]
+        assert len(tarefas) == 1 and not tarefas[0].done()
+
+    assert tarefas[0].cancelled()

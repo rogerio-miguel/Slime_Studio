@@ -17,6 +17,7 @@ Fire-and-forget como o resto: `executar_passada` agenda as sondagens e volta —
 resultado entra no banco e aparece na leitura seguinte do catálogo.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -44,11 +45,44 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 # registradas em `verificacao_de_anime` mais as que ainda estão em voo.
 TETO_DE_SONDAGENS_POR_HORA = 30
 
+# Intervalo entre passadas e espera antes da primeira: ao subir a API, a Home
+# ainda está aquecendo o cache de feeds (AniList + TMDB) e uma rajada de
+# sondagens competiria com ela — a primeira passada espera.
+INTERVALO_ENTRE_PASSADAS_S = 60
+ESPERA_INICIAL_S = 120
+
 
 class Zelador:
-    def __init__(self, sessionmaker: _SessionMaker, leitor: LeitorDeHorarios | None = None):
+    def __init__(
+        self,
+        sessionmaker: _SessionMaker,
+        leitor: LeitorDeHorarios | None = None,
+        *,
+        intervalo_s: float = INTERVALO_ENTRE_PASSADAS_S,
+        espera_inicial_s: float = ESPERA_INICIAL_S,
+    ):
         self._sessionmaker = sessionmaker
         self._leitor = leitor or LeitorDeHorarios()
+        self._intervalo_s = intervalo_s
+        self._espera_inicial_s = espera_inicial_s
+
+    async def rodar(self) -> None:
+        """Laço do zelador: espera a partida da API assentar e então executa uma
+        passada a cada intervalo, até ser cancelado (desligamento da API). Uma
+        passada que falha é registrada e o laço segue — o zelador não pode morrer
+        em silêncio por um erro de banco ou de rede."""
+        logger.info(
+            "zelador de fontes iniciado (primeira passada em %ss, depois a cada %ss)",
+            self._espera_inicial_s,
+            self._intervalo_s,
+        )
+        await asyncio.sleep(self._espera_inicial_s)
+        while True:
+            try:
+                await self.executar_passada()
+            except Exception:
+                logger.exception("zelador: passada falhou")
+            await asyncio.sleep(self._intervalo_s)
 
     async def executar_passada(self, agora: datetime | None = None) -> None:
         """No-op com o zelador desligado no arquivo de horários ou com o orçamento
