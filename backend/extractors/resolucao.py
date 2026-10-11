@@ -3,7 +3,8 @@ item 2 / §10, Fase 2/3) — versão consciente de legendado/dublado (Fase 2 da
 modelagem dublado/legendado).
 """
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final
 
@@ -12,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import VersaoDeFonte, VersaoEpisodio
+from core.erros import FalhaDeExtracao, SessaoRejeitada, SiteEmCooldown
 from core.texto import slugificar
 from extractors import circuit_breaker
 from extractors.base import ExtratorDeSite, ResultadoBusca
@@ -22,6 +24,8 @@ from extractors.registro import EXTRATORES
 from extractors.versao import remover_marcador_de_versao
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
+
+logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
@@ -55,9 +59,24 @@ class ConfirmacaoNecessaria:
 @dataclass(frozen=True, slots=True)
 class VersaoIndisponivel:
     """Nenhum site, mapeado ou buscado ao vivo, consegue servir `versao` — nem
-    confirmada, nem `NAO_DIFERENCIADA`."""
+    confirmada, nem `NAO_DIFERENCIADA`.
+
+    `indisponiveis`: sites que NÃO foram consultados de verdade (falha de
+    extração ou circuit breaker aberto). Vazio = todos responderam e nenhum tem a
+    versão ("não existe"); preenchido = não dá pra afirmar que não existe, o
+    chamador trata como site indisponível (`falha_principal`)."""
 
     versao: VersaoEpisodio
+    indisponiveis: tuple[FalhaDeExtracao, ...] = field(default=(), compare=False)
+
+    @property
+    def falha_principal(self) -> FalhaDeExtracao | None:
+        """A falha mais acionável: sessão rejeitada (o zelador sabe renovar) vence
+        as demais; senão a primeira, na ordem de prioridade dos sites."""
+        for falha in self.indisponiveis:
+            if isinstance(falha, SessaoRejeitada):
+                return falha
+        return self.indisponiveis[0] if self.indisponiveis else None
 
 
 async def resolver_fonte_do_anime(
@@ -99,7 +118,9 @@ async def resolver_fonte_do_anime(
        graça quando também desambigua sem custo de rede extra. Sites que não
        diferenciam seguem o comportamento de sempre (desambigua no pool
        inteiro, `NAO_DIFERENCIADA`).
-    3. Nenhum site (mapeado ou buscado) serve a versão pedida -> `VersaoIndisponivel`.
+    3. Nenhum site (mapeado ou buscado) serve a versão pedida -> `ConfirmacaoNecessaria`
+       se algum ficou ambíguo; senão `VersaoIndisponivel` (com os sites que não
+       puderam ser consultados em `indisponiveis`).
     """
     if versao not in (VersaoEpisodio.LEGENDADO, VersaoEpisodio.DUBLADO):
         raise ValueError(
@@ -117,11 +138,24 @@ async def resolver_fonte_do_anime(
     if resolvida is not None:
         return resolvida
 
+    # Um site que falha, está em cooldown ou fica ambíguo não encerra a cadeia: os
+    # seguintes ainda podem resolver. Só no fim, sem nenhum que sirva, a ambiguidade
+    # (o usuário consegue desfazer) e depois a indisponibilidade são devolvidas.
+    ambigua: ConfirmacaoNecessaria | None = None
+    indisponiveis: list[FalhaDeExtracao] = []
     for indice, extrator in enumerate(EXTRATORES):
         if await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio):
+            indisponiveis.append(
+                SiteEmCooldown(f"{extrator.dominio} em cooldown", dominio=extrator.dominio)
+            )
             continue
 
-        candidatos = await _buscar_variantes(sessionmaker, extrator, referencias)
+        try:
+            candidatos = await _buscar_variantes(sessionmaker, extrator, referencias)
+        except FalhaDeExtracao as falha:
+            logger.warning("busca em %s falhou, seguindo adiante: %s", extrator.dominio, falha)
+            indisponiveis.append(falha)
+            continue
         if not candidatos:
             continue
 
@@ -129,15 +163,19 @@ async def resolver_fonte_do_anime(
             resultado = await _resolver_no_site_que_diferencia(
                 sessionmaker, anime, referencias, extrator, indice, candidatos, versao
             )
-            if resultado is not None:
-                return resultado
-            continue  # partição pedida vazia neste site — não desiste, tenta o próximo
+        else:
+            resultado = await _resolver_no_site_nao_diferenciado(
+                sessionmaker, anime, referencias, extrator, indice, candidatos
+            )
+        if isinstance(resultado, FonteResolvida):
+            return resultado
+        if isinstance(resultado, ConfirmacaoNecessaria) and ambigua is None:
+            ambigua = resultado
+        # `None`: partição da versão pedida vazia neste site — tenta o próximo.
 
-        return await _resolver_no_site_nao_diferenciado(
-            sessionmaker, anime, referencias, extrator, indice, candidatos
-        )
-
-    return VersaoIndisponivel(versao=versao)
+    if ambigua is not None:
+        return ambigua
+    return VersaoIndisponivel(versao=versao, indisponiveis=tuple(indisponiveis))
 
 
 async def proximo_site_para(
@@ -191,7 +229,11 @@ async def proximo_site_para(
         if await circuit_breaker.esta_em_cooldown(sessionmaker, extrator.dominio):
             continue
 
-        candidatos = await _buscar_variantes(sessionmaker, extrator, referencias)
+        try:
+            candidatos = await _buscar_variantes(sessionmaker, extrator, referencias)
+        except FalhaDeExtracao as falha:
+            logger.warning("busca em %s falhou, seguindo adiante: %s", extrator.dominio, falha)
+            continue
         if not candidatos:
             continue
 

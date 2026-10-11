@@ -123,7 +123,8 @@ async def resolver_e_listar(
     `ConfirmacaoNecessaria` (mais de um candidato, sem match exato) vira
     `FonteAmbigua`; o cliente resolve via
     `POST /api/admin/animes/{id}/fontes/confirmar` e reenvia. `VersaoIndisponivel`
-    vira `VersaoIndisponivelError`. Timeout de qualquer etapa de rede vira
+    vira `VersaoIndisponivelError` — ou a falha de um site que não pôde ser consultado,
+    pois então a versão não está provadamente ausente. Timeout de qualquer etapa de rede vira
     `FalhaDeExtracao` retentável (o orçamento é nosso, não uma falha do site).
 
     `tentar_fontes_alternativas` (só a sondagem liga): se listar a fonte escolhida
@@ -166,6 +167,11 @@ async def resolver_e_listar(
             ],
         )
     if isinstance(resolvida, VersaoIndisponivel):
+        # Sites que não puderam ser consultados: não dá pra dizer que a versão
+        # "não existe", então a falha deles sobe no lugar (ex. `SessaoRejeitada`
+        # vira PRECISA_SESSAO na sondagem, `SiteEmCooldown` vira SITE_INDISPONIVEL).
+        if resolvida.falha_principal is not None:
+            raise resolvida.falha_principal
         raise VersaoIndisponivelError(resolvida.versao)
 
     resolvida, episodios = await _listar_com_alternativas(
