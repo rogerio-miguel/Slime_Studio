@@ -1,7 +1,7 @@
 """Política pura de ciclo de vida (`core/ciclo_de_vida.py`): tabela de decisões
 com `hoje` fixo, incluindo os casos reais do catálogo que motivaram a regra."""
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -11,7 +11,9 @@ from core.ciclo_de_vida import (
     deve_atualizar_status,
     deve_sondar_fonte,
     fase_do_anime,
+    proxima_tentativa,
 )
+from core.enums import ResultadoDeVerificacao as R
 from core.enums import StatusLancamento as S
 
 _HOJE = date(2026, 10, 11)
@@ -56,3 +58,30 @@ def test_janela_pos_fim_fecha_45_dias_depois_do_fim_previsto():
 
     assert fase_do_anime(retrato, fim_previsto + timedelta(days=45)) is Fase.POS_FIM
     assert fase_do_anime(retrato, fim_previsto + timedelta(days=46)) is Fase.ARQUIVO
+
+
+# --- backoff ---
+
+
+def _intervalo(resultado, falhas):
+    agora = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
+    return proxima_tentativa(resultado, falhas, agora) - agora
+
+
+@pytest.mark.parametrize(
+    ("resultado", "falhas", "esperado"),
+    [
+        (R.OK, 0, timedelta(hours=6)),
+        (R.SITE_INDISPONIVEL, 3, timedelta(minutes=15)),
+        (R.PRECISA_SESSAO, 5, timedelta(hours=3)),
+        (R.AMBIGUO, 1, timedelta(days=7)),
+        (R.NAO_ENCONTRADO, 1, timedelta(hours=6)),
+        (R.NAO_ENCONTRADO, 2, timedelta(hours=12)),
+        (R.NAO_ENCONTRADO, 10, timedelta(days=7)),  # teto
+        (R.ERRO, 1, timedelta(hours=1)),
+        (R.ERRO, 3, timedelta(hours=4)),
+        (R.ERRO, 99, timedelta(hours=24)),  # teto, sem overflow
+    ],
+)
+def test_proxima_tentativa(resultado, falhas, esperado):
+    assert _intervalo(resultado, falhas) == esperado
