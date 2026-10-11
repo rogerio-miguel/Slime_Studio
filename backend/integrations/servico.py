@@ -90,9 +90,10 @@ logger = logging.getLogger(__name__)
 # é cancelável pelo `wait_for`).
 _TIMEOUT_POR_PROVEDOR_S: float = 8
 _TTL_EM_ALTA_S = 3600
-# Agenda de exibição muda tão rápido quanto "em alta" (episódio novo a
-# qualquer hora) — mesmo TTL.
-_TTL_NOVOS_LANCAMENTOS_S = 3600
+# Agenda de exibição: episódio novo a qualquer hora, e o usuário espera ver o
+# que acabou de sair — TTL curto (a Home rebusca a cada poucos minutos). Uma
+# chamada só à AniList, cabe folgado no limite de ~30/min.
+_TTL_NOVOS_LANCAMENTOS_S = 300
 # Roster de temporada muda devagar (estreias/adiamentos, não trending diário) —
 # TTL mais folgado que o de "em alta".
 _TTL_PROXIMA_TEMPORADA_S = 6 * 3600

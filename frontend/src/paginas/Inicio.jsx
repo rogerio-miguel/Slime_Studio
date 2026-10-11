@@ -17,6 +17,7 @@ import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
+import { useAtualizacaoPeriodica } from '../hooks/useAtualizacaoPeriodica.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
@@ -34,6 +35,7 @@ import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 
 const LIMITE_PROXIMAS_ESTREIAS = 20;
+const INTERVALO_NOVOS_LANCAMENTOS_MS = 2 * 60 * 1000;
 
 // Rota "/" — interface principal do streaming: navbar + carrossel hero
 // "Destaques da temporada" seguido das fileiras horizontais. A introdução
@@ -127,6 +129,8 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // "próxima temporada" (ainda não estreou). Mesma exibição silenciosa:
   // carregando/erro/vazio a fileira simplesmente não aparece.
   const novosLancamentos = useRecurso(listarNovosLancamentos, []);
+  // Episódio sai a qualquer hora: sem isto a fileira só mudaria com reload.
+  useAtualizacaoPeriodica(novosLancamentos.recarregar, INTERVALO_NOVOS_LANCAMENTOS_MS);
   // Chave 'animes' (invalidacao.js): recarrega sozinho quando `criarAnime`/
   // `removerAnime` resolve em qualquer lugar do app (ex. materializar um
   // item do feed abaixo), sem precisar de um `recarregar()` manual aqui.
