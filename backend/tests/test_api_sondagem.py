@@ -300,7 +300,7 @@ async def test_gate_barra_anime_ja_em_voo(
     assert list(sondagem._sondagens_em_voo) == [anime_id]  # só o dummy; fixture o cancela
 
 
-async def test_gate_passa_com_status_none(
+async def test_gate_barra_status_none_ate_o_status_ser_aquecido(
     sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
     chamadas = _espiar_sondagem(monkeypatch)
@@ -311,7 +311,7 @@ async def test_gate_passa_com_status_none(
     sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
     await _drenar_sondagens()
 
-    assert chamadas == [(anime_id, _LEG)]
+    assert chamadas == []
 
 
 # --- agendar_sondagens: teto e dedupe ---
