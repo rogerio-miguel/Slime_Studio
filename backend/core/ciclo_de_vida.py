@@ -100,6 +100,22 @@ def deve_atualizar_status(retrato: RetratoDoAnime, hoje: date) -> bool:
     return fase_do_anime(retrato, hoje) in _FASES_COM_STATUS_VIVO
 
 
+def deve_resolver_fonte(
+    retrato: RetratoDoAnime, hoje: date, *, tem_episodios: bool, temporada_nova: bool
+) -> bool:
+    """Anime SEM nenhuma fonte mapeada: vale a varredura cara (busca em todos os
+    sites) para achar uma? Três motivos, todos "o usuário vai precisar dela":
+    - `tem_episodios`: fonte perdida (migração apagou o mapeamento) — o badge de
+      versão e as contagens ficam cegos até reencontrar o anime;
+    - `temporada_nova`: continuação de franquia que o usuário terminou
+      (`lancamentos.temporadas_novas`), sem episódio local ainda;
+    - fase de fonte viva (`deve_sondar_fonte`): estreia ou anime em exibição que
+      nunca foi aberto — sem isto, um bookmark que vira `EM_LANCAMENTO` ficaria
+      sem fonte para sempre, porque só quem já tem fonte é sondado.
+    O backoff por falha (`verificacao_de_anime`) é de quem executa, não daqui."""
+    return tem_episodios or temporada_nova or deve_sondar_fonte(retrato, hoje)
+
+
 # --- Backoff entre tentativas ---
 
 INTERVALO_APOS_SUCESSO = timedelta(hours=6)

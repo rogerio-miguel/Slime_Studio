@@ -19,8 +19,10 @@ from api.servicos import sondagem
 from api.servicos.fontes import FonteComEpisodios
 from core.enums import (
     ResultadoDeVerificacao,
+    StatusEpisodio,
     StatusLancamento,
     TarefaDeVerificacao,
+    TipoEpisodio,
     VersaoDeFonte,
     VersaoEpisodio,
 )
@@ -34,6 +36,7 @@ from core.erros import (
 )
 from extractors.base import EpisodioRemoto
 from models.anime import Anime
+from models.episodio import Episodio
 from models.fonte_anime import FonteAnime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
@@ -668,3 +671,119 @@ async def test_sondagem_roda_em_segundo_plano_e_pede_fontes_alternativas(
 
     assert vistos == [(True, True)]
     assert resiliencia._segundo_plano.get() is False
+
+
+# --- versoes_para_resolver_fonte: quem ainda não tem FonteAnime ---
+
+
+async def _capturar_episodio(
+    sessionmaker: _SessionMaker, anime_id: int, versao: VersaoEpisodio
+) -> None:
+    async with sessionmaker() as sessao:
+        sessao.add(
+            Episodio(
+                anime_id=anime_id,
+                numero=1,
+                tipo=TipoEpisodio.REGULAR,
+                versao=versao,
+                url_fonte="/qualquer.mkv",
+                site_origem="local",
+                status=StatusEpisodio.PRONTO,
+            )
+        )
+        await sessao.commit()
+
+
+async def _versoes_a_resolver(
+    sessionmaker: _SessionMaker,
+    animes: list[Anime],
+    *,
+    versoes_existentes: dict[int, VersaoEpisodio] | None = None,
+    com_episodios: set[int] = frozenset(),
+    temporadas_novas: dict[int, int] | None = None,
+    em_espera: frozenset[int] = frozenset(),
+) -> dict[int, VersaoEpisodio]:
+    async with sessionmaker() as sessao:
+        return await sondagem.versoes_para_resolver_fonte(
+            sessao,
+            animes,
+            versoes_existentes or {},
+            com_episodios=com_episodios,
+            temporadas_novas=temporadas_novas or {},
+            em_espera=em_espera,
+        )
+
+
+async def test_estreia_em_lancamento_sem_fonte_e_resolvida_com_palpite_legendado(
+    sessionmaker_api: _SessionMaker,
+):
+    """Caso do anime 172: bookmark que estreou e nunca ganhou `FonteAnime`."""
+    anime_id = await _criar_anime(
+        sessionmaker_api, "estreia", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+
+    resultado = await _versoes_a_resolver(
+        sessionmaker_api, await _carregar(sessionmaker_api, anime_id)
+    )
+
+    assert resultado == {anime_id: _LEG}
+
+
+async def test_nao_resolve_quem_ja_tem_fonte_esta_em_espera_ou_nao_estreou(
+    sessionmaker_api: _SessionMaker,
+):
+    com_fonte = await _criar_anime(
+        sessionmaker_api, "com-fonte", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+    em_espera = await _criar_anime(
+        sessionmaker_api, "em-espera", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+    futuro = await _criar_anime(
+        sessionmaker_api, "futuro", status_lancamento=StatusLancamento.NAO_LANCADO
+    )
+
+    resultado = await _versoes_a_resolver(
+        sessionmaker_api,
+        await _carregar(sessionmaker_api, com_fonte, em_espera, futuro),
+        versoes_existentes={com_fonte: _LEG},
+        em_espera=frozenset({em_espera}),
+    )
+
+    assert resultado == {}
+
+
+async def test_fonte_perdida_usa_a_versao_dos_episodios_capturados(
+    sessionmaker_api: _SessionMaker,
+):
+    anime_id = await _criar_anime(
+        sessionmaker_api, "dublado-antigo", status_lancamento=StatusLancamento.FINALIZADO
+    )
+    await _capturar_episodio(sessionmaker_api, anime_id, VersaoEpisodio.DUBLADO)
+
+    resultado = await _versoes_a_resolver(
+        sessionmaker_api,
+        await _carregar(sessionmaker_api, anime_id),
+        com_episodios={anime_id},
+    )
+
+    assert resultado == {anime_id: VersaoEpisodio.DUBLADO}
+
+
+async def test_temporada_nova_herda_a_versao_da_temporada_anterior(
+    sessionmaker_api: _SessionMaker,
+):
+    anterior = await _criar_anime(
+        sessionmaker_api, "t1", status_lancamento=StatusLancamento.FINALIZADO
+    )
+    nova = await _criar_anime(
+        sessionmaker_api, "t2", status_lancamento=StatusLancamento.FINALIZADO
+    )
+    await _capturar_episodio(sessionmaker_api, anterior, VersaoEpisodio.DUBLADO)
+
+    resultado = await _versoes_a_resolver(
+        sessionmaker_api,
+        await _carregar(sessionmaker_api, nova),
+        temporadas_novas={nova: anterior},
+    )
+
+    assert resultado == {nova: VersaoEpisodio.DUBLADO}
