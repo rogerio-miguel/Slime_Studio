@@ -1169,3 +1169,23 @@ async def test_escrita_automatica_nao_rebaixa_fonte_manual(sessionmaker):
 
     fonte = await _fonte_gravada(sessionmaker, anime.id, "site-a.io", versao)
     assert fonte.origem is OrigemDeFonte.MANUAL
+
+
+async def test_escrita_automatica_nao_sobrescreve_identificador_de_fonte_manual(sessionmaker):
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    versao = VersaoDeFonte.LEGENDADO
+    await resolucao._gravar_fonte_anime(
+        sessionmaker, anime.id, "site-a.io", "escolhido", versao,
+        prioridade=0, origem=OrigemDeFonte.MANUAL, titulo_no_site="Escolha do usuário",
+    )
+
+    await resolucao._gravar_fonte_anime(
+        sessionmaker, anime.id, "site-a.io", "palpite", versao,
+        prioridade=3, origem=OrigemDeFonte.AUTOMATICA, titulo_no_site="Palpite",
+        bump_recencia=False,
+    )
+
+    fonte = await _fonte_gravada(sessionmaker, anime.id, "site-a.io", versao)
+    assert fonte.identificador_no_site == "escolhido"
+    assert fonte.titulo_no_site == "Escolha do usuário"
+    assert fonte.prioridade == 0

@@ -729,6 +729,11 @@ async def _gravar_fonte_anime(
                 existente = await sessao.get(FonteAnime, (anime_id, dominio, versao))
                 if existente is None:
                     raise
+        if existente.origem is OrigemDeFonte.MANUAL and origem is OrigemDeFonte.AUTOMATICA:
+            # Escolha do usuário é intocável: nem o identificador, nem a
+            # recência. Caso real: a escrita "de graça" da OUTRA versão
+            # (`bump_recencia=False`) caía aqui e trocava o mapeamento manual.
+            return
         existente.identificador_no_site = identificador
         existente.prioridade = prioridade
         existente.titulo_no_site = titulo_no_site
