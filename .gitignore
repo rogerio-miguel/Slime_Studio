@@ -8,6 +8,9 @@ backend/.venv/
 backend/db/*.db
 backend/db/*.db-*
 
+# Horários do zelador de fontes: ajuste local do usuário (o .exemplo é versionado)
+config/horarios.toml
+
 # Node (frontend)
 frontend/node_modules/
 frontend/dist/
