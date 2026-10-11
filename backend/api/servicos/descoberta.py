@@ -11,15 +11,15 @@ import re
 import time
 from collections.abc import Iterable
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos.catalogo import agrupar_franquias, banner_da_temporada_ou_franquia
+from core.ciclo_de_vida import RetratoDoAnime, deve_atualizar_status
 from core.conteudo_adulto import eh_conteudo_adulto
-from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
 from core.temporada import PosicaoNaSerie, conciliar_posicao, separar_temporada
 from core.texto import slugificar
@@ -466,11 +466,7 @@ def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> 
     há event loop rodando."""
     if anime.anilist_id is None:
         return
-    if anime.status_lancamento not in (
-        StatusLancamento.EM_LANCAMENTO,
-        StatusLancamento.NAO_LANCADO,
-        None,
-    ):
+    if not deve_atualizar_status(RetratoDoAnime.de(anime), date.today()):
         return
     limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
     if not carimbo_esta_velho(anime.lancamento_atualizado_em, limite):
@@ -720,20 +716,11 @@ def refresh_em_andamento(ids: Iterable[int]) -> bool:
 
 
 def _elegivel_para_aquecimento(anime: Anime, limite: datetime) -> bool:
-    """Gate comum aos dois caminhos de `agendar_refreshs_do_catalogo`: status de
-    lançamento que ainda pode ganhar episódios (`EM_LANCAMENTO`, `NAO_LANCADO`
-    ou nulo) e carimbo mais velho que `limite` (ou ausente).
-
-    `NAO_LANCADO` entra na tupla porque um bookmark de "Próximas estreias" nasce
-    com `status_lancamento` NULL, é aquecido uma única vez para `NAO_LANCADO` +
-    `proximo_ep_em` e — sem ele aqui — nunca mais seria reconsultado: a data de
-    estreia congelaria e o anime jamais transicionaria para `EM_LANCAMENTO` ao
-    estrear. Mesmo motivo no gate de `agendar_refresh_de_lancamento` (esses
-    bookmarks têm `anilist_id`, então passam pela busca lazy por id)."""
-    return anime.status_lancamento in (
-        StatusLancamento.EM_LANCAMENTO,
-        StatusLancamento.NAO_LANCADO,
-        None,
+    """Gate comum aos dois caminhos de `agendar_refreshs_do_catalogo`: a política
+    de ciclo de vida pede status novo (`core.ciclo_de_vida.deve_atualizar_status`)
+    e o carimbo é mais velho que `limite` (ou ausente)."""
+    return deve_atualizar_status(
+        RetratoDoAnime.de(anime), date.today()
     ) and carimbo_esta_velho(anime.lancamento_atualizado_em, limite)
 
 
