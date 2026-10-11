@@ -6,7 +6,7 @@ contagem em `Anime.episodios_na_fonte`/`fonte_verificada_*`
 (`db.catalogo.atualizar_contagem_na_fonte`). Família de adapter distinta da de
 `api/servicos/descoberta.py`, que orquestra `integrations/` (metadados de
 provedor externo por API JSON pública): aqui é scraping de site com bypass
-anti-bot, custo real por anime — daí o TTL longo, o teto por lote e o semáforo
+anti-bot, custo real por anime — daí o intervalo longo, o teto por lote e o semáforo
 global que serializa os scrapes.
 
 Mesmo padrão de refresh oportunista de F4b
@@ -30,10 +30,10 @@ from api.servicos import descoberta
 from api.servicos.fontes import resolver_e_listar
 from api.servicos.jobs import versao_episodio_da_fonte
 from core.ciclo_de_vida import (
-    INTERVALO_APOS_SUCESSO,
     RetratoDoAnime,
     deve_resolver_fonte,
     deve_sondar_fonte,
+    proxima_sondagem_apos_sucesso,
 )
 from core.enums import (
     ResultadoDeVerificacao,
@@ -63,9 +63,11 @@ logger = logging.getLogger(__name__)
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 # Sondagem é scraping de site (caro: bypass anti-bot, uma requisição por anime).
-# TTL de 6h entre sondagens do mesmo anime — sem scheduler, só carona na leitura
-# do catálogo (mesma filosofia de `descoberta._TTL_LANCAMENTO_S`).
-_TTL_SONDAGEM_S = int(INTERVALO_APOS_SUCESSO.total_seconds())
+# QUANDO sondar de novo é do backoff persistido (`verificacao_de_anime.proxima_em`,
+# cadência ancorada no episódio, `ciclo_de_vida.proxima_sondagem_apos_sucesso`),
+# aplicado por quem chama via `em_espera`. Este espaçamento é só a rede de
+# segurança para quem chama sem `em_espera` ou tem carimbo sem registro (legado).
+_ESPACAMENTO_MINIMO_S = 30 * 60
 
 # Teto de sondagens disparadas por uma única passada de `agendar_sondagens` —
 # abrir o catálogo não pode enfileirar um scrape por anime em lançamento.
@@ -266,7 +268,7 @@ def agendar_sondagens(
     max_sondagens: int = _MAX_SONDAGENS_POR_LOTE,
 ) -> None:
     """Dispara, sem bloquear, a sondagem da fonte real dos animes em lançamento
-    cuja contagem está velha (> `_TTL_SONDAGEM_S`) ou ausente — no máximo
+    cuja contagem está velha (> `_ESPACAMENTO_MINIMO_S`) ou ausente — no máximo
     `max_sondagens` (padrão `_MAX_SONDAGENS_POR_LOTE`) por passada, os de carimbo
     mais antigo primeiro.
     Fire-and-forget: o resultado entra no banco para a próxima leitura do
@@ -287,7 +289,8 @@ def agendar_sondagens(
     anormal, então sem log) quando não há event loop rodando, ou para cada anime
     cuja fase (`core.ciclo_de_vida.deve_sondar_fonte`) não pede sondagem E que não
     está em `a_resolver`; não tem fonte mapeada nem palpite de versão
-    (`anime.id not in versoes`); contagem ainda dentro do TTL; ou já tem uma
+    (`anime.id not in versoes`); contagem verificada há pouco
+    (`_ESPACAMENTO_MINIMO_S`); ou já tem uma
     sondagem em voo.
     """
     try:
@@ -295,7 +298,7 @@ def agendar_sondagens(
     except RuntimeError:
         return
 
-    limite = datetime.now(UTC) - timedelta(seconds=_TTL_SONDAGEM_S)
+    limite = datetime.now(UTC) - timedelta(seconds=_ESPACAMENTO_MINIMO_S)
     hoje = date.today()
     candidatos = sorted(animes, key=_ordem_de_sondagem)
 
@@ -367,6 +370,7 @@ async def _registrar(
     resultado: ResultadoDeVerificacao,
     detalhe: str | None = None,
     dominio: str | None = None,
+    proxima_apos_sucesso: datetime | None = None,
 ) -> None:
     """Grava o desfecho sem deixar um erro de banco esconder o da sondagem."""
     try:
@@ -377,6 +381,7 @@ async def _registrar(
             resultado,
             detalhe=detalhe,
             dominio=dominio,
+            proxima_apos_sucesso=proxima_apos_sucesso,
         )
     except SQLAlchemyError as excecao:
         logger.warning("registro da verificação falhou para anime_id=%s: %s", anime_id, excecao)
@@ -422,6 +427,11 @@ async def _sondar_e_persistir(
         await atualizar_contagem_na_fonte(
             sessionmaker, anime_id, total=total, dominio=fonte.dominio
         )
+        # Em dia = a fonte já tem tudo o que foi ao ar antes do próximo episódio.
+        fonte_em_dia = anime.proximo_ep_numero is None or total >= anime.proximo_ep_numero - 1
+        proxima_apos_sucesso = proxima_sondagem_apos_sucesso(
+            anime.proximo_ep_em, fonte_em_dia, datetime.now(UTC)
+        )
     except (
         FalhaDeExtracao,
         FonteAmbigua,
@@ -438,4 +448,9 @@ async def _sondar_e_persistir(
         )
         await _registrar(sessionmaker, anime_id, resultado, str(excecao), dominio or None)
     else:
-        await _registrar(sessionmaker, anime_id, ResultadoDeVerificacao.OK)
+        await _registrar(
+            sessionmaker,
+            anime_id,
+            ResultadoDeVerificacao.OK,
+            proxima_apos_sucesso=proxima_apos_sucesso,
+        )

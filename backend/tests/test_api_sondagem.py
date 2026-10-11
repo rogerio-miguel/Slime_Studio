@@ -285,7 +285,7 @@ async def test_gate_barra_carimbo_dentro_do_ttl(
         sessionmaker_api,
         "fresco",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
-        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
+        fonte_verificada_em=datetime.now(UTC) - timedelta(minutes=10),
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 
@@ -439,6 +439,35 @@ async def test_sondagem_bem_sucedida_persiste_as_tres_colunas(
         assert anime.fonte_verificada_dominio == "animefire.one"
         assert anime.fonte_verificada_em is not None
         assert anime.fonte_verificada_em >= antes
+
+
+async def test_sondagem_bem_sucedida_agenda_a_proxima_ancorada_no_episodio(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """Próximo episódio (nº 4) previsto para daqui a 3 h e a fonte já tem os 3
+    anteriores: a próxima sondagem é +2h depois do episódio, não +6h."""
+
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
+        return _fonte(dominio="animefire.one", episodios=[_ep("1", 1), _ep("2", 2), _ep("3", 3)])
+
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
+    exibicao = datetime.now(UTC) + timedelta(hours=3)
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "ancorado",
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        proximo_ep_numero=4,
+        proximo_ep_em=exibicao,
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+
+    animes = await _carregar(sessionmaker_api, anime_id)
+    sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
+    await _drenar_sondagens()
+
+    linha = await _verificacao_de(sessionmaker_api, anime_id)
+    assert linha.ultimo_resultado == ResultadoDeVerificacao.OK
+    assert abs(linha.proxima_em - (exibicao + timedelta(hours=2))) < timedelta(seconds=5)
 
 
 # --- _sondar_e_persistir: falha não carimba nem propaga ---

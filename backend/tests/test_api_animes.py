@@ -372,6 +372,29 @@ def test_episodios_novos_zero_para_status_diferente_de_em_lancamento():
     assert episodios_novos(anime, maior_capturado=0) == 0
 
 
+def test_episodios_novos_conta_na_janela_pos_fim_de_finalizado_incompleto():
+    # a AniList já fechou o status, mas o fansub ainda sobe o último episódio:
+    # a fonte tem 11 de 12 e o usuário parou no 10 -> 1 novo
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.FINALIZADO,
+        estreia_em=date.today() - timedelta(weeks=12),
+        total_episodios_anilist=12,
+        episodios_na_fonte=11,
+    )
+    assert episodios_novos(anime, maior_capturado=10) == 1
+
+
+def test_episodios_novos_zero_para_finalizado_incompleto_fora_da_janela_pos_fim():
+    # 12 de 13 há anos (especial contado no total): arquivo, nunca badge
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.FINALIZADO,
+        estreia_em=date(2015, 1, 9),
+        total_episodios_anilist=13,
+        episodios_na_fonte=12,
+    )
+    assert episodios_novos(anime, maior_capturado=0) == 0
+
+
 def test_episodios_novos_zero_quando_contagem_da_fonte_nula():
     anime = _anime_em_memoria(
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
@@ -1234,7 +1257,7 @@ async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(
         "Anime Fonte Fresca",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=2,
-        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
+        fonte_verificada_em=datetime.now(UTC) - timedelta(minutes=10),
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 

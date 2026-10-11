@@ -64,10 +64,13 @@ async def registrar_resultado(
     *,
     detalhe: str | None = None,
     dominio: str | None = None,
+    proxima_apos_sucesso: datetime | None = None,
     agora: datetime | None = None,
 ) -> None:
     """Grava o desfecho de uma tentativa e agenda a próxima
-    (`core.ciclo_de_vida.proxima_tentativa`). Sucesso zera as falhas seguidas;
+    (`core.ciclo_de_vida.proxima_tentativa`; num `OK`, `proxima_apos_sucesso` —
+    cadência ancorada no episódio, `proxima_sondagem_apos_sucesso` — sobrepõe o
+    intervalo padrão). Sucesso zera as falhas seguidas;
     `SITE_INDISPONIVEL` as preserva (o culpado é o site). Anime que sumiu entre a
     sondagem e a escrita é no-op, como em `atualizar_contagem_na_fonte`.
     `dominio`: site que motivou a falha (só para `PRECISA_SESSAO`)."""
@@ -82,7 +85,11 @@ async def registrar_resultado(
         else:
             falhas = falhas_anteriores
         campos = {
-            "proxima_em": proxima_tentativa(resultado, falhas, agora),
+            "proxima_em": (
+                proxima_apos_sucesso
+                if resultado is ResultadoDeVerificacao.OK and proxima_apos_sucesso
+                else proxima_tentativa(resultado, falhas, agora)
+            ),
             "ultima_tentativa_em": agora,
             "ultimo_resultado": resultado,
             "falhas_consecutivas": falhas,

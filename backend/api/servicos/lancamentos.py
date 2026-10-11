@@ -23,10 +23,12 @@ não há flag persistida. Ver `episodios_novos`.
 """
 
 from collections.abc import Iterable, Sequence
+from datetime import date
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.ciclo_de_vida import Fase, RetratoDoAnime, fase_do_anime
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
@@ -40,7 +42,9 @@ _STATUS_CAPTURADO = (StatusEpisodio.PRONTO, StatusEpisodio.LIBERADO)
 
 def episodios_novos(anime: Anime, maior_capturado: int) -> int:
     """Nº de episódios já disponíveis na fonte real (site) acima da fronteira do
-    que o usuário acompanhou — 0 quando o anime não está `EM_LANCAMENTO`.
+    que o usuário acompanhou — 0 quando o anime não está `EM_LANCAMENTO` nem na
+    janela pós-fim (`Fase.POS_FIM`: `FINALIZADO` cuja fonte ainda não alcançou o
+    total, o fansub atrasa o último episódio).
 
     `episodios_na_fonte` é a contagem da última sondagem bem-sucedida do site
     (`api/servicos/sondagem.py`); fica `None` enquanto nenhuma sondagem
@@ -51,7 +55,9 @@ def episodios_novos(anime: Anime, maior_capturado: int) -> int:
     episódios antigos (`episodios_na_fonte` abaixo da fronteira) não vira
     negativo.
 
-    Gate: só `EM_LANCAMENTO`, sem sub-trava de sinal-vivo. A fronteira
+    Gate: `EM_LANCAMENTO` ou `POS_FIM` (`core.ciclo_de_vida.fase_do_anime`, a
+    mesma que decide quem é sondado — sem isto a sondagem acharia o episódio
+    tardio e o badge não acenderia), sem sub-trava de sinal-vivo. A fronteira
     `maior_capturado` já mata o falso-positivo do episódio antigo pulado. O
     status é lido da coluna `status_lancamento` a cada request (mantida em dia
     por `api/servicos/descoberta.py`): se a AniList finaliza o anime o badge
@@ -59,7 +65,8 @@ def episodios_novos(anime: Anime, maior_capturado: int) -> int:
     """
     if anime.episodios_na_fonte is None:
         return 0
-    if anime.status_lancamento is not StatusLancamento.EM_LANCAMENTO:
+    fase = fase_do_anime(RetratoDoAnime.de(anime), date.today())
+    if fase not in (Fase.EM_LANCAMENTO, Fase.POS_FIM):
         return 0
     return max(0, anime.episodios_na_fonte - maior_capturado)
 

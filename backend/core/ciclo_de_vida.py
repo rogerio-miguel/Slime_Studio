@@ -119,6 +119,17 @@ def deve_resolver_fonte(
 # --- Backoff entre tentativas ---
 
 INTERVALO_APOS_SUCESSO = timedelta(hours=6)
+# Depois do horário previsto de um episódio, o fansub leva horas para publicar:
+# sondar cedo e espaçar (em vez de martelar de 6 em 6 h o dia todo).
+_PASSOS_APOS_EPISODIO = (
+    timedelta(hours=2),
+    timedelta(hours=6),
+    timedelta(hours=12),
+    timedelta(hours=24),
+)
+# `proximo_ep_em` vem da AniList e pode estar desatualizado: nunca dormir mais
+# que isto esperando um episódio que talvez já tenha saído.
+_ESPERA_MAXIMA_ANTES_DO_EPISODIO = timedelta(hours=24)
 _ESPERA_SITE_INDISPONIVEL = timedelta(minutes=15)  # o breaker do site manda; aqui é só folga
 _ESPERA_PRECISA_SESSAO = timedelta(hours=3)
 _ESPERA_AMBIGUO = timedelta(days=7)  # só o usuário desfaz; nada a ganhar retentando
@@ -131,6 +142,31 @@ CONTA_COMO_FALHA_DO_ANIME = frozenset(ResultadoDeVerificacao) - {
     ResultadoDeVerificacao.OK,
     ResultadoDeVerificacao.SITE_INDISPONIVEL,
 }
+
+
+def proxima_sondagem_apos_sucesso(
+    proximo_ep_em: datetime | None, fonte_em_dia: bool, agora: datetime
+) -> datetime:
+    """Quando sondar de novo a fonte de um anime cuja sondagem acabou de dar certo.
+
+    Ancorada no horário do próximo episódio (`proximo_ep_em`): antes dele não há
+    nada novo a achar, então espera até `+2h` depois (no máximo 24 h, que cobre
+    âncora desatualizada); depois dele sonda em `+2h`, `+6h`, `+12h`, `+24h` — o
+    fansub publica com atraso — e passado isso volta ao intervalo padrão.
+
+    `fonte_em_dia`: a fonte já tem os episódios anteriores ao próximo. Se estiver
+    atrasada (faltam episódios que já foram ao ar) a âncora não ajuda — o atraso é
+    do fansub, não do relógio — e vale o intervalo padrão. Sem `proximo_ep_em`
+    (fase pós-fim, status desconhecido), idem."""
+    if proximo_ep_em is None or not fonte_em_dia:
+        return agora + INTERVALO_APOS_SUCESSO
+    if proximo_ep_em > agora:
+        limite = agora + _ESPERA_MAXIMA_ANTES_DO_EPISODIO
+        return min(proximo_ep_em + _PASSOS_APOS_EPISODIO[0], limite)
+    for passo in _PASSOS_APOS_EPISODIO:
+        if proximo_ep_em + passo > agora:
+            return proximo_ep_em + passo
+    return agora + INTERVALO_APOS_SUCESSO
 
 
 def _exponencial(base: timedelta, teto: timedelta, falhas_consecutivas: int) -> timedelta:
