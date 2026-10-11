@@ -169,6 +169,63 @@ def proxima_sondagem_apos_sucesso(
     return agora + INTERVALO_APOS_SUCESSO
 
 
+# Uma fonte só é dada como "parada" depois deste atraso sobre o episódio que já
+# foi ao ar: fansub atrasa horas, não dias.
+LIMITE_DE_FONTE_PARADA = timedelta(hours=48)
+# A AniList só informa o PRÓXIMO episódio, não quando saiu o último; estima-se
+# exibição semanal. Série quinzenal subestima o atraso (nunca alarma à toa); série
+# diária o superestima, caso raro que a trava de 48 h absorve em parte.
+_INTERVALO_SEMANAL = timedelta(days=7)
+# A contagem da fonte precisa ser recente para afirmar algo sobre ela: se a
+# sondagem anda falhando, "faltam episódios" seria só dado velho.
+_CONTAGEM_RECENTE = timedelta(hours=36)
+
+
+@dataclass(frozen=True)
+class FonteParada:
+    episodio_esperado: int  # último episódio que já foi ao ar segundo a AniList
+    atraso: timedelta  # desde que ele (estimadamente) saiu
+
+
+def fonte_parada(
+    fase: Fase,
+    *,
+    proximo_ep_numero: int | None,
+    proximo_ep_em: datetime | None,
+    episodios_na_fonte: int | None,
+    fonte_verificada_em: datetime | None,
+    agora: datetime,
+) -> FonteParada | None:
+    """A fonte do anime parece parada? Só em exibição (`EM_LANCAMENTO`), com a
+    contagem da fonte recente, quando ela tem MENOS episódios do que a AniList diz
+    que já saíram e o último deveria ter sido publicado há mais de
+    `LIMITE_DE_FONTE_PARADA`. Compara com a AniList, nunca com o contador exibido:
+    ele já desconta o que o usuário capturou. É só um indício — vira sugestão de
+    "Trocar fonte", nunca troca nada sozinho."""
+    if (
+        fase is not Fase.EM_LANCAMENTO
+        or proximo_ep_numero is None
+        or proximo_ep_em is None
+        or episodios_na_fonte is None
+        or fonte_verificada_em is None
+    ):
+        return None
+    if fonte_verificada_em.tzinfo is None:
+        fonte_verificada_em = fonte_verificada_em.replace(tzinfo=agora.tzinfo)
+    if agora - fonte_verificada_em > _CONTAGEM_RECENTE:
+        return None
+    if proximo_ep_em > agora:
+        # O próximo ainda não saiu: já saíram os `N - 1` anteriores.
+        esperado, saiu_em = proximo_ep_numero - 1, proximo_ep_em - _INTERVALO_SEMANAL
+    else:
+        # `proximo_ep_em` vencido (AniList ainda não avançou): o `N` já saiu.
+        esperado, saiu_em = proximo_ep_numero, proximo_ep_em
+    atraso = agora - saiu_em
+    if esperado < 1 or episodios_na_fonte >= esperado or atraso < LIMITE_DE_FONTE_PARADA:
+        return None
+    return FonteParada(episodio_esperado=esperado, atraso=atraso)
+
+
 def _exponencial(base: timedelta, teto: timedelta, falhas_consecutivas: int) -> timedelta:
     expoente = min(max(falhas_consecutivas - 1, 0), 16)  # 16: evita overflow, teto já vem antes
     return min(base * 2**expoente, teto)

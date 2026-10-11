@@ -329,6 +329,15 @@ class FileiraTematicaSaida(BaseModel):
     itens: list[AnimeEmAltaSaida]
 
 
+class FonteParadaSaida(BaseModel):
+    """Indício de que a fonte do anime parou de publicar (ver
+    `core.ciclo_de_vida.fonte_parada`): a página sugere "Trocar fonte"."""
+
+    episodio_esperado: int
+    atraso_horas: int
+    dominio: str | None = None
+
+
 class AnimeDetalheSaida(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -386,6 +395,9 @@ class AnimeDetalheSaida(BaseModel):
     # `None` quando não há nenhuma nesse estado. `estreia_em`/`ano` do objeto
     # vêm preenchidos só aqui.
     proxima_temporada: TemporadaIrmaSaida | None = None
+    # Presente só quando a fonte tem menos episódios do que a AniList diz que já
+    # saíram há mais de 48 h (`core.ciclo_de_vida.fonte_parada`); `None` no resto.
+    fonte_parada: FonteParadaSaida | None = None
 
 
 class CandidatoDeBannerSaida(BaseModel):

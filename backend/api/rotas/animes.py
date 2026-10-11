@@ -4,7 +4,7 @@ alta" de metadados externos via `integrations/`).
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -26,6 +26,7 @@ from api.esquemas import (
     EscolherBannerRequest,
     FileiraTematicaSaida,
     FonteConsultadaSaida,
+    FonteParadaSaida,
     ResultadoBuscaFonteSaida,
     TemporadaIrmaSaida,
 )
@@ -38,6 +39,7 @@ from api.servicos import fontes as servico_fontes
 from api.servicos import jobs as servico_jobs
 from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
+from core.ciclo_de_vida import RetratoDoAnime, fase_do_anime, fonte_parada
 from core.config import Config
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
@@ -578,6 +580,7 @@ async def obter_anime(
         numero_temporada=anime.numero_temporada,
         temporadas=temporadas,
         proxima_temporada=proxima_temporada,
+        fonte_parada=_fonte_parada_de(anime, versao_confirmada_mais_recente),
     )
 
 
@@ -638,6 +641,32 @@ async def listar_relacionados_do_anime(
         for item, aid in pares
         if aid is None or aid not in ids_do_seletor
     ]
+
+
+def _fonte_parada_de(
+    anime: Anime, versao_ativa: VersaoEpisodio | None
+) -> FonteParadaSaida | None:
+    """Indício de fonte parada para a página do anime. Fonte dublada fica de fora:
+    o dub atrasa em relação à AniList por natureza, então a comparação seria
+    alarme falso."""
+    if versao_ativa is VersaoEpisodio.DUBLADO:
+        return None
+    agora = datetime.now(UTC)
+    parada = fonte_parada(
+        fase_do_anime(RetratoDoAnime.de(anime), date.today()),
+        proximo_ep_numero=anime.proximo_ep_numero,
+        proximo_ep_em=anime.proximo_ep_em,
+        episodios_na_fonte=anime.episodios_na_fonte,
+        fonte_verificada_em=anime.fonte_verificada_em,
+        agora=agora,
+    )
+    if parada is None:
+        return None
+    return FonteParadaSaida(
+        episodio_esperado=parada.episodio_esperado,
+        atraso_horas=int(parada.atraso.total_seconds() // 3600),
+        dominio=anime.fonte_verificada_dominio,
+    )
 
 
 def _ids_do_seletor_de_temporada(
