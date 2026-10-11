@@ -9,10 +9,10 @@ execução, não política.
 """
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 
-from core.enums import StatusLancamento
+from core.enums import ResultadoDeVerificacao, StatusLancamento
 
 # Folga após a data prevista do último episódio (estreia + 1 semana por
 # episódio) em que um `FINALIZADO` incompleto ainda é re-sondado — o fansub
@@ -98,3 +98,46 @@ def deve_sondar_fonte(retrato: RetratoDoAnime, hoje: date) -> bool:
 
 def deve_atualizar_status(retrato: RetratoDoAnime, hoje: date) -> bool:
     return fase_do_anime(retrato, hoje) in _FASES_COM_STATUS_VIVO
+
+
+# --- Backoff entre tentativas ---
+
+INTERVALO_APOS_SUCESSO = timedelta(hours=6)
+_ESPERA_SITE_INDISPONIVEL = timedelta(minutes=15)  # o breaker do site manda; aqui é só folga
+_ESPERA_PRECISA_SESSAO = timedelta(hours=3)
+_ESPERA_AMBIGUO = timedelta(days=7)  # só o usuário desfaz; nada a ganhar retentando
+_BASE_NAO_ENCONTRADO, _TETO_NAO_ENCONTRADO = timedelta(hours=6), timedelta(days=7)
+_BASE_ERRO, _TETO_ERRO = timedelta(hours=1), timedelta(hours=24)
+
+# Falha que não conta contra o anime: o culpado é o site, e o breaker dele já
+# segura as tentativas.
+CONTA_COMO_FALHA_DO_ANIME = frozenset(ResultadoDeVerificacao) - {
+    ResultadoDeVerificacao.OK,
+    ResultadoDeVerificacao.SITE_INDISPONIVEL,
+}
+
+
+def _exponencial(base: timedelta, teto: timedelta, falhas_consecutivas: int) -> timedelta:
+    expoente = min(max(falhas_consecutivas - 1, 0), 16)  # 16: evita overflow, teto já vem antes
+    return min(base * 2**expoente, teto)
+
+
+def proxima_tentativa(
+    resultado: ResultadoDeVerificacao, falhas_consecutivas: int, agora: datetime
+) -> datetime:
+    """Quando tentar de novo, dado o desfecho e as falhas seguidas (já contando
+    esta). Backoff exponencial só onde repetir pode mudar o resultado."""
+    match resultado:
+        case ResultadoDeVerificacao.OK:
+            espera = INTERVALO_APOS_SUCESSO
+        case ResultadoDeVerificacao.SITE_INDISPONIVEL:
+            espera = _ESPERA_SITE_INDISPONIVEL
+        case ResultadoDeVerificacao.PRECISA_SESSAO:
+            espera = _ESPERA_PRECISA_SESSAO
+        case ResultadoDeVerificacao.AMBIGUO:
+            espera = _ESPERA_AMBIGUO
+        case ResultadoDeVerificacao.NAO_ENCONTRADO:
+            espera = _exponencial(_BASE_NAO_ENCONTRADO, _TETO_NAO_ENCONTRADO, falhas_consecutivas)
+        case ResultadoDeVerificacao.ERRO:
+            espera = _exponencial(_BASE_ERRO, _TETO_ERRO, falhas_consecutivas)
+    return agora + espera

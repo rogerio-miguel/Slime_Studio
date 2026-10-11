@@ -326,13 +326,16 @@ async def listar_animes(
         # episódio já capturado; `ignorar_gate_de_status` deixa isto tentar
         # mesmo pra anime `FINALIZADO` (o gate normal de status não se aplica
         # aqui — é reparo pontual, não sondagem contínua de contagem).
-        # `ids_fora_de_cooldown_de_reparo` corta quem falhou a varredura cara
-        # (todos os extratores, sem fonte mapeada pra atalhar) há pouco tempo —
-        # sem isto, um anime não encontrado em lugar nenhum repetia a
-        # varredura inteira a cada `?aquecer=true`.
-        ids_sem_fonte_com_episodios = servico_sondagem.ids_fora_de_cooldown_de_reparo(
-            aid for aid in ids if aid in com_episodios and aid not in versoes
-        )
+        # `em_espera` (backoff persistido) corta quem falhou há pouco, inclusive
+        # a varredura cara (todos os extratores, sem fonte mapeada pra atalhar) —
+        # sem isto, um anime não encontrado em lugar nenhum repetia a varredura
+        # inteira a cada `?aquecer=true`.
+        em_espera = await servico_sondagem.ids_em_espera(sessao, ids)
+        ids_sem_fonte_com_episodios = [
+            aid
+            for aid in ids
+            if aid in com_episodios and aid not in versoes and aid not in em_espera
+        ]
         versoes_de_reparo = await servico_sondagem.versoes_para_reresolver_fonte_perdida(
             sessao, ids_sem_fonte_com_episodios
         )
@@ -350,6 +353,7 @@ async def listar_animes(
             animes,
             versoes,
             ignorar_gate_de_status=frozenset(versoes_de_reparo),
+            em_espera=em_espera,
         )
         servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
@@ -582,7 +586,12 @@ async def obter_anime(
         if mais_recente is not None
         else {}
     )
-    servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
+    servico_sondagem.agendar_sondagens(
+        sessionmaker,
+        [anime],
+        versoes_de_sondagem,
+        em_espera=await servico_sondagem.ids_em_espera(sessao, [anime.id]),
+    )
     grupos = await servico_catalogo.agrupar_franquias(sessao)
     temporadas, proxima_temporada = _temporadas_e_proxima(
         anime.id, anime.numero_temporada, grupos[anime.id]

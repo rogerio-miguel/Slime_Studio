@@ -99,6 +99,28 @@ class StatusLancamento(StrEnum):
     HIATO = "hiato"
 
 
+class TarefaDeVerificacao(StrEnum):
+    """Tipo de verificação periódica de um anime (`VerificacaoDeAnime`).
+
+    Persistido como name; só `FONTE` existe hoje (sondagem do site). `STATUS`
+    (AniList) e `CLASSIFICACAO` entram quando o agendador as executar — coluna
+    varchar, acrescentar valor não exige migration."""
+
+    FONTE = "fonte"
+
+
+class ResultadoDeVerificacao(StrEnum):
+    """Desfecho de uma tentativa de verificação — define o backoff
+    (`core.ciclo_de_vida.proxima_tentativa`)."""
+
+    OK = "ok"
+    NAO_ENCONTRADO = "nao_encontrado"  # anime/versão não existe no site
+    PRECISA_SESSAO = "precisa_sessao"  # Cloudflare rejeitou a sessão
+    SITE_INDISPONIVEL = "site_indisponivel"  # circuit breaker do site aberto
+    AMBIGUO = "ambiguo"  # mais de um candidato: espera decisão do usuário
+    ERRO = "erro"  # timeout, banco, falha de extração genérica
+
+
 # Estados que contam como "em andamento" para fins de reclaim por heartbeat
 # (db/fila.py: reciclar_jobs_orfaos). Um job travado em qualquer um destes
 # estados, com heartbeat velho, volta para `na_fila`.
