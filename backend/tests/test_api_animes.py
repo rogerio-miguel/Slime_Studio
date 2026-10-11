@@ -446,6 +446,7 @@ async def _criar_anime_catalogado(
     episodios_na_fonte: int | None = None,
     fonte_verificada_em: datetime | None = None,
     proximo_ep_em: datetime | None = None,
+    proximo_ep_numero: int | None = None,
     estreia_em: date | None = None,
     generos: list[str] | None = None,
     formato_midia: str | None = None,
@@ -463,6 +464,7 @@ async def _criar_anime_catalogado(
             episodios_na_fonte=episodios_na_fonte,
             fonte_verificada_em=fonte_verificada_em,
             proximo_ep_em=proximo_ep_em,
+            proximo_ep_numero=proximo_ep_numero,
             estreia_em=estreia_em,
             generos=generos,
         )
@@ -1008,6 +1010,66 @@ async def test_obter_anime_detalhe_expoe_status_lancamento_mas_nunca_o_badge(
     # `episodios_novos` é badge só da galeria (`GET /api/animes`) — o detalhe
     # nunca expõe, mesmo no estado que na galeria daria badge 2.
     assert "episodios_novos" not in resposta.json()
+
+
+async def test_obter_anime_detalhe_expoe_fonte_parada_quando_a_fonte_nao_alcanca_a_anilist(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    # AniList: próximo é o ep 6, em 3 dias -> já saíram 5; o 5º saiu há ~4 dias
+    # (7 d antes do próximo). A fonte, sondada há 1 h, tem só 3.
+    anime_id = await _criar_anime_catalogado(
+        sessionmaker_api,
+        "Anime Fonte Parada",
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=3,
+        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
+        proximo_ep_numero=6,
+        proximo_ep_em=datetime.now(UTC) + timedelta(days=3),
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id, dominio="animefire.one")
+
+    corpo = (await cliente.get(f"/api/animes/{anime_id}")).json()
+
+    assert corpo["fonte_parada"]["episodio_esperado"] == 5
+    assert 90 <= corpo["fonte_parada"]["atraso_horas"] <= 100
+
+
+async def test_obter_anime_detalhe_sem_fonte_parada_quando_a_fonte_esta_em_dia(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    anime_id = await _criar_anime_catalogado(
+        sessionmaker_api,
+        "Anime Fonte Em Dia",
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=5,
+        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
+        proximo_ep_numero=6,
+        proximo_ep_em=datetime.now(UTC) + timedelta(days=3),
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+
+    corpo = (await cliente.get(f"/api/animes/{anime_id}")).json()
+
+    assert corpo["fonte_parada"] is None
+
+
+async def test_obter_anime_detalhe_nao_acusa_fonte_parada_em_fonte_dublada(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker
+):
+    anime_id = await _criar_anime_catalogado(
+        sessionmaker_api,
+        "Anime Dublado Atrasado",
+        status_lancamento=StatusLancamento.EM_LANCAMENTO,
+        episodios_na_fonte=2,
+        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
+        proximo_ep_numero=6,
+        proximo_ep_em=datetime.now(UTC) + timedelta(days=3),
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id, versao=VersaoDeFonte.DUBLADO)
+
+    corpo = (await cliente.get(f"/api/animes/{anime_id}")).json()
+
+    assert corpo["fonte_parada"] is None
 
 
 async def test_obter_anime_detalhe_expoe_banner_e_capa_cor(

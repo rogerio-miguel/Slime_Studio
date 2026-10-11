@@ -15,6 +15,7 @@ import {
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
+import AvisoDeFonteParada from '../components/AvisoDeFonteParada.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
@@ -1044,6 +1045,10 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
                     </div>
                   )}
                   <LinhaDeVerificacao verificacao={verificacoes.dados?.[0]} />
+                  <AvisoDeFonteParada
+                    fonteParada={anime?.fonte_parada}
+                    aoTrocarFonte={() => setTrocandoFonte(true)}
+                  />
                 </>
               )
             }

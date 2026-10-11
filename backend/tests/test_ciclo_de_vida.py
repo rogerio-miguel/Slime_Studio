@@ -12,6 +12,7 @@ from core.ciclo_de_vida import (
     deve_resolver_fonte,
     deve_sondar_fonte,
     fase_do_anime,
+    fonte_parada,
     proxima_sondagem_apos_sucesso,
     proxima_tentativa,
 )
@@ -142,3 +143,66 @@ _AGORA = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 )
 def test_proxima_sondagem_apos_sucesso(proximo_ep_em, em_dia, esperado):
     assert proxima_sondagem_apos_sucesso(proximo_ep_em, em_dia, _AGORA) - _AGORA == esperado
+
+
+# --- fonte parada ---
+
+
+def _parada(*, fase=Fase.EM_LANCAMENTO, numero=6, em, na_fonte, verificada_ha=timedelta(hours=1)):
+    return fonte_parada(
+        fase,
+        proximo_ep_numero=numero,
+        proximo_ep_em=em,
+        episodios_na_fonte=na_fonte,
+        fonte_verificada_em=_AGORA - verificada_ha,
+        agora=_AGORA,
+    )
+
+
+def test_fonte_parada_proximo_no_futuro_estima_o_ultimo_uma_semana_antes():
+    # próximo (ep 6) em 3 dias: o ep 5 saiu há 4 dias; a fonte tem 3
+    parada = _parada(em=_AGORA + timedelta(days=3), na_fonte=3)
+
+    assert parada.episodio_esperado == 5
+    assert parada.atraso == timedelta(days=4)
+
+
+def test_fonte_parada_proximo_vencido_conta_do_proprio_horario():
+    # AniList ainda não avançou: o ep 6 devia ter saído há 3 dias; a fonte tem 5
+    parada = _parada(em=_AGORA - timedelta(days=3), na_fonte=5)
+
+    assert parada.episodio_esperado == 6
+    assert parada.atraso == timedelta(days=3)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        # fonte em dia (tem os 5 que já saíram)
+        {"em": _AGORA + timedelta(days=3), "na_fonte": 5},
+        # fonte à frente da AniList
+        {"em": _AGORA + timedelta(days=3), "na_fonte": 9},
+        # atraso ainda dentro das 48 h (próximo em 6 d -> o 5º saiu há 1 d)
+        {"em": _AGORA + timedelta(days=6), "na_fonte": 3},
+        # contagem velha demais para afirmar algo
+        {"em": _AGORA + timedelta(days=3), "na_fonte": 3, "verificada_ha": timedelta(hours=48)},
+        # fora de exibição
+        {"em": _AGORA + timedelta(days=3), "na_fonte": 3, "fase": Fase.POS_FIM},
+        # estreia: nada saiu ainda (próximo é o ep 1)
+        {"em": _AGORA + timedelta(days=3), "na_fonte": 0, "numero": 1},
+    ],
+)
+def test_fonte_parada_nao_acusa(kwargs):
+    assert _parada(**kwargs) is None
+
+
+def test_fonte_parada_sem_dados_da_anilist_ou_da_fonte_nao_acusa():
+    base = {
+        "proximo_ep_numero": 6,
+        "proximo_ep_em": _AGORA + timedelta(days=3),
+        "episodios_na_fonte": 3,
+        "fonte_verificada_em": _AGORA,
+        "agora": _AGORA,
+    }
+    for campo in list(base)[:-1]:
+        assert fonte_parada(Fase.EM_LANCAMENTO, **{**base, campo: None}) is None
