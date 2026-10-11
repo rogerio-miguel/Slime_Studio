@@ -9,7 +9,7 @@ que uma corotina fire-and-forget nunca propaga exceção.
 """
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -202,6 +202,48 @@ async def test_gate_barra_status_finalizado(
 
     assert chamadas == []
     assert sondagem._sondagens_em_voo == {}
+
+
+async def test_gate_barra_finalizado_incompleto_antigo(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    chamadas = _espiar_sondagem(monkeypatch)
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "finalizado-antigo",
+        status_lancamento=StatusLancamento.FINALIZADO,
+        total_episodios_anilist=13,
+        episodios_na_fonte=12,
+        estreia_em=date(2015, 1, 9),
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+
+    animes = await _carregar(sessionmaker_api, anime_id)
+    sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
+    await _drenar_sondagens()
+
+    assert chamadas == []
+
+
+async def test_gate_libera_finalizado_incompleto_recente(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    chamadas = _espiar_sondagem(monkeypatch)
+    anime_id = await _criar_anime(
+        sessionmaker_api,
+        "finalizado-recente",
+        status_lancamento=StatusLancamento.FINALIZADO,
+        total_episodios_anilist=12,
+        episodios_na_fonte=11,
+        estreia_em=date.today() - timedelta(weeks=13),
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+
+    animes = await _carregar(sessionmaker_api, anime_id)
+    sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
+    await _drenar_sondagens()
+
+    assert len(chamadas) == 1
 
 
 async def test_gate_barra_anime_sem_fonte_mapeada(
