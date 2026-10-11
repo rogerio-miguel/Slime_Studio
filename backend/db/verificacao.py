@@ -4,7 +4,7 @@ backoff é de `core/ciclo_de_vida.py`; aqui só leitura e gravação."""
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -36,6 +36,21 @@ async def ids_em_espera(
         )
     )
     return frozenset(resultado.scalars())
+
+
+async def tentativas_desde(
+    sessao: AsyncSession, tarefa: TarefaDeVerificacao, desde: datetime
+) -> int:
+    """Quantos animes tiveram uma tentativa de `tarefa` a partir de `desde`. Guarda
+    só a ÚLTIMA tentativa de cada anime, então é um limite inferior do volume real
+    (um anime que falhou duas vezes na janela conta uma) — suficiente para o teto
+    por hora, porque o backoff espaça as tentativas do mesmo anime."""
+    resultado = await sessao.execute(
+        select(func.count()).where(
+            VerificacaoDeAnime.tarefa == tarefa, VerificacaoDeAnime.ultima_tentativa_em >= desde
+        )
+    )
+    return resultado.scalar_one()
 
 
 async def registrar_resultado(
