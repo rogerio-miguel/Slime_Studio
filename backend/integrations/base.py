@@ -146,6 +146,9 @@ class AnimeEmAlta:
     # airingAt`) — mesma origem e mesmo feed de `episodio_lancado`. A Home agrupa
     # "Acabou de sair" por dia com isso (Hoje/Ontem/...) e mostra a hora.
     episodio_lancado_em: datetime | None = None
+    # `ArteDeAnime.banner_com_titulo_url`, sobreposto por `_com_arte`; `None` quando
+    # o TMDB não tem arte com título — o frontend cai no `banner_url`.
+    banner_com_titulo_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +290,10 @@ class ArteDeAnime:
     banner_url: str | None
     sinopse_serie: str | None = None
     ano_da_serie: int | None = None
+    # Backdrop do TMDB COM o título desenhado na imagem (idioma pt/en de
+    # `/tv/{id}/images`), ao contrário de `banner_url`, que é sempre a arte limpa —
+    # o feed "Acabou de sair" não tem bloco de texto pra cobrir o banner.
+    banner_com_titulo_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

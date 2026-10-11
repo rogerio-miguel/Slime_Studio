@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 _URL_BASE = "https://api.themoviedb.org/3"
 _URL_IMAGEM = "https://image.tmdb.org/t/p"
 _TAMANHO_BACKDROP = "original"  # hero em tela cheia: w1280 ficava borrado
+# `/tv/{id}/images` só devolve os idiomas pedidos: a arte COM título existe em vários
+# (o título desenhado em japonês, coreano...), então a lista é larga de propósito.
+_IDIOMAS_DE_IMAGEM = "pt,en,ja,ko,zh,es,fr,de,it,ru,th,id,null"
+_PRIORIDADE_DE_IDIOMA_DO_TITULO = {"pt": 0, "en": 1, "ja": 2}
+_IDIOMA_DO_TITULO_OUTRO = 3
+_TAMANHO_COM_TITULO = "w780"  # miniatura da lista "Acabou de sair" (~200px); original é exagero
 _TAMANHO_ANALISE = "w780"  # só pra medir espaço livre; o banner salvo é `original`
 _LADO_DA_ANALISE = 160  # px do maior lado após reduzir (custo O(pixels) em Python puro)
 _FAIXA_ESQUERDA = 0.45  # fração da largura onde o hero põe o bloco de conteúdo
@@ -121,6 +127,9 @@ class TmdbProvider(ProvedorDeArte):
         # diferente ao memo de `servico.py`) e o feed reaproveitam a mesma medição
         # em vez de refazer ~6 downloads — e o overlay do feed cabe no timeout de 8s.
         self._backdrop_medido: dict[int, str] = {}
+        # `id_da_serie -> corpo de /tv/{id}/images`: backdrop limpo e backdrop com título
+        # saem da MESMA chamada (vários idiomas, `_IDIOMAS_DE_IMAGEM`): 1 request por série, não 2.
+        self._imagens: dict[int, dict] = {}
 
     @property
     def nome(self) -> str:
@@ -139,15 +148,20 @@ class TmdbProvider(ProvedorDeArte):
         id_da_serie = serie.get("id")
         melhor = self._melhor_backdrop(id_da_serie) if isinstance(id_da_serie, int) else None
         banner_url = _url_imagem(melhor or serie.get("backdrop_path"), _TAMANHO_BACKDROP)
+        com_titulo = (
+            self._melhor_backdrop_com_titulo(id_da_serie) if isinstance(id_da_serie, int) else None
+        )
+        banner_com_titulo_url = _url_imagem(com_titulo, _TAMANHO_COM_TITULO)
         # `overview` da busca já vem em `_IDIOMA` (idêntico ao de `GET /tv/{id}`,
         # medido); vazio quando o TMDB não tem tradução — fica `None`, nunca o inglês.
         sinopse_serie = (serie.get("overview") or "").strip() or None
-        if banner_url is None and sinopse_serie is None:
+        if banner_url is None and sinopse_serie is None and banner_com_titulo_url is None:
             return None
         return ArteDeAnime(
             banner_url=banner_url,
             sinopse_serie=sinopse_serie,
             ano_da_serie=_ano_de_estreia(serie),
+            banner_com_titulo_url=banner_com_titulo_url,
         )
 
     def sinopse_da_temporada(self, titulo: str, ano: int | None, temporada: int) -> str | None:
@@ -190,17 +204,57 @@ class TmdbProvider(ProvedorDeArte):
             self._backdrop_medido[id_da_serie] = escolhido["file_path"]
         return escolhido["file_path"]
 
+    def _imagens_da_serie(self, id_da_serie: int) -> dict:
+        """Corpo de `GET /tv/{id}/images` (memo por série). Os demais idiomas entram só
+        pela arte com título: `_backdrops_da_serie` descarta o que não for sem texto ou
+        inglês."""
+        if id_da_serie not in self._imagens:
+            if len(self._imagens) >= _LIMITE_MEMO_IMAGENS:
+                self._imagens.clear()  # mesma política dos memos de `servico.py`
+            self._imagens[id_da_serie] = self._executar(
+                f"/tv/{id_da_serie}/images", {"include_image_language": _IDIOMAS_DE_IMAGEM}
+            )
+        return self._imagens[id_da_serie]
+
     def _backdrops_da_serie(self, id_da_serie: int) -> list[dict]:
         """Backdrops de `GET /tv/{id}/images` que têm `file_path`, sem texto
         (`iso_639_1` nulo) ou em inglês — o TMDB devolve `backdrops` ausente ou
         malformado em série sem arte, e isso vira lista vazia."""
-        dados = self._executar(
-            f"/tv/{id_da_serie}/images", {"include_image_language": "null,en"}
-        )
-        backdrops = dados.get("backdrops")
+        backdrops = self._imagens_da_serie(id_da_serie).get("backdrops")
         if not isinstance(backdrops, list):
             return []
-        return [b for b in backdrops if isinstance(b, dict) and b.get("file_path")]
+        return [
+            b
+            for b in backdrops
+            if isinstance(b, dict) and b.get("file_path") and b.get("iso_639_1") in (None, "en")
+        ]
+
+    def _melhor_backdrop_com_titulo(self, id_da_serie: int) -> str | None:
+        """`file_path` do melhor backdrop COM texto desenhado (qualquer `iso_639_1`
+        não nulo): pt-BR, depois inglês, depois japonês, depois os demais idiomas e,
+        dentro do mesmo, o mais votado e mais largo. Sem o filtro de resolução nem a
+        medição de espaço livre do banner do carrossel: a miniatura da lista tem
+        ~200px, a diferença não aparece. `None` quando a série não tem — o frontend
+        cai na capa, que traz o título."""
+        backdrops = self._imagens_da_serie(id_da_serie).get("backdrops")
+        if not isinstance(backdrops, list):
+            return None
+        candidatos = [
+            b
+            for b in backdrops
+            if isinstance(b, dict) and b.get("file_path") and b.get("iso_639_1")
+        ]
+        if not candidatos:
+            return None
+        melhor = min(
+            candidatos,
+            key=lambda b: (
+                _PRIORIDADE_DE_IDIOMA_DO_TITULO.get(b["iso_639_1"], _IDIOMA_DO_TITULO_OUTRO),
+                -(b.get("vote_average") or 0),
+                -(b.get("width") or 0),
+            ),
+        )
+        return melhor["file_path"]
 
     def listar_candidatos_de_banner(self, titulo: str, ano: int | None) -> list[CandidatoDeBanner]:
         """Opções do seletor de banner: os backdrops SEM texto sobreposto na
@@ -461,16 +515,22 @@ class TmdbProvider(ProvedorDeArte):
         titulo`, `tabela_de_temporadas`) esta é a única redução — sem ela o
         overlay de still não resolvia nenhuma temporada >= 2. Descascar de
         novo um título já base é no-op (identidade).
+
+        Busca vazia não encerra: `_consultas_de_busca` tenta versões mais curtas (sem
+        subtítulo, sem marcadores soltos). O TMDB resolve título alternativo ("Diamond
+        no Ace" acha "Ace of the Diamond"), mas não casa o romaji com subtítulo
+        ("Umayuru: Full Gate!"). A busca mais longa vem primeiro: quem já casava não muda.
         """
         titulo_base, _derivado = separar_temporada(titulo)
-        dados = self._executar(
-            "/search/tv",
-            {"query": titulo_base, "include_adult": "false", "page": 1, "language": _IDIOMA},
-        )
-        resultados = dados.get("results")
-        if not isinstance(resultados, list) or not resultados:
-            return None
-        return _melhor_resultado(resultados, titulo_base, ano)
+        for consulta in _consultas_de_busca(titulo_base):
+            dados = self._executar(
+                "/search/tv",
+                {"query": consulta, "include_adult": "false", "page": 1, "language": _IDIOMA},
+            )
+            resultados = dados.get("results")
+            if isinstance(resultados, list) and resultados:
+                return _melhor_resultado(resultados, titulo_base, ano)
+        return None
 
     def _executar(self, caminho: str, params: dict) -> dict:
         resposta = requests.get(
@@ -489,6 +549,29 @@ class TmdbProvider(ProvedorDeArte):
         if not isinstance(corpo, dict):
             raise RuntimeError("TMDB: resposta não é um objeto JSON")
         return corpo
+
+
+_MAX_CONSULTAS = 4
+_LIMITE_MEMO_IMAGENS = 500  # ~dezenas de KB cada; o feed toca poucas dezenas de séries
+_MIN_PALAVRAS_AO_ENCURTAR = 3  # abaixo disso a busca casa qualquer coisa popular
+_CORTE_DE_SUBTITULO = re.compile(r":\s+|\s+[-–—]")
+
+
+def _consultas_de_busca(titulo: str) -> list[str]:
+    """Buscas a tentar no TMDB, da mais específica à mais curta: o título inteiro,
+    depois o que vem antes do subtítulo (": ..." ou " - ...") e, por fim, esse
+    trecho sem as últimas palavras (marcadores soltos como "act II"), parando em
+    `_MIN_PALAVRAS_AO_ENCURTAR` palavras. "Re:Zero" não é cortado: só ":" seguido de
+    espaço conta como subtítulo."""
+    consultas = [titulo]
+    corte = _CORTE_DE_SUBTITULO.split(titulo, maxsplit=1)[0].strip()
+    if corte and corte != titulo:
+        consultas.append(corte)
+    palavras = (corte or titulo).split()
+    while len(palavras) > _MIN_PALAVRAS_AO_ENCURTAR and len(consultas) < _MAX_CONSULTAS:
+        palavras = palavras[:-1]
+        consultas.append(" ".join(palavras))
+    return list(dict.fromkeys(consultas))
 
 
 def _melhor_resultado(resultados: list, titulo: str, ano: int | None) -> dict | None:

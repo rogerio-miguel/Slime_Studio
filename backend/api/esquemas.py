@@ -304,6 +304,9 @@ class AnimeEmAltaSaida(BaseModel):
     # Quando esse episódio foi ao ar (UTC) — só `/novos-lancamentos` preenche.
     # Frontend agrupa por dia local e mostra a hora.
     episodio_lancado_em: datetime | None = None
+    # Backdrop do TMDB com o título desenhado na imagem (miniatura de "Acabou de sair");
+    # `None` → o frontend usa `banner_url`.
+    banner_com_titulo_url: str | None = None
 
 
 class FileiraTematicaSaida(BaseModel):
