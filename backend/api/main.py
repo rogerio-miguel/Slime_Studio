@@ -5,6 +5,8 @@ routers e handlers de exceção. Sem app global: testes injetam `Config` de test
 carregá-la sozinho).
 """
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -21,6 +23,7 @@ from api.eventos import Assinantes, MonitorDeFila
 from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
 from api.seguranca import CabecalhosDeSeguranca, LimitesDeTaxa, ProtecaoDeOrigem
 from api.servicos import cache_de_feeds
+from api.servicos.zelador import Zelador
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
@@ -83,9 +86,19 @@ def criar_app(config: Config) -> FastAPI:
         app.state.limites = LimitesDeTaxa()
         app.state.monitor = monitor
 
+        tarefa_do_zelador = None
+        if config.zelador_ativo:
+            tarefa_do_zelador = asyncio.create_task(
+                Zelador(sessionmaker).rodar(), name="zelador-de-fontes"
+            )
+
         try:
             yield
         finally:
+            if tarefa_do_zelador is not None:
+                tarefa_do_zelador.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await tarefa_do_zelador
             await monitor.parar()
             await engine.dispose()
 

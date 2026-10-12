@@ -8,6 +8,7 @@ from models.estado_site import EstadoSite
 from models.fonte_anime import FonteAnime
 from models.job import Job
 from models.sessao_bypass import SessaoBypass
+from models.verificacao_de_anime import VerificacaoDeAnime
 
 __all__ = [
     "Anime",
@@ -18,4 +19,5 @@ __all__ = [
     "FonteAnime",
     "Job",
     "SessaoBypass",
+    "VerificacaoDeAnime",
 ]

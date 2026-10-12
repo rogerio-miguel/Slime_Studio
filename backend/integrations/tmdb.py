@@ -376,7 +376,7 @@ class TmdbProvider(ProvedorDeArte):
     def tabela_de_temporadas(self, titulo: str, ano: int | None) -> TabelaDeTemporadas | None:
         """`GET /tv/{id}` -> `seasons[]` -> tabela "primeiro episódio absoluto
         por temporada", acumulando `episode_count` das temporadas anteriores —
-        mesma aritmética que `extractors/animefire.py::
+        mesma aritmética que `fontes/adaptadores/animefire.py::
         _mapa_primeiro_episodio_por_temporada` já resolve do lado do
         AnimeFire (útil só como referência), aqui resolvida puramente do lado
         do TMDB. Pública (não `_`-prefixada): reusada por

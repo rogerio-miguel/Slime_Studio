@@ -1,4 +1,4 @@
-"""Testes de `extractors/cliente.py::ClienteLeve` sem rede — a sessão
+"""Testes de `fontes/rede/cliente.py::ClienteLeve` sem rede — a sessão
 `cloudscraper` é trocada por um dublê que devolve uma resposta (ou levanta uma
 exceção de `requests`) pré-programada.
 
@@ -11,7 +11,7 @@ import pytest
 import requests
 
 from core.erros import FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
-from extractors.cliente import ClienteComPost, ClienteLeve, ClienteNavegador
+from fontes.rede.cliente import ClienteComPost, ClienteLeve, ClienteNavegador
 
 
 class _RespostaFalsa:
@@ -59,7 +59,7 @@ def cliente_leve_com(monkeypatch):
     ) -> tuple[ClienteLeve, _SessaoFalsa]:
         sessao = _SessaoFalsa(resultado)
         monkeypatch.setattr(
-            "extractors.cliente.cloudscraper.create_scraper", lambda **_: sessao
+            "fontes.rede.cliente.cloudscraper.create_scraper", lambda **_: sessao
         )
         return ClienteLeve(), sessao
 
@@ -119,7 +119,7 @@ def test_403_sem_marcador_de_desafio_nao_e_sessao_rejeitada(cliente_leve_com):
 
 def test_capacidade_de_post_e_exclusiva_do_cliente_leve(monkeypatch):
     monkeypatch.setattr(
-        "extractors.cliente.cloudscraper.create_scraper", lambda **_: object()
+        "fontes.rede.cliente.cloudscraper.create_scraper", lambda **_: object()
     )
     assert isinstance(ClienteLeve(), ClienteComPost)
     assert not isinstance(ClienteNavegador(), ClienteComPost)

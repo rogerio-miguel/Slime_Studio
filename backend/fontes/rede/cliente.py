@@ -4,7 +4,7 @@
 por injeção, não hierarquia — D2/D3 do plano) — `ClienteLeve` e
 `ClienteNavegador` implementam o mesmo contrato sem herdar nada em comum.
 
-Quem escolhe entre os dois é `extractors/resiliencia.py`, nunca o adapter: o
+Quem escolhe entre os dois é `fontes/rede/resiliencia.py`, nunca o adapter: o
 leve é o padrão (rápido, sem JS), o navegador entra quando o site exige
 (`ExtratorDeSite.exige_navegador`/`exige_navegador_para_midia`) ou como escalada
 de `SessaoRejeitada`.
@@ -28,7 +28,7 @@ import cloudscraper
 import requests
 
 from core.erros import FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
-from extractors import rede_segura
+from fontes.rede import rede_segura
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,17 @@ _MARCADORES_CORPO_CLOUDFLARE = (
 )
 
 
+# Beacon de "JavaScript Detections" do Cloudflare: vive sob o mesmo prefixo
+# `/cdn-cgi/challenge-platform/` mas é injetado em página NORMAL já liberada (visto
+# ao vivo no MeusAnimes em 2026-10-11, com `cf_clearance` válido e resultados na
+# tela). Contá-lo como desafio fazia o navegador esperar 20s numa página boa e
+# descartar a busca. O loader de desafio de verdade usa `.../h/<x>/orchestrate/...`.
+_BEACON_JSD = "/cdn-cgi/challenge-platform/scripts/jsd/"
+
+
 def _tem_marcador_de_desafio(html: str) -> bool:
-    return any(marcador in html for marcador in _MARCADORES_CORPO_CLOUDFLARE)
+    sem_beacon = html.replace(_BEACON_JSD, "")
+    return any(marcador in sem_beacon for marcador in _MARCADORES_CORPO_CLOUDFLARE)
 
 
 class ClienteDeSite(Protocol):
@@ -98,7 +107,7 @@ class ClienteComPost(Protocol):
     site na mão.
 
     Mesmo contrato de uso de `ClienteComCaptura`: o helper que precisa disso
-    (`extractors/blogger.py`) confere com `isinstance` antes de chamar; o
+    (`fontes/adaptadores/blogger.py`) confere com `isinstance` antes de chamar; o
     contrato base (`ClienteDeSite`) segue sendo só GET."""
 
     def postar_formulario(self, url: str, campos: dict[str, str], *, timeout_s: int) -> str: ...
@@ -134,7 +143,7 @@ class ClienteLeve:
     def postar_formulario(self, url: str, campos: dict[str, str], *, timeout_s: int) -> str:
         """POST de formulário (`application/x-www-form-urlencoded`) com a MESMA
         tradução de erro do GET — ver `_requisitar`. Existe para o helper do
-        Blogger (`extractors/blogger.py`) falar o protocolo `batchexecute` do
+        Blogger (`fontes/adaptadores/blogger.py`) falar o protocolo `batchexecute` do
         player sem subir navegador; só o cliente leve implementa (`ClienteComPost`)."""
         resposta = self._requisitar(
             url, lambda: self._sessao.post(url, data=campos, timeout=timeout_s)
@@ -182,7 +191,7 @@ class ClienteLeve:
 
 # Binário do navegador: procurado no PATH, na ordem abaixo, ou apontado por
 # `SLIME_NAVEGADOR_BIN`. Não passa por `core/config.py` de propósito — `Config`
-# nunca chega em `extractors/resiliencia.py` (quem instancia o cliente), e
+# nunca chega em `fontes/rede/resiliencia.py` (quem instancia o cliente), e
 # plumbar Config até aqui só por causa de um caminho de binário acoplaria a
 # camada de extração ao bootstrap da aplicação.
 _VARIAVEL_BINARIO_NAVEGADOR = "SLIME_NAVEGADOR_BIN"
@@ -308,14 +317,14 @@ class ClienteNavegador:
     usuário rodaria.
 
     Existe porque parte dos players do AnimesDrive só monta a URL de mídia em
-    tempo de execução, no próprio JS da página (`extractors/animesdrive.py`).
+    tempo de execução, no próprio JS da página (`fontes/adaptadores/animesdrive.py`).
     A estratégia aqui é **observar**, não reimplementar: o navegador carrega a
     página, ela executa o que executaria normalmente, e a gente lê a URL da
     requisição de mídia que ela mesma dispara.
 
     Sessão descartável (incógnito, sem cookie injetado): o navegador resolve o
     próprio desafio, e é o resultado *dele* que alimenta `SessaoBypass` de volta
-    (`extractors/resiliencia.py`), não o contrário.
+    (`fontes/rede/resiliencia.py`), não o contrário.
     """
 
     def __init__(self, *, headless: bool | None = None) -> None:
@@ -475,7 +484,7 @@ class ClienteNavegador:
             return self._pagina
 
         # Import tardio: DrissionPage arrasta lxml/websocket-client e custa ~1s
-        # de import. A API (`api/`) importa `extractors` inteiro e nunca usa
+        # de import. A API (`api/`) importa `fontes` inteiro e nunca usa
         # navegador — não faz sentido pagar isso em todo boot.
         from DrissionPage import ChromiumOptions, ChromiumPage
         from DrissionPage.errors import BaseError
@@ -636,7 +645,7 @@ def _localizar_binario_de_navegador() -> str:
 
 def responde(url: str, cabecalhos: dict[str, str]) -> bool:
     """Confere que a URL responde, com os mesmos cabeçalhos (e sem cookie) que o
-    `ffmpeg` do pipeline vai usar — `extractors/download.py`.
+    `ffmpeg` do pipeline vai usar — `captura/download.py`.
 
     Existe porque o player tenta mais de uma origem: no mesmo episódio, o
     primeiro `.mp4` pedido devolvia 404 e só o segundo tocava (confirmado ao vivo
@@ -644,12 +653,12 @@ def responde(url: str, cabecalhos: dict[str, str]) -> bool:
     job só descobriria isso no download.
 
     Não é só pra URL observada saindo do navegador: também vale pra URL de
-    `<source>` lida direto do HTML estático (`extractors/animesdrive.py`, painel
+    `<source>` lida direto do HTML estático (`fontes/adaptadores/animesdrive.py`, painel
     de qualidade com vídeo direto) — mesma razão (o site serve URL morta), mesmo
     tratamento.
 
     Só status — a validação de isca (HTML/imagem no lugar de mídia) continua em
-    `extractors/download.py::conferir_link_de_midia`, que roda no pipeline; não
+    `captura/download.py::conferir_link_de_midia`, que roda no pipeline; não
     dá pra reusar aquela função aqui sem import circular (`download` → `base` →
     `cliente`).
     """

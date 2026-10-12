@@ -8,7 +8,7 @@ import pytest
 
 from api.servicos import fontes
 from core.enums import StatusLancamento
-from extractors.base import EpisodioRemoto
+from fontes.adaptadores.base import EpisodioRemoto
 
 
 def _eps(quantidade: int) -> list[EpisodioRemoto]:
@@ -34,13 +34,13 @@ def offset_de(monkeypatch):
     async def _sem_partes(_sessionmaker, _anime):
         return 0
 
-    monkeypatch.setattr(fontes, "_total_das_partes_irmas", _sem_partes)
+    monkeypatch.setattr(fontes, "total_das_partes_irmas", _sem_partes)
 
     def _fixar(valor: int) -> None:
         async def _falso(_sessionmaker, _anime):
             return valor
 
-        monkeypatch.setattr(fontes, "_offset_de_temporada", _falso)
+        monkeypatch.setattr(fontes, "offset_de_temporada", _falso)
 
     return _fixar
 
@@ -96,7 +96,7 @@ async def test_temporada_dividida_em_partes_soma_os_totais(monkeypatch, offset_d
     async def _partes(_sessionmaker, _anime):
         return 12
 
-    monkeypatch.setattr(fontes, "_total_das_partes_irmas", _partes)
+    monkeypatch.setattr(fontes, "total_das_partes_irmas", _partes)
     anime = _anime(total_episodios_anilist=12)
 
     assert await fontes._recortar_se_fonte_achatada(None, anime, _eps(24)) == _eps(24)

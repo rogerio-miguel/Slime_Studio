@@ -16,7 +16,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos.catalogo import job_ativo_do_episodio, remover_arquivos_do_episodio
-from api.servicos.fontes import info_de_episodio, resolver_e_listar
+from api.servicos.fontes import resolver_e_listar
+from api.servicos.stills_de_episodio import info_de_episodio
 from core.config import Config
 from core.enums import StatusEpisodio, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import (
@@ -27,7 +28,7 @@ from core.erros import (
 )
 from db import catalogo
 from db.fila import criar_job as criar_job_na_fila
-from extractors.servico import filtrar_por_numero_e_versao, filtrar_por_versao
+from fontes.listagem import filtrar_por_numero_e_versao, filtrar_por_versao
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -84,14 +85,14 @@ async def criar_job_site(
     # (`fonte.versao_da_fonte`), nunca do `versao` pedido pelo cliente — a
     # invariante desta fase. Também usado para filtrar a listagem abaixo: sem
     # isso, um site que lista episódios das duas versões (mesmo risco de
-    # `extractors/servico.py::_proximo_com_episodio`) poderia gravar a URL da
+    # `captura/servico.py::_proximo_com_episodio`) poderia gravar a URL da
     # versão errada sob o rótulo certo.
     versao_do_episodio = versao_episodio_da_fonte(fonte.versao_da_fonte)
 
     correspondentes = filtrar_por_numero_e_versao(fonte.episodios, numero, versao_do_episodio)
     if len(correspondentes) > 1:
         # Mais de um rótulo remoto mapeia pro mesmo `numero` (ex. "7"/"07" —
-        # extractors/base.py::EpisodioRemoto) — o request só carrega `numero`
+        # fontes/adaptadores/base.py::EpisodioRemoto) — o request só carrega `numero`
         # (int), sem como o cliente escolher o rótulo. Escolha determinística
         # (1ª ocorrência, ordem já estável do adapter) em vez de silenciosa —
         # nunca some do log.
@@ -122,7 +123,7 @@ async def criar_job_site(
     # extractor (scraping não expõe nada disso) — pedido explícito do usuário
     # pra `capa_path`, mesma regra aplicada aos dois campos novos.
     # `info_de_episodio` busca a mesma info TMDB que a listagem de exibição já
-    # sobrepõe (`api/servicos/fontes.py::_sobrepor_stills_de_episodios`);
+    # sobrepõe (`api/servicos/stills_de_episodio.py::sobrepor_stills_de_episodios`);
     # best-effort, `None` quando o TMDB não acha — o frontend cai pra arte do
     # anime nesse caso (`PaginaDoAnime.jsx`), nunca pro thumb da fonte; título/
     # sinopse simplesmente ficam vazios.

@@ -1,17 +1,17 @@
-"""Testes de `extractors/servico.py::_proximo_com_episodio`, sem rede —
+"""Testes de `captura/servico.py::_proximo_com_episodio`, sem rede —
 `listar_episodios_em` é substituído por uma versão que devolve uma lista fixa;
 a resolução do próximo site usa `FonteAnime` já mapeada no banco (mesmo padrão
 de `tests/test_resolucao.py::test_proximo_site_para_prefere_mapeamento_ja_existente`),
 sem precisar de extrator falso nem de `resiliencia.chamar`.
 
-Também cobre `extractors/busca/servico.py::buscar_em_com_variantes` (Fase A,
+Também cobre `fontes/busca/servico.py::buscar_em_com_variantes` (Fase A,
 fatia 2 de PLANO_PADRONIZACAO_FONTES.md), importado aqui como `servico_busca`,
 que precisa de um extrator falso injetado via
 `monkeypatch.setattr(servico_busca, "obter_extrator", ...)` e de
 `resiliencia.chamar` substituído por uma versão que chama a operação direto,
 mesmo padrão de `tests/test_resolucao.py::_resiliencia_sem_cliente_real`.
 
-E `extractors/busca/servico.py::buscar_por_site_com_variantes` (Fase B, fatia
+E `fontes/busca/servico.py::buscar_por_site_com_variantes` (Fase B, fatia
 3/4), que injeta extratores falsos via
 `monkeypatch.setattr(servico_busca, "EXTRATORES",
 ...)`/`monkeypatch.setattr(servico_busca, "obter_extrator", ...)` (mesmo padrão de
@@ -51,14 +51,16 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from captura import download, servico
 from core.config import Config
 from core.enums import TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada, SiteEmCooldown
 from db.engine import criar_engine, criar_sessionmaker
-from extractors import download, resiliencia, resolucao, servico
-from extractors.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
-from extractors.busca import servico as servico_busca
-from extractors.busca.termos import escada_combinada, variantes_de_busca
+from fontes import resolucao
+from fontes.adaptadores.base import EpisodioRemoto, LinkDeMidia, ResultadoBusca
+from fontes.busca import servico as servico_busca
+from fontes.busca.termos import escada_combinada, variantes_de_busca
+from fontes.rede import resiliencia
 from models.anime import Anime
 from models.base import Base
 from models.episodio import Episodio
@@ -99,7 +101,7 @@ async def test_proximo_com_episodio_colisao_de_numero_escolhe_primeiro_e_loga(
     sessionmaker, monkeypatch, caplog
 ):
     """Dois rótulos remotos ("7"/"07") mapeiam pro mesmo `numero=7` — regressão
-    da ambiguidade introduzida por dedup-por-rótulo (extractors/base.py::
+    da ambiguidade introduzida por dedup-por-rótulo (fontes/adaptadores/base.py::
     EpisodioRemoto). Escolha determinística (1ª ocorrência) e log de aviso,
     nunca silenciosa (CLAUDE.md §4)."""
     anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
@@ -266,7 +268,7 @@ async def test_baixar_com_fallback_de_site_loga_duracao_e_sites_tentados_no_suce
 
     monkeypatch.setattr(servico, "baixar_episodio", _baixar_episodio_fake)
 
-    with caplog.at_level("INFO", logger="extractors.servico"):
+    with caplog.at_level("INFO", logger="captura.servico"):
         resultado = await servico.baixar_com_fallback_de_site(
             sessionmaker,
             _config_de_teste(tmp_path),
@@ -328,7 +330,7 @@ async def test_baixar_com_fallback_de_site_conta_sites_tentados_apos_fallback(
 
     monkeypatch.setattr(servico, "baixar_episodio", _baixar_episodio_fake)
 
-    with caplog.at_level("INFO", logger="extractors.servico"):
+    with caplog.at_level("INFO", logger="captura.servico"):
         resultado = await servico.baixar_com_fallback_de_site(
             sessionmaker,
             _config_de_teste(tmp_path),
@@ -374,7 +376,7 @@ async def test_baixar_com_fallback_de_site_loga_ao_esgotar_sites_disponiveis(
     monkeypatch.setattr(servico, "baixar_episodio", _baixar_episodio_fake)
     monkeypatch.setattr(resolucao, "proximo_site_para", _proximo_site_para_fake)
 
-    with caplog.at_level("WARNING", logger="extractors.servico"):
+    with caplog.at_level("WARNING", logger="captura.servico"):
         with pytest.raises(EstruturaDoSiteMudou):
             await servico.baixar_com_fallback_de_site(
                 sessionmaker,
@@ -450,7 +452,7 @@ async def test_baixar_com_fallback_de_site_deadline_estourado_nao_tenta_proximo_
 
     monkeypatch.setattr(servico, "baixar_episodio", _baixar_episodio_fake)
 
-    with caplog.at_level("WARNING", logger="extractors.servico"):
+    with caplog.at_level("WARNING", logger="captura.servico"):
         with pytest.raises(FonteNaoEncontrada) as excinfo:
             await servico.baixar_com_fallback_de_site(
                 sessionmaker,
@@ -970,7 +972,7 @@ async def test_buscar_em_com_variantes_ordena_validos_com_match_exato_primeiro(
     """Sonda larga: uma única variante volta com 2 cards que passam por
     `corresponde_a_alguma_referencia` — o match exato e um mais longo que só compartilha
     o prefixo. O site os lista na ordem errada; `buscar_em_com_variantes`
-    ordena `validos` por `extractors/busca/correspondencia.py::proximidade_a_referencias` e
+    ordena `validos` por `fontes/busca/correspondencia.py::proximidade_a_referencias` e
     `candidatos[0]` é o exato (o que a UI mostra e a captura pega)."""
     _resiliencia_direta(monkeypatch)
     exato = ResultadoBusca(titulo_exibicao="Naruto", identificador="n", url="https://x/n")

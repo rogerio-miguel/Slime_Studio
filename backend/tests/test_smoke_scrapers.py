@@ -22,10 +22,10 @@ de que headless não resolve o desafio).
 
 import pytest
 
-from extractors.animefire import AnimeFireProvider
-from extractors.animesdrive import AnimesDriveProvider
-from extractors.cliente import ClienteLeve, ClienteNavegador
-from extractors.meusanimes import MeusAnimesProvider
+from fontes.adaptadores.animefire import AnimeFireProvider
+from fontes.adaptadores.animesdrive import AnimesDriveProvider
+from fontes.adaptadores.meusanimes import MeusAnimesProvider
+from fontes.rede.cliente import ClienteLeve, ClienteNavegador
 
 pytestmark = pytest.mark.rede
 
@@ -89,7 +89,7 @@ def test_animesdrive_resolve_midia_com_navegador():
 
 def test_meusanimes_localiza_link_de_um_episodio_real():
     """Cadeia inteira por `ClienteLeve` (sem navegador): busca → listagem →
-    `get-video.php` → token do Blogger → `extractors/blogger.py` (POST
+    `get-video.php` → token do Blogger → `fontes/adaptadores/blogger.py` (POST
     `batchexecute`) → URL de vídeo do googlevideo. Referência "One Piece"
     (dublado — entrada de catálogo própria no MeusAnimes), pelo mesmo motivo dos
     outros smokes: série longa, baixo risco de sumir do catálogo."""

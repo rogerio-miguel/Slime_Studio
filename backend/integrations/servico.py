@@ -16,14 +16,14 @@ expõe `buscar_info_de_episodio` (still/nome/sinopse), consumido por
 montagem acima, é chamado por episódio, não por registro de metadados/feed.
 
 Único lugar de `integrations/` com `asyncio.to_thread`/`asyncio.wait_for`
-(mesma separação de `extractors/resiliencia.py` para os extratores de site).
+(mesma separação de `fontes/rede/resiliencia.py` para os extratores de site).
 `_chamar` é também o único ponto que lê/escreve o cooldown de provedor
 (`_cooldown_por_provedor`, circuit breaker "lite" em memória de processo — ver
 o comentário da seção logo abaixo de `_ERROS_DE_PROVEDOR`).
 
 Cache do feed "em alta": sem precedente de cache em memória no projeto — os
-dois candidatos óbvios (`extractors/circuit_breaker.py`,
-`extractors/sessao_cache.py`) são ambos persistidos em SQLite, o que não se
+dois candidatos óbvios (`fontes/rede/circuit_breaker.py`,
+`fontes/rede/sessao_cache.py`) são ambos persistidos em SQLite, o que não se
 aplica aqui (não há necessidade de sobreviver a restart de processo para um
 cache de 1h de um feed público). Uma variável de módulo com timestamp resolve
 sem introduzir Redis nem um novo padrão de infraestrutura.
@@ -77,7 +77,7 @@ from integrations.tmdb import (
 logger = logging.getLogger(__name__)
 
 # Teto curto por provedor: estas são APIs JSON públicas sem bypass (ao
-# contrário de `extractors/resiliencia.py::_TETO_ESPERA_S`, que cobre até 2
+# contrário de `fontes/rede/resiliencia.py::_TETO_ESPERA_S`, que cobre até 2
 # chamadas HTTP sequenciais de um adapter com bypass) — uma falha aqui deve
 # liberar o próximo provedor da cadeia rápido.
 #
@@ -139,7 +139,7 @@ _ERROS_DE_PROVEDOR: tuple[type[Exception], ...] = (
 #
 # Em memória de processo (dict de módulo, relógio `time.monotonic`) — MESMA
 # justificativa do `_cache_em_alta` abaixo (API JSON pública, sem necessidade de
-# sobreviver a restart). NÃO reusa `extractors/circuit_breaker.py`: aquele é
+# sobreviver a restart). NÃO reusa `fontes/rede/circuit_breaker.py`: aquele é
 # SQLite e acoplado a `EstadoSite`/domínio de site com bypass anti-bot
 # (CLAUDE.md §1 — as duas famílias de adapter não se cruzam). Espelha só o
 # vocabulário: `falhas_consecutivas`, backoff crescente + cooldown cheio, estado
@@ -402,7 +402,7 @@ async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
     """Tenta cada provedor de `PROVEDORES_DE_TITULO` (só a AniList — ver o
     comentário da tupla em `registro.py`) em ordem até achar títulos
     alternativos (romaji/inglês/nativo/sinônimos) para `titulo` — usado por
-    `api/servicos/busca.py::_resolver_titulos_canonicos` como base da escada de
+    `api/servicos/titulos_canonicos.py::resolver_titulos_canonicos` como base da escada de
     termos e das referências de validação da busca em fontes.
 
     Ao contrário de `buscar_por_titulo`, NÃO cai para o Kitsu: a resolução do
@@ -614,7 +614,7 @@ async def _buscar_em_cadeia[T](
     `servico.PROVEDORES`; `buscar_titulos` passa `PROVEDORES_DE_TITULO` (só
     AniList). Um provedor que responde mas não encontra o título (`None`) não é
     falha — cai para o próximo provedor tentar, mesma filosofia de
-    `extractors/resolucao.py` (busca vazia não é erro). Só levanta
+    `fontes/resolucao.py` (busca vazia não é erro). Só levanta
     `FalhaDeMetadados` se todos os provedores falharem de fato (rede/HTTP/
     timeout); se todos responderem sem encontrar, devolve `None` (título não
     existe em nenhum provedor conhecido). `descricao` entra na mensagem de
@@ -1729,7 +1729,7 @@ def _http_indica_provedor_fora_do_ar(excecao: requests.HTTPError) -> bool:
 def _cooldown_ate(nome: str) -> float | None:
     """`cooldown_ate` (relógio `time.monotonic`) se `nome` está em cooldown
     AGORA, senão `None`. Estado DERIVADO de `cooldown_ate > agora` — nunca um
-    bool armazenado (mesma decisão de `extractors/circuit_breaker.py`)."""
+    bool armazenado (mesma decisão de `fontes/rede/circuit_breaker.py`)."""
     estado = _cooldown_por_provedor.get(nome)
     if estado is None:
         return None

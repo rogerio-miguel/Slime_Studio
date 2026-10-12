@@ -8,7 +8,7 @@ ainda, o `ffmpeg`/`yt-dlp`, que resolvem por conta própria) faz outro lookup de
 Fixar o IP validado na conexão fecharia a janela de DNS rebinding, mas só cobriria as
 chamadas `requests`; por isso não foi feito.
 
-Depende só de `core.erros` (não importa `extractors.download`/`cliente`), pra os dois
+Depende só de `core.erros` (não importa `captura.download`/`cliente`), pra os dois
 poderem usá-lo sem import circular.
 """
 

@@ -13,12 +13,13 @@ from collections.abc import Iterable
 from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from captura.download import caminho_raw
 from core.config import Config
+from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import ESTADOS_EM_EXECUCAO, StatusEpisodio
 from core.erros import JobEmExecucao
 from core.franquia import slug_de_franquia
 from core.midia import diretorio_do_episodio, podar_diretorios_do_anime
-from extractors.download import caminho_raw
 from models.anime import Anime
 from models.episodio import Episodio
 from models.job import Job
@@ -312,6 +313,18 @@ async def definir_banner_da_franquia(
         )
         await sessao.commit()
         return True
+
+
+async def animes_do_catalogo(sessao: AsyncSession) -> tuple[list[Anime], dict[int, list[object]]]:
+    """Os animes que ganham card no catálogo (sem conteúdo adulto, com a regra de
+    `visiveis_no_catalogo`), por título, mais o agrupamento de franquia que essa
+    regra usou. Base comum de `GET /api/animes` e do zelador de fontes."""
+    grupos = await agrupar_franquias(sessao)
+    resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
+    animes = visiveis_no_catalogo(
+        (a for a in resultado.scalars() if not eh_conteudo_adulto(a.generos)), grupos
+    )
+    return animes, grupos
 
 
 def visiveis_no_catalogo(

@@ -23,7 +23,7 @@ import logging
 
 from sqlalchemy import select
 
-from api.servicos.fontes import info_de_episodio
+from api.servicos.stills_de_episodio import info_de_episodio
 from core.config import carregar_config
 from db.engine import criar_engine, criar_sessionmaker
 from integrations.registro import instalar_provedores_de_arte

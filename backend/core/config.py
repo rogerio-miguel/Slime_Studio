@@ -36,6 +36,9 @@ class Config:
     # no fim da dataclass pra não quebrar as construções por keyword já
     # existentes em `tests/conftest.py` e outros arquivos de teste.
     tmdb_token: str | None = None
+    # Liga o zelador de fontes (`api/servicos/zelador.py`). Ligado por padrão;
+    # `ZELADOR_ATIVO=false` no .env o desliga (vale no próximo start da API).
+    zelador_ativo: bool = True
 
 
 def carregar_config(env_path: Path | None = None) -> Config:
@@ -64,7 +67,19 @@ def carregar_config(env_path: Path | None = None) -> Config:
         ffprobe=ffprobe,
         caminho_lock=caminho_lock,
         tmdb_token=tmdb_token,
+        zelador_ativo=_ler_booleano("ZELADOR_ATIVO", valores.get("ZELADOR_ATIVO"), padrao=True),
     )
+
+
+def _ler_booleano(nome: str, valor: str | None, *, padrao: bool) -> bool:
+    if valor is None or not valor.strip():
+        return padrao
+    normalizado = valor.strip().lower()
+    if normalizado in ("1", "true"):
+        return True
+    if normalizado in ("0", "false"):
+        return False
+    raise ErroDeConfiguracao(f"{nome} deve ser true ou false, recebido {valor!r}.")
 
 
 def _resolver_media_root(valor: str) -> Path:

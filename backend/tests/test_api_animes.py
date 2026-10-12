@@ -14,14 +14,14 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos import sondagem
+from api.servicos import sondagem, zelador
 from api.servicos.catalogo import ids_com_episodios
 from api.servicos.fontes import FonteComEpisodios
 from api.servicos.lancamentos import episodios_novos, maior_numero_capturado_por_anime
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao
-from extractors.base import EpisodioRemoto, ResultadoBusca
-from extractors.resolucao import ConfirmacaoNecessaria, FonteResolvida
+from fontes.adaptadores.base import EpisodioRemoto, ResultadoBusca
+from fontes.resolucao import ConfirmacaoNecessaria, FonteResolvida
 from integrations.base import AnimeEmAlta, InfoDeEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
@@ -44,7 +44,7 @@ def _resolucao_de_titulo_canonico_sem_rede(monkeypatch: pytest.MonkeyPatch):
     canônicos do anime (`integrations.servico.buscar_titulos`, só AniList) ANTES
     da resolução de fonte e SEMPRE — sem stub, os testes de `episodios-remotos`
     bateriam em AniList de verdade. Devolve `None` ("provedor respondeu, não
-    achou"), o que degrada `_referencias_de_anime` para só o título cadastrado —
+    achou"), o que degrada `referencias_de_anime` para só o título cadastrado —
     o comportamento que estes testes já assumem. Mesmo padrão de
     `tests/test_api_buscar_fontes.py`."""
 
@@ -86,7 +86,7 @@ async def test_listar_episodios_remotos_caminho_feliz(
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
 
     # `thumb_url` nunca reflete o que `_listar_fake` devolveu: o overlay
-    # (`_sobrepor_stills_de_episodios`) substitui pela arte do anime (aqui
+    # (`sobrepor_stills_de_episodios`) substitui pela arte do anime (aqui
     # `None`, o anime de teste não tem banner/capa) sempre que o TMDB não
     # resolve — nunca mais o thumb cru do extractor (ver
     # `test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_anime`).
@@ -183,7 +183,7 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ani
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
@@ -248,7 +248,7 @@ async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{t2_id}/episodios-remotos")
@@ -315,7 +315,7 @@ async def test_listar_episodios_remotos_still_direto_nunca_cai_pro_absoluto_com_
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{t4_id}/episodios-remotos")
@@ -368,6 +368,29 @@ def test_episodios_novos_sem_captura_conta_a_fonte_inteira():
 def test_episodios_novos_zero_para_status_diferente_de_em_lancamento():
     anime = _anime_em_memoria(
         status_lancamento=StatusLancamento.FINALIZADO, episodios_na_fonte=12
+    )
+    assert episodios_novos(anime, maior_capturado=0) == 0
+
+
+def test_episodios_novos_conta_na_janela_pos_fim_de_finalizado_incompleto():
+    # a AniList já fechou o status, mas o fansub ainda sobe o último episódio:
+    # a fonte tem 11 de 12 e o usuário parou no 10 -> 1 novo
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.FINALIZADO,
+        estreia_em=date.today() - timedelta(weeks=12),
+        total_episodios_anilist=12,
+        episodios_na_fonte=11,
+    )
+    assert episodios_novos(anime, maior_capturado=10) == 1
+
+
+def test_episodios_novos_zero_para_finalizado_incompleto_fora_da_janela_pos_fim():
+    # 12 de 13 há anos (especial contado no total): arquivo, nunca badge
+    anime = _anime_em_memoria(
+        status_lancamento=StatusLancamento.FINALIZADO,
+        estreia_em=date(2015, 1, 9),
+        total_episodios_anilist=13,
+        episodios_na_fonte=12,
     )
     assert episodios_novos(anime, maior_capturado=0) == 0
 
@@ -1127,26 +1150,27 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
     }
 
 
-# --- F12: GET /api/animes agenda sondagem fire-and-forget da fonte real, opt-in
-# via `?aquecer=true` (só a Galeria manda a flag; a Home chama sem ela) ---
+# --- verificação da fonte: só o zelador dispara; ler o catálogo não ---
 
 
-async def test_listar_animes_so_agenda_carona_de_aquecimento_com_a_flag(
+async def _passada_do_zelador(sessionmaker: _SessionMaker) -> None:
+    await zelador.Zelador(sessionmaker).executar_passada()
+
+
+async def test_listar_animes_nao_dispara_verificacao_nenhuma(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
-    """A carona fire-and-forget (sondagem da fonte real + aquecimento de
-    `status_lancamento` via AniList/Kitsu) é opt-in via `?aquecer=true` — só a
-    Galeria a envia. Sem a flag, `GET /api/animes` devolve o catálogo e nada
-    mais: a Home não paga esse custo a cada abertura."""
-    sondagens: list[int] = []
-    refreshs: list[int] = []
+    """Sondagem da fonte e atualização de `status_lancamento` são do zelador;
+    `GET /api/animes` (inclusive com a antiga flag `?aquecer=true`, hoje ignorada)
+    devolve o catálogo e nada mais."""
+    disparos: list[str] = []
     monkeypatch.setattr(
         "api.servicos.sondagem.agendar_sondagens",
-        lambda sessionmaker, animes, versoes, **_: sondagens.append(len(animes)),
+        lambda *_, **__: disparos.append("sondagem"),
     )
     monkeypatch.setattr(
         "api.servicos.descoberta.agendar_refreshs_do_catalogo",
-        lambda sessionmaker, animes: refreshs.append(len(animes)),
+        lambda *_, **__: disparos.append("refresh"),
     )
     await _criar_anime_catalogado(
         sessionmaker_api,
@@ -1154,15 +1178,11 @@ async def test_listar_animes_so_agenda_carona_de_aquecimento_com_a_flag(
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
     )
 
-    sem_flag = await cliente.get("/api/animes")
-    assert sem_flag.status_code == 200
-    assert sondagens == []
-    assert refreshs == []
+    for caminho in ("/api/animes", "/api/animes?aquecer=true"):
+        resposta = await cliente.get(caminho)
+        assert resposta.status_code == 200
 
-    com_flag = await cliente.get("/api/animes?aquecer=true")
-    assert com_flag.status_code == 200
-    assert sondagens == [1]
-    assert refreshs == [1]
+    assert disparos == []
 
 
 def _espiar_sondagem(
@@ -1177,7 +1197,7 @@ def _espiar_sondagem(
     toca extractor/rede real."""
     chamadas: list[tuple[int, VersaoEpisodio]] = []
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         chamadas.append((anime.id, versao))
         if erro is not None:
             raise erro
@@ -1192,7 +1212,7 @@ def _espiar_sondagem(
     return chamadas
 
 
-async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura(
+async def test_passada_do_zelador_sonda_e_badge_atualiza_na_proxima_leitura(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
     chamadas = _espiar_sondagem(
@@ -1208,11 +1228,12 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
     await _mapear_fonte(sessionmaker_api, anime_id)
     await _capturar_episodio(sessionmaker_api, anime_id, numero=1)
 
-    primeira = await cliente.get("/api/animes?aquecer=true")
+    primeira = await cliente.get("/api/animes")
     assert primeira.status_code == 200
     item = next(i for i in primeira.json() if i["id"] == anime_id)
     assert item["episodios_novos"] == 0  # badge desta leitura: 1 na fonte, fronteira no ep 1
 
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_sondagens()
     assert chamadas == [(anime_id, VersaoEpisodio.LEGENDADO)]
     async with sessionmaker_api() as sessao:
@@ -1220,12 +1241,12 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
         assert anime.episodios_na_fonte == 3
         assert anime.fonte_verificada_dominio == "animefire.one"
 
-    segunda = await cliente.get("/api/animes?aquecer=true")
+    segunda = await cliente.get("/api/animes")
     item = next(i for i in segunda.json() if i["id"] == anime_id)
     assert item["episodios_novos"] == 2  # 3 na fonte, fronteira no ep 1
 
 
-async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(
+async def test_passada_do_zelador_nao_sonda_dentro_do_ttl(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
     chamadas = _espiar_sondagem(monkeypatch)
@@ -1234,18 +1255,17 @@ async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(
         "Anime Fonte Fresca",
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
         episodios_na_fonte=2,
-        fonte_verificada_em=datetime.now(UTC) - timedelta(hours=1),
+        fonte_verificada_em=datetime.now(UTC) - timedelta(minutes=10),
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 
-    resposta = await cliente.get("/api/animes?aquecer=true")
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_sondagens()
 
-    assert resposta.status_code == 200
     assert chamadas == []
 
 
-async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha(
+async def test_sondagem_que_falha_no_zelador_mantem_o_badge_antigo(
     cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
@@ -1262,11 +1282,12 @@ async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha
     await _mapear_fonte(sessionmaker_api, anime_id)
 
     with caplog.at_level("WARNING"):
-        resposta = await cliente.get("/api/animes?aquecer=true")
+        await _passada_do_zelador(sessionmaker_api)
+        await _drenar_sondagens()  # gather sem return_exceptions: re-levantaria se propagasse
+        resposta = await cliente.get("/api/animes")
         assert resposta.status_code == 200
         item = next(i for i in resposta.json() if i["id"] == anime_id)
         assert item["episodios_novos"] == 5  # badge antigo; falha de site não derruba a home
-        await _drenar_sondagens()  # gather sem return_exceptions: re-levantaria se propagasse
 
     assert "sondagem de fonte falhou" in caplog.text
     async with sessionmaker_api() as sessao:
@@ -1275,7 +1296,7 @@ async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha
         assert anime.fonte_verificada_em is None
 
 
-async def test_listar_animes_duas_chamadas_concorrentes_deduplicam_sondagem(
+async def test_duas_passadas_concorrentes_do_zelador_deduplicam_sondagem(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
     chamadas = _espiar_sondagem(monkeypatch)
@@ -1285,7 +1306,7 @@ async def test_listar_animes_duas_chamadas_concorrentes_deduplicam_sondagem(
     await _mapear_fonte(sessionmaker_api, anime_id)
 
     await asyncio.gather(
-        cliente.get("/api/animes?aquecer=true"), cliente.get("/api/animes?aquecer=true")
+        _passada_do_zelador(sessionmaker_api), _passada_do_zelador(sessionmaker_api)
     )
     await _drenar_sondagens()
 
@@ -1364,7 +1385,7 @@ async def test_confirmar_fonte_sem_marcador_textual_confia_no_cliente(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker
 ):
     """AnimeFire diferencia versão por um campo à parte da API (`audio`), sem
-    marcador no slug/título (`extractors/animefire.py::_resultados_do_item`) —
+    marcador no slug/título (`fontes/adaptadores/animefire.py::_resultados_do_item`) —
     `inferir_versao(titulo_exibicao, identificador)` nunca encontra nada pra
     ele. Regressão do bug reportado: confirmar 'Dublado' voltava sempre
     'Legendado' porque o servidor rederivava e caía no default silencioso.
@@ -1433,7 +1454,7 @@ async def test_listar_episodios_remotos_tenta_titulo_ingles_quando_tmdb_nao_acha
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
@@ -1492,7 +1513,7 @@ async def test_listar_episodios_remotos_atualiza_texto_gravado_so_com_ptbr_real(
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")

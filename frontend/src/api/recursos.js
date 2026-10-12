@@ -4,20 +4,8 @@
 import { requisitar } from './cliente.js';
 import { invalidar } from './invalidacao.js';
 
-// `aquecer` (opt-in) liga a carona fire-and-forget do backend — sondagem da
-// fonte real + aquecimento de `status_lancamento` via AniList/Kitsu. Só a
-// Galeria (rota `/animes`, catálogo completo com os badges) passa `true`; a
-// Home chama sem a flag e não paga esse custo a cada abertura.
-export function listarAnimes({ aquecer = false } = {}) {
-  return requisitar(aquecer ? '/api/animes?aquecer=true' : '/api/animes');
-}
-
-// Peek nas cargas fire-and-forget que `?aquecer=true` agenda (sondagem da
-// fonte real + aquecimento de `status_lancamento`) — a Galeria usa isto pra
-// saber se vale reconsultar `listarAnimes` de novo em alguns segundos, mesmo
-// papel de `sondagem_em_andamento` em `listarContinuarAssistindo`.
-export function aquecimentoEmAndamento() {
-  return requisitar('/api/animes/aquecimento-em-andamento');
+export function listarAnimes() {
+  return requisitar('/api/animes');
 }
 
 export function listarAnimesEmAlta() {

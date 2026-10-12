@@ -1,4 +1,4 @@
-"""Testes de parsing de `extractors/animesdrive.py`, sem rede — `ClienteFalso`
+"""Testes de parsing de `fontes/adaptadores/animesdrive.py`, sem rede — `ClienteFalso`
 (via fixture `cliente_falso` de `conftest.py`) devolve fixtures HTML escritas
 à mão em `tests/fixtures/animesdrive/`."""
 
@@ -8,10 +8,10 @@ import pytest
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
-from extractors import animesdrive as modulo_animesdrive
-from extractors.animesdrive import AnimesDriveProvider
-from extractors.base import EpisodioRemoto, ResultadoBusca
-from extractors.cliente import MidiaCapturada
+from fontes.adaptadores import animesdrive as modulo_animesdrive
+from fontes.adaptadores.animesdrive import AnimesDriveProvider
+from fontes.adaptadores.base import EpisodioRemoto, ResultadoBusca
+from fontes.rede.cliente import MidiaCapturada
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "animesdrive"
 

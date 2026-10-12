@@ -1,9 +1,9 @@
 """Contrato Strategy dos provedores de metadados externos de anime (AniList
-principal, Kitsu fallback) — espelha `extractors/base.py`.
+principal, Kitsu fallback) — espelha `fontes/adaptadores/base.py`.
 
 Domínio puro: sem HTTP, sem SQLAlchemy — só o formato dos dados que
 atravessam a fronteira e o contrato abstrato que cada adapter implementa.
-`ABC` (não `Protocol`) pela mesma razão de `extractors/base.py`: sem type
+`ABC` (não `Protocol`) pela mesma razão de `fontes/adaptadores/base.py`: sem type
 checker nos comandos de validação (`ruff` só), então a garantia de contrato
 completo precisa vir de `TypeError` na instanciação.
 """
@@ -207,7 +207,7 @@ class RelacoesDeAnime:
 class ProvedorDeMetadados(ABC):
     """Uma implementação por provedor (`anilist.py`, `kitsu.py`), síncrona —
     o `asyncio.to_thread`/timeout que a torna não-bloqueante mora só em
-    `integrations/servico.py` (mesma separação de `extractors/resiliencia.py`
+    `integrations/servico.py` (mesma separação de `fontes/rede/resiliencia.py`
     para os extratores de site)."""
 
     @property
@@ -219,7 +219,7 @@ class ProvedorDeMetadados(ABC):
     def buscar_por_titulo(self, titulo: str) -> MetadadosDeAnime | None:
         """Busca metadados por título; `None` é resultado normal (título não
         encontrado neste provedor), não erro — mesma convenção de
-        `extractors.base.ExtratorDeSite.buscar`."""
+        `fontes.adaptadores.base.ExtratorDeSite.buscar`."""
 
     def listar_por_busca(self, titulo: str) -> list[AnimeEmAlta]:
         """Candidatos de uma busca livre por `titulo` (a busca da Home) —

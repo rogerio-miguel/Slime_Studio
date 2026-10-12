@@ -1,4 +1,4 @@
-"""Testes de `extractors/busca/termos.py` e `extractors/busca/correspondencia.py`
+"""Testes de `fontes/busca/termos.py` e `fontes/busca/correspondencia.py`
 — domínio puro, sem rede. `PLANO_PADRONIZACAO_FONTES.md` D-A1/D-A2/D-A3/D-A6
 (`variantes_de_busca`) e plano de correspondência de card
 (`corresponde_a_alguma_referencia`, validação contra vários nomes do anime)."""
@@ -6,11 +6,11 @@
 import pytest
 
 from core.texto import slugificar
-from extractors.busca.correspondencia import (
+from fontes.busca.correspondencia import (
     corresponde_a_alguma_referencia,
     proximidade_a_referencias,
 )
-from extractors.busca.termos import variantes_de_busca
+from fontes.busca.termos import variantes_de_busca
 
 
 def test_titulo_simples_sem_tratamento_nenhum_devolve_so_o_titulo():
@@ -131,7 +131,7 @@ def test_prefixo_crescente_nao_ativa_pra_titulo_de_uma_palavra():
 
 
 def test_prefixo_crescente_respeita_teto_de_variantes_em_titulo_longo():
-    """Cada variante é 1 request real por site (`extractors/busca/servico.py`), sem
+    """Cada variante é 1 request real por site (`fontes/busca/servico.py`), sem
     teto de tempo de lote — um
     título muito longo não pode multiplicar o número de requests sem limite."""
     titulo = "Um Dois Tres Quatro Cinco Seis Sete Oito Nove Dez"  # 10 palavras

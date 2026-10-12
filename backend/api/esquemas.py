@@ -239,20 +239,6 @@ class AnimeSaida(BaseModel):
     proxima_temporada: TemporadaIrmaSaida | None = None
 
 
-class AquecimentoCatalogoSaida(BaseModel):
-    """Corpo de `GET /api/animes/aquecimento-em-andamento` — peek síncrono (sem
-    I/O) nas duas cargas fire-and-forget que `?aquecer=true` agenda
-    (`api/servicos/sondagem.py::agendar_sondagens` e `api/servicos/
-    descoberta.py::agendar_refreshs_do_catalogo`). A Galeria
-    (`paginas/Galeria.jsx`) usa esta flag pra saber se vale reconsultar
-    `GET /api/animes` de novo em alguns segundos — mesmo papel de
-    `ContinuarAssistindoRespostaSaida.sondagem_em_andamento`, só que num
-    endpoint próprio (não dá pra pendurar a flag na lista crua de `AnimeSaida`
-    sem quebrar o contrato que a Home também consome sem `?aquecer=true`)."""
-
-    em_andamento: bool
-
-
 class AnimeEmAltaSaida(BaseModel):
     """Item do feed `GET /api/animes/em-alta` (`integrations.base.AnimeEmAlta`)
     já cruzado com o catálogo local — `anime_id` vem preenchido pelo servidor
@@ -404,7 +390,7 @@ class ConfirmarFonteRequest(BaseModel):
     identificador: str = Field(max_length=300)
     titulo_exibicao: str = Field(max_length=300)
     # Só round-trip do candidato da busca: o servidor NÃO grava nem requisita esta
-    # URL (`extractors/resolucao.py::confirmar_fonte` persiste `dominio` + `identificador`).
+    # URL (`fontes/resolucao.py::confirmar_fonte` persiste `dominio` + `identificador`).
     url: str = Field(max_length=2048)
 
     @field_validator("identificador")
@@ -418,7 +404,7 @@ class ConfirmarFonteRequest(BaseModel):
         return valor
     # Round-trip do `versao` que o frontend recebeu em `ResultadoBuscaFonteSaida`
     # pro candidato escolhido — o servidor rederiva via
-    # `extractors.versao.inferir_versao` (e loga divergência) quando o site
+    # `fontes.adaptadores.versao.inferir_versao` (e loga divergência) quando o site
     # marca a versão no texto do slug/título; sites que diferenciam por um
     # campo à parte da API sem marcador textual (ex. AnimeFire, `audio`) não
     # têm como ser rederivados assim, e o servidor confia neste round-trip
@@ -428,7 +414,7 @@ class ConfirmarFonteRequest(BaseModel):
 
 class ResultadoBuscaFonteSaida(BaseModel):
     """Item de `GET /api/animes/buscar-fontes` — candidato ainda não catalogado
-    localmente, encontrado ao vivo em um site de extração (`extractors.base.
+    localmente, encontrado ao vivo em um site de extração (`fontes.adaptadores.base.
     ResultadoBusca`); `dominio` identifica de qual site veio, necessário pra
     depois confirmar a fonte (`POST /api/admin/animes/{id}/fontes/confirmar`)."""
 
@@ -437,13 +423,13 @@ class ResultadoBuscaFonteSaida(BaseModel):
     url: str
     dominio: str
     # `None` quando o site não diferencia versão ou nenhum marcador foi
-    # detectado neste candidato específico (`extractors.base.ResultadoBusca.versao`).
+    # detectado neste candidato específico (`fontes.adaptadores.base.ResultadoBusca.versao`).
     versao: VersaoEpisodio | None = None
     # Capability do site que resolveu este candidato (`ExtratorDeSite.diferencia_versao`)
     # — a UI usa isso pra decidir se oferece a escolha legendado/dublado.
     site_diferencia_versao: bool = False
     # `True` quando este candidato veio pelo degrau de "correspondência incerta"
-    # (`extractors/busca/servico.py::buscar_em_com_variantes`): o site não
+    # (`fontes/busca/servico.py::buscar_em_com_variantes`): o site não
     # devolveu NENHUM card batendo as referências canônicas do anime, mas este
     # veio de uma busca por um termo que É um nome canônico (não um prefixo
     # curto) — provável acerto sob um título que o provedor de metadados não
@@ -474,7 +460,7 @@ class BuscaEmFontesSaida(BaseModel):
 
 
 class EpisodioRemotoSaida(BaseModel):
-    """Posição na fonte remota (site) — `extractors.base.EpisodioRemoto` não expõe
+    """Posição na fonte remota (site) — `fontes.adaptadores.base.EpisodioRemoto` não expõe
     `url` aqui (uso só server-side); a grade prontos/não capturados do frontend
     cruza `numero` com `EpisodioSaida.numero` de `GET /api/animes/{id}/episodios`.
     `numero` é `None` quando `rotulo` não é puramente numérico (ex. "Especial")
@@ -485,8 +471,8 @@ class EpisodioRemotoSaida(BaseModel):
     `GET /api/thumb` (`api/rotas/thumb.py`), que embute o `Referer` de hotlink.
 
     `titulo`/`sinopse` NUNCA vêm da fonte de scraping (nenhum extractor os
-    expõe) — só do overlay TMDB best-effort (`api/servicos/fontes.py::
-    _sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`); `None`
+    expõe) — só do overlay TMDB best-effort (`api/servicos/stills_de_episodio.py::
+    sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`); `None`
     quando o TMDB não acha ou não tem tradução pt-BR."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -524,7 +510,7 @@ class EpisodioSaida(BaseModel):
     anime_id: int
     numero: int
     titulo: str | None
-    # Sinopse do episódio (TMDB, `api/servicos/jobs.py::info_de_episodio`) —
+    # Sinopse do episódio (TMDB, `api/servicos/stills_de_episodio.py::info_de_episodio`) —
     # persistida na captura, mesma origem/momento de `titulo`. `None` quando o
     # TMDB não achou ou não tem tradução pt-BR, ou o episódio foi capturado
     # antes desta coluna existir (sem backfill).
@@ -608,20 +594,6 @@ class ContinuarAssistindoSaida(BaseModel):
     # decidir se vale recarregar a prateleira de novo em alguns segundos, sem
     # precisar de F5 (`paginas/Inicio.jsx`).
     still_pendente: bool = False
-
-
-class ContinuarAssistindoRespostaSaida(BaseModel):
-    """Corpo de `GET /api/episodios/continuar-assistindo` — envelope em vez de
-    lista crua pra caber `sondagem_em_andamento` (nível da resposta, não por
-    item: um anime cujo próximo episódio ainda não existe some inteiro de
-    `itens` até a sondagem em segundo plano confirmar a contagem da fonte,
-    `api/servicos/progresso.py::listar_continuar_assistindo`). Mesmo papel de
-    `still_pendente` por item, só que pro caso que não tem item pra pendurar a
-    flag — `paginas/Inicio.jsx` usa os dois pra decidir se vale reconsultar a
-    prateleira de novo em alguns segundos."""
-
-    itens: list[ContinuarAssistindoSaida]
-    sondagem_em_andamento: bool
 
 
 # --- sites (api/rotas/sites.py) ---

@@ -1,10 +1,10 @@
-"""Testes de `extractors/qualidade.py::qualidade_do_rotulo` — domínio puro, sem
+"""Testes de `fontes/adaptadores/qualidade.py::qualidade_do_rotulo` — domínio puro, sem
 rede. Tabela de classificação equivalente à documentada em `PLANO_ANIMESDRIVE.md`
 D1, compartilhada entre `animesdrive.py` e `animefire.py`."""
 
 import pytest
 
-from extractors.qualidade import NivelDeQualidade, qualidade_do_rotulo
+from fontes.adaptadores.qualidade import NivelDeQualidade, qualidade_do_rotulo
 
 
 @pytest.mark.parametrize(

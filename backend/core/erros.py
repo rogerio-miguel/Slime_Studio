@@ -92,7 +92,7 @@ class FonteNaoEncontrada(FalhaDeExtracao):
 
     Efeito colateral consciente dessa mudança (era `True`, herdado de
     `FalhaDeExtracao`, antes desta revisão): em
-    `extractors/servico.py::baixar_com_fallback_de_site`, um 404 num episódio
+    `captura/servico.py::baixar_com_fallback_de_site`, um 404 num episódio
     específico agora aciona fallback para o próximo site da lista de
     prioridade em vez de reagendar o job 3x; em `worker/executor.py`, sem mais
     site na lista, o job vai direto para `aguardando_intervencao` em vez de
@@ -106,12 +106,12 @@ class FonteNaoEncontrada(FalhaDeExtracao):
 
 
 class FonteAmbigua(ErroSlimeStudio):
-    """`extractors.resolucao.resolver_fonte_do_anime` devolveu `ConfirmacaoNecessaria`
+    """`fontes.resolucao.resolver_fonte_do_anime` devolveu `ConfirmacaoNecessaria`
     (mais de um candidato, sem match exato de título) — a API mapeia isto para 409
     com `{"motivo": "fonte_ambigua", "dominio": ..., "candidatos": [...]}`.
 
     `candidatos` já vem serializado (lista de `dict`), não como `ResultadoBusca` —
-    este módulo é domínio puro e não importa `extractors` (regra de dependência da
+    este módulo é domínio puro e não importa `fontes` (regra de dependência da
     Clean Architecture, CLAUDE.md §1). `versao` dentro de cada dict pode ser
     `None` (site não diferencia versão ou nenhum marcador foi detectado).
     """
@@ -123,7 +123,7 @@ class FonteAmbigua(ErroSlimeStudio):
 
 
 class VersaoIndisponivelError(ErroSlimeStudio):
-    """`extractors.resolucao.resolver_fonte_do_anime` devolveu `VersaoIndisponivel`
+    """`fontes.resolucao.resolver_fonte_do_anime` devolveu `VersaoIndisponivel`
     — nenhum site, mapeado ou buscado ao vivo, serve a versão pedida (nem
     confirmada, nem `VersaoDeFonte.NAO_DIFERENCIADA`, em nenhum site).
 

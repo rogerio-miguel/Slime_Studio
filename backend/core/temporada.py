@@ -3,12 +3,12 @@ dependências externas (Escada de Minimalismo), usado pela resolução de arte
 via TMDB (a busca do TMDB é por *série*, não por temporada — sem extrair o
 número, uma capa multi-temporada sempre resolve pro pôster da temporada 1).
 
-Fronteira deliberada com `extractors/busca/termos.py::_remover_marcadores_
+Fronteira deliberada com `fontes/busca/termos.py::_remover_marcadores_
 temporada_parte`: os dois regex reconhecem marcadores parecidos ("Season 2",
 "Part 2", romano) e usam a mesma técnica de laço (um `.sub()` só alcança o
 marcador mais à direita; títulos com dois marcadores empilhados exigem
 descascar um por vez até estabilizar), mas respondem perguntas diferentes.
-`extractors/` decide *o que digitar na busca de um site de streaming* — errar
+`fontes/` decide *o que digitar na busca de um site de streaming* — errar
 pra mais estrito só custa um termo de busca a menos numa lista que já tem
 fallback. Este módulo decide *qual temporada, dentre várias, o TMDB está
 mostrando* — errar aqui é mostrar a capa errada pro usuário. Same-shaped

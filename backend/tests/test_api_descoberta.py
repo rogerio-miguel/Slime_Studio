@@ -19,7 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import descoberta as servico_descoberta
-from api.servicos import sondagem
+from api.servicos import sondagem, zelador
 from api.servicos.fontes import FonteComEpisodios
 from core.enums import StatusLancamento, VersaoDeFonte
 from core.erros import FalhaDeMetadados
@@ -57,10 +57,22 @@ def _sondagem_da_fonte_sem_rede(monkeypatch: pytest.MonkeyPatch):
     a `Task` nunca tocar extractor/rede. Testes que precisam espiar a chamada
     re-`setattr`am por cima."""
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         return _fonte(dominio="stub.io", episodios=[])
 
     monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
+
+
+async def _passada_do_zelador(sessionmaker: _SessionMaker) -> None:
+    await zelador.Zelador(sessionmaker).executar_passada()
+
+
+async def _disparar_refresh_do_anime(sessionmaker: _SessionMaker, anime_id: int) -> None:
+    """O refresh por id de um anime só: o mesmo `agendar_refresh_de_lancamento` que o
+    zelador usa por anime (a página do anime não o dispara mais)."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+    servico_descoberta.agendar_refresh_de_lancamento(sessionmaker, anime)
 
 
 async def _drenar_refreshs_de_lancamento() -> None:
@@ -950,9 +962,7 @@ async def test_obter_anime_agenda_refresh_lazy_fora_do_ttl(
         lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=7),
     )
 
-    resposta = await cliente.get(f"/api/animes/{anime_id}")
-    assert resposta.status_code == 200
-
+    await _disparar_refresh_do_anime(sessionmaker_api, anime_id)
     await _drenar_refreshs_de_lancamento()
 
     assert chamadas == [77]
@@ -984,9 +994,7 @@ async def test_obter_anime_agenda_refresh_lazy_para_status_nao_lancado(
         lancamento_atualizado_em=datetime.now(UTC) - timedelta(hours=7),
     )
 
-    resposta = await cliente.get(f"/api/animes/{anime_id}")
-    assert resposta.status_code == 200
-
+    await _disparar_refresh_do_anime(sessionmaker_api, anime_id)
     await _drenar_refreshs_de_lancamento()
 
     assert chamadas == [99]
@@ -1017,9 +1025,7 @@ async def test_obter_anime_nao_agenda_refresh_lazy_quando_gate_barra(
 
     anime_id = await _criar_anime(sessionmaker_api, "Slime Gate", "slime-gate", **campos)
 
-    resposta = await cliente.get(f"/api/animes/{anime_id}")
-    assert resposta.status_code == 200
-
+    await _disparar_refresh_do_anime(sessionmaker_api, anime_id)
     await _drenar_refreshs_de_lancamento()
 
     assert chamadas == []
@@ -1085,8 +1091,7 @@ async def test_obter_anime_refresh_lazy_falho_da_anilist_nao_propaga(
     )
 
     with caplog.at_level("WARNING"):
-        resposta = await cliente.get(f"/api/animes/{anime_id}")
-        assert resposta.status_code == 200
+        await _disparar_refresh_do_anime(sessionmaker_api, anime_id)
         # `gather` sem `return_exceptions` — re-levantaria se a corotina propagasse
         await _drenar_refreshs_de_lancamento()
 
@@ -1096,22 +1101,18 @@ async def test_obter_anime_refresh_lazy_falho_da_anilist_nao_propaga(
         assert anime.proximo_ep_numero == 4  # nada foi sobrescrito
 
 
-async def test_obter_anime_agenda_sondagem_de_fonte_sem_regredir_refresh_de_lancamento(
+async def test_obter_anime_nao_dispara_verificacao_de_fonte_nem_de_lancamento(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
-    """F12 não engoliu o `agendar_refresh_de_lancamento` de F4b: abrir a página de
-    um anime em lançamento com `FonteAnime` mapeada e dado velho dispara AS DUAS
-    caronas fire-and-forget."""
-    lancamentos: list[int] = []
-    sondagens: list[int] = []
+    """Abrir a página é só leitura: refresh de lançamento e sondagem da fonte são do
+    zelador. Mesmo com dado velho e `FonteAnime` mapeada, nada é agendado."""
+    disparos: list[str] = []
 
     async def _buscar_lancamento_fake(anilist_id: int):
-        lancamentos.append(anilist_id)
-        return None
+        disparos.append("lancamento")
 
-    async def _sondar_fake(sessionmaker, anime, versao, *, resolver_canonico):
-        sondagens.append(anime.id)
-        return _fonte(dominio="stub.io", episodios=[])
+    async def _sondar_fake(*_, **__):
+        disparos.append("sondagem")
 
     monkeypatch.setattr(
         "integrations.servico.buscar_lancamento_por_anilist_id", _buscar_lancamento_fake
@@ -1144,8 +1145,7 @@ async def test_obter_anime_agenda_sondagem_de_fonte_sem_regredir_refresh_de_lanc
     await _drenar_refreshs_de_lancamento()
     await _drenar_sondagens()
 
-    assert lancamentos == [321]
-    assert sondagens == [anime_id]
+    assert disparos == []
 
 
 # --- F14: listar catálogo aquece `status_lancamento` até um teto por request ---
@@ -1257,8 +1257,8 @@ async def test_agendar_refreshs_do_catalogo_aquece_status_nao_lancado(
     assert sorted(chamadas) == [11, 22]
 
 
-# --- F14: aquecimento por TÍTULO dos animes sem `anilist_id` (via `GET
-# /api/animes?aquecer=true` — a carona é opt-in, só a Galeria manda a flag) ---
+# --- F14: aquecimento por TÍTULO dos animes sem `anilist_id` (via passada do
+# zelador, `api/servicos/zelador.py`) ---
 
 
 async def test_agendar_refreshs_do_catalogo_busca_por_titulo_tem_teto_proprio(
@@ -1338,8 +1338,7 @@ async def test_listar_animes_aquece_por_titulo_hit_corroborado_persiste_id_e_blo
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    resposta = await cliente.get("/api/animes?aquecer=true")
-    assert resposta.status_code == 200
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_refreshs_de_lancamento()
 
     async with sessionmaker_api() as sessao:
@@ -1380,8 +1379,7 @@ async def test_listar_animes_aquece_por_titulo_sem_corroboracao_nao_grava_anilis
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    resposta = await cliente.get("/api/animes?aquecer=true")
-    assert resposta.status_code == 200
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_refreshs_de_lancamento()
 
     async with sessionmaker_api() as sessao:
@@ -1421,8 +1419,7 @@ async def test_listar_animes_aquece_por_titulo_remove_marcador_de_versao_do_term
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    resposta = await cliente.get("/api/animes?aquecer=true")
-    assert resposta.status_code == 200
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_refreshs_de_lancamento()
 
     assert termos == [romaji]  # "(Dublado)" removido antes de consultar o provedor
@@ -1445,8 +1442,7 @@ async def test_listar_animes_aquece_por_titulo_cache_negativo_bloqueia_rebusca_n
 
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
-    primeira = await cliente.get("/api/animes?aquecer=true")
-    assert primeira.status_code == 200
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_refreshs_de_lancamento()
 
     async with sessionmaker_api() as sessao:
@@ -1454,8 +1450,7 @@ async def test_listar_animes_aquece_por_titulo_cache_negativo_bloqueia_rebusca_n
         assert anime.lancamento_atualizado_em is not None  # cache negativo carimbado
         assert anime.status_lancamento is None  # nada foi achado
 
-    segunda = await cliente.get("/api/animes?aquecer=true")
-    assert segunda.status_code == 200
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_refreshs_de_lancamento()
 
     assert chamadas == ["Nunca Achado"]  # 2ª passada não re-busca (dentro do TTL)
@@ -1479,8 +1474,7 @@ async def test_listar_animes_aquece_por_titulo_falha_de_provedor_nao_carimba(
     monkeypatch.setattr("integrations.servico.buscar_por_titulo", _buscar_fake)
 
     with caplog.at_level("WARNING"):
-        primeira = await cliente.get("/api/animes?aquecer=true")
-        assert primeira.status_code == 200
+        await _passada_do_zelador(sessionmaker_api)
         # `gather` sem `return_exceptions` — re-levantaria se a corotina propagasse
         await _drenar_refreshs_de_lancamento()
 
@@ -1489,8 +1483,7 @@ async def test_listar_animes_aquece_por_titulo_falha_de_provedor_nao_carimba(
         anime = await sessao.get(Anime, anime_id)
         assert anime.lancamento_atualizado_em is None  # falha não carimba
 
-    segunda = await cliente.get("/api/animes?aquecer=true")
-    assert segunda.status_code == 200
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_refreshs_de_lancamento()
     assert chamadas == ["Provedor Fora Do Ar", "Provedor Fora Do Ar"]  # tenta de novo
 
@@ -1532,8 +1525,8 @@ async def test_agendar_refreshs_do_catalogo_por_titulo_respeita_o_gate(
 async def test_obter_anime_sem_anilist_id_nao_dispara_busca_por_titulo(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
-    """D5: o aquecimento por título é só da galeria (`GET /api/animes`). A página
-    do anime (`GET /api/animes/{id}`) nunca dispara busca por título."""
+    """D5: o aquecimento por título é só do zelador. A página do anime
+    (`GET /api/animes/{id}`) nunca dispara busca por título."""
     chamadas: list[str] = []
 
     async def _buscar_fake(termo: str):

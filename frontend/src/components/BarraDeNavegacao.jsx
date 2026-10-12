@@ -53,7 +53,7 @@ import SinopseNaIlha from './SinopseNaIlha.jsx';
 //     cápsula não existe, cai no <dialog> de SinopseNaIlha.jsx). A página mantém
 //     o objeto até `aoFechar`, que só dispara depois da animação de volta.
 //
-// Notificações (`notificacaoNovosEps`, `verificandoNovosEps`, `statusCapturaIlha`,
+// Notificações (`notificacaoNovosEps`, `statusCapturaIlha`,
 // `capturaProntaIlha`, `erroCapturaIlha` + os `aoClicar*`): um só slot de texto,
 // com fila e prioridade em hooks/useFilaDaIlha.js. Enquanto um menu da ilha está
 // ativo (dropdown, modo, sinopse) elas esperam e entram depois, uma por vez.
@@ -97,7 +97,6 @@ export default function BarraDeNavegacao({
   sinopse,
   notificacaoNovosEps = false,
   aoClicarNotificacaoNovosEps,
-  verificandoNovosEps = false,
   statusCapturaIlha = null,
   aoClicarStatusCapturaIlha,
   capturaProntaIlha = null,
@@ -199,7 +198,6 @@ export default function BarraDeNavegacao({
         aoClicar: aoClicarNotificacaoNovosEps,
       },
       status: { texto: statusCapturaIlha, aoClicar: aoClicarStatusCapturaIlha },
-      verificando: { texto: verificandoNovosEps ? 'Verificando novos episódios…' : null },
     },
   });
   // A sinopse abre a ilha pelo mesmo caminho do scroll e das mensagens: só o texto

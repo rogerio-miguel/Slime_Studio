@@ -87,7 +87,7 @@ def _backfill_versao_por_marcador_no_identificador() -> None:
     execução) em vez de reimplementar a heurística em SQL puro.
     """
     from core.enums import VersaoEpisodio
-    from extractors.versao import inferir_versao
+    from fontes.adaptadores.versao import inferir_versao
 
     bind = op.get_bind()
     fonte_anime = sa.table(

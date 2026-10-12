@@ -1,5 +1,5 @@
 """Geração dos termos de busca a partir de um título de anime
-(`extractors/busca/`).
+(`fontes/busca/`).
 
 Domínio puro — zero I/O, zero dependência de rede/framework. A partir de um
 título de anime, `variantes_de_busca` monta a lista de termos de busca em
@@ -97,7 +97,7 @@ def variantes_de_busca(titulo: str) -> list[str]:
     usa a grafia com espaço" NÃO é coberta (separar palavra composta exigiria
     dicionário). A inversa (local com espaço → site colado) é: cai na busca
     pela 1ª palavra + validação por chave normalizada em
-    `extractors/busca/correspondencia.py::corresponde_a_alguma_referencia`.
+    `fontes/busca/correspondencia.py::corresponde_a_alguma_referencia`.
     """
     return _deduplicar_por_slug([v for degrau in _degraus(titulo) for v in degrau])
 
@@ -166,7 +166,7 @@ _MINIMO_CARACTERES_PREFIXO = 3
 _MINIMO_CARACTERES_PRIMEIRA_PALAVRA = 5
 
 # Teto de prefixos gerados aqui — cada um vira 1 request real por site em
-# `extractors/busca/servico.py::buscar_em_com_variantes` (chamado por
+# `fontes/busca/servico.py::buscar_em_com_variantes` (chamado por
 # `api/servicos/busca.py`, sem teto de tempo de lote). O
 # título completo (sonda 0) + os até 2 cortes do bloco de precisão já cobrem
 # o lado longo; 3 prefixos bastam pro lado curto sem multiplicar request

@@ -20,7 +20,7 @@ from core.config import Config, carregar_config
 from core.enums import VersaoEpisodio
 from core.erros import ErroSlimeStudio
 from db.engine import criar_engine, criar_sessionmaker
-from extractors.resolucao import (
+from fontes.resolucao import (
     ConfirmacaoNecessaria,
     FonteResolvida,
     VersaoIndisponivel,

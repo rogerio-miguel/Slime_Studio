@@ -1,8 +1,8 @@
 """Testes de `api/rotas/jobs.py`: criação nos dois modos, listagem/filtro,
 cancelar/retry. Resolução de fonte remota (modo "site") é monkeypatchada nos
 nomes importados em `api.servicos.jobs` — o comportamento de
-`extractors.resolucao`/`extractors.servico` em si já tem testes próprios
-(`tests/test_resolucao.py`, `tests/test_extractors_servico.py`)."""
+`fontes.resolucao`/`captura.servico` em si já tem testes próprios
+(`tests/test_resolucao.py`, `tests/test_captura_servico.py`)."""
 
 from datetime import UTC, datetime
 
@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusEpisodio, StatusJob, VersaoDeFonte, VersaoEpisodio
-from extractors.base import EpisodioRemoto, ResultadoBusca
-from extractors.resolucao import ConfirmacaoNecessaria, FonteResolvida
+from fontes.adaptadores.base import EpisodioRemoto, ResultadoBusca
+from fontes.resolucao import ConfirmacaoNecessaria, FonteResolvida
 from models.anime import Anime
 from models.episodio import Episodio
 from models.job import Job
@@ -178,7 +178,7 @@ async def test_criar_job_modo_site_colisao_de_numero_usa_primeiro_e_loga(
     caplog: pytest.LogCaptureFixture,
 ):
     """Dois rótulos remotos ("7"/"07") mapeiam pro mesmo `numero=7` — regressão
-    da ambiguidade introduzida por dedup-por-rótulo (extractors/base.py::
+    da ambiguidade introduzida por dedup-por-rótulo (fontes/adaptadores/base.py::
     EpisodioRemoto). Escolha determinística (1ª ocorrência) e log de aviso,
     nunca silenciosa (CLAUDE.md §4)."""
     anime_id = await _criar_anime(sessionmaker_api, "Anime Colisao")

@@ -1,5 +1,5 @@
 """Adapter AnimeFire (ESPECIFICACAO.md §3A) — porte de
-`Slime_Shell_Web/backend/api/animefire.py` para o contrato de `extractors/base.py`.
+`Slime_Shell_Web/backend/api/animefire.py` para o contrato de `fontes/adaptadores/base.py`.
 
 Mudanças em relação ao original: sem cliente HTTP próprio (recebe `ClienteDeSite`
 injetado), sem cache em disco (substituído por `FonteAnime`/banco), e nenhum
@@ -9,7 +9,7 @@ em vez de devolver silenciosamente uma coleção vazia.
 
 Decisão registrada: busca (`buscar`) devolvendo zero resultados **não** é erro —
 é o caso normal de "este título não existe neste site", usado por
-`extractors/resolucao.py` para cair para o próximo site da lista de prioridade.
+`fontes/resolucao.py` para cair para o próximo site da lista de prioridade.
 """
 
 import logging
@@ -20,15 +20,15 @@ from urllib.parse import parse_qs, urlparse
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FonteNaoEncontrada
 from core.texto import slugificar
-from extractors.base import (
+from fontes.adaptadores.base import (
     EpisodioRemoto,
     ExtratorDeSite,
     FormatoDeMidia,
     LinkDeMidia,
     ResultadoBusca,
 )
-from extractors.cliente import ClienteDeSite
-from extractors.versao import inferir_versao
+from fontes.adaptadores.versao import inferir_versao
+from fontes.rede.cliente import ClienteDeSite
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class AnimeFireProvider(ExtratorDeSite):
 
         if not resultados:
             # info, não warning: com a busca em paralelo em todos os sites
-            # (extractors/busca/servico.py::buscar_por_site_com_variantes), um título
+            # (fontes/busca/servico.py::buscar_por_site_com_variantes), um título
             # existir só num dos dois é o caso comum, não uma falha — não dá
             # pra distinguir "não achei mesmo" de "estrutura mudou" só por
             # contagem zero, então não escala pra warning (isso viraria
@@ -296,13 +296,21 @@ class AnimeFireProvider(ExtratorDeSite):
         mapa: dict[int, int] = {}
         for temporada in temporadas:
             try:
-                mapa[temporada["number"]] = temporada["first_episode_number"]
+                numero = temporada["number"]
+                primeiro_episodio = temporada["first_episode_number"]
             except (TypeError, KeyError) as excecao:
                 raise EstruturaDoSiteMudou(
                     f"temporada do AnimeFire sem 'number'/'first_episode_number' em {url}:"
                     f" {excecao}",
                     dominio=self.dominio,
                 ) from excecao
+            if not _eh_inteiro(numero) or not _eh_inteiro(primeiro_episodio):
+                raise EstruturaDoSiteMudou(
+                    f"temporada do AnimeFire com 'number'/'first_episode_number' não numéricos"
+                    f" em {url}: {numero!r}/{primeiro_episodio!r}",
+                    dominio=self.dominio,
+                )
+            mapa[numero] = primeiro_episodio
         return mapa
 
     def _episodios_do_item(
@@ -328,6 +336,14 @@ class AnimeFireProvider(ExtratorDeSite):
                 dominio=self.dominio,
             ) from excecao
 
+        if not _eh_inteiro(numero_na_temporada):
+            # Sem isto, `number` string virava `TypeError` cru na conta abaixo, fora
+            # da taxonomia de erros de extração.
+            raise EstruturaDoSiteMudou(
+                f"episódio {id_episodio!r} do AnimeFire com 'number' não numérico"
+                f" em {url}: {numero_na_temporada!r}",
+                dominio=self.dominio,
+            )
         primeiro_episodio = primeiro_episodio_por_temporada.get(numero_da_temporada)
         if primeiro_episodio is None:
             raise EstruturaDoSiteMudou(
@@ -514,3 +530,8 @@ class AnimeFireProvider(ExtratorDeSite):
             if stream.get("is_mtl") is not True:
                 return stream
         return candidatos[0]
+
+
+def _eh_inteiro(valor: object) -> bool:
+    """`int` de verdade; `bool` é subclasse de `int` e não é número de episódio."""
+    return isinstance(valor, int) and not isinstance(valor, bool)

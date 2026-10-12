@@ -1,5 +1,5 @@
 """Correspondência entre os títulos de referência de um anime e o título de um
-card devolvido por busca em site de streaming (`extractors/busca/`).
+card devolvido por busca em site de streaming (`fontes/busca/`).
 
 Domínio puro — zero I/O, zero dependência de rede/framework.
 `corresponde_a_alguma_referencia` valida se um card realmente corresponde a
@@ -18,8 +18,8 @@ import re
 import unicodedata
 
 from core.texto import slugificar
-from extractors.busca.termos import remover_marcadores_temporada_parte
-from extractors.versao import remover_marcador_de_versao
+from fontes.adaptadores.versao import remover_marcador_de_versao
+from fontes.busca.termos import remover_marcadores_temporada_parte
 
 # Vogal longa aparece grafada de duas formas conforme o site: par dobrado
 # ("Suuguu", romaji Hepburn "solto") ou reduzida a partir de macron pelo
@@ -61,7 +61,7 @@ def corresponde_a_alguma_referencia(referencias: list[str], titulo_candidato: st
     palavra — a docstring dela tem o PORQUÊ de cada regra); o veredito é o OR
     entre todas. Um card que não bate com NENHUMA referência é falso-positivo
     de busca por prefixo e é descartado pelo chamador
-    (`extractors/busca/servico.py`).
+    (`fontes/busca/servico.py`).
 
     `referencias` vazia degrada para aceitar — mesmo veredito que uma
     referência sem chave de comparação (título só em kanji) já produz por
@@ -85,7 +85,7 @@ def _corresponde_a_uma_referencia(referencia: str, titulo_candidato: str) -> boo
     (`titulo_exibicao` de um card devolvido por busca em site de streaming)
     realmente corresponde a `referencia`, em vez de só compartilhar um prefixo
     curto com outro anime — falso-positivo real de sites com busca por prefixo
-    (ver `extractors/busca/termos.py::_prefixos_crescentes`): um prefixo de
+    (ver `fontes/busca/termos.py::_prefixos_crescentes`): um prefixo de
     2-3 palavras casa por texto com o card de um anime completamente diferente
     que começa igual.
 
@@ -154,7 +154,7 @@ def _chave_de_comparacao(texto: str) -> str:
 def _e_card_da_franquia(referencia: str, titulo_candidato: str) -> bool:
     """`titulo_candidato` é o card da franquia de `referencia`. O marcador de
     versão do card ("Overlord Dublado") não conta: dublado é outra entrada de
-    catálogo da mesma franquia (`extractors/versao.py`), e o diálogo a agrupa
+    catálogo da mesma franquia (`fontes/adaptadores/versao.py`), e o diálogo a agrupa
     com a legendada."""
     franquia = _chave_da_franquia(referencia)
     sem_versao = remover_marcador_de_versao(titulo_candidato)
@@ -179,10 +179,10 @@ def e_nome_do_anime(variante: str, referencias: list[str]) -> bool:
     usa por dentro) de `variante` está no conjunto dos slugs de `referencias`.
 
     Checagem de "sonda precisa", consumida por
-    `extractors/busca/servico.py::buscar_em_com_variantes` para decidir o
+    `fontes/busca/servico.py::buscar_em_com_variantes` para decidir o
     destino de um card ÓRFÃO (não bateu `corresponde_a_alguma_referencia` com
     referência nenhuma): quando o termo buscado era um nome canônico COMPLETO —
-    não um prefixo curto da escada de recall de `extractors/busca/termos.py`,
+    não um prefixo curto da escada de recall de `fontes/busca/termos.py`,
     que é a origem real dos falsos-positivos — o card órfão vira
     "correspondência incerta" (o site pode indexar o anime só sob um título que
     o provedor de metadados não conhece, ex. só em PT-BR) em vez de ser
@@ -202,10 +202,10 @@ def proximidade_a_referencias(
     """Chave de ordenação para candidatos JÁ aprovados por
     `corresponde_a_alguma_referencia`, do mais próximo à referência mais
     parecida ao mais distante — consumida por
-    `extractors/busca/servico.py::buscar_em_com_variantes` via `list.sort`.
+    `fontes/busca/servico.py::buscar_em_com_variantes` via `list.sort`.
 
     Existe por causa da sonda larga: o bloco de recall de
-    `extractors/busca/termos.py::variantes_de_busca` busca pela 1ª palavra,
+    `fontes/busca/termos.py::variantes_de_busca` busca pela 1ª palavra,
     então uma única variante volta com vários cards legítimos ("Naruto" e
     "Naruto Shippuden" numa busca por "Naruto") e o primeiro da lista é o que
     a UI mostra e o que a captura tende a baixar. Sem ordenar, esse primeiro é

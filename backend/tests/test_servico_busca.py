@@ -1,15 +1,15 @@
 """Testes de `api/servicos/busca.py::buscar_em_todas_as_fontes_com_titulos_alternativos`
-(e dos helpers puros de termos/referências), sem rede — `integrations.servico.
-buscar_titulos` e `extractors.busca.servico.buscar_por_site_com_variantes` são
+sem rede — `integrations.servico.
+buscar_titulos` e `fontes.busca.servico.buscar_por_site_com_variantes` são
 monkeypatchados nos nomes de módulo (mesmo padrão de `tests/test_api_buscar_fontes.py`),
-pois `busca.py` os chama via `servico_metadados`/`servico_extractors`, que apontam
+pois `busca.py` os chama via `servico_metadados`/`servico_fontes`, que apontam
 pro mesmo objeto de módulo.
 
 A função devolve `list[ResultadoDeFonte]` — a UNIÃO das fontes que têm o anime, sem
 vencedor nem termo alternativo. O fake de `buscar_por_site_com_variantes` recebe
 `(sessionmaker, variantes, *, referencias, dominios=None)` e devolve
 `dict[str, ResultadoDeFonte]`, mesmo contrato da função real.
-`_termos_de_busca`/`_referencias_de_anime` NÃO são monkeypatchadas: rodam de verdade
+`termos_de_busca`/`referencias_de_anime` NÃO são monkeypatchadas: rodam de verdade
 sobre o `TitulosDeAnime` que o fake de `buscar_titulos` devolve.
 
 O enriquecimento de capa saiu de `busca.py`; o módulo `api/servicos/capas.py` e seus
@@ -19,10 +19,9 @@ import pytest
 
 from api.servicos import busca as servico_busca
 from core.erros import FalhaDeMetadados
-from extractors.base import ResultadoBusca
-from extractors.busca.servico import ResultadoDeFonte
-from extractors.busca.termos import variantes_de_busca
-from extractors.registro import EXTRATORES
+from fontes.adaptadores.base import ResultadoBusca
+from fontes.adaptadores.registro import EXTRATORES
+from fontes.busca.servico import ResultadoDeFonte
 from integrations.base import TitulosDeAnime
 
 
@@ -60,7 +59,7 @@ async def test_todas_termo_de_provedor_entra_na_escada_quando_o_digitado_nao_ach
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -106,7 +105,7 @@ async def test_todas_escada_combinada_une_romaji_e_ingles_numa_rodada_so(
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=ingles)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -129,7 +128,7 @@ async def test_todas_titulo_ingles_do_provedor_alcanca_site_pendente(
     regex não pode impedir o AnimesDrive de ser alcançado com o título inglês
     do provedor ("Tomb Raider King"), onde o anime existe — antes o diálogo
     "Trocar fonte" listava uma fonte só. A escada COMBINADA
-    (`_termos_de_busca` = romaji + inglês + digitado) varre o inglês já na 1ª
+    (`termos_de_busca` = romaji + inglês + digitado) varre o inglês já na 1ª
     varredura, em paralelo, em todos os sites — a UNIÃO traz as duas fontes numa
     rodada de scraping só."""
     candidato_af = ResultadoBusca(
@@ -160,7 +159,7 @@ async def test_todas_titulo_ingles_do_provedor_alcanca_site_pendente(
         return TitulosDeAnime(titulo_romaji="Dogul Wang", titulo_ingles="Tomb Raider King")
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -206,7 +205,7 @@ async def test_todas_faz_uma_rodada_so_quando_todos_os_sites_acham(
         return TitulosDeAnime(titulo_romaji="Naruto", titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -241,7 +240,7 @@ async def test_todas_toda_vazia_e_preservada(monkeypatch: pytest.MonkeyPatch):
         return TitulosDeAnime(titulo_romaji=romaji, titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -257,7 +256,7 @@ async def test_todas_toda_vazia_e_preservada(monkeypatch: pytest.MonkeyPatch):
 async def test_todas_falha_de_metadados_nao_propaga_e_busca_so_com_o_digitado(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`buscar_titulos` lança → `_resolver_titulos_canonicos` degrada pra
+    """`buscar_titulos` lança → `resolver_titulos_canonicos` degrada pra
     `None` (best-effort, upfront) e a busca segue só com o título
     digitado como referência (`referencias == [titulo]`), sem propagar a
     exceção."""
@@ -277,7 +276,7 @@ async def test_todas_falha_de_metadados_nao_propaga_e_busca_so_com_o_digitado(
         raise FalhaDeMetadados("todos os provedores de metadados falharam")
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_falha)
@@ -315,7 +314,7 @@ async def test_todas_todos_os_sites_indisponiveis_ainda_resolve_o_canonico_upfro
         return TitulosDeAnime(titulo_romaji="Naruto Shippuuden", titulo_ingles=None)
 
     monkeypatch.setattr(
-        "extractors.busca.servico.buscar_por_site_com_variantes",
+        "fontes.busca.servico.buscar_por_site_com_variantes",
         _buscar_por_site_com_variantes_fake,
     )
     monkeypatch.setattr("integrations.servico.buscar_titulos", _buscar_titulos_fake)
@@ -327,138 +326,6 @@ async def test_todas_todos_os_sites_indisponiveis_ainda_resolve_o_canonico_upfro
     assert titulos_chamado == ["Naruto"]
     assert rodadas == [None]  # uma rodada de scraping só
     assert all(fonte.indisponivel for fonte in resultado)
-
-
-# --- _referencias_de_anime / _termos_de_busca (helpers puros, fatia d1) ---
-#
-# Helpers de domínio puro consumidos pela Fase 1 de
-# `buscar_em_todas_as_fontes_com_titulos_alternativos` (exercitada acima).
-# Cobertura direta aqui além da indireta pelas funções públicas — o caso de
-# borda de cada um (kanji vazio, dedupe por slug, `titulos is None`) fica mais
-# legível isolado.
-
-
-def test_referencias_de_anime_ordem_digitado_primeiro_depois_campos_do_provedor():
-    titulos = TitulosDeAnime(
-        titulo_romaji="Tensei Shitara Slime Datta Ken",
-        titulo_ingles="That Time I Got Reincarnated as a Slime",
-        titulo_nativo="転生したらスライムだった件",
-        sinonimos=("TenSura", "Regarding Reincarnated to Slime"),
-    )
-
-    referencias = servico_busca._referencias_de_anime(titulos, "Slime")
-
-    # `titulo` na frente; romaji, inglês e cada sinônimo na ordem; o nativo em
-    # kanji slugifica pra vazio e sai.
-    assert referencias == [
-        "Slime",
-        "Tensei Shitara Slime Datta Ken",
-        "That Time I Got Reincarnated as a Slime",
-        "TenSura",
-        "Regarding Reincarnated to Slime",
-    ]
-
-
-def test_referencias_de_anime_dedupe_por_slug_ignora_caixa_e_pontuacao():
-    titulos = TitulosDeAnime(
-        titulo_romaji="Re:Zero kara Hajimeru Isekai Seikatsu",
-        titulo_ingles="Re Zero kara Hajimeru Isekai Seikatsu",
-        sinonimos=("Tomb Raider King",),
-    )
-
-    referencias = servico_busca._referencias_de_anime(
-        titulos, "re:zero kara hajimeru isekai seikatsu"
-    )
-
-    # digitado (caixa baixa), romaji (com ":") e inglês (com espaço) slugificam
-    # todos pra "re-zero-kara-hajimeru-isekai-seikatsu" — colapsam; só o
-    # sinônimo distinto sobra.
-    assert referencias == [
-        "re:zero kara hajimeru isekai seikatsu",
-        "Tomb Raider King",
-    ]
-
-
-def test_referencias_de_anime_descarta_none_e_string_em_branco():
-    titulos = TitulosDeAnime(
-        titulo_romaji=None,
-        titulo_ingles="   ",
-        titulo_nativo=None,
-        sinonimos=("", "Blue Lock"),
-    )
-
-    referencias = servico_busca._referencias_de_anime(titulos, "Aoki")
-
-    assert referencias == ["Aoki", "Blue Lock"]
-
-
-def test_referencias_de_anime_titulos_none_devolve_so_o_digitado():
-    assert servico_busca._referencias_de_anime(None, "Naruto") == ["Naruto"]
-
-
-def test_referencias_de_anime_mantem_digitado_mesmo_quando_slugifica_pra_vazio():
-    titulos = TitulosDeAnime(titulo_romaji="Sono Bisque Doll", titulo_ingles=None)
-
-    referencias = servico_busca._referencias_de_anime(titulos, "着せ替え人形")
-
-    # kanji digitado slugifica pra vazio, mas é a âncora — fica na posição 0
-    # (`corresponde_a_alguma_referencia` degrada pra aceitar referência sem
-    # chave); o romaji entra normalmente.
-    assert referencias == ["着せ替え人形", "Sono Bisque Doll"]
-
-
-def test_termos_de_busca_titulos_none_cai_em_variantes_de_busca():
-    assert servico_busca._termos_de_busca(None, "Kimetsu no Yaiba") == variantes_de_busca(
-        "Kimetsu no Yaiba"
-    )
-
-
-def test_termos_de_busca_ordem_romaji_antes_de_ingles_antes_do_digitado():
-    titulos = TitulosDeAnime(
-        titulo_romaji="Shingeki no Kyojin",
-        titulo_ingles="Attack on Titan",
-    )
-
-    termos = servico_busca._termos_de_busca(titulos, "AoT")
-
-    assert termos[0] == "Shingeki no Kyojin"
-    assert (
-        termos.index("Shingeki no Kyojin")
-        < termos.index("Attack on Titan")
-        < termos.index("AoT")
-    )
-
-
-def test_termos_de_busca_dedupe_entre_escadas_por_slug():
-    titulos = TitulosDeAnime(titulo_romaji="Naruto", titulo_ingles="Naruto")
-
-    termos = servico_busca._termos_de_busca(titulos, "Naruto")
-
-    # romaji, inglês e digitado slugificam igual — a escada do romaji sobra só.
-    assert termos == ["Naruto"]
-
-
-def test_termos_de_busca_ignora_nativo_e_sinonimos():
-    titulos = TitulosDeAnime(
-        titulo_romaji="Bocchi the Rock",
-        titulo_ingles=None,
-        titulo_nativo="ぼっち・ざ・ろっく",
-        sinonimos=("BtR", "Kessoku Band"),
-    )
-
-    termos = servico_busca._termos_de_busca(titulos, "Bocchi the Rock")
-
-    # inglês None e digitado == romaji (colapsa): sobra exatamente a escada do
-    # romaji — nativo e sinônimos não contribuem termo nenhum.
-    assert termos == variantes_de_busca("Bocchi the Rock")
-
-
-def test_termos_de_busca_nunca_vazia_quando_so_o_digitado_e_util():
-    titulos = TitulosDeAnime(titulo_romaji=None, titulo_ingles=None)
-
-    termos = servico_busca._termos_de_busca(titulos, "One Piece")
-
-    assert termos == variantes_de_busca("One Piece")
 
 
 # --- cache de "Trocar fonte" ---
@@ -475,7 +342,7 @@ def _contador_de_buscas(monkeypatch: pytest.MonkeyPatch, fontes: list[ResultadoD
         return {fonte.dominio: fonte for fonte in fontes}
 
     monkeypatch.setattr("integrations.servico.buscar_titulos", _sem_titulos)
-    monkeypatch.setattr(servico_busca.servico_extractors, "buscar_por_site_com_variantes", _buscar)
+    monkeypatch.setattr(servico_busca.servico_fontes, "buscar_por_site_com_variantes", _buscar)
     return chamadas
 
 

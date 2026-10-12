@@ -9,7 +9,8 @@ from types import SimpleNamespace
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos import progresso as servico_progresso
+from api.servicos import aquecimento, sondagem
+from api.servicos import catalogo as servico_catalogo
 from api.servicos.lancamentos import primeiras_em_lancamento, temporadas_novas_apos_concluida
 from api.servicos.progresso import listar_continuar_assistindo
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
@@ -77,7 +78,7 @@ async def test_listar_continuar_assistindo_inclui_pronto_com_progresso_abaixo_do
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [linha.episodio_id for linha in linhas] == [episodio_id]
 
@@ -90,7 +91,7 @@ async def test_listar_continuar_assistindo_inclui_capturado_pronto_sem_progresso
     anime_id = await _criar_anime(sessionmaker_api, "Anime Recem Capturado")
     episodio_id = await _criar_episodio(sessionmaker_api, anime_id, progresso_s=None)
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [(linha.episodio_id, linha.variante, linha.progresso_s) for linha in linhas] == [
         (episodio_id, "pronto", None)
@@ -103,7 +104,7 @@ async def test_listar_continuar_assistindo_inclui_captura_em_andamento_como_proc
     anime_id = await _criar_anime(sessionmaker_api, "Anime Capturando")
     await _criar_episodio(sessionmaker_api, anime_id, status=StatusEpisodio.PENDENTE)
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [linha.variante for linha in linhas] == ["processando"]
 
@@ -115,7 +116,7 @@ async def test_listar_continuar_assistindo_sem_assistido_usa_o_menor_numero_disp
     await _criar_episodio(sessionmaker_api, anime_id, numero=3)
     primeiro_id = await _criar_episodio(sessionmaker_api, anime_id, numero=2)
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [(linha.numero, linha.episodio_id) for linha in linhas] == [(2, primeiro_id)]
 
@@ -132,7 +133,7 @@ async def test_listar_continuar_assistindo_exclui_status_diferente_de_pronto(
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert linhas == []
 
@@ -149,7 +150,7 @@ async def test_listar_continuar_assistindo_exclui_acima_do_limiar_de_90_pct(
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert linhas == []
 
@@ -166,7 +167,7 @@ async def test_listar_continuar_assistindo_inclui_sem_duracao_conhecida(
         progresso_atualizado_em=datetime.now(UTC),
     )
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [linha.episodio_id for linha in linhas] == [episodio_id]
 
@@ -190,7 +191,7 @@ async def test_listar_continuar_assistindo_um_item_por_anime_o_mais_recente(
         sessionmaker_api, anime_id, numero=2, progresso_s=100, progresso_atualizado_em=agora
     )
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [linha.episodio_id for linha in linhas] == [mais_recente_id]
 
@@ -283,7 +284,7 @@ async def test_listar_continuar_assistindo_inclui_primeira_temporada_em_lancamen
         await sessao.commit()
         anime_id = anime.id
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [
         (linha.anime_id, linha.numero, linha.variante, linha.episodio_id, linha.episodio_novo)
@@ -325,7 +326,7 @@ async def test_primeira_em_lancamento_ordena_pela_fonte_confirmada_nao_pela_cria
         await sessao.commit()
         antigo_id, em_andamento_id = antigo.id, em_andamento.id
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [linha.anime_id for linha in linhas] == [antigo_id, em_andamento_id]
 
@@ -370,7 +371,7 @@ async def test_listar_continuar_assistindo_inclui_temporada_nova_da_franquia_con
 ):
     _, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=True)
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
     assert [
         (linha.anime_id, linha.numero, linha.variante, linha.episodio_id, linha.episodio_novo)
@@ -378,25 +379,34 @@ async def test_listar_continuar_assistindo_inclui_temporada_nova_da_franquia_con
     ] == [(t2_id, 1, "capturavel", None, True)]
 
 
-async def test_listar_continuar_assistindo_agenda_reparo_de_fonte_da_temporada_nova(
+async def test_reparo_de_fonte_da_temporada_nova_e_pedido_pelo_zelador_nao_pela_leitura(
     sessionmaker_api: _SessionMaker, monkeypatch
 ):
-    _, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=False)
+    t1_id, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=False)
     chamadas = []
     monkeypatch.setattr(
-        servico_progresso.servico_sondagem,
+        sondagem,
         "agendar_sondagens",
         lambda *args, **kwargs: chamadas.append((args, kwargs)),
     )
 
-    linhas = (await listar_continuar_assistindo(sessionmaker_api)).itens
+    linhas = await listar_continuar_assistindo(sessionmaker_api)
 
-    # Sem fonte mapeada ainda: não vira card, mas a sondagem de reparo é pedida
-    # (com palpite de versão herdado da T1) para a próxima leitura já achar.
+    # Sem fonte mapeada ainda: não vira card, e ler a prateleira não dispara sondagem.
     assert linhas == []
+    assert chamadas == []
+
+    async with sessionmaker_api() as sessao:
+        animes, grupos = await servico_catalogo.animes_do_catalogo(sessao)
+        com_episodios = await servico_catalogo.ids_com_episodios(sessao, [a.id for a in animes])
+        await aquecimento.aquecer_catalogo(sessionmaker_api, sessao, animes, grupos, com_episodios)
+
+    # A passada do zelador pede a resolução (com palpite de versão herdado da T1)
+    # para a próxima leitura já achar a fonte.
     (args, kwargs), = chamadas
     assert args[2][t2_id] == VersaoEpisodio.LEGENDADO
-    assert kwargs["ignorar_gate_de_status"] == frozenset({t2_id})
+    # A T1 também não tem fonte mapeada e tem episódio (fonte perdida): mesma política.
+    assert kwargs["a_resolver"] == frozenset({t1_id, t2_id})
 
 
 # --- GET /api/episodios/continuar-assistindo ---
@@ -418,7 +428,7 @@ async def test_rota_continuar_assistindo_devolve_itens_esperados(
     resposta = await cliente.get("/api/episodios/continuar-assistindo")
 
     assert resposta.status_code == 200
-    corpo = resposta.json()["itens"]
+    corpo = resposta.json()
     assert len(corpo) == 1
     assert corpo[0]["episodio_id"] == episodio_id
     assert corpo[0]["anime_id"] == anime_id
@@ -444,7 +454,7 @@ async def test_rota_continuar_assistindo_thumb_vem_do_episodio_nao_do_anime(
     resposta = await cliente.get("/api/episodios/continuar-assistindo")
 
     assert resposta.status_code == 200
-    corpo = resposta.json()["itens"]
+    corpo = resposta.json()
     assert corpo[0]["thumb"] == "https://img/thumb-do-episodio.jpg"
     assert "capa_path" not in corpo[0]
 

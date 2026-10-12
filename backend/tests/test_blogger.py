@@ -1,4 +1,4 @@
-"""Testes de `extractors/blogger.py::resolver_token` com fixtures estáticas — sem
+"""Testes de `fontes/adaptadores/blogger.py::resolver_token` com fixtures estáticas — sem
 rede, sem navegador. O cliente é um dublê que devolve o HTML `video.g` e a
 resposta `batchexecute` pré-gravados (ou levanta a exceção já traduzida que o
 cliente real levantaria).
@@ -11,7 +11,7 @@ import json
 import pytest
 
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, SessaoRejeitada
-from extractors import blogger
+from fontes.adaptadores import blogger
 
 # `video.g` realista: `WIZ_global_data` numa linha (com `{}` aninhado e `{}`
 # dentro de string, para travar que o fatiador de bloco não usa `{.*}`), um

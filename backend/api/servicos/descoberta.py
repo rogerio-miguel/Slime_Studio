@@ -1,6 +1,6 @@
 """Orquestração de metadados externos (`integrations/`) com o catálogo local
 — mesmo papel de `api/servicos/fontes.py`, mas para `integrations/servico.py`
-em vez de `extractors/`. Não importa `fastapi` nem Pydantic (regra de
+em vez de `fontes/`. Não importa `fastapi` nem Pydantic (regra de
 dependência da Clean Architecture, CLAUDE.md §1); `api/rotas/animes.py`
 traduz para schemas.
 """
@@ -9,17 +9,16 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Iterable
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos.catalogo import agrupar_franquias, banner_da_temporada_ou_franquia
+from core.ciclo_de_vida import RetratoDoAnime, deve_atualizar_status
 from core.conteudo_adulto import eh_conteudo_adulto
-from core.enums import StatusLancamento
 from core.erros import FalhaDeMetadados
 from core.temporada import PosicaoNaSerie, conciliar_posicao, separar_temporada
 from core.texto import slugificar
@@ -38,7 +37,7 @@ from db.catalogo import (
     sincronizar_capas_em_lote,
     sobrescrever_arte,
 )
-from extractors.versao import remover_marcador_de_versao
+from fontes.adaptadores.versao import remover_marcador_de_versao
 from integrations import servico
 from integrations.base import AnimeEmAlta, ArteDeAnime, MetadadosDeAnime, NoDeSerie
 from models.anime import Anime
@@ -47,24 +46,23 @@ logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
-# F4/F14 — aquecimento oportunista do estado de lançamento. Sem scheduler/cron
-# (decisão de produto): o dado só é atualizado em três momentos de "carona":
+# F4/F14 — atualização do estado de lançamento, sem scheduler próprio. O dado
+# se renova em dois momentos:
 #   1. o cruzamento do feed "em alta" (F4a, de graça: o feed já traz o bloco
 #      fresco da AniList);
-#   2. a abertura da página de um anime, ou a listagem do catálogo, para animes
-#      COM `anilist_id` e dado mais velho que este TTL (F4b/F14, busca lazy por
-#      id: `servico.buscar_lancamento_por_anilist_id`);
-#   3. a listagem do catálogo, para animes SEM `anilist_id` (F14, busca lazy por
-#      TÍTULO: `servico.buscar_por_titulo`, cadeia AniList→Kitsu) — senão esses
-#      animes ficam com `status_lancamento` NULL para sempre e o badge de
-#      "episódios novos" nunca dispara.
+#   2. a passada do zelador (`api/servicos/zelador.py` → `agendar_refreshs_do_catalogo`),
+#      para animes com dado mais velho que este TTL — COM `anilist_id` por busca lazy
+#      por id (`servico.buscar_lancamento_por_anilist_id`), SEM por TÍTULO
+#      (`servico.buscar_por_titulo`, cadeia AniList→Kitsu; sem isso `status_lancamento`
+#      ficaria NULL para sempre e o badge de "episódios novos" nunca dispararia).
 _TTL_LANCAMENTO_S = 6 * 3600
 
-# Referência forte às buscas lazy em andamento: (1) deduplica aberturas
-# concorrentes da mesma página / passadas do catálogo e (2) impede o GC de
+# Referência forte às buscas lazy em andamento: (1) deduplica passadas
+# concorrentes sobre o mesmo anime e (2) impede o GC de
 # coletar uma `Task` fire-and-forget antes de ela terminar. A entrada sai no
-# `add_done_callback`. Compartilhado pelos caminhos 2 e 3 acima — as listas de
-# candidatos de cada um são disjuntas (um anime tem OU não tem `anilist_id`).
+# `add_done_callback`. Compartilhado pelos dois caminhos de
+# `agendar_refreshs_do_catalogo` — as listas de candidatos de cada um são
+# disjuntas (um anime tem OU não tem `anilist_id`).
 _refreshs_de_lancamento_em_voo: dict[int, asyncio.Task] = {}
 
 # F14 — teto de animes por listagem de catálogo que disparam busca à AniList
@@ -84,7 +82,7 @@ _MAX_BUSCAS_POR_TITULO_POR_LOTE = 2
 _MAX_REPAROS_DE_CLASSIFICACAO_POR_LOTE = 2
 # Cooldown por anime e por processo, contado da TENTATIVA (não do sucesso): série
 # cujo walk nunca resolve (ciclo, prequel ambíguo) ficaria retentando a cada
-# `?aquecer=true` pra sempre. Em memória de propósito — reiniciar o processo
+# passada do zelador pra sempre. Em memória de propósito — reiniciar o processo
 # zera, que é exatamente quando vale tentar de novo.
 _COOLDOWN_REPARO_DE_CLASSIFICACAO_S = 3600
 _reparos_de_classificacao_em_voo: dict[int, asyncio.Task] = {}
@@ -113,7 +111,7 @@ _TETO_ENRIQUECIMENTO_S = 18
 # Teto do walk de `relations` (`servico.resolver_serie`) no enriquecimento da
 # materialização. Cada hop é uma chamada AniList sob o timeout por provedor de
 # `integrations/`; o `_memo_serie` de processo faz a franquia inteira custar ~1
-# caminhada depois da primeira. Best-effort como `_resolver_titulos_canonicos`
+# caminhada depois da primeira. Best-effort como `resolver_titulos_canonicos`
 # — nunca bloqueia a criação do anime, que já aconteceu antes desta chamada.
 _TETO_SERIE_S = 12
 
@@ -466,11 +464,7 @@ def agendar_refresh_de_lancamento(sessionmaker: _SessionMaker, anime: Anime) -> 
     há event loop rodando."""
     if anime.anilist_id is None:
         return
-    if anime.status_lancamento not in (
-        StatusLancamento.EM_LANCAMENTO,
-        StatusLancamento.NAO_LANCADO,
-        None,
-    ):
+    if not deve_atualizar_status(RetratoDoAnime.de(anime), date.today()):
         return
     limite = datetime.now(UTC) - timedelta(seconds=_TTL_LANCAMENTO_S)
     if not carimbo_esta_velho(anime.lancamento_atualizado_em, limite):
@@ -709,31 +703,12 @@ def agendar_reparos_de_classificacao(sessionmaker: _SessionMaker, animes: list[A
         )
 
 
-def refresh_em_andamento(ids: Iterable[int]) -> bool:
-    """`True` se algum dos `ids` tem uma busca lazy de lançamento em voo agora
-    (peek em `_refreshs_de_lancamento_em_voo`, sem I/O) — espelha
-    `api/servicos/sondagem.py::sondagem_em_andamento`. Usado por
-    `GET /api/animes/aquecimento-em-andamento` (`api/rotas/animes.py`) junto
-    com `sondagem_em_andamento` pra sinalizar à Galeria que vale reconsultar o
-    catálogo em alguns segundos em vez de esperar F5."""
-    return any(anime_id in _refreshs_de_lancamento_em_voo for anime_id in ids)
-
-
 def _elegivel_para_aquecimento(anime: Anime, limite: datetime) -> bool:
-    """Gate comum aos dois caminhos de `agendar_refreshs_do_catalogo`: status de
-    lançamento que ainda pode ganhar episódios (`EM_LANCAMENTO`, `NAO_LANCADO`
-    ou nulo) e carimbo mais velho que `limite` (ou ausente).
-
-    `NAO_LANCADO` entra na tupla porque um bookmark de "Próximas estreias" nasce
-    com `status_lancamento` NULL, é aquecido uma única vez para `NAO_LANCADO` +
-    `proximo_ep_em` e — sem ele aqui — nunca mais seria reconsultado: a data de
-    estreia congelaria e o anime jamais transicionaria para `EM_LANCAMENTO` ao
-    estrear. Mesmo motivo no gate de `agendar_refresh_de_lancamento` (esses
-    bookmarks têm `anilist_id`, então passam pela busca lazy por id)."""
-    return anime.status_lancamento in (
-        StatusLancamento.EM_LANCAMENTO,
-        StatusLancamento.NAO_LANCADO,
-        None,
+    """Gate comum aos dois caminhos de `agendar_refreshs_do_catalogo`: a política
+    de ciclo de vida pede status novo (`core.ciclo_de_vida.deve_atualizar_status`)
+    e o carimbo é mais velho que `limite` (ou ausente)."""
+    return deve_atualizar_status(
+        RetratoDoAnime.de(anime), date.today()
     ) and carimbo_esta_velho(anime.lancamento_atualizado_em, limite)
 
 
@@ -856,10 +831,10 @@ def _termo_de_busca(titulo: str) -> str:
     pioraria o match); `remover_marcador_de_versao` cuida das formas sem
     parênteses. Título que ficaria vazio volta cru.
 
-    `remover_marcador_de_versao` é domínio puro de `extractors/versao.py` (sem
+    `remover_marcador_de_versao` é domínio puro de `fontes/adaptadores/versao.py` (sem
     HTTP/framework) — reuso pontual da regra de fronteira de token, não a
     mistura de famílias de adapter que o CLAUDE.md §1 proíbe (`api/servicos/
-    sondagem.py` importa de `extractors/` pelo mesmo motivo).
+    sondagem.py` importa de `fontes/` pelo mesmo motivo).
     """
     sem_parenteses = _REGEX_SEGMENTO_PARENTETICO.sub(" ", titulo)
     termo = remover_marcador_de_versao(sem_parenteses)
@@ -1065,7 +1040,7 @@ async def _resolver_e_aplicar_serie(
 async def _materializar_temporadas_irmas(
     sessionmaker: _SessionMaker, anilist_id_clicado: int, franquia: list[NoDeSerie]
 ) -> None:
-    """Materializa (metadados apenas, sem tocar `extractors/`) toda temporada
+    """Materializa (metadados apenas, sem tocar `fontes/`) toda temporada
     da `franquia` (`servico.resolver_franquia`, lista ordenada T1..Tn) que
     ainda não está no catálogo local — o pedido do usuário de agrupar a
     franquia inteira ao clicar em qualquer uma das temporadas.

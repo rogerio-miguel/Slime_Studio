@@ -8,11 +8,12 @@ validação (`ruff` só), então a garantia de contrato completo precisa vir de
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
 from core.enums import VersaoEpisodio
-from extractors.cliente import ClienteDeSite
+from fontes.rede.cliente import ClienteDeSite
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,8 +38,10 @@ class EpisodioRemoto:
       temporadas, quando a fonte tem esse conceito) quando `temporada is None`.
       Casa com `Episodio.numero` no primeiro caso.
     - `rotulo` é sempre o texto/label cru da fonte (ex.: "7", "07", "Especial")
-      e NUNCA é reescrito — é a chave de dedup de cada adapter (rótulos com zero
-      à esquerda não são necessariamente o mesmo episódio) e PODE divergir de
+      e NUNCA é reescrito — é a chave de dedup do AnimeFire e do AnimesDrive
+      (rótulos com zero à esquerda não são necessariamente o mesmo episódio); o
+      MeusAnimes deduplica por `url`, porque lá o rótulo é o número por temporada
+      e repete entre temporadas. PODE divergir de
       `numero`: no AnimeFire continua sendo o número absoluto da série; no
       MeusAnimes, o número por temporada cru da URL. `api/servicos/jobs.py`
       deriva `Episodio.numero_fonte` de `int(rotulo)`.
@@ -60,8 +63,8 @@ class EpisodioRemoto:
     thumb_url: str | None = None
     # Nome e sinopse do episódio — NUNCA vêm do extractor (nenhum site de
     # scraping expõe isso hoje); sempre `None` aqui na origem, preenchidos
-    # depois só pelo overlay TMDB (`api/servicos/fontes.py::
-    # _sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`).
+    # depois só pelo overlay TMDB (`api/servicos/stills_de_episodio.py::
+    # sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`).
     titulo: str | None = None
     sinopse: str | None = None
     # `True` quando o adapter recortou a temporada pelo marcador da própria fonte
@@ -72,9 +75,26 @@ class EpisodioRemoto:
     recortado_pela_fonte: bool = False
 
 
+def ordenar_episodios(episodios: Iterable[EpisodioRemoto]) -> list[EpisodioRemoto]:
+    """Numéricos em ordem crescente primeiro, rótulos não numéricos
+    (`numero=None`) depois — sem seção separada na listagem (decisão do produto),
+    só não intercalados entre os numéricos. Sem `rotulo` na chave: `sorted` é
+    estável, então dois rótulos com o mesmo `numero` (ex. "7"/"07", ou temporadas
+    achatadas sem marcador) mantêm a ordem em que apareceram na página — usar
+    `rotulo` como desempate colocaria "07" antes de "7" (comparação lexicográfica),
+    uma ordem arbitrária e não a "natural" da fonte."""
+    return sorted(
+        episodios,
+        key=lambda episodio: (
+            episodio.numero is None,
+            episodio.numero if episodio.numero is not None else 0,
+        ),
+    )
+
+
 class FormatoDeMidia(StrEnum):
     """Formato do container/protocolo apontado por `LinkDeMidia.url` — vocabulário
-    de extractor, não domínio persistido (mesmo racional de `extractors/qualidade.py`:
+    de extractor, não domínio persistido (mesmo racional de `fontes/adaptadores/qualidade.py`:
     fica fora de `core/enums.py` de propósito, pois é só o site que atravessou a
     fronteira, não algo que o resto do sistema precisa conhecer).
 
@@ -126,7 +146,7 @@ class ExtratorDeSite(ABC):
 
         Granularidade separada de `exige_navegador` de propósito: subir Chromium
         em toda busca (operação mais frequente do sistema, e paralela entre sites
-        em `extractors/busca/servico.py::buscar_por_site_com_variantes`) pra atender um
+        em `fontes/busca/servico.py::buscar_por_site_com_variantes`) pra atender um
         único método seria caro sem necessidade. Concreta, não abstrata: o caso
         normal é `False` e nenhum adapter existente precisa declarar isso.
         """
@@ -137,7 +157,7 @@ class ExtratorDeSite(ABC):
         """`True` quando este site separa legendado de dublado no próprio
         markup (slug/título de anime) — capability, não comportamento: quem
         lê isso é o chamador, decidindo se a ausência de marcador detectado
-        por `extractors/versao.py::inferir_versao` vira `VersaoEpisodio.LEGENDADO`
+        por `fontes/adaptadores/versao.py::inferir_versao` vira `VersaoEpisodio.LEGENDADO`
         por convenção do site (dublado sempre marcado, legendado é o default
         silencioso) ou fica indeterminada.
 
@@ -172,6 +192,12 @@ class ExtratorDeSite(ABC):
         - a fonte expõe VÁRIAS temporadas e nenhuma bate `temporada` → `[]` com
           `logger.warning` listando as disponíveis (esta temporada não existe
           nesta fonte).
+
+        Listagem vazia: `[]` só quando a fonte dá um sinal estruturado de que
+        não há episódio (ex. a API do AnimeFire devolvendo `episodes: []` para
+        anime ainda não estreado). Em adapter que lê HTML, página sem nenhum
+        episódio não distingue "ainda não publicou" de "o seletor quebrou" e
+        levanta `EstruturaDoSiteMudou`.
         """
 
     @abstractmethod

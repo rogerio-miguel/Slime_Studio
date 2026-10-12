@@ -15,7 +15,6 @@ from api.esquemas import (
     AnimeDetalheSaida,
     AnimeEmAltaSaida,
     AnimeSaida,
-    AquecimentoCatalogoSaida,
     BuscaEmFontesSaida,
     CandidatoDeBannerSaida,
     ConfirmarFonteRequest,
@@ -36,15 +35,15 @@ from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
 from api.servicos import jobs as servico_jobs
 from api.servicos import lancamentos as servico_lancamentos
-from api.servicos import sondagem as servico_sondagem
+from api.servicos import versoes_de_fonte as servico_versoes
 from core.config import Config
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from db.catalogo import obter_ou_criar_anime_id
-from extractors.base import ResultadoBusca
-from extractors.registro import EXTRATORES
-from extractors.resolucao import confirmar_fonte
-from extractors.versao import inferir_versao
+from fontes.adaptadores.base import ResultadoBusca
+from fontes.adaptadores.registro import EXTRATORES
+from fontes.adaptadores.versao import inferir_versao
+from fontes.resolucao import confirmar_fonte
 from integrations import servico as servico_metadados
 from integrations.base import AnimeEmAlta
 from integrations.tmdb import url_de_banner
@@ -113,11 +112,11 @@ async def confirmar_fonte_do_anime(
     `corpo.versao` é o round-trip do que o frontend recebeu em
     `ResultadoBuscaFonteSaida.versao` pro candidato escolhido. Preferência: o
     servidor rederiva via `inferir_versao` (mesma lógica de
-    `extractors/resolucao.py::confirmar_fonte`) quando encontra marcador no
+    `fontes/resolucao.py::confirmar_fonte`) quando encontra marcador no
     texto — sites como AnimesDrive/MeusAnimes o carregam no slug/título, e aí
     o servidor não confia cegamente no cliente. Sites como AnimeFire
     diferenciam por um campo à parte da API (`audio`, sem marcador textual —
-    `extractors/animefire.py::_resultados_do_item`) e `inferir_versao` NUNCA
+    `fontes/adaptadores/animefire.py::_resultados_do_item`) e `inferir_versao` NUNCA
     encontra nada pra eles: sem esta ressalva, toda confirmação nesses sites
     era silenciosamente regravada como `LEGENDADO`, não importa o que o
     usuário escolheu (`corpo.versao`, já calculado com o sinal correto lá na
@@ -279,20 +278,13 @@ async def restaurar_banner(
 
 @router_publico.get("", response_model=list[AnimeSaida])
 async def listar_animes(
-    aquecer: bool = False,
     sessao: AsyncSession = Depends(obter_sessao),
-    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeSaida]:
     # Filme/OVA/ONA/especial (`formato_midia` não nulo) se agrupam no anime
     # original (seletor de temporada, `agrupar_franquias`/`_temporadas_e_proxima`)
     # em vez de aparecer como card solto — exceto quando a franquia não tem
     # temporada normal catalogada (`visiveis_no_catalogo`), senão somem da grade.
-    grupos_de_franquia = await servico_catalogo.agrupar_franquias(sessao)
-    resultado = await sessao.execute(select(Anime).order_by(Anime.titulo))
-    animes = servico_catalogo.visiveis_no_catalogo(
-        (a for a in resultado.scalars() if not eh_conteudo_adulto(a.generos)),
-        grupos_de_franquia,
-    )
+    animes, grupos_de_franquia = await servico_catalogo.animes_do_catalogo(sessao)
     ids = [anime.id for anime in animes]
     maior_capturado = await servico_lancamentos.maior_numero_capturado_por_anime(sessao, ids)
     com_episodios = await servico_catalogo.ids_com_episodios(sessao, ids)
@@ -302,56 +294,9 @@ async def listar_animes(
     # "Nª temporada estreia em ..." (agrupamento de franquia rodado uma vez,
     # `agrupar_franquias`, reaproveitado por card — ver docstring de
     # `_temporadas_e_proxima`).
-    versoes_confirmadas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
+    versoes_confirmadas = await servico_versoes.versoes_confirmadas_mais_recentes_por_anime(
         sessao, ids
     )
-    # Aquecimento opt-in via `?aquecer=true`: carona fire-and-forget que sonda a
-    # fonte real (scraping) dos animes em lançamento com contagem velha/ausente e
-    # aquece o `status_lancamento` (filtro do badge) via AniList/Kitsu. Só a
-    # Galeria (`paginas/Galeria.jsx`, rota `/animes` — catálogo completo com os
-    # badges) envia a flag; a Home (`paginas/Inicio.jsx`) chama sem ela e não
-    # paga esse custo a cada abertura. O resultado entra no banco para a PRÓXIMA
-    # leitura do catálogo, não para esta — logo o badge de "episódios novos" na
-    # Home reflete a última passada da Galeria. Zero `await` de rede aqui: a
-    # query de versões só alimenta o agendamento, que é síncrono.
-    if aquecer:
-        versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
-        # Reparo de fonte perdida (2026-09-15, migração
-        # `26791d90cb31_invalida_fonte_anime_do_animefire_one`): anime com
-        # episódio capturado mas ZERO `FonteAnime` mapeada nunca ganha entrada
-        # em `versoes_de_sondagem_por_anime` (não há fonte pra consultar) e
-        # `agendar_sondagens` o pulava pra sempre — só um `versao_confirmada_
-        # mais_recente` nulo pro badge Dublado/Legendado sumir do card sem
-        # nenhum jeito automático de voltar. Palpite de versão vem do próprio
-        # episódio já capturado; `ignorar_gate_de_status` deixa isto tentar
-        # mesmo pra anime `FINALIZADO` (o gate normal de status não se aplica
-        # aqui — é reparo pontual, não sondagem contínua de contagem).
-        # `ids_fora_de_cooldown_de_reparo` corta quem falhou a varredura cara
-        # (todos os extratores, sem fonte mapeada pra atalhar) há pouco tempo —
-        # sem isto, um anime não encontrado em lugar nenhum repetia a
-        # varredura inteira a cada `?aquecer=true`.
-        ids_sem_fonte_com_episodios = servico_sondagem.ids_fora_de_cooldown_de_reparo(
-            aid for aid in ids if aid in com_episodios and aid not in versoes
-        )
-        versoes_de_reparo = await servico_sondagem.versoes_para_reresolver_fonte_perdida(
-            sessao, ids_sem_fonte_com_episodios
-        )
-        # Temporada nova de franquia que o usuário terminou: sem episódio local
-        # não há fonte mapeada, então o badge nunca acenderia sozinho — mesmo
-        # reparo acima, com palpite de versão herdado da temporada anterior.
-        novas = await servico_lancamentos.temporadas_novas(sessao, grupos_de_franquia)
-        versoes_de_temporadas_novas = await servico_sondagem.versoes_de_reparo_de_temporadas_novas(
-            sessao, novas, versoes
-        )
-        versoes_de_reparo = {**versoes_de_reparo, **versoes_de_temporadas_novas}
-        versoes = {**versoes, **versoes_de_reparo}
-        servico_sondagem.agendar_sondagens(
-            sessionmaker,
-            animes,
-            versoes,
-            ignorar_gate_de_status=frozenset(versoes_de_reparo),
-        )
-        servico_descoberta.agendar_refreshs_do_catalogo(sessionmaker, animes)
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
     # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios`,
     # `assistido` e `episodios_atuais` são derivados e precisam ser injetados à
@@ -379,21 +324,6 @@ async def listar_animes(
             )
         )
     return resultado_saida
-
-
-# Mesma armadilha de ordem de `/em-alta` abaixo: precisa vir ANTES de
-# `/{anime_id}`, senão casaria com `anime_id="aquecimento-em-andamento"`.
-@router_publico.get("/aquecimento-em-andamento", response_model=AquecimentoCatalogoSaida)
-async def aquecimento_em_andamento(
-    sessao: AsyncSession = Depends(obter_sessao),
-) -> AquecimentoCatalogoSaida:
-    grupos = await servico_catalogo.agrupar_franquias(sessao)
-    animes = (await sessao.execute(select(Anime))).scalars()
-    ids = [anime.id for anime in servico_catalogo.visiveis_no_catalogo(animes, grupos)]
-    em_andamento = servico_sondagem.sondagem_em_andamento(
-        ids
-    ) or servico_descoberta.refresh_em_andamento(ids)
-    return AquecimentoCatalogoSaida(em_andamento=em_andamento)
 
 
 # `/em-alta` precisa vir ANTES de `/{anime_id}` — um `{anime_id}` declarado
@@ -508,7 +438,7 @@ async def buscar_animes_em_fontes(
     """Busca ao vivo em sites de extração — alimenta o diálogo "Trocar fonte":
     cada site busca em paralelo, esgotando de forma independente e exaustiva sua
     própria escada de variantes, sem que um "roube a vez" do outro
-    (`extractors.busca.servico.buscar_por_site_com_variantes`). Devolve a UNIÃO
+    (`fontes.busca.servico.buscar_por_site_com_variantes`). Devolve a UNIÃO
     das fontes onde o anime existe. `fontes` traz o status de cada site
     consultado (disponível ou não, com motivo) — a UI usa isso pra distinguir
     "não achei nada" de "não consegui nem tentar" (CLAUDE.md §4, erro nunca
@@ -554,12 +484,10 @@ async def obter_anime(
     anime = await sessao.get(Anime, anime_id)
     if anime is None or eh_conteudo_adulto(anime.generos):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
-    # F4b: refresh lazy fire-and-forget do estado de lançamento — não aguarda,
-    # só agenda para a próxima leitura (ver `descoberta.agendar_refresh_de_lancamento`).
-    servico_descoberta.agendar_refresh_de_lancamento(sessionmaker, anime)
-    # Mesma carona, para sinopse/banner/cor/gêneros ainda faltando (anime
-    # materializado do feed "em alta", que nunca traz sinopse) — ver
-    # `descoberta.agendar_enriquecimento_de_metadados`.
+    # Completa sinopse/banner/cor/gêneros ainda faltando (anime materializado do
+    # feed "em alta", que nunca traz sinopse) — fire-and-forget, ver
+    # `descoberta.agendar_enriquecimento_de_metadados`. Verificar fonte/status é do
+    # zelador (`api/servicos/zelador.py`), não de quem lê a página.
     servico_descoberta.agendar_enriquecimento_de_metadados(sessionmaker, anime)
     resultado = await sessao.execute(
         select(FonteAnime.versao, FonteAnime.resolvido_em).where(FonteAnime.anime_id == anime_id)
@@ -572,17 +500,6 @@ async def obter_anime(
         if mais_recente is not None
         else None
     )
-    # Sondagem oportunista da fonte real — mesma carona fire-and-forget do
-    # `agendar_refresh_de_lancamento` de F4b acima, mas alimentando
-    # `Anime.episodios_na_fonte`. Reusa a linha de `FonteAnime` já lida (sem
-    # `versao_confirmada`/`DESCONHECIDA` da tradução de F4: aqui é
-    # `versao_de_sondagem`, `NAO_DIFERENCIADA -> LEGENDADO`).
-    versoes_de_sondagem = (
-        {anime.id: servico_sondagem.versao_de_sondagem(mais_recente.versao)}
-        if mais_recente is not None
-        else {}
-    )
-    servico_sondagem.agendar_sondagens(sessionmaker, [anime], versoes_de_sondagem)
     grupos = await servico_catalogo.agrupar_franquias(sessao)
     temporadas, proxima_temporada = _temporadas_e_proxima(
         anime.id, anime.numero_temporada, grupos[anime.id]

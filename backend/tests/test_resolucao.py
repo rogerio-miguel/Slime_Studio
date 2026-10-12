@@ -1,4 +1,4 @@
-"""Testes de `extractors/resolucao.py`, sem rede — `resiliencia.chamar` é
+"""Testes de `fontes/resolucao.py`, sem rede — `resiliencia.chamar` é
 substituído por uma versão que chama a operação direto (sem `ClienteLeve`/
 `cloudscraper`), e adapters falsos ficam em `resolucao.EXTRATORES` via
 `monkeypatch`.
@@ -15,10 +15,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.config import Config
-from core.enums import VersaoDeFonte, VersaoEpisodio
+from core.enums import OrigemDeFonte, VersaoDeFonte, VersaoEpisodio
+from core.erros import FalhaDeExtracao, SessaoRejeitada, SiteEmCooldown
 from db.engine import criar_engine, criar_sessionmaker
-from extractors import resiliencia, resolucao
-from extractors.base import EpisodioRemoto, ExtratorDeSite, ResultadoBusca
+from fontes import resolucao
+from fontes.adaptadores.base import EpisodioRemoto, ExtratorDeSite, ResultadoBusca
+from fontes.rede import resiliencia
 from models.anime import Anime
 from models.base import Base
 from models.estado_site import EstadoSite
@@ -33,7 +35,9 @@ class _ExtratorFalso(ExtratorDeSite):
         candidatos: list[ResultadoBusca] | None = None,
         episodios: list[EpisodioRemoto] | None = None,
         diferencia_versao: bool = False,
+        erro: FalhaDeExtracao | None = None,
     ) -> None:
+        self._erro = erro
         self._dominio = dominio
         self._candidatos = candidatos or []
         self._episodios = episodios or []
@@ -54,6 +58,8 @@ class _ExtratorFalso(ExtratorDeSite):
 
     def buscar(self, cliente, titulo):
         self.chamadas_buscar += 1
+        if self._erro is not None:
+            raise self._erro
         return self._candidatos
 
     def listar_episodios(self, cliente, identificador):
@@ -797,6 +803,127 @@ async def test_nenhum_site_serve_versao_devolve_versao_indisponivel(sessionmaker
     assert resultado == resolucao.VersaoIndisponivel(versao=VersaoEpisodio.DUBLADO)
 
 
+_CARD_SLIME = ResultadoBusca(titulo_exibicao="Slime Datta Ken", identificador="slime", url="x")
+_VERSAO = VersaoEpisodio.LEGENDADO
+
+
+async def test_site_que_falha_na_busca_nao_aborta_a_cadeia(sessionmaker, monkeypatch):
+    quebrado = _ExtratorFalso("site-a.io", erro=FalhaDeExtracao("fora do ar", dominio="site-a.io"))
+    saudavel = _ExtratorFalso("site-b.io", candidatos=[_CARD_SLIME])
+    monkeypatch.setattr(resolucao, "EXTRATORES", (quebrado, saudavel))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+
+    resultado = await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    assert resultado == resolucao.FonteResolvida(
+        dominio="site-b.io", identificador="slime", versao_da_fonte=VersaoDeFonte.NAO_DIFERENCIADA
+    )
+
+
+async def test_todos_os_sites_fora_devolve_indisponiveis_e_prioriza_sessao(
+    sessionmaker, monkeypatch
+):
+    generica = FalhaDeExtracao("timeout", dominio="site-a.io")
+    sessao_rejeitada = SessaoRejeitada("cloudflare", dominio="site-b.io")
+    monkeypatch.setattr(
+        resolucao,
+        "EXTRATORES",
+        (
+            _ExtratorFalso("site-a.io", erro=generica),
+            _ExtratorFalso("site-b.io", erro=sessao_rejeitada),
+        ),
+    )
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+
+    resultado = await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    assert isinstance(resultado, resolucao.VersaoIndisponivel)
+    assert resultado.indisponiveis == (generica, sessao_rejeitada)
+    assert resultado.falha_principal is sessao_rejeitada
+
+
+async def test_site_em_cooldown_conta_como_indisponivel_e_nao_como_inexistente(
+    sessionmaker, monkeypatch
+):
+    monkeypatch.setattr(resolucao, "EXTRATORES", (_ExtratorFalso("site-a.io"),))
+    async with sessionmaker() as sessao:
+        sessao.add(
+            EstadoSite(
+                site_dominio="site-a.io",
+                falhas_consecutivas=3,
+                cooldown_ate=datetime.now(UTC) + timedelta(hours=1),
+            )
+        )
+        await sessao.commit()
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+
+    resultado = await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    assert isinstance(resultado, resolucao.VersaoIndisponivel)
+    assert isinstance(resultado.falha_principal, SiteEmCooldown)
+    assert resultado.falha_principal.dominio == "site-a.io"
+
+
+async def test_sem_falhas_e_sem_candidatos_versao_indisponivel_nao_tem_falha_principal(
+    sessionmaker, monkeypatch
+):
+    monkeypatch.setattr(resolucao, "EXTRATORES", (_ExtratorFalso("site-a.io"),))
+    anime = await _criar_anime(sessionmaker, "Anime Obscuro")
+
+    resultado = await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    assert isinstance(resultado, resolucao.VersaoIndisponivel)
+    assert resultado.falha_principal is None
+
+
+_CARDS_AMBIGUOS = [
+    ResultadoBusca(titulo_exibicao="Slime Datta Ken", identificador="a", url="x"),
+    ResultadoBusca(titulo_exibicao="Slime Datta Ken OVA", identificador="b", url="y"),
+]
+
+
+async def test_site_ambiguo_nao_bloqueia_o_seguinte(sessionmaker, monkeypatch):
+    ambiguo = _ExtratorFalso("site-a.io", candidatos=_CARDS_AMBIGUOS)
+    exato = _ExtratorFalso("site-b.io", candidatos=[_CARD_SLIME])
+    monkeypatch.setattr(resolucao, "EXTRATORES", (ambiguo, exato))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ke")
+    exato._candidatos = [
+        ResultadoBusca(titulo_exibicao="Slime Datta Ke", identificador="b", url="x")
+    ]
+
+    resultado = await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    assert isinstance(resultado, resolucao.FonteResolvida)
+    assert resultado.dominio == "site-b.io"
+
+
+async def test_ambiguidade_vence_indisponibilidade_quando_nenhum_site_resolve(
+    sessionmaker, monkeypatch
+):
+    ambiguo = _ExtratorFalso("site-a.io", candidatos=_CARDS_AMBIGUOS)
+    quebrado = _ExtratorFalso("site-b.io", erro=FalhaDeExtracao("fora", dominio="site-b.io"))
+    monkeypatch.setattr(resolucao, "EXTRATORES", (ambiguo, quebrado))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ke")
+
+    resultado = await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    assert resultado == resolucao.ConfirmacaoNecessaria(
+        dominio="site-a.io", candidatos=_CARDS_AMBIGUOS
+    )
+
+
+async def test_proximo_site_para_pula_site_que_falha_na_busca(sessionmaker, monkeypatch):
+    quebrado = _ExtratorFalso("site-a.io", erro=FalhaDeExtracao("fora", dominio="site-a.io"))
+    saudavel = _ExtratorFalso("site-b.io", candidatos=[_CARD_SLIME])
+    monkeypatch.setattr(resolucao, "EXTRATORES", (quebrado, saudavel))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+
+    resultado = await resolucao.proximo_site_para(sessionmaker, anime, set(), _VERSAO)
+
+    assert resultado is not None
+    assert resultado.dominio == "site-b.io"
+
+
 async def test_resolver_fonte_do_anime_rejeita_versao_desconhecida(sessionmaker, monkeypatch):
     extrator = _ExtratorFalso("animefire.one", candidatos=[])
     monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
@@ -921,3 +1048,127 @@ async def test_proximo_site_para_versao_desconhecida_ignora_capacidade_de_versao
     assert resultado == resolucao.FonteResolvida(
         dominio="site-b.io", identificador="b", versao_da_fonte=VersaoDeFonte.DUBLADO
     )
+
+
+async def test_fontes_mapeadas_alternativas_so_capazes_uma_por_dominio_da_mais_recente(
+    sessionmaker,
+):
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    agora = datetime.now(UTC)
+
+    def _linha(dominio, versao, identificador, dias_atras):
+        return FonteAnime(
+            anime_id=anime.id,
+            site_dominio=dominio,
+            versao=versao,
+            identificador_no_site=identificador,
+            prioridade=0,
+            resolvido_em=agora - timedelta(days=dias_atras),
+        )
+
+    async with sessionmaker() as sessao:
+        sessao.add_all(
+            [
+                _linha("escolhido.io", VersaoDeFonte.LEGENDADO, "e", 0),
+                _linha("b.io", VersaoDeFonte.LEGENDADO, "b-velha", 5),
+                _linha("b.io", VersaoDeFonte.NAO_DIFERENCIADA, "b-nova", 2),
+                _linha("c.io", VersaoDeFonte.DUBLADO, "c-so-dublado", 1),  # incapaz
+                _linha("d.io", VersaoDeFonte.NAO_DIFERENCIADA, "d", 9),
+            ]
+        )
+        await sessao.commit()
+
+    alternativas = await resolucao.fontes_mapeadas_alternativas(
+        sessionmaker, anime, VersaoEpisodio.LEGENDADO, excluir_dominio="escolhido.io"
+    )
+
+    assert alternativas == [
+        resolucao.FonteResolvida("b.io", "b-nova", VersaoDeFonte.NAO_DIFERENCIADA),
+        resolucao.FonteResolvida("d.io", "d", VersaoDeFonte.NAO_DIFERENCIADA),
+    ]
+
+
+async def test_resolver_e_listar_relanca_a_falha_do_site_em_vez_de_versao_indisponivel(
+    sessionmaker, monkeypatch
+):
+    """`api/servicos/fontes.py` só devolve "versão indisponível" quando todos os
+    sites responderam; se algum não pôde ser consultado, a falha dele sobe — é ela
+    que a sondagem usa para escolher PRECISA_SESSAO/SITE_INDISPONIVEL em vez de
+    NAO_ENCONTRADO (backoff de dias)."""
+    from api.servicos import fontes
+
+    sessao_rejeitada = SessaoRejeitada("cloudflare", dominio="site-a.io")
+    monkeypatch.setattr(
+        resolucao, "EXTRATORES", (_ExtratorFalso("site-a.io", erro=sessao_rejeitada),)
+    )
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+
+    with pytest.raises(SessaoRejeitada) as excecao:
+        await fontes.resolver_e_listar(sessionmaker, anime, _VERSAO, resolver_canonico=False)
+
+    assert excecao.value is sessao_rejeitada
+
+
+# --- origem do mapeamento ---
+
+_VERSAO = VersaoEpisodio.LEGENDADO
+_CARD_SLIME = ResultadoBusca(
+    titulo_exibicao="Slime Datta Ken", identificador="slime", url="http://x/slime"
+)
+
+
+async def _fonte_gravada(sessionmaker, anime_id, dominio, versao) -> FonteAnime:
+    async with sessionmaker() as sessao:
+        return await sessao.get(FonteAnime, (anime_id, dominio, versao))
+
+
+async def test_resolucao_automatica_grava_origem_automatica(sessionmaker, monkeypatch):
+    extrator = _ExtratorFalso("site-a.io", candidatos=[_CARD_SLIME])
+    monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+
+    await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)
+
+    fonte = await _fonte_gravada(
+        sessionmaker, anime.id, "site-a.io", VersaoDeFonte.NAO_DIFERENCIADA
+    )
+    assert fonte.origem is OrigemDeFonte.AUTOMATICA
+
+
+async def test_confirmar_fonte_grava_origem_manual_e_promove_linha_automatica(
+    sessionmaker, monkeypatch
+):
+    extrator = _ExtratorFalso("site-a.io", candidatos=[_CARD_SLIME])
+    monkeypatch.setattr(resolucao, "EXTRATORES", (extrator,))
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    await resolucao.resolver_fonte_do_anime(sessionmaker, anime, _VERSAO)  # AUTOMATICA
+
+    escolhido = ResultadoBusca(
+        titulo_exibicao="Slime Datta Ken (Dublado)", identificador="outro", url="y"
+    )
+    await resolucao.confirmar_fonte(sessionmaker, anime, "site-a.io", escolhido)
+
+    fonte = await _fonte_gravada(
+        sessionmaker, anime.id, "site-a.io", VersaoDeFonte.NAO_DIFERENCIADA
+    )
+    assert fonte.origem is OrigemDeFonte.MANUAL
+    assert fonte.identificador_no_site == "outro"
+
+
+async def test_escrita_automatica_nao_altera_fonte_manual(sessionmaker):
+    anime = await _criar_anime(sessionmaker, "Slime Datta Ken")
+    versao = VersaoDeFonte.LEGENDADO
+    await resolucao._gravar_fonte_anime(
+        sessionmaker, anime.id, "site-a.io", "id-manual", versao,
+        prioridade=0, origem=OrigemDeFonte.MANUAL,
+    )
+
+    await resolucao._gravar_fonte_anime(
+        sessionmaker, anime.id, "site-a.io", "id-automatico", versao,
+        prioridade=1, origem=OrigemDeFonte.AUTOMATICA, bump_recencia=False,
+    )
+
+    fonte = await _fonte_gravada(sessionmaker, anime.id, "site-a.io", versao)
+    assert fonte.origem is OrigemDeFonte.MANUAL
+    assert fonte.identificador_no_site == "id-manual"
+    assert fonte.prioridade == 0

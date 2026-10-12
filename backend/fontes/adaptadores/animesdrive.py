@@ -1,10 +1,10 @@
 """Adapter AnimesDrive (ESPECIFICACAO.md §3A) — segundo site da lista de
-prioridade de fallback (`extractors/registro.py`), atrás do AnimeFire.
+prioridade de fallback (`fontes/adaptadores/registro.py`), atrás do AnimeFire.
 
 Strategy Pattern completo. É o único adapter do projeto que declara
 `exige_navegador_para_midia`: os players embutidos aqui só montam a URL de
 mídia rodando o próprio JS, e a estratégia é **observar** o navegador fazendo o
-que a página faria com um usuário real (`extractors/cliente.py::capturar_midia`),
+que a página faria com um usuário real (`fontes/rede/cliente.py::capturar_midia`),
 nunca reimplementar o player. Achados ao vivo contra o site (host mudou de
 `animesdrive.online` para `animesdrive.cloud` em 2026-08-25 — `dominio` é
 identificador estável desacoplado do host, só `BASE_URL` muda numa próxima
@@ -24,7 +24,7 @@ troca de domínio; achados abaixo continuam válidos, foi só migração de host
   `referrer-policy` do embed) — não a URL do embed, como esta docstring previa
   antes de existir medição.
 - Orçamento: `_TIMEOUT_CAPTURA_S`/`_ORCAMENTO_CAPTURAS_S` abaixo, cobertos por
-  `extractors/resiliencia.py::_TETO_ESPERA_NAVEGADOR_S`.
+  `fontes/rede/resiliencia.py::_TETO_ESPERA_NAVEGADOR_S`.
 
 Confirmado ao vivo em 2026-08-18 (episódios com seletor de qualidade): a página
 de episódio pode renderizar uma seção `animeq-player` com botões
@@ -46,17 +46,22 @@ import logging
 import re
 import time
 import urllib.parse
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
-from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
-from extractors.cliente import ClienteComCaptura, ClienteDeSite, responde
-from extractors.qualidade import NivelDeQualidade, qualidade_do_rotulo
-from extractors.versao import inferir_versao
+from fontes.adaptadores.base import (
+    EpisodioRemoto,
+    ExtratorDeSite,
+    LinkDeMidia,
+    ResultadoBusca,
+    ordenar_episodios,
+)
+from fontes.adaptadores.qualidade import NivelDeQualidade, qualidade_do_rotulo
+from fontes.adaptadores.versao import inferir_versao
+from fontes.rede.cliente import ClienteComCaptura, ClienteDeSite, responde
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +127,7 @@ class AnimesDriveProvider(ExtratorDeSite):
         try:
             html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)
         except FonteNaoEncontrada:
-            # Mesmo tratamento do AnimeFire (`extractors/animefire.py::buscar`),
+            # Mesmo tratamento do AnimeFire (`fontes/adaptadores/animefire.py::buscar`),
             # por simetria — não confirmado ao vivo se o AnimesDrive também
             # responde 404 numa busca sem resultado, mas tratar aqui é seguro
             # (404 vira lista vazia, não erro) e evita divergência entre os dois
@@ -165,7 +170,7 @@ class AnimesDriveProvider(ExtratorDeSite):
                 )
             if not resultados:
                 # info, não warning: com a busca em paralelo em todos os sites
-                # (extractors/busca/servico.py::buscar_por_site_com_variantes), um título
+                # (fontes/busca/servico.py::buscar_por_site_com_variantes), um título
                 # existir só num dos dois é o caso comum, não uma falha — não
                 # dá pra distinguir "não achei mesmo" de "estrutura mudou" só
                 # por contagem zero, então não escala pra warning (isso viraria
@@ -201,7 +206,7 @@ class AnimesDriveProvider(ExtratorDeSite):
             # Dentro de cada grupo, a chave de dedup é o rótulo cru (string), não
             # `int(numero)`: "7" e "07" não são necessariamente o mesmo episódio,
             # e colapsar os dois por valor inteiro perderia um episódio de
-            # verdade (extractors/base.py::EpisodioRemoto).
+            # verdade (fontes/adaptadores/base.py::EpisodioRemoto).
             tags_a = soup.select(_SELETOR_LISTA_EPISODIOS)
             # Cada card do #episodes tem dois <a> com o mesmo href: um envolve a
             # <img> da thumb, o outro é o texto. Pareia thumb por href pra
@@ -284,7 +289,7 @@ class AnimesDriveProvider(ExtratorDeSite):
                     slug_a,
                     slug_b,
                 )
-                return _ordenar_episodios(episodios_das_duas_versoes)
+                return ordenar_episodios(episodios_das_duas_versoes)
 
         # Fica com o grupo maior — a lista do próprio anime — e diz o que
         # descartou, em vez de devolver duas versões misturadas. Empate mantém o
@@ -309,7 +314,7 @@ class AnimesDriveProvider(ExtratorDeSite):
             len(por_rotulo),
         )
 
-        return _ordenar_episodios(por_rotulo.values())
+        return ordenar_episodios(por_rotulo.values())
 
     def resolver_midia(self, cliente: ClienteDeSite, url_episodio: str) -> LinkDeMidia:
         """Resolve a melhor mídia utilizável do episódio.
@@ -350,7 +355,7 @@ class AnimesDriveProvider(ExtratorDeSite):
 
         if not isinstance(cliente, ClienteComCaptura):
             # Contrato quebrado, não falha de site: `exige_navegador_para_midia`
-            # é `True` aqui e `extractors/resiliencia.py` deveria ter entregue o
+            # é `True` aqui e `fontes/rede/resiliencia.py` deveria ter entregue o
             # cliente de navegador. Retentar com o mesmo cliente repetiria o erro.
             # Conferido cedo (não só no 1º candidato de iframe): modo A pode nem
             # precisar de captura (vídeo direto vivo), mas a mensagem de
@@ -602,7 +607,7 @@ def _extrair_identificador(url_anime: str) -> str:
 
 
 # Marcador de versão isolado por `-` ou início/fim do slug — mesma fronteira
-# de token de `extractors/versao.py`, só que aplicada a segmento de slug
+# de token de `fontes/adaptadores/versao.py`, só que aplicada a segmento de slug
 # (hífen, não espaço) para comparar dois slugs de grupo de episódio entre si.
 _REGEX_MARCADOR_VERSAO_SLUG = re.compile(
     r"(?:^|-)(?:dublado|dub|legendado|leg)(?=-|$)", re.IGNORECASE
@@ -619,20 +624,3 @@ def _diferem_so_por_marcador_de_versao(slug_a: str, slug_b: str) -> bool:
     `listar_episodios` para distinguir "duas versões do mesmo anime" de
     "dois grupos genuinamente diferentes na mesma página"."""
     return _slug_sem_marcador_de_versao(slug_a) == _slug_sem_marcador_de_versao(slug_b)
-
-
-def _ordenar_episodios(episodios: Iterable[EpisodioRemoto]) -> list[EpisodioRemoto]:
-    """Numéricos em ordem crescente primeiro, rótulos não numéricos
-    (numero=None) depois — sem seção separada na listagem (decisão do
-    produto), só não intercalados entre os numéricos. Sem `rotulo` na chave:
-    `sorted` é estável, então dois rótulos com o mesmo `numero` (ex. "7"/"07")
-    mantêm a ordem em que apareceram na página — usar `rotulo` como
-    desempate colocaria "07" antes de "7" (comparação lexicográfica,
-    '0' < '7'), uma ordem arbitrária e não a "natural" da fonte."""
-    return sorted(
-        episodios,
-        key=lambda episodio: (
-            episodio.numero is None,
-            episodio.numero if episodio.numero is not None else 0,
-        ),
-    )
