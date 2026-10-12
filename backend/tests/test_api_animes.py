@@ -44,7 +44,7 @@ def _resolucao_de_titulo_canonico_sem_rede(monkeypatch: pytest.MonkeyPatch):
     canônicos do anime (`integrations.servico.buscar_titulos`, só AniList) ANTES
     da resolução de fonte e SEMPRE — sem stub, os testes de `episodios-remotos`
     bateriam em AniList de verdade. Devolve `None` ("provedor respondeu, não
-    achou"), o que degrada `_referencias_de_anime` para só o título cadastrado —
+    achou"), o que degrada `referencias_de_anime` para só o título cadastrado —
     o comportamento que estes testes já assumem. Mesmo padrão de
     `tests/test_api_buscar_fontes.py`."""
 

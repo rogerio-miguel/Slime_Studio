@@ -30,8 +30,8 @@ PROVEDORES: tuple[ProvedorDeMetadados, ...] = (_anilist, KitsuProvider())
 PROVEDORES_DE_FEED: tuple[ProvedorDeMetadados, ...] = (_anilist,)
 
 # Subconjunto para a resolução do título canônico da busca em fontes
-# (`api/servicos/busca.py::_resolver_titulos_canonicos`, base de
-# `_referencias_de_anime`/`_termos_de_busca`): essa resolução precisa ser rápida
+# (`api/servicos/titulos_canonicos.py::resolver_titulos_canonicos`, base de
+# `referencias_de_anime`/`termos_de_busca`): essa resolução precisa ser rápida
 # e determinística — é enriquecimento best-effort sob teto curto
 # (`_TETO_METADADOS_S`), NÃO pré-condição da busca. O `buscar_titulos` do Kitsu
 # é mais pobre que o da AniList (menos sinônimos, sem título nativo) e, com o

@@ -1952,7 +1952,7 @@ async def test_servico_buscar_titulos_nao_cai_para_kitsu(monkeypatch: pytest.Mon
     comentário da tupla em `registro.py`). AniList falhando NÃO cai para o
     Kitsu, mesmo que ele resolveria: propaga `FalhaDeMetadados` (todos os
     provedores da tupla de título falharam) para
-    `api/servicos/busca.py::_resolver_titulos_canonicos` degradar para o título
+    `api/servicos/titulos_canonicos.py::resolver_titulos_canonicos` degradar para o título
     digitado."""
     anilist = _ProvedorFake("anilist", erro=requests.ConnectionError("falhou"))
     kitsu = _ProvedorFake(

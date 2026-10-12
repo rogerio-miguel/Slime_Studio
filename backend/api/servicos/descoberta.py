@@ -111,7 +111,7 @@ _TETO_ENRIQUECIMENTO_S = 18
 # Teto do walk de `relations` (`servico.resolver_serie`) no enriquecimento da
 # materialização. Cada hop é uma chamada AniList sob o timeout por provedor de
 # `integrations/`; o `_memo_serie` de processo faz a franquia inteira custar ~1
-# caminhada depois da primeira. Best-effort como `_resolver_titulos_canonicos`
+# caminhada depois da primeira. Best-effort como `resolver_titulos_canonicos`
 # — nunca bloqueia a criação do anime, que já aconteceu antes desta chamada.
 _TETO_SERIE_S = 12
 

@@ -402,7 +402,7 @@ async def buscar_titulos(titulo: str) -> TitulosDeAnime | None:
     """Tenta cada provedor de `PROVEDORES_DE_TITULO` (só a AniList — ver o
     comentário da tupla em `registro.py`) em ordem até achar títulos
     alternativos (romaji/inglês/nativo/sinônimos) para `titulo` — usado por
-    `api/servicos/busca.py::_resolver_titulos_canonicos` como base da escada de
+    `api/servicos/titulos_canonicos.py::resolver_titulos_canonicos` como base da escada de
     termos e das referências de validação da busca em fontes.
 
     Ao contrário de `buscar_por_titulo`, NÃO cai para o Kitsu: a resolução do

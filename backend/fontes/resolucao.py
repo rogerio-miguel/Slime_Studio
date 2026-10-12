@@ -94,7 +94,7 @@ async def resolver_fonte_do_anime(
     por quem chama — `fontes/` não cruza a fronteira de `integrations/`
     (CLAUDE.md §1), então a lista vem pronta de
     `api/servicos/fontes.py::listar_episodios_remotos` (via
-    `api/servicos/busca.py::_referencias_de_anime`), com o título cadastrado na
+    `api/servicos/titulos_canonicos.py::referencias_de_anime`), com o título cadastrado na
     posição 0 como âncora. `None` (default) = caminho SEM resolução canônica
     (captura em `api/servicos/jobs.py`, fallback de job no worker): degrada para
     só o título cadastrado, byte a byte o comportamento anterior a esta mudança.
@@ -275,9 +275,9 @@ def _variantes_das_referencias(referencias: list[str]) -> list[str]:
     (digitado, romaji, inglês, nativo, sinônimos), deduplicando por
     `core/texto.py::slugificar` e preservando a primeira ocorrência.
 
-    Espelha `api/servicos/busca.py::_termos_de_busca` (que `fontes/` não
+    Espelha `api/servicos/titulos_canonicos.py::termos_de_busca` (que `fontes/` não
     pode importar — fronteira de `integrations/`). A posição 0 CRUA de cada
-    referência sobrevive ao dedup: `_referencias_de_anime` já entrega a lista
+    referência sobrevive ao dedup: `referencias_de_anime` já entrega a lista
     slug-única, então a raw-0 de uma referência nunca colide com a raw-0 de
     outra — só variantes DERIVADAS (cortes de subtítulo, prefixos) se sobrepõem
     entre referências e são as únicas descartadas aqui.

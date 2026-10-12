@@ -30,11 +30,8 @@ from dataclasses import dataclass, replace
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-# `_referencias_de_anime` reusado de `busca.py` (mesmo par de módulos de
-# orquestração cross-camada) — monta a lista slug-única de todos os nomes do
-# anime, com o título cadastrado como âncora na posição 0.
-from api.servicos.busca import _referencias_de_anime
 from api.servicos.catalogo import agrupar_franquias
+from api.servicos.titulos_canonicos import referencias_de_anime, resolver_titulos_canonicos
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from core.erros import FalhaDeExtracao, FonteAmbigua, VersaoIndisponivelError
 from fontes.adaptadores.base import EpisodioRemoto
@@ -47,7 +44,7 @@ from fontes.resolucao import (
     resolver_fonte_do_anime,
 )
 from integrations import servico as servico_metadados
-from integrations.base import InfoDeEpisodio, TitulosDeAnime
+from integrations.base import InfoDeEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -61,12 +58,6 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 # passam por `resolver_e_listar`: exibição, captura e sondagem.
 _TETO_LISTAGEM_REMOTA_S = 60
 
-# Sub-teto só do round-trip de `buscar_titulos` (resolução do título canônico),
-# consumido ANTES e FORA do `wait_for` de `_TETO_LISTAGEM_REMOTA_S` — mesmo
-# arranjo e mesmo valor de `api/servicos/busca.py::_TETO_METADADOS_S`: uma
-# AniList pendurada não pode segurar a resolução de fonte antes de ela começar.
-_TETO_METADADOS_S = 9
-
 # Mesma concorrência/deadline de `api/servicos/capas.py::_consultar_capas` —
 # outro enriquecimento best-effort sobre `integrations/servico.py`, mesma
 # ordem de grandeza de chamadas em paralelo.
@@ -74,7 +65,7 @@ _CONCORRENCIA_STILLS = 5
 _TETO_LOTE_STILLS_S = 18
 
 # Teto do lookup de UM episódio (`info_de_episodio`, usado na captura — ver
-# `api/servicos/jobs.py`) — mesma ordem de grandeza de `_TETO_METADADOS_S`,
+# `api/servicos/jobs.py`) — mesma ordem de grandeza do teto de título canônico (9s),
 # fora do lote, então sem a proteção do `asyncio.wait(timeout=...)` acima.
 _TETO_STILL_UNICO_S = 9
 
@@ -137,8 +128,8 @@ async def resolver_e_listar(
     """
     referencias: list[str] | None = None
     if resolver_canonico:
-        titulos = await _resolver_titulos_canonicos(anime.titulo)
-        referencias = _referencias_de_anime(titulos, anime.titulo)
+        titulos = await resolver_titulos_canonicos(anime.titulo)
+        referencias = referencias_de_anime(titulos, anime.titulo)
 
     try:
         resolvida = await asyncio.wait_for(
@@ -574,30 +565,6 @@ async def info_de_episodio(
             numero,
             anime.titulo,
             excecao,
-        )
-        return None
-
-
-async def _resolver_titulos_canonicos(titulo: str) -> TitulosDeAnime | None:
-    """Resolve os nomes canônicos de `titulo` na AniList
-    (`integrations.servico.buscar_titulos` — percorre só `PROVEDORES_DE_TITULO`,
-    Kitsu fora) para alimentar `_referencias_de_anime`, espelhando
-    `api/servicos/busca.py::_resolver_titulos_canonicos`.
-
-    Best-effort: qualquer falha (rede, timeout de `_TETO_METADADOS_S`, provedor
-    fora do ar, formato inesperado) degrada para `None` e a resolução de fonte
-    segue só com o título cadastrado como referência — o comportamento anterior
-    a esta mudança. Captura ampla e intencional (CLAUDE.md §4 — degrada
-    explícito com `logger.warning`, não silencioso): resolver o canônico é
-    enriquecimento, não pré-condição; o provedor fora do ar não pode derrubar a
-    listagem de episódios da fonte."""
-    try:
-        return await asyncio.wait_for(
-            servico_metadados.buscar_titulos(titulo), timeout=_TETO_METADADOS_S
-        )
-    except Exception as excecao:
-        logger.warning(
-            "resolução de título canônico best-effort falhou para %r: %s", titulo, excecao
         )
         return None
 
