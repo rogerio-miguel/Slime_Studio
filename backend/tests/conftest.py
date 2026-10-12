@@ -26,9 +26,22 @@ from integrations import anilist
 from integrations import servico as servico_metadados
 from models.base import Base
 
+_sondagens_no_site: list[bool] = []
+
+
+async def _esperar_sondagens_chegarem_ao_site() -> None:
+    """Cancelar uma sondagem no meio da primeira consulta ao banco deixa a conexão
+    do `aiosqlite` aberta. Quem fecha o engine (`app_pronto`) e o teardown abaixo
+    esperam cada tarefa agendada chegar ao "site" (onde já não usa o banco)."""
+    pendentes = list(sondagem._sondagens_em_voo.values())
+    for _ in range(200):
+        if len(_sondagens_no_site) >= len(pendentes) or all(t.done() for t in pendentes):
+            return
+        await asyncio.sleep(0.005)
+
 
 @pytest.fixture(autouse=True)
-async def _isola_sondagens_de_fonte():
+async def _isola_sondagens_de_fonte(monkeypatch: pytest.MonkeyPatch):
     """`sondagem._sondagens_em_voo` e `sondagem._semaforo_de_sondagem` são estado
     de módulo. A partir de F12 as rotas `GET /api/animes` e `GET /api/animes/{id}`
     agendam sondagens fire-and-forget, então qualquer teste de `test_api_*.py`
@@ -44,11 +57,23 @@ async def _isola_sondagens_de_fonte():
     """
     sondagem._sondagens_em_voo.clear()
     sondagem._semaforo_de_sondagem = asyncio.Semaphore(1)
+
+    _sondagens_no_site.clear()
+
+    async def _site_que_nunca_responde(*args, **kwargs):
+        # Rede real nunca é tocada por acidente: uma sondagem agendada sem o teste
+        # ter combinado nada fica pendente (como um site lento) e é cancelada no
+        # fim. Teste que quer outro comportamento sobrescreve `resolver_e_listar`.
+        _sondagens_no_site.append(True)
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(sondagem, "resolver_e_listar", _site_que_nunca_responde)
     yield
     # Cancela ANTES de aguardar: uma `Task` fire-and-forget pode estar presa num
     # `await` que nunca completa (semáforo, `wait_for` de rede). Testes que
     # querem drenar de verdade chamam o próprio `_drenar_sondagens` antes daqui.
     pendentes = list(sondagem._sondagens_em_voo.values())
+    await _esperar_sondagens_chegarem_ao_site()
     for tarefa in pendentes:
         tarefa.cancel()
     for tarefa in pendentes:
@@ -232,6 +257,7 @@ async def app_pronto(config_api: Config):
     aplicativo = criar_app(config_api)
     async with aplicativo.router.lifespan_context(aplicativo):
         yield aplicativo
+        await _esperar_sondagens_chegarem_ao_site()
 
 
 @pytest.fixture

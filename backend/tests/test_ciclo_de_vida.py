@@ -9,6 +9,7 @@ from core.ciclo_de_vida import (
     Fase,
     RetratoDoAnime,
     deve_atualizar_status,
+    deve_resolver_fonte,
     deve_sondar_fonte,
     fase_do_anime,
     proxima_tentativa,
@@ -58,6 +59,30 @@ def test_janela_pos_fim_fecha_45_dias_depois_do_fim_previsto():
 
     assert fase_do_anime(retrato, fim_previsto + timedelta(days=45)) is Fase.POS_FIM
     assert fase_do_anime(retrato, fim_previsto + timedelta(days=46)) is Fase.ARQUIVO
+
+
+@pytest.mark.parametrize(
+    ("retrato", "tem_episodios", "temporada_nova", "resolve"),
+    [
+        # estreia que virou EM_LANCAMENTO sem nunca ter sido aberta (ex. 172)
+        (_retrato(S.EM_LANCAMENTO, date(2026, 10, 11)), False, False, True),
+        # ainda não estreou: nada a procurar
+        (_retrato(S.NAO_LANCADO, date(2026, 10, 18)), False, False, False),
+        # fonte perdida: FINALIZADO antigo, mas com episódio capturado
+        (_retrato(S.FINALIZADO, date(2015, 1, 9), 13, 13), True, False, True),
+        # arquivo sem episódio e sem motivo: não gasta varredura
+        (_retrato(S.FINALIZADO, date(2015, 1, 9), 13, 13), False, False, False),
+        # continuação de franquia que o usuário terminou
+        (_retrato(S.FINALIZADO, date(2024, 1, 9), 12, 12), False, True, True),
+    ],
+)
+def test_deve_resolver_fonte(retrato, tem_episodios, temporada_nova, resolve):
+    assert (
+        deve_resolver_fonte(
+            retrato, _HOJE, tem_episodios=tem_episodios, temporada_nova=temporada_nova
+        )
+        is resolve
+    )
 
 
 # --- backoff ---

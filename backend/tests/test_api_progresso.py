@@ -381,7 +381,7 @@ async def test_listar_continuar_assistindo_inclui_temporada_nova_da_franquia_con
 async def test_listar_continuar_assistindo_agenda_reparo_de_fonte_da_temporada_nova(
     sessionmaker_api: _SessionMaker, monkeypatch
 ):
-    _, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=False)
+    t1_id, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=False)
     chamadas = []
     monkeypatch.setattr(
         servico_progresso.servico_sondagem,
@@ -396,7 +396,8 @@ async def test_listar_continuar_assistindo_agenda_reparo_de_fonte_da_temporada_n
     assert linhas == []
     (args, kwargs), = chamadas
     assert args[2][t2_id] == VersaoEpisodio.LEGENDADO
-    assert kwargs["ignorar_gate_de_status"] == frozenset({t2_id})
+    # A T1 também não tem fonte mapeada e tem episódio (fonte perdida): mesma política.
+    assert kwargs["a_resolver"] == frozenset({t1_id, t2_id})
 
 
 # --- GET /api/episodios/continuar-assistindo ---
