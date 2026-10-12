@@ -10,10 +10,10 @@ markup) — nunca duas linhas colidindo na mesma versão para o mesmo site
 from datetime import UTC, datetime
 
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from core.enums import VersaoDeFonte
+from core.enums import OrigemDeFonte, VersaoDeFonte
 from models.base import Base, ColunaDataHoraUTC
 
 
@@ -35,4 +35,14 @@ class FonteAnime(Base):
     prioridade: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     resolvido_em: Mapped[datetime] = mapped_column(
         ColunaDataHoraUTC(), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    # Quem decidiu este mapeamento. Quem grava informa sempre (ver
+    # `fontes/resolucao.py::_gravar_fonte_anime`); o default só protege linha
+    # criada fora dessas rotas (script, teste) e é o conservador: tratar como
+    # MANUAL nunca deixa uma troca automática passar por cima de uma escolha.
+    origem: Mapped[OrigemDeFonte] = mapped_column(
+        SAEnum(OrigemDeFonte, native_enum=False, validate_strings=True),
+        nullable=False,
+        default=OrigemDeFonte.MANUAL,
+        server_default=text("'MANUAL'"),
     )

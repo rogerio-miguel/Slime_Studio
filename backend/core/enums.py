@@ -67,6 +67,16 @@ class VersaoDeFonte(StrEnum):
     NAO_DIFERENCIADA = "nao_diferenciada"
 
 
+class OrigemDeFonte(StrEnum):
+    """Quem decidiu um mapeamento `FonteAnime`: o usuário (escolha na desambiguação
+    ou "Trocar fonte") ou a resolução automática. Uma escolha manual nunca é
+    rebaixada por uma escrita automática, e só a automática pode, no futuro, ser
+    trocada sem perguntar."""
+
+    MANUAL = "manual"
+    AUTOMATICA = "automatica"
+
+
 class StatusEpisodio(StrEnum):
     PENDENTE = "pendente"
     PRONTO = "pronto"
