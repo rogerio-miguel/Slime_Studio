@@ -18,7 +18,7 @@ import sys
 
 from sqlalchemy import select
 
-from api.servicos.fontes import _titulo_base_da_franquia
+from api.servicos.temporadas import titulo_base_da_franquia
 from core.config import carregar_config
 from core.sinopse import escolher_sinopse
 from db.engine import criar_engine, criar_sessionmaker
@@ -55,7 +55,7 @@ async def backfill(*, dry_run: bool) -> tuple[int, int]:
         trocados = 0
         for anime in animes:
             temporada = anime.numero_temporada or 1
-            titulo_base = await _titulo_base_da_franquia(sessionmaker, anime)
+            titulo_base = await titulo_base_da_franquia(sessionmaker, anime)
             arte = await servico_metadados.buscar_arte_por_titulo(titulo_base, anime.ano)
             temporada_ptbr = None
             if temporada > 1:

@@ -86,7 +86,7 @@ async def test_listar_episodios_remotos_caminho_feliz(
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
 
     # `thumb_url` nunca reflete o que `_listar_fake` devolveu: o overlay
-    # (`_sobrepor_stills_de_episodios`) substitui pela arte do anime (aqui
+    # (`sobrepor_stills_de_episodios`) substitui pela arte do anime (aqui
     # `None`, o anime de teste não tem banner/capa) sempre que o TMDB não
     # resolve — nunca mais o thumb cru do extractor (ver
     # `test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_anime`).
@@ -183,7 +183,7 @@ async def test_listar_episodios_remotos_sobrepoe_still_tmdb_com_fallback_pro_ani
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
@@ -248,7 +248,7 @@ async def test_listar_episodios_remotos_still_de_temporada_irma_pede_por_numero_
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{t2_id}/episodios-remotos")
@@ -315,7 +315,7 @@ async def test_listar_episodios_remotos_still_direto_nunca_cai_pro_absoluto_com_
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{t4_id}/episodios-remotos")
@@ -1454,7 +1454,7 @@ async def test_listar_episodios_remotos_tenta_titulo_ingles_quando_tmdb_nao_acha
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")
@@ -1513,7 +1513,7 @@ async def test_listar_episodios_remotos_atualiza_texto_gravado_so_com_ptbr_real(
     monkeypatch.setattr("api.servicos.fontes.resolver_fonte_do_anime", _resolver_fake)
     monkeypatch.setattr("api.servicos.fontes.listar_episodios_em", _listar_fake)
     monkeypatch.setattr(
-        "api.servicos.fontes.servico_metadados.buscar_info_de_episodio", _info_fake
+        "integrations.servico.buscar_info_de_episodio", _info_fake
     )
 
     resposta = await cliente.get(f"/api/admin/animes/{anime_id}/episodios-remotos")

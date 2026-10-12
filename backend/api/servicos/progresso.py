@@ -56,7 +56,7 @@ fato o episódio mais recente que a fonte tem; badge só volta a acender quando
 o usuário alcançar essa fronteira de novo.
 
 Still/título/sinopse do slot `capturavel` sem episódio (nunca capturado, não
-tem `Episodio.capa_path` ainda) vêm de `api/servicos/fontes.py::
+tem `Episodio.capa_path` ainda) vêm de `api/servicos/stills_de_episodio.py::
 info_de_episodio` — mesma consulta pontual ao TMDB que a captura já faz pra
 gravar essas colunas, só antecipada pra exibição. **Nunca ao vivo dentro da
 resposta** (2026-09-19 — a versão anterior dava `await` nesse lookup pra cada
@@ -92,7 +92,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
-from api.servicos.fontes import info_de_episodio
+from api.servicos.stills_de_episodio import info_de_episodio
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoEpisodio
 from integrations.base import InfoDeEpisodio
 from models.anime import Anime

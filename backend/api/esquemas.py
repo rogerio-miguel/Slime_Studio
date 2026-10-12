@@ -471,8 +471,8 @@ class EpisodioRemotoSaida(BaseModel):
     `GET /api/thumb` (`api/rotas/thumb.py`), que embute o `Referer` de hotlink.
 
     `titulo`/`sinopse` NUNCA vêm da fonte de scraping (nenhum extractor os
-    expõe) — só do overlay TMDB best-effort (`api/servicos/fontes.py::
-    _sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`); `None`
+    expõe) — só do overlay TMDB best-effort (`api/servicos/stills_de_episodio.py::
+    sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`); `None`
     quando o TMDB não acha ou não tem tradução pt-BR."""
 
     model_config = ConfigDict(from_attributes=True)
@@ -510,7 +510,7 @@ class EpisodioSaida(BaseModel):
     anime_id: int
     numero: int
     titulo: str | None
-    # Sinopse do episódio (TMDB, `api/servicos/jobs.py::info_de_episodio`) —
+    # Sinopse do episódio (TMDB, `api/servicos/stills_de_episodio.py::info_de_episodio`) —
     # persistida na captura, mesma origem/momento de `titulo`. `None` quando o
     # TMDB não achou ou não tem tradução pt-BR, ou o episódio foi capturado
     # antes desta coluna existir (sem backfill).

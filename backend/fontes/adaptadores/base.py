@@ -63,8 +63,8 @@ class EpisodioRemoto:
     thumb_url: str | None = None
     # Nome e sinopse do episódio — NUNCA vêm do extractor (nenhum site de
     # scraping expõe isso hoje); sempre `None` aqui na origem, preenchidos
-    # depois só pelo overlay TMDB (`api/servicos/fontes.py::
-    # _sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`).
+    # depois só pelo overlay TMDB (`api/servicos/stills_de_episodio.py::
+    # sobrepor_stills_de_episodios`, mesmo mecanismo de `thumb_url`).
     titulo: str | None = None
     sinopse: str | None = None
     # `True` quando o adapter recortou a temporada pelo marcador da própria fonte
