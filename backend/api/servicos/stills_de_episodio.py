@@ -11,7 +11,7 @@ from dataclasses import replace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos.temporadas import offset_de_temporada, titulo_base_da_franquia
+from db.franquias import offset_de_temporada, titulo_base_da_franquia
 from fontes.adaptadores.base import EpisodioRemoto
 from integrations import servico as servico_metadados
 from integrations.base import InfoDeEpisodio

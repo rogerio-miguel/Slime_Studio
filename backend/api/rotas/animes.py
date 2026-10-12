@@ -40,6 +40,7 @@ from core.config import Config
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
 from db.catalogo import obter_ou_criar_anime_id
+from db.franquias import agrupar_franquias
 from fontes.adaptadores.base import ResultadoBusca
 from fontes.adaptadores.registro import EXTRATORES
 from fontes.adaptadores.versao import inferir_versao
@@ -500,7 +501,7 @@ async def obter_anime(
         if mais_recente is not None
         else None
     )
-    grupos = await servico_catalogo.agrupar_franquias(sessao)
+    grupos = await agrupar_franquias(sessao)
     temporadas, proxima_temporada = _temporadas_e_proxima(
         anime.id, anime.numero_temporada, grupos[anime.id]
     )
@@ -544,7 +545,7 @@ async def listar_banners_do_anime(
     série achada."""
     if await sessao.get(Anime, anime_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
-    grupos = await servico_catalogo.agrupar_franquias(sessao)
+    grupos = await agrupar_franquias(sessao)
     primeira = grupos[anime_id][0]
     candidatos = await servico_metadados.listar_candidatos_de_banner(
         primeira.titulo, primeira.ano
@@ -578,7 +579,7 @@ async def listar_relacionados_do_anime(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
     if anime.anilist_id is None:
         return []
-    grupos = await servico_catalogo.agrupar_franquias(sessao)
+    grupos = await agrupar_franquias(sessao)
     ids_do_seletor = _ids_do_seletor_de_temporada(anime.id, anime.numero_temporada, grupos)
     pares = await servico_descoberta.listar_relacionados_com_catalogo(
         sessionmaker, anime.anilist_id

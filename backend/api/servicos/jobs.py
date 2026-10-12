@@ -77,9 +77,10 @@ async def criar_job_site(
     """
     fonte = await resolver_e_listar(sessionmaker, anime, versao, resolver_canonico=False)
 
-    # O adapter já devolveu a temporada de `anime.numero_temporada` numerada de
-    # 1 (contrato de `ExtratorDeSite.listar_episodios`), então `ep.numero` casa
-    # com `numero` (o pedido do cliente) e com `Episodio.numero`.
+    # `resolver_e_listar` já devolve a temporada de `anime.numero_temporada`
+    # numerada de 1 (recorte do adapter ou, em fonte achatada, de
+    # `fontes/recorte.py`), então `ep.numero` casa com `numero` (o pedido do
+    # cliente) e com `Episodio.numero`.
 
     # `Episodio.versao` deriva do que a fonte resolvida realmente é
     # (`fonte.versao_da_fonte`), nunca do `versao` pedido pelo cliente — a
