@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos import sondagem
+from api.servicos import sondagem, versoes_de_fonte
 from api.servicos.fontes import FonteComEpisodios
 from core.enums import (
     ResultadoDeVerificacao,
@@ -138,14 +138,14 @@ def _espiar_sondagem(
 def test_versao_de_sondagem_traduz_cada_versao_de_fonte(
     versao_de_fonte: VersaoDeFonte, esperada: VersaoEpisodio
 ):
-    assert sondagem.versao_de_sondagem(versao_de_fonte) == esperada
+    assert versoes_de_fonte.versao_de_sondagem(versao_de_fonte) == esperada
 
 
 def test_versao_de_sondagem_nunca_devolve_desconhecida():
     """`DESCONHECIDA` faria `resolver_fonte_do_anime` levantar `ValueError` —
     `NAO_DIFERENCIADA` tem de virar `LEGENDADO`, nunca isso."""
     assert all(
-        sondagem.versao_de_sondagem(vf) is not VersaoEpisodio.DESCONHECIDA
+        versoes_de_fonte.versao_de_sondagem(vf) is not VersaoEpisodio.DESCONHECIDA
         for vf in VersaoDeFonte
     )
 
@@ -168,7 +168,7 @@ async def test_versoes_escolhe_linha_de_maior_resolvido_em(sessionmaker_api: _Se
     )
 
     async with sessionmaker_api() as sessao:
-        versoes = await sondagem.versoes_de_sondagem_por_anime(sessao, [anime_id])
+        versoes = await versoes_de_fonte.versoes_de_sondagem_por_anime(sessao, [anime_id])
 
     assert versoes == {anime_id: VersaoEpisodio.DUBLADO}
 
@@ -186,7 +186,7 @@ async def test_versoes_nao_diferenciada_recente_vira_legendado(sessionmaker_api:
     )
 
     async with sessionmaker_api() as sessao:
-        versoes = await sondagem.versoes_de_sondagem_por_anime(sessao, [anime_id])
+        versoes = await versoes_de_fonte.versoes_de_sondagem_por_anime(sessao, [anime_id])
 
     assert versoes == {anime_id: VersaoEpisodio.LEGENDADO}
     assert VersaoEpisodio.DESCONHECIDA not in versoes.values()
@@ -196,8 +196,8 @@ async def test_versoes_anime_sem_fonte_e_ids_vazio(sessionmaker_api: _SessionMak
     anime_id = await _criar_anime(sessionmaker_api, "sem-fonte")
 
     async with sessionmaker_api() as sessao:
-        assert await sondagem.versoes_de_sondagem_por_anime(sessao, [anime_id]) == {}
-        assert await sondagem.versoes_de_sondagem_por_anime(sessao, []) == {}
+        assert await versoes_de_fonte.versoes_de_sondagem_por_anime(sessao, [anime_id]) == {}
+        assert await versoes_de_fonte.versoes_de_sondagem_por_anime(sessao, []) == {}
 
 
 # --- agendar_sondagens: gate ---

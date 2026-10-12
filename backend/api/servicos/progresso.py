@@ -91,7 +91,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import lancamentos as servico_lancamentos
-from api.servicos import sondagem as servico_sondagem
+from api.servicos import versoes_de_fonte as servico_versoes
 from api.servicos.stills_de_episodio import info_de_episodio
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoEpisodio
 from integrations.base import InfoDeEpisodio
@@ -405,7 +405,7 @@ async def listar_continuar_assistindo(
         for episodio in episodios_result.scalars():
             episodios_por_anime[episodio.anime_id].append(episodio)
 
-        versoes_ativas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
+        versoes_ativas = await servico_versoes.versoes_confirmadas_mais_recentes_por_anime(
             sessao, ids_ativos
         )
 

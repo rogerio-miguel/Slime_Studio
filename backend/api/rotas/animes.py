@@ -35,7 +35,7 @@ from api.servicos import descoberta as servico_descoberta
 from api.servicos import fontes as servico_fontes
 from api.servicos import jobs as servico_jobs
 from api.servicos import lancamentos as servico_lancamentos
-from api.servicos import sondagem as servico_sondagem
+from api.servicos import versoes_de_fonte as servico_versoes
 from core.config import Config
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.enums import StatusLancamento, VersaoDeFonte, VersaoEpisodio
@@ -294,7 +294,7 @@ async def listar_animes(
     # "Nª temporada estreia em ..." (agrupamento de franquia rodado uma vez,
     # `agrupar_franquias`, reaproveitado por card — ver docstring de
     # `_temporadas_e_proxima`).
-    versoes_confirmadas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
+    versoes_confirmadas = await servico_versoes.versoes_confirmadas_mais_recentes_por_anime(
         sessao, ids
     )
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos

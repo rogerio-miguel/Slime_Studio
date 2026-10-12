@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.servicos import descoberta as servico_descoberta
 from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import sondagem as servico_sondagem
+from api.servicos import versoes_de_fonte as servico_versoes
 from models.anime import Anime
 
 _SessionMaker = async_sessionmaker[AsyncSession]
@@ -34,7 +35,7 @@ async def aquecer_catalogo(
 
     Zero `await` de rede aqui: só leituras de banco para montar o agendamento."""
     ids = [anime.id for anime in animes]
-    versoes = await servico_sondagem.versoes_de_sondagem_por_anime(sessao, ids)
+    versoes = await servico_versoes.versoes_de_sondagem_por_anime(sessao, ids)
     # Anime SEM nenhuma `FonteAnime` não entra em `versoes` e a sondagem o
     # pularia pra sempre; a política (`deve_resolver_fonte`) manda resolver a
     # fonte de quem a perdeu (migração `26791d90cb31`), de temporada nova de

@@ -9,9 +9,8 @@ from types import SimpleNamespace
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos import aquecimento
+from api.servicos import aquecimento, sondagem
 from api.servicos import catalogo as servico_catalogo
-from api.servicos import progresso as servico_progresso
 from api.servicos.lancamentos import primeiras_em_lancamento, temporadas_novas_apos_concluida
 from api.servicos.progresso import listar_continuar_assistindo
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoDeFonte, VersaoEpisodio
@@ -386,7 +385,7 @@ async def test_reparo_de_fonte_da_temporada_nova_e_pedido_pelo_zelador_nao_pela_
     t1_id, t2_id = await _criar_franquia_com_t1_concluida(sessionmaker_api, com_fonte_na_t2=False)
     chamadas = []
     monkeypatch.setattr(
-        servico_progresso.servico_sondagem,
+        sondagem,
         "agendar_sondagens",
         lambda *args, **kwargs: chamadas.append((args, kwargs)),
     )
