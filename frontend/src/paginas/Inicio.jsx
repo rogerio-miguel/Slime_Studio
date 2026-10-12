@@ -99,16 +99,10 @@ const INTERVALO_NOVOS_LANCAMENTOS_MS = 2 * 60 * 1000;
 // montava `BarraDeNavegacao`, só faltava ligar o mesmo hook global que
 // Galeria/PaginaDoAnime já usam (`hooks/useStatusDeCapturaIlha.js`).
 
-// Poll de `still_pendente`/`sondagem_em_andamento` (ver efeito abaixo). O
-// teto (4s x 16 = ~64s) mira o teto comum de sondagem de fonte
-// (`extractors/resiliencia.py::_TETO_ESPERA_S`, 45s) com folga — a busca de
-// still TMDB é bem mais rápida (timeout de 9s, `progresso.py`) e resolve bem
-// antes disso, então o efeito para sozinho cedo nesse caso (dependência vira
-// `false` assim que a pendência resolve, sem esperar o teto). O caminho raro
-// de sondagem via navegador visível (bypass de Turnstile, até 225s,
-// `_TETO_ESPERA_NAVEGADOR_S`) pode passar do teto — nesse caso o episódio só
-// aparece no próximo gatilho de poll (nova pendência) ou reload manual, sem
-// piorar o caso comum de scraping leve.
+// Poll de `still_pendente` (ver efeito abaixo). O teto (4s x 16 = ~64s) cobre a
+// busca de still TMDB (timeout de 9s, `progresso.py`), que resolve bem antes —
+// o efeito para sozinho cedo (dependência vira `false` assim que a pendência
+// resolve, sem esperar o teto).
 const _INTERVALO_POLL_STILL_MS = 4000;
 const _MAX_TENTATIVAS_POLL_STILL = 16;
 export default function Inicio({ jobsPorEpisodio, snapshotId }) {
@@ -146,28 +140,16 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // abaixo) não passa por essa chave (mesmo motivo de `PaginaDoAnime.jsx`:
   // `criarJobSite` não invalida sozinho), por isso chama `continuando.
   // recarregar()` explicitamente no sucesso.
-  // `GET /continuar-assistindo` devolve um envelope (`{itens, sondagem_em_
-  // andamento}`, não lista crua) desde 2026-09-19 — precisa do nível da
-  // resposta pra `sondagem_em_andamento` (ver comentário do poll abaixo).
   const continuando = useRecurso(listarContinuarAssistindo, [], 'episodios');
-  const itensContinuar = continuando.dados?.itens ?? [];
-  // Poll leve, enquanto (1) algum card `capturavel` está com `still_pendente`
-  // (busca de still/título/sinopse TMDB em segundo plano,
-  // `progresso.py::_aplicar_still_capturavel`) OU (2) o backend sinaliza
-  // `sondagem_em_andamento` — uma sondagem de fonte (`sondagem.
-  // agendar_sondagens`, disparada pelo próprio `listar_continuar_assistindo`
-  // pros animes desta prateleira) ainda rodando em segundo plano. O 2º caso
-  // cobre o que uma flag por item não resolve: um anime cujo próximo episódio
-  // ainda não existe SOME inteiro de `itens` até a sondagem confirmar a
-  // contagem da fonte — não tem item pra pendurar `still_pendente`. Nenhum
-  // dos dois bloqueia a resposta original; sem isso o usuário só via o card
-  // certo (still OU episódio novo capturável) depois de um F5 manual. Para
-  // sozinho assim que as duas pendências resolvem ou ao atingir o teto de
-  // tentativas; sem nenhuma (o caso comum), o efeito nem agenda o timer —
-  // zero custo pro resto da página.
-  const precisaPollDeContinuar =
-    itensContinuar.some((item) => item.still_pendente) ||
-    continuando.dados?.sondagem_em_andamento === true;
+  const itensContinuar = continuando.dados ?? [];
+  // Episódio novo na fonte chega pelo zelador do backend, sem ninguém abrir a página.
+  useAtualizacaoPeriodica(continuando.atualizar, INTERVALO_NOVOS_LANCAMENTOS_MS);
+  // Poll leve enquanto algum card `capturavel` está com `still_pendente` (busca de
+  // still/título/sinopse TMDB em segundo plano, `progresso.py::
+  // _aplicar_still_capturavel`): sem ele o usuário só veria o card certo depois de um
+  // F5. Para sozinho quando a pendência resolve ou ao atingir o teto de tentativas;
+  // sem pendência (o caso comum) o efeito nem agenda o timer.
+  const precisaPollDeContinuar = itensContinuar.some((item) => item.still_pendente);
   useEffect(() => {
     if (!precisaPollDeContinuar) return undefined;
     let tentativas = 0;
@@ -185,7 +167,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   // o ramo `pronto` de fato (ícone de play + link `/assistir/:id`) — só o
   // ícone É a mudança de variante, que só um `item.variante === 'pronto'` do
   // REST resolve, e nada aqui força esse refetch quando o job conclui fora da
-  // janela do poll de still/sondagem acima. Guard por `episodio_id:job.id`
+  // janela do poll de still acima. Guard por `episodio_id:job.id`
   // evita reagendar `recarregar()` a cada tick de QUALQUER job ativo no app
   // (`jobsPorEpisodio` é o Map global do WS) uma vez que o par já disparou.
   const jaRecarregadoContinuarRef = useRef(new Set());

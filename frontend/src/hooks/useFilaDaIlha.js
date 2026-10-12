@@ -10,10 +10,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 //                 vez de qualquer outro.
 //   2. pronto   — aponta um episódio específico.
 //   3. novosEps — genérico ("o catálogo tem novidade").
-// Contínuos (ficam enquanto o sinal durar), só aparecem com a fila de
+// Contínuo (fica enquanto o sinal durar), só aparece com a fila de
 // transitórios vazia:
-//   4. status      — aponta um episódio específico.
-//   5. verificando — genérico ("estou checando").
+//   4. status — aponta um episódio específico.
 //
 // A fila é da ilha, não da página: o transitório é copiado para cá quando o sinal
 // aparece, então o timer da página pode expirar sem que a mensagem se perca
@@ -28,7 +27,7 @@ const TRANSITORIOS = [
   { tipo: 'pronto', duracaoMs: 5000 },
   { tipo: 'novosEps', duracaoMs: 5000 },
 ];
-const CONTINUOS = ['status', 'verificando'];
+const CONTINUOS = ['status'];
 
 const dadosDoTipo = (tipo) => TRANSITORIOS.find((t) => t.tipo === tipo);
 
@@ -58,7 +57,7 @@ function useEnfileirarAoAparecer(tipo, texto, sinaisRef, setFila) {
   }, [tipo, texto, sinaisRef, setFila]);
 }
 
-// `sinais`: { erro, pronto, novosEps, status, verificando }, cada um
+// `sinais`: { erro, pronto, novosEps, status }, cada um
 // `{ texto: string|null, aoClicar?: () => void }`.
 // Devolve `{ texto, tom, aoClicar } | null`.
 export function useFilaDaIlha({ sinais, retida }) {

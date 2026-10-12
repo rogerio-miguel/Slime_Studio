@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ErroDeApi } from '../api/cliente.js';
-import { aquecimentoEmAndamento, listarAnimes, removerAnime } from '../api/recursos.js';
+import { listarAnimes, removerAnime } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoDeVideoLocal from '../components/CartaoDeVideoLocal.jsx';
+import { useAtualizacaoPeriodica } from '../hooks/useAtualizacaoPeriodica.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
@@ -46,21 +47,10 @@ const ROTULOS_STATUS_LANCAMENTO = {
 const VALOR_FILTRO_VIDEOS_LOCAIS = 'videos-locais';
 const CHAVE_DA_ORDEM = 'slime.galeria.ordem';
 
-// Poll leve pós-carga (`listarAnimes({aquecer:true})`, abaixo): a sondagem da
-// fonte real e o aquecimento de `status_lancamento` que `?aquecer=true`
-// dispara são fire-and-forget — o resultado entra no banco só para a PRÓXIMA
-// leitura do catálogo (`api/rotas/animes.py::listar_animes`), então sem isto
-// as tags (status/dublado-legendado) e "Tn EP.n" só atualizavam num F5
-// manual. Mesmo papel de `sondagem_em_andamento` em `paginas/Inicio.jsx` pra
-// "Continuar assistindo", só que o sinal vem de um endpoint próprio
-// (`aquecimentoEmAndamento`) em vez de vir junto da lista — `GET /api/animes`
-// tem que continuar devolvendo array cru, é o mesmo contrato que a Home usa
-// sem a flag. Cada tick só CHECA a flag; o catálogo só é recarregado UMA vez,
-// no fim (quando a flag vira `false` ou o teto de tentativas é atingido) —
-// pedido explícito do usuário pra os cards não ficarem trocando de tag/
-// contagem repetidas vezes no meio do aquecimento.
-const _INTERVALO_POLL_AQUECIMENTO_MS = 4000;
-const _MAX_TENTATIVAS_POLL_AQUECIMENTO = 16;
+// A verificação das fontes é do zelador (backend, `api/servicos/zelador.py`) e roda
+// sem esta página aberta; ela só relê o catálogo de tempos em tempos (e ao voltar à
+// aba) pra mostrar o que o zelador achou — tags, contagem "Tn EP.n", notificação.
+const INTERVALO_ATUALIZACAO_CATALOGO_MS = 2 * 60 * 1000;
 
 // Quanto tempo a notificação "novos episódios" da ilha dinâmica
 // (BarraDeNavegacao.jsx) fica visível antes de sumir sozinha — pedido do
@@ -108,79 +98,14 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   const [termoBusca, setTermoBusca] = useState('');
   const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
   const focoTitulo = useFocoAoMontar();
-  // `aquecer: true` — esta é a única página que dispara a carona fire-and-forget
-  // do backend (sondagem da fonte real + aquecimento de `status_lancamento`); a
-  // Home chama `listarAnimes()` sem a flag. `recarregar` do `useRecurso` segue
-  // funcionando: reexecuta este mesmo `buscar`.
   // Chave 'animes' (invalidacao.js): recarrega sozinho quando `criarAnime`/
   // `removerAnime` resolve, mesmo se disparado por outra página.
-  const { dados: animes, carregando, erro, recarregar } = useRecurso(
-    () => listarAnimes({ aquecer: true }),
+  const { dados: animes, carregando, erro, recarregar, atualizar } = useRecurso(
+    listarAnimes,
     [],
     'animes'
   );
-
-  // Checagem única, assim que a primeira carga termina: `disparouRef` evita
-  // repetir esta checagem nos ciclos de `carregando` que o PRÓPRIO poll
-  // abaixo produz (cada `recarregar()` alterna `carregando` true->false de
-  // novo). Sem o guard, cada tick do poll re-perguntaria isto à toa.
-  const [aquecendo, setAquecendo] = useState(false);
-  const disparouChecagemDeAquecimentoRef = useRef(false);
-  useEffect(() => {
-    if (carregando || animes == null || disparouChecagemDeAquecimentoRef.current) return undefined;
-    disparouChecagemDeAquecimentoRef.current = true;
-    let cancelado = false;
-    aquecimentoEmAndamento()
-      .then(({ em_andamento }) => {
-        if (cancelado) return;
-        setAquecendo(em_andamento);
-        // Nada em andamento já na primeira checagem: não vai ter poll (ver
-        // efeito abaixo), então é AQUI que a verificação "termina" pra
-        // efeito da notificação de novos episódios (useEffect de
-        // `franquias` mais abaixo).
-        if (!em_andamento) verificacaoDeNovosEpsConcluidaRef.current = true;
-      })
-      .catch(() => {});
-    return () => {
-      cancelado = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [carregando]);
-
-  // Enquanto `aquecendo`, só CHECA a flag a cada
-  // `_INTERVALO_POLL_AQUECIMENTO_MS` (sem tocar no catálogo) — `recarregar()`
-  // roda uma ÚNICA vez, no fim, quando a sondagem/aquecimento realmente
-  // terminam (ou ao atingir o teto de tentativas). Pedido explícito do
-  // usuário: os cards devem atualizar DEPOIS que a busca termina, não a cada
-  // tick no meio dela (senão o catálogo troca de tag/contagem várias vezes
-  // seguidas enquanto o usuário olha a tela). Dependência é `aquecendo` (não
-  // `carregando`): isolar a checagem do próprio efeito colateral de
-  // `recarregar()` evita reiniciar o contador de tentativas a cada tick.
-  useEffect(() => {
-    if (!aquecendo) return undefined;
-    let cancelado = false;
-    let tentativas = 0;
-    const intervalo = setInterval(async () => {
-      tentativas += 1;
-      let emAndamento = false;
-      try {
-        ({ em_andamento: emAndamento } = await aquecimentoEmAndamento());
-      } catch {
-        emAndamento = true; // erro de rede: assume que ainda está em voo, tenta de novo
-      }
-      if (cancelado) return;
-      if (!emAndamento || tentativas >= _MAX_TENTATIVAS_POLL_AQUECIMENTO) {
-        setAquecendo(false);
-        verificacaoDeNovosEpsConcluidaRef.current = true;
-        recarregar();
-      }
-    }, _INTERVALO_POLL_AQUECIMENTO_MS);
-    return () => {
-      cancelado = true;
-      clearInterval(intervalo);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aquecendo]);
+  useAtualizacaoPeriodica(atualizar, INTERVALO_ATUALIZACAO_CATALOGO_MS);
 
   const [filtroSelecionado, setFiltroSelecionado] = useState('');
   // A ordem escolhida só persiste em "Todos" — e persiste de verdade: fica salva
@@ -352,52 +277,33 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   }, [limparSelecao, limparOrdem]);
 
   // Notificação "novos episódios" na ilha dinâmica (pedido do usuário,
-  // 2026-09-27) — dispara depois que a verificação nos extratores termina
-  // de verdade, não a qualquer recomputo de `franquias`.
-  // `verificacaoDeNovosEpsConcluidaRef` marca esse momento nos DOIS pontos
-  // onde a checagem acima pode "terminar": (1) a checagem inicial já
-  // encontra nada em andamento (nada pra esperar, dado já está fresco) ou
-  // (2) o poll conclui e chama `recarregar()`. Sem esse guard, o efeito
-  // abaixo rodaria assim que `franquias` existisse (ainda na 1ª carga, antes
-  // de qualquer verificação real), soando "novos episódios" pra dados que já
-  // estavam ali há tempo. `disparouNotificacaoRef`: mostra uma ÚNICA vez por
-  // visita à página, mesmo que `franquias` recompute depois por outro
-  // motivo (ex.: `removerAnime`).
+  // 2026-09-27) — dispara quando uma releitura do catálogo (periódica, ver
+  // acima) mostra uma franquia com MAIS episódios novos do que a leitura anterior,
+  // ou seja, quando o zelador achou algo com a página aberta. A 1ª leitura só
+  // fixa a referência (`episodiosNovosVistosRef`): dado que já estava ali não é
+  // novidade. Franquia que aparece agora (id novo) também não notifica.
   const [notificacaoNovosEps, setNotificacaoNovosEps] = useState(false);
-  const verificacaoDeNovosEpsConcluidaRef = useRef(false);
-  const disparouNotificacaoRef = useRef(false);
+  const episodiosNovosVistosRef = useRef(null);
   useEffect(() => {
-    if (
-      !verificacaoDeNovosEpsConcluidaRef.current ||
-      disparouNotificacaoRef.current ||
-      carregando ||
-      animes == null
-    ) {
-      return;
-    }
-    if (franquias.some((franquia) => franquia.episodios_novos > 0)) {
-      disparouNotificacaoRef.current = true;
-      setNotificacaoNovosEps(true);
-    }
+    if (carregando || animes == null) return;
+    const atuais = new Map(franquias.map((franquia) => [franquia.id, franquia.episodios_novos]));
+    const vistos = episodiosNovosVistosRef.current;
+    episodiosNovosVistosRef.current = atuais;
+    if (vistos === null) return;
+    const cresceu = [...atuais].some(([id, novos]) => vistos.has(id) && novos > vistos.get(id));
+    if (cresceu) setNotificacaoNovosEps(true);
   }, [franquias, carregando, animes]);
 
-  // Escape hatch SÓ DEV pra testar notificação/verificação sem esperar
-  // aquecimento real terminar nem precisar de um anime com episódio novo de
-  // verdade — `import.meta.env.DEV` é substituído por `false` no build de
+  // Escape hatch SÓ DEV pra testar a notificação sem precisar de um anime com
+  // episódio novo de verdade — `import.meta.env.DEV` é substituído por `false` no build de
   // produção e o bloco inteiro é eliminado (dead code), não sobra no bundle
   // publicado. Uso no console do navegador, na rota /animes:
   //   __testarNotificacaoNovosEps()   -- força aparecer (some sozinha em 5s)
-  //   __testarVerificandoNovosEps()   -- força o status "verificando" por 3s
   useEffect(() => {
     if (!import.meta.env.DEV) return undefined;
     window.__testarNotificacaoNovosEps = () => setNotificacaoNovosEps(true);
-    window.__testarVerificandoNovosEps = () => {
-      setAquecendo(true);
-      setTimeout(() => setAquecendo(false), 3000);
-    };
     return () => {
       delete window.__testarNotificacaoNovosEps;
-      delete window.__testarVerificandoNovosEps;
     };
   }, []);
 
@@ -620,7 +526,6 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
         aoMudarFiltro={mudarFiltro}
         notificacaoNovosEps={notificacaoNovosEps}
         aoClicarNotificacaoNovosEps={aoClicarNotificacaoNovosEps}
-        verificandoNovosEps={aquecendo}
         statusCapturaIlha={statusCapturaIlha}
         aoClicarStatusCapturaIlha={aoClicarStatusCapturaIlha}
         capturaProntaIlha={capturaProntaIlha}
