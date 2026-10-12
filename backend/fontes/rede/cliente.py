@@ -48,8 +48,17 @@ _MARCADORES_CORPO_CLOUDFLARE = (
 )
 
 
+# Beacon de "JavaScript Detections" do Cloudflare: vive sob o mesmo prefixo
+# `/cdn-cgi/challenge-platform/` mas é injetado em página NORMAL já liberada (visto
+# ao vivo no MeusAnimes em 2026-10-11, com `cf_clearance` válido e resultados na
+# tela). Contá-lo como desafio fazia o navegador esperar 20s numa página boa e
+# descartar a busca. O loader de desafio de verdade usa `.../h/<x>/orchestrate/...`.
+_BEACON_JSD = "/cdn-cgi/challenge-platform/scripts/jsd/"
+
+
 def _tem_marcador_de_desafio(html: str) -> bool:
-    return any(marcador in html for marcador in _MARCADORES_CORPO_CLOUDFLARE)
+    sem_beacon = html.replace(_BEACON_JSD, "")
+    return any(marcador in sem_beacon for marcador in _MARCADORES_CORPO_CLOUDFLARE)
 
 
 class ClienteDeSite(Protocol):

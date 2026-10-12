@@ -575,6 +575,24 @@ def test_tem_marcador_de_desafio_ignora_o_titulo_localizado_sozinho():
     )
 
 
+def test_tem_marcador_de_desafio_ignora_o_beacon_jsd_de_pagina_liberada():
+    """Página real já liberada (MeusAnimes, 2026-10-11): o Cloudflare injeta o beacon
+    `scripts/jsd/main.js` sob `/cdn-cgi/challenge-platform/`. Não é desafio."""
+    pagina_liberada = (
+        "<title>Você pesquisou por Slime - Meus Animes</title>"
+        "<script>a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';</script>"
+    )
+    assert modulo_cliente._tem_marcador_de_desafio(pagina_liberada) is False
+
+
+def test_tem_marcador_de_desafio_ainda_pega_desafio_que_tambem_traz_o_beacon():
+    pagina_de_desafio = (
+        "<script src='/cdn-cgi/challenge-platform/scripts/jsd/main.js'></script>"
+        '<script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>'
+    )
+    assert modulo_cliente._tem_marcador_de_desafio(pagina_de_desafio) is True
+
+
 # --- _eh_desafio_cloudflare ----------------------------------------------------
 
 
