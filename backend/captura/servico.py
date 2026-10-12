@@ -21,6 +21,7 @@ from fontes import resolucao
 from fontes.adaptadores.base import ExtratorDeSite, LinkDeMidia
 from fontes.adaptadores.registro import obter_extrator
 from fontes.listagem import filtrar_por_numero_e_versao, listar_episodios_em
+from fontes.recorte import recortar_se_fonte_achatada
 from fontes.rede import resiliencia
 from models.anime import Anime
 from models.episodio import Episodio
@@ -296,16 +297,17 @@ async def _proximo_com_episodio(
         if proxima_fonte is None:
             return None
 
-        # O adapter já devolve a temporada de `anime.numero_temporada` numerada
-        # de 1 (contrato de `ExtratorDeSite.listar_episodios`), então
-        # `ep.numero` casa com `numero_episodio` (`Episodio.numero`, por
-        # temporada) direto — sem recorte aqui.
+        # O adapter devolve a temporada de `anime.numero_temporada` numerada de 1
+        # (contrato de `ExtratorDeSite.listar_episodios`) quando a fonte marca a
+        # temporada; sem essa marca a franquia vem inteira e o recorte por offset
+        # a traz de volta pra numeração por temporada de `Episodio.numero`.
         episodios_remotos = await listar_episodios_em(
             sessionmaker,
             proxima_fonte.dominio,
             proxima_fonte.identificador,
             anime.numero_temporada,
         )
+        episodios_remotos = await recortar_se_fonte_achatada(sessionmaker, anime, episodios_remotos)
         correspondentes = filtrar_por_numero_e_versao(episodios_remotos, numero_episodio, versao)
         if len(correspondentes) > 1:
             # Mais de um rótulo mapeia pro mesmo `numero` (ex. "7"/"07" —

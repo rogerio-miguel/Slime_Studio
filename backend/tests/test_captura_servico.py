@@ -1195,3 +1195,46 @@ def test_escada_combinada_poe_todos_os_titulos_completos_antes_dos_cortes_e_pref
 def test_escada_combinada_de_um_titulo_so_equivale_a_variantes_de_busca():
     for titulo in ("Overlord II", "Nome 2nd Season: Extra", "Dogul Wang", "Naruto"):
         assert escada_combinada([titulo]) == variantes_de_busca(titulo)
+
+
+async def test_proximo_com_episodio_recorta_fonte_achatada_antes_de_casar_o_numero(
+    sessionmaker, monkeypatch
+):
+    """Troca de site no meio do download: o episódio 3 da T2 não pode virar o
+    episódio absoluto 3 (da T1) só porque o site novo lista a franquia inteira."""
+    async with sessionmaker() as sessao:
+        t1 = Anime(
+            titulo="Komi", slug="komi", numero_temporada=1, total_episodios_anilist=12
+        )
+        t2 = Anime(
+            titulo="Komi 2nd Season",
+            slug="komi-2nd-season",
+            numero_temporada=2,
+            total_episodios_anilist=12,
+        )
+        sessao.add_all([t1, t2])
+        await sessao.commit()
+        await sessao.refresh(t2)
+        sessao.add(
+            FonteAnime(
+                anime_id=t2.id,
+                site_dominio="site-b.io",
+                versao=VersaoDeFonte.NAO_DIFERENCIADA,
+                identificador_no_site="b",
+                prioridade=0,
+            )
+        )
+        await sessao.commit()
+
+    async def _listar_fake(sessionmaker, dominio, identificador, temporada):
+        return [
+            EpisodioRemoto(rotulo=str(n), numero=n, url=f"https://x/ep{n}") for n in range(1, 25)
+        ]
+
+    monkeypatch.setattr(servico, "listar_episodios_em", _listar_fake)
+
+    resultado = await servico._proximo_com_episodio(
+        sessionmaker, t2, 3, {"site-a.io"}, VersaoEpisodio.DESCONHECIDA
+    )
+
+    assert resultado == ("site-b.io", "https://x/ep15")
