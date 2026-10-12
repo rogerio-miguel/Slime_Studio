@@ -31,7 +31,6 @@ import {
   ALTURA_DA_ARTE,
   GRADIENTE_DO_HERO,
   imagemEmAltaResolucao,
-  CLASSE_PILL_HERO,
 } from '../inicio/CarrosselDestaques.jsx';
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { textoDeProximaTemporada, tituloBaseDeTemporada } from '../inicio/franquia.js';
@@ -50,11 +49,10 @@ const ROTULO_VERSAO = {
   desconhecida: 'Desconhecida (site não confirma)',
 };
 
-// Frase de lista vazia: nomeia a versão ativa e lembra que a outra pode já ter
-// episódio, sem consultar a fonte de novo (ex. T2 legendada antes da dublagem).
+// Frase de lista vazia: nomeia a versão ativa (ex. T2 legendada antes da dublagem).
 const AVISO_POR_VERSAO = {
-  legendado: ['legendados', 'dublada'],
-  dublado: ['dublados', 'legendada'],
+  legendado: 'legendados',
+  dublado: 'dublados',
 };
 
 // backend/core/enums.py::SITE_LOCAL — mesmo valor de string, espelhado aqui
@@ -298,8 +296,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
 
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   // Sinopse completa aberta (painel da ilha: components/SinopseNaIlha.jsx, via
-  // `sinopse` de BarraDeNavegacao).
-  const [sinopseEmFoco, setSinopseEmFoco] = useState(false);
+  // `sinopse` de BarraDeNavegacao). `{ lidos }` quando aberta (caracteres que o
+  // hero já mostrava), `null` fechada.
+  const [sinopseEmFoco, setSinopseEmFoco] = useState(null);
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState(null);
 
@@ -583,9 +582,9 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   // esse painel — a fonte, `nomeDaFonte(remotos.dados.dominio)`, só aparece
   // depois que a listagem remota resolve; até lá o `.filter(Boolean)` a
   // omite);
-  // os gêneros saem dela e viram pills próprias (`generosTraduzidos`,
-  // até 3, traduzidos por `traduzirGenero` — mesmo recorte do card do
-  // carrossel da Home). Declarado aqui (não junto de `anime`) porque a
+  // os gêneros (`generosTraduzidos`, até 3, traduzidos por `traduzirGenero`)
+  // entram nela como o fato "Gêneros" — mesmo recorte e formato do carrossel
+  // da Home. Declarado aqui (não junto de `anime`) porque a
   // contagem depende de `linhas`, que já une episódios locais + remotos.
   // `AnimeDetalheSaida` não expõe nota/rating — por isso o painel não tem
   // fato de rating, ao contrário do AnimeFire. Rótulo da versão via
@@ -616,6 +615,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   const avisoProximaTemporada = textoDeProximaTemporada(anime?.proxima_temporada);
   const fatos = [
     anime?.ano != null ? { rotulo: 'Ano', valor: String(anime.ano) } : null,
+    generosTraduzidos.length > 0 ? { rotulo: 'Gêneros', valor: generosTraduzidos.join(', ') } : null,
     linhas.length > 0 ? { rotulo: 'Episódios', valor: String(linhas.length) } : null,
     nomeDaFonte(remotos.dados?.dominio)
       ? { rotulo: 'Fonte', valor: nomeDaFonte(remotos.dados.dominio) }
@@ -850,7 +850,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
                 titulo: tituloExibicao ?? anime?.titulo ?? '',
                 tituloSecundario,
                 texto: anime?.sinopse,
-                aoFechar: () => setSinopseEmFoco(false),
+                lidos: sinopseEmFoco.lidos,
+                aoFechar: () => setSinopseEmFoco(null),
               }
             : null
         }
@@ -978,15 +979,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
               controles abaixo (pedido do usuário, 2026-09-21). */}
           <BlocoConteudoHero
             className="relative pb-10 pt-24 sm:pb-14 lg:pb-[18vh] xl:pb-[20vh]"
-            // Pills de gênero — ACIMA do título, mesma posição das pills
-            // "#N em alta"/"Anime no Catálogo" do carrossel. `CLASSE_PILL_HERO`
-            // é a fonte única do estilo (`bg-white/10 backdrop-blur-sm
-            // text-white`), a mesma linguagem de pill do hero da Home.
-            pills={generosTraduzidos.map((genero) => (
-              <span key={genero} className={CLASSE_PILL_HERO}>
-                {genero}
-              </span>
-            ))}
             // `<h1>` espelha o `<h3>` do carrossel: `text-2xl→sm:4xl→lg:5xl`,
             // `font-extrabold`, `line-clamp-2`, `lg:leading-[1.2]` — só que
             // focável (`ref`/`tabIndex=-1`, foco ao montar/trocar de anime).
@@ -1015,16 +1007,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             sinopse={!animeNaoEncontrado ? anime?.sinopse : null}
             // O botão só aparece se o `line-clamp` cortou texto (decisão do
             // `BlocoConteudoHero`); abre a sinopse inteira em modo foco.
-            acaoSinopse={
+            acaoSinopse={(lidos) => (
               <button
                 type="button"
-                onClick={() => setSinopseEmFoco(true)}
+                onClick={() => setSinopseEmFoco({ lidos })}
                 aria-haspopup="dialog"
                 className="-mt-0.5 inline-flex min-h-9 cursor-pointer items-center text-sm font-bold text-neon outline-none transition-colors hover:text-white focus-visible:underline"
               >
                 Ler sinopse completa
               </button>
-            }
+            )}
             metaExtra={
               fatos.length > 0 &&
               !animeNaoEncontrado && (
@@ -1258,7 +1250,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           // acima já cobre e aqui fica o texto genérico.
           <p role="status" className="text-sm font-bold text-ink-muted">
             {remotos.dados
-              ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios${AVISO_POR_VERSAO[versaoPedida] ? ` ${AVISO_POR_VERSAO[versaoPedida][0]}` : ''} deste anime. Tente de novo mais tarde${AVISO_POR_VERSAO[versaoPedida] ? ` ou veja a versão ${AVISO_POR_VERSAO[versaoPedida][1]} em "Trocar fonte"` : ''}.`
+              ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios${AVISO_POR_VERSAO[versaoPedida] ? ` ${AVISO_POR_VERSAO[versaoPedida]}` : ''} deste anime.`
               : versaoIndisponivelNaFonte
                 ? `A versão ${(ROTULO_VERSAO[versaoPedida] ?? versaoPedida).toLowerCase()} ainda não foi publicada em nenhuma fonte. Tente de novo mais tarde.`
                 : 'Nenhum episódio encontrado.'}

@@ -45,7 +45,7 @@ import SinopseNaIlha from './SinopseNaIlha.jsx';
 //   `gerenciar` — Galeria: seleção em lote para remover, ligada pelo "Remover"
 //     do painel de filtros (contrato em ilha/ConteudoGerenciarIlha.jsx);
 //   `modoDaIlha` — nó React, Página do Anime ("Trocar banner");
-//   `sinopse` — Início e Página do Anime: `{ titulo, tituloSecundario, texto,
+//   `sinopse` — Início e Página do Anime: `{ titulo, tituloSecundario, texto, lidos,
 //     aoFechar }` enquanto aberta (`undefined` = página sem sinopse, `null` =
 //     fechada). A ilha abre como no scroll (ou, já aberta, só troca o texto do
 //     seletor para "Sinopse") e depois a cápsula cresce e vira o painel
@@ -506,6 +506,7 @@ export default function BarraDeNavegacao({
           titulo={sinopse?.titulo ?? ''}
           tituloSecundario={sinopse?.tituloSecundario}
           sinopse={sinopse?.texto}
+          lidos={sinopse?.lidos}
           aoFechar={sinopse?.aoFechar}
         />
       )}
