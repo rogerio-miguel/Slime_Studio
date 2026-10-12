@@ -39,7 +39,7 @@ import { PADDING_TITULO } from './tamanhoDeCard.js';
 // / BlocoConteudoHero.jsx) — pedido explícito do usuário, 2026-10-02: título
 // `text-2xl sm:text-4xl lg:text-5xl`, sinopse `font-bold text-ink-muted`, fatos
 // com rótulo `text-[11px]` caixa-alta e valor `text-sm sm:text-base` branco, e
-// as mesmas pills (`CLASSE_PILL_HERO`: "#N em alta" + "Anime no Catálogo")..
+// a mesma pill de ranking (`CLASSE_PILL_HERO`: "#N em alta").
 //
 // `rank`: posição do item no feed `em-alta` (1-based), calculada por quem
 // renderiza (`paginas/Inicio.jsx`) — o item sozinho não carrega isso. 0 =
@@ -140,15 +140,12 @@ export default function DestaqueGrande({ item, aoAtivar, desabilitado, rank = 0 
               'linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.85) 100%)',
           }}
         />
-        {(rank > 0 || catalogado) && (
+        {rank > 0 && (
           <div className="absolute left-4 top-4 flex flex-wrap items-center gap-2 sm:left-5 sm:top-5">
-            {rank > 0 && (
-              <span className={CLASSE_PILL_HERO}>
-                <IconeEmAlta />
-                {`#${rank} em alta`}
-              </span>
-            )}
-            {catalogado && <span className={CLASSE_PILL_HERO}>Anime no Catálogo</span>}
+            <span className={CLASSE_PILL_HERO}>
+              <IconeEmAlta />
+              {`#${rank} em alta`}
+            </span>
           </div>
         )}
         <h3 className="absolute inset-x-5 bottom-4 line-clamp-2 text-2xl font-extrabold text-white sm:inset-x-7 sm:bottom-6 sm:text-4xl lg:text-5xl lg:leading-[1.2]">

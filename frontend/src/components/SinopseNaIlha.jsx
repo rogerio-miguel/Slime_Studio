@@ -30,18 +30,36 @@ import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 //
 // `sinopse` é texto de provedor externo (AniList/TMDB): renderizado como texto
 // do React, nunca como HTML (CLAUDE.md §5).
+// `lidos`: quantos caracteres da sinopse o hero já mostrava antes do clamp
+// (inicio/BlocoConteudoHero.jsx). Esse trecho entra esmaecido no painel, pro
+// leitor retomar de onde parou em vez de reler do começo.
 const REGEX_FRASE = /[^.!?]+[.!?]*["')\]”’]*\s*/g;
 // Mesma duração de `transition` em `dialog.sinopse-ilha` (index.css).
 const PAINEL_MS = 340;
 
-function dividirEmFrases(texto) {
-  return texto.match(REGEX_FRASE) ?? [texto];
+// Cada frase vira `{ texto, lida }`; a que atravessa a fronteira `lidos` é
+// partida em duas (mesmo índice de animação, pra não atrasar o resto).
+function dividirEmFrases(texto, lidos) {
+  const frases = texto.match(REGEX_FRASE) ?? [texto];
+  const partes = [];
+  let inicio = 0;
+  frases.forEach((frase, indice) => {
+    const corte = lidos - inicio;
+    if (corte > 0 && corte < frase.length) {
+      partes.push({ indice, texto: frase.slice(0, corte), lida: true });
+      partes.push({ indice, texto: frase.slice(corte), lida: false });
+    } else {
+      partes.push({ indice, texto: frase, lida: corte >= frase.length });
+    }
+    inicio += frase.length;
+  });
+  return partes;
 }
 
 // Miolo da sinopse (rótulo, títulos e frases entrando uma a uma), igual no
 // dialog e dentro da cápsula.
-export function ConteudoDaSinopse({ titulo, tituloSecundario, sinopse }) {
-  const frases = useMemo(() => dividirEmFrases(sinopse ?? ''), [sinopse]);
+export function ConteudoDaSinopse({ titulo, tituloSecundario, sinopse, lidos }) {
+  const frases = useMemo(() => dividirEmFrases(sinopse ?? '', lidos ?? 0), [sinopse, lidos]);
   return (
     <div className="px-6 pb-8 pt-6 sm:px-9 sm:pb-10 sm:pt-8">
       <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-ink-muted">Sinopse</p>
@@ -58,9 +76,13 @@ export function ConteudoDaSinopse({ titulo, tituloSecundario, sinopse }) {
           inicio/BlocoConteudoHero.jsx e inicio/DestaqueGrande.jsx), só em
           tamanho de leitura — pedido do usuário, 2026-10-02. */}
       <p className="text-base font-bold leading-relaxed text-ink-muted sm:text-lg sm:leading-[1.75]">
-        {frases.map((frase, indice) => (
-          <span key={indice} className="sinopse-ilha-frase" style={{ '--i': indice }}>
-            {frase}
+        {frases.map((frase, posicao) => (
+          <span
+            key={posicao}
+            className={`sinopse-ilha-frase${frase.lida ? ' opacity-50' : ''}`}
+            style={{ '--i': frase.indice }}
+          >
+            {frase.texto}
           </span>
         ))}
       </p>
@@ -68,7 +90,7 @@ export function ConteudoDaSinopse({ titulo, tituloSecundario, sinopse }) {
   );
 }
 
-export default function SinopseNaIlha({ aberta, titulo, tituloSecundario, sinopse, aoFechar }) {
+export default function SinopseNaIlha({ aberta, titulo, tituloSecundario, sinopse, lidos, aoFechar }) {
   const dialogRef = useRef(null);
   const conteudoRef = useRef(null);
   const temporizadorFecharRef = useRef(null);
@@ -141,7 +163,12 @@ export default function SinopseNaIlha({ aberta, titulo, tituloSecundario, sinops
       className="sinopse-ilha"
     >
       <div ref={conteudoRef} className="sinopse-ilha-conteudo">
-        <ConteudoDaSinopse titulo={titulo} tituloSecundario={tituloSecundario} sinopse={sinopse} />
+        <ConteudoDaSinopse
+          titulo={titulo}
+          tituloSecundario={tituloSecundario}
+          sinopse={sinopse}
+          lidos={lidos}
+        />
       </div>
     </dialog>
   );

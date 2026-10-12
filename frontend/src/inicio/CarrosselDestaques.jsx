@@ -257,8 +257,8 @@ export const ALTURA_DA_ARTE = 'max(100%, 56.25vw)';
 export const CLASSE_BOTAO_HERO =
   'inline-flex h-11 w-fit cursor-pointer items-center gap-3 rounded-xl bg-white px-6 font-bold text-[#17171b] outline-none transition hover:brightness-90 motion-reduce:transition-none disabled:cursor-progress sm:h-12 lg:h-14 lg:text-xl';
 
-// Pill do hero — usada pela tag de ranking ("#N em alta") e pela de estado
-// ("Anime no Catálogo"), lado a lado. Mesmo visual pras duas.
+// Pill do hero (tag de ranking "#N em alta"). Não há pill de "já no catálogo":
+// o CTA ("Assistir agora" x "Adicionar ao catálogo") já diz isso.
 export const CLASSE_PILL_HERO =
   'inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-bold text-white backdrop-blur-sm';
 
@@ -763,11 +763,6 @@ export function ConteudoDeDestaque({
             {`#${rank} em alta`}
           </span>
         ),
-        !compacto && catalogado && (
-          <span key="catalogado" className={CLASSE_PILL_HERO}>
-            Anime no Catálogo
-          </span>
-        ),
       ].filter(Boolean)}
       titulo={
         <h3
@@ -804,7 +799,7 @@ export function ConteudoDeDestaque({
       // O botão só aparece se o `line-clamp` cortou texto (decisão do
       // `BlocoConteudoHero`); no carrossel só o slide ativo é focável (`inert`
       // nos demais).
-      acaoSinopse={
+      acaoSinopse={(lidos) => (
         <button
           type="button"
           onClick={(evento) => {
@@ -812,6 +807,7 @@ export function ConteudoDeDestaque({
               titulo,
               tituloSecundario: mostrarAlternativo ? tituloAlternativo : null,
               texto: item.sinopse,
+              lidos,
               // O dialog devolve o foco ao botão que o abriu; aberto por
               // mouse/toque, isso deixaria o contêiner "com foco dentro" (ver
               // `desfocarSePonteiro` no carrossel).
@@ -823,7 +819,7 @@ export function ConteudoDeDestaque({
         >
           Ler sinopse completa
         </button>
-      }
+      )}
       // Fatos ACIMA do botão — o AnimeFire não mostra essa linha no hero, mas o
       // usuário quis mantê-la e vê-la nesta posição.
       metaExtra={

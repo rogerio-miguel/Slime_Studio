@@ -35,6 +35,7 @@ export default function RegiaoDaSinopse({ painel, sinopse }) {
             titulo={sinopse?.titulo ?? ''}
             tituloSecundario={sinopse?.tituloSecundario}
             sinopse={sinopse?.texto}
+            lidos={sinopse?.lidos}
           />
         </div>
       </div>

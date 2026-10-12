@@ -16,7 +16,46 @@ import { PADDING_TITULO } from './tamanhoDeCard.js';
 // `acaoSinopse`: nó (botão "ler sinopse completa") renderizado logo abaixo da
 // sinopse SÓ quando o `line-clamp` realmente cortou texto — sem isso, uma
 // sinopse curta ganharia um botão que não leva a nada. Mede com
-// `ResizeObserver` (o corte muda com a largura da janela).
+// `ResizeObserver` (o corte muda com a largura da janela). Pode ser uma função
+// `(caracteresLidos) => nó`: recebe quantos caracteres da sinopse o clamp deixou
+// visíveis, pro painel da sinopse completa marcar onde o leitor parou.
+
+const ESPACO = /\s/;
+
+// Quantos caracteres do texto cabem no `line-clamp` do elemento. As linhas
+// cortadas continuam no layout (só o `overflow` as esconde), então dá pra
+// perguntar ao navegador onde cada caractere caiu e achar a fronteira por busca
+// binária. Espaço de quebra de linha não tem retângulo próprio — usa o último
+// caractere visível antes dele. Recua até o fim de palavra: o "…" do clamp
+// come as últimas letras da última linha.
+function caracteresVisiveis(elemento) {
+  const no = elemento.firstChild;
+  if (no?.nodeType !== Node.TEXT_NODE) return null;
+  const texto = no.data;
+  const limite = elemento.getBoundingClientRect().bottom + 1;
+  const intervalo = document.createRange();
+
+  const fundoDe = (indice) => {
+    let i = indice;
+    while (i > 0 && ESPACO.test(texto[i])) i -= 1;
+    intervalo.setStart(no, i);
+    intervalo.setEnd(no, i + 1);
+    const retangulos = intervalo.getClientRects();
+    return retangulos.length > 0 ? retangulos[retangulos.length - 1].bottom : 0;
+  };
+
+  let baixo = 0;
+  let alto = texto.length;
+  while (baixo < alto) {
+    const meio = Math.ceil((baixo + alto) / 2);
+    if (fundoDe(meio - 1) <= limite) baixo = meio;
+    else alto = meio - 1;
+  }
+  if (baixo >= texto.length) return null;
+  const fimDePalavra = texto.lastIndexOf(' ', baixo - 1);
+  return fimDePalavra > 0 ? fimDePalavra : null;
+}
+
 export default function BlocoConteudoHero({
   className,
   pills,
@@ -37,13 +76,16 @@ export default function BlocoConteudoHero({
 }) {
   const sinopseRef = useRef(null);
   const [sinopseCortada, setSinopseCortada] = useState(false);
+  const [caracteresLidos, setCaracteresLidos] = useState(null);
 
   useEffect(() => {
     const elemento = sinopseRef.current;
     if (!elemento) return undefined;
     // O observer dispara uma vez ao `observe`, então não há medição avulsa aqui.
     const observador = new ResizeObserver(() => {
-      setSinopseCortada(elemento.scrollHeight > elemento.clientHeight + 1);
+      const cortada = elemento.scrollHeight > elemento.clientHeight + 1;
+      setSinopseCortada(cortada);
+      setCaracteresLidos(cortada ? caracteresVisiveis(elemento) : null);
     });
     observador.observe(elemento);
     return () => observador.disconnect();
@@ -70,7 +112,8 @@ export default function BlocoConteudoHero({
           <p ref={sinopseRef} className="line-clamp-2 max-w-2xl text-sm font-bold text-ink-muted sm:text-base">
             {sinopse}
           </p>
-          {sinopseCortada && acaoSinopse}
+          {sinopseCortada &&
+            (typeof acaoSinopse === 'function' ? acaoSinopse(caracteresLidos) : acaoSinopse)}
         </div>
       )}
 
