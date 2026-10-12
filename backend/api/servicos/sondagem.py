@@ -255,10 +255,12 @@ def agendar_sondagens(
     *,
     ignorar_gate_de_status: frozenset[int] = frozenset(),
     em_espera: frozenset[int] = frozenset(),
+    max_sondagens: int = _MAX_SONDAGENS_POR_LOTE,
 ) -> None:
     """Dispara, sem bloquear, a sondagem da fonte real dos animes em lançamento
     cuja contagem está velha (> `_TTL_SONDAGEM_S`) ou ausente — no máximo
-    `_MAX_SONDAGENS_POR_LOTE` por passada, os de carimbo mais antigo primeiro.
+    `max_sondagens` (padrão `_MAX_SONDAGENS_POR_LOTE`) por passada, os de carimbo
+    mais antigo primeiro.
     Fire-and-forget: o resultado entra no banco para a próxima leitura do
     catálogo, não para esta (mesmo padrão de
     `descoberta.agendar_refresh_de_lancamento`).
@@ -294,7 +296,7 @@ def agendar_sondagens(
 
     agendadas = 0
     for anime in candidatos:
-        if agendadas >= _MAX_SONDAGENS_POR_LOTE:
+        if agendadas >= max_sondagens:
             break
         if anime.id not in ignorar_gate_de_status and not deve_sondar_fonte(
             RetratoDoAnime.de(anime), hoje
@@ -315,6 +317,12 @@ def agendar_sondagens(
             lambda _tarefa, aid=anime.id: _sondagens_em_voo.pop(aid, None)
         )
         agendadas += 1
+
+
+def quantidade_em_voo() -> int:
+    """Sondagens em andamento agora — o zelador desconta do orçamento por hora,
+    senão passadas seguidas agendariam mais enquanto as anteriores ainda rodam."""
+    return len(_sondagens_em_voo)
 
 
 def sondagem_em_andamento(ids: Iterable[int]) -> bool:

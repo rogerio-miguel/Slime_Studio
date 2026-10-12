@@ -215,6 +215,7 @@ async def config_api(tmp_path: Path) -> Config:
         ffmpeg=Path("/usr/bin/ffmpeg"),
         ffprobe=Path("/usr/bin/ffprobe"),
         caminho_lock=tmp_path / "worker.lock",
+        zelador_ativo=False,
     )
 
 
