@@ -842,3 +842,19 @@ async def test_obter_ou_criar_anime_id_slug_existente_sem_anilist_id_e_reaprovei
     resultado = await obter_ou_criar_anime_id(sessionmaker, "Slime", 2018, anilist_id=1)
 
     assert resultado == anime_id
+
+
+async def test_obter_ou_criar_anime_id_acha_a_linha_pelo_anilist_id_mesmo_com_slug_antigo(
+    sessionmaker: _SessionMaker,
+):
+    # Linha gravada quando "★" colava as palavras ("magicalexplorer"): o slug de
+    # hoje é outro, mas é a mesma obra.
+    anime_id = await _criar_anime(
+        sessionmaker, titulo="Magical★Explorer", slug="magicalexplorer", anilist_id=169581
+    )
+
+    resultado = await obter_ou_criar_anime_id(
+        sessionmaker, "Magical★Explorer", 2024, anilist_id=169581
+    )
+
+    assert resultado == anime_id

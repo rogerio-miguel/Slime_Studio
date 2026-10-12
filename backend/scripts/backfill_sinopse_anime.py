@@ -18,10 +18,10 @@ import sys
 
 from sqlalchemy import select
 
-from api.servicos.temporadas import titulo_base_da_franquia
 from core.config import carregar_config
 from core.sinopse import escolher_sinopse
 from db.engine import criar_engine, criar_sessionmaker
+from db.franquias import titulo_base_da_franquia
 from integrations import servico as servico_metadados
 from integrations.registro import instalar_provedores_de_arte
 from models.anime import Anime

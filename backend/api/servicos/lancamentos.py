@@ -170,7 +170,7 @@ def temporadas_novas_apos_concluida(
     nenhuma com episódio, só a T2 é "nova" — a T3 espera o usuário alcançar a T2.
     Filme/OVA/ONA (`formato_midia`), temporada sem `numero_temporada` (posição
     desconhecida) e `NAO_LANCADO` (nada a capturar ainda) ficam de fora.
-    `grupos` é o dict de `catalogo.agrupar_franquias` (listas compartilhadas por
+    `grupos` é o dict de `db.franquias.agrupar_franquias` (listas compartilhadas por
     membro — dedupe por identidade). Sem I/O."""
     resultado: dict[int, int] = {}
     vistos: set[int] = set()
@@ -226,7 +226,7 @@ async def temporadas_novas(
     """Versão com I/O de `temporadas_novas_apos_concluida`: descobre quais
     temporadas com episódio local estão concluídas (uma query de `Anime` + a
     agregada de `ids_totalmente_assistidos`) e cruza com as franquias de
-    `catalogo.agrupar_franquias`. Só consulta franquias com 2+ membros."""
+    `db.franquias.agrupar_franquias`. Só consulta franquias com 2+ membros."""
     ids_com_episodio = {
         linha.id
         for grupo in grupos.values()

@@ -260,7 +260,7 @@ class ProvedorDeMetadados(ABC):
         quantos episódios uma temporada irmã tem SEM outra chamada — sem isso,
         `Anime.total_episodios_anilist` fica `NULL` até um refresh de
         lançamento passar por ela, e o recorte de fonte achatada
-        (`api/servicos/fontes.py::_recortar_se_fonte_achatada`) não tem como
+        (`fontes/recorte.py::recortar_se_fonte_achatada`) não tem como
         calcular o offset entre temporadas nesse intervalo.
 
         Capability opcional com implementação PADRÃO

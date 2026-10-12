@@ -89,11 +89,11 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos import catalogo as servico_catalogo
 from api.servicos import lancamentos as servico_lancamentos
 from api.servicos import versoes_de_fonte as servico_versoes
 from api.servicos.stills_de_episodio import info_de_episodio
 from core.enums import StatusEpisodio, StatusLancamento, TipoEpisodio, VersaoEpisodio
+from db.franquias import agrupar_franquias
 from integrations.base import InfoDeEpisodio
 from models.anime import Anime
 from models.episodio import Episodio
@@ -384,7 +384,7 @@ async def listar_continuar_assistindo(
 
         # Continuação de franquia: temporada nova do catálogo, sem episódio
         # local, cuja anterior o usuário terminou. `novas` = {nova: anterior}.
-        grupos = await servico_catalogo.agrupar_franquias(sessao)
+        grupos = await agrupar_franquias(sessao)
         novas = await servico_lancamentos.temporadas_novas(sessao, grupos)
 
         primeiras = servico_lancamentos.primeiras_em_lancamento(grupos)

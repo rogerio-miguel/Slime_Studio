@@ -10,7 +10,7 @@ from fontes.busca.correspondencia import (
     corresponde_a_alguma_referencia,
     proximidade_a_referencias,
 )
-from fontes.busca.termos import variantes_de_busca
+from fontes.busca.termos import remover_marcadores_temporada_parte, variantes_de_busca
 
 
 def test_titulo_simples_sem_tratamento_nenhum_devolve_so_o_titulo():
@@ -480,3 +480,39 @@ def test_corresponde_a_alguma_ref_card_dublado_da_franquia_tambem_vale():
     assert corresponde_a_alguma_referencia(["Overlord II"], "Outro Anime Dublado") is False
     # sem marcador de temporada na referência não há "franquia": mantém o guard
     assert corresponde_a_alguma_referencia(["One Piece"], "One Dublado") is False
+
+
+# --- Símbolo como marcador de sequência ("Kakegurui ××", "Go-toubun no Hanayome ∬") ---
+
+
+@pytest.mark.parametrize(
+    ("titulo", "base"),
+    [
+        ("Kakegurui ××", "Kakegurui"),
+        ("Go-toubun no Hanayome ∬", "Go-toubun no Hanayome"),
+        ("Anime 2nd Season ★", "Anime"),
+    ],
+)
+def test_simbolo_final_conta_como_marcador_de_temporada(titulo, base):
+    assert remover_marcadores_temporada_parte(titulo) == base
+
+
+@pytest.mark.parametrize("titulo", ["Gintama°", "Magical★Explorer", "Hunter × Hunter", "K-ON!"])
+def test_simbolo_colado_ou_no_meio_do_titulo_nao_e_marcador(titulo):
+    assert remover_marcadores_temporada_parte(titulo) == titulo
+
+
+def test_titulo_so_de_simbolo_nao_vira_vazio():
+    assert remover_marcadores_temporada_parte("★★") == "★★"
+
+
+def test_card_da_franquia_vale_para_temporada_marcada_por_simbolo():
+    """O site cataloga as duas temporadas sob o card "Kakegurui" (confirmado ao vivo)."""
+    referencias = ["Kakegurui ××", "Kakegurui xx"]
+    assert corresponde_a_alguma_referencia(referencias, "Kakegurui") is True
+    assert corresponde_a_alguma_referencia(referencias, "Kakegurui Dublado") is True
+    assert corresponde_a_alguma_referencia(referencias, "Kakegurui Twin") is False
+
+
+def test_variantes_de_busca_corta_o_simbolo_final():
+    assert "Kakegurui" in variantes_de_busca("Kakegurui ××")

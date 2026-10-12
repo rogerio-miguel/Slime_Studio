@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos.catalogo import agrupar_franquias, banner_da_temporada_ou_franquia
+from api.servicos.catalogo import banner_da_temporada_ou_franquia
 from core.ciclo_de_vida import RetratoDoAnime, deve_atualizar_status
 from core.conteudo_adulto import eh_conteudo_adulto
 from core.erros import FalhaDeMetadados
@@ -37,6 +37,7 @@ from db.catalogo import (
     sincronizar_capas_em_lote,
     sobrescrever_arte,
 )
+from db.franquias import agrupar_franquias
 from fontes.adaptadores.versao import remover_marcador_de_versao
 from integrations import servico
 from integrations.base import AnimeEmAlta, ArteDeAnime, MetadadosDeAnime, NoDeSerie
