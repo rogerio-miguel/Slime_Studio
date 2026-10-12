@@ -48,6 +48,7 @@ from core.erros import (
 from db import verificacao
 from db.catalogo import atualizar_contagem_na_fonte
 from fontes.listagem import filtrar_por_versao
+from fontes.rede.resiliencia import em_segundo_plano
 from models.anime import Anime
 from models.episodio import Episodio
 from models.fonte_anime import FonteAnime
@@ -389,9 +390,14 @@ async def _sondar_e_persistir(
         if anime is None:
             return
         async with _semaforo_de_sondagem:
-            fonte = await resolver_e_listar(
-                sessionmaker, anime, versao, resolver_canonico=True
-            )
+            with em_segundo_plano():
+                fonte = await resolver_e_listar(
+                    sessionmaker,
+                    anime,
+                    versao,
+                    resolver_canonico=True,
+                    tentar_fontes_alternativas=True,
+                )
         episodios = filtrar_por_versao(fonte.episodios, versao)
         total = len({ep.numero for ep in episodios if ep.numero is not None})
         await atualizar_contagem_na_fonte(

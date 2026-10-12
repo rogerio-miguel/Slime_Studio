@@ -1177,7 +1177,7 @@ def _espiar_sondagem(
     toca extractor/rede real."""
     chamadas: list[tuple[int, VersaoEpisodio]] = []
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         chamadas.append((anime.id, versao))
         if erro is not None:
             raise erro

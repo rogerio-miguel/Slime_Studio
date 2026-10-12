@@ -329,3 +329,54 @@ def test_ttl_sessao_cai_no_padrao_com_env_invalida(monkeypatch, caplog, valor):
     with caplog.at_level("WARNING", logger="fontes.rede.resiliencia"):
         assert resiliencia._ttl_sessao_s() == resiliencia._TTL_SESSAO_S_PADRAO
     assert "SLIME_SESSAO_TTL_S" in caplog.text
+
+
+async def test_segundo_plano_sessao_rejeitada_nao_abre_navegador_nem_conta_no_breaker(
+    sessionmaker, navegador_falso
+):
+    """Sondagem automática não pode abrir o Chrome nem abrir cooldown que também
+    bloquearia as ações do usuário naquele site."""
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        raise SessaoRejeitada("desafio Cloudflare")
+
+    with resiliencia.em_segundo_plano():
+        for _ in range(5):
+            with pytest.raises(SessaoRejeitada):
+                await resiliencia.chamar(sessionmaker, _ExtratorFalso(), operacao)
+
+    assert navegador_falso.instancias == []
+    assert await circuit_breaker.esta_em_cooldown(sessionmaker, _DOMINIO) is False
+
+
+async def test_segundo_plano_recusa_operacao_que_exige_navegador(sessionmaker, navegador_falso):
+    chamadas: list[str] = []
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        chamadas.append("chamada")
+        return "ok"
+
+    with resiliencia.em_segundo_plano():
+        with pytest.raises(SessaoRejeitada):
+            await resiliencia.chamar(
+                sessionmaker, _ExtratorFalso(), operacao, exigir_navegador=True
+            )
+
+    assert chamadas == []
+    assert navegador_falso.instancias == []
+
+
+async def test_segundo_plano_termina_ao_sair_do_contexto(sessionmaker, navegador_falso):
+    """Fora do `with`, a escalada para o navegador volta a funcionar."""
+
+    def operacao(cliente: ClienteDeSite) -> str:
+        if not isinstance(cliente, navegador_falso):
+            raise SessaoRejeitada("desafio Cloudflare")
+        return "ok"
+
+    with resiliencia.em_segundo_plano():
+        pass
+
+    assert await resiliencia.chamar(sessionmaker, _ExtratorFalso(), operacao) == "ok"
+    assert len(navegador_falso.instancias) == 1
+

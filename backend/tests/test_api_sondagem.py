@@ -113,7 +113,7 @@ def _espiar_sondagem(
     `(anime.id, versao)` e devolve um resultado fixo."""
     chamadas: list[tuple[int, VersaoEpisodio]] = []
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         chamadas.append((anime.id, versao))
         return _fonte(dominio="site.io", episodios=episodios or [])
 
@@ -414,7 +414,7 @@ async def test_contagem_descarta_none_e_deduplica(
 async def test_sondagem_bem_sucedida_persiste_as_tres_colunas(
     sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         return _fonte(
             dominio="animefire.one", episodios=[_ep("1", 1), _ep("2", 2), _ep("3", 3)]
         )
@@ -452,7 +452,7 @@ async def test_sondagem_falha_nao_toca_colunas_nem_propaga(
     caplog: pytest.LogCaptureFixture,
     erro: Exception,
 ):
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         raise erro
 
     monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
@@ -491,7 +491,7 @@ async def test_semaforo_serializa_sondagens(
     ativos = 0
     pico = 0
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         nonlocal ativos, pico
         ativos += 1
         pico = max(pico, ativos)
@@ -531,7 +531,7 @@ async def _verificacao_de(sessionmaker: _SessionMaker, anime_id: int):
 def _falhar_sondagem(monkeypatch: pytest.MonkeyPatch, excecao: Exception) -> list[int]:
     chamadas: list[int] = []
 
-    async def _fake(sessionmaker, anime, versao, *, resolver_canonico):
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
         chamadas.append(anime.id)
         raise excecao
 
@@ -643,3 +643,27 @@ async def test_anime_em_espera_nao_ocupa_vaga_do_teto_de_lote(
     await _drenar_sondagens()
 
     assert [anime_id for anime_id, _ in chamadas] == [livre]
+
+
+async def test_sondagem_roda_em_segundo_plano_e_pede_fontes_alternativas(
+    sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    from fontes.rede import resiliencia
+    vistos: list[tuple[bool, bool]] = []
+
+    async def _fake(sessionmaker, anime, versao, *, resolver_canonico, tentar_fontes_alternativas):
+        vistos.append((resiliencia._segundo_plano.get(), tentar_fontes_alternativas))
+        return _fonte(dominio="site.io", episodios=[])
+
+    monkeypatch.setattr("api.servicos.sondagem.resolver_e_listar", _fake)
+    anime_id = await _criar_anime(
+        sessionmaker_api, "fundo", status_lancamento=StatusLancamento.EM_LANCAMENTO
+    )
+    await _mapear_fonte(sessionmaker_api, anime_id)
+
+    animes = await _carregar(sessionmaker_api, anime_id)
+    sondagem.agendar_sondagens(sessionmaker_api, animes, {anime_id: _LEG})
+    await _drenar_sondagens()
+
+    assert vistos == [(True, True)]
+    assert resiliencia._segundo_plano.get() is False
