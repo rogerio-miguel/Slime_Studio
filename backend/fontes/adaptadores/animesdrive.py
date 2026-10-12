@@ -52,6 +52,7 @@ from bs4 import BeautifulSoup
 
 from core.enums import VersaoEpisodio
 from core.erros import EstruturaDoSiteMudou, FalhaDeExtracao, FonteNaoEncontrada, SessaoRejeitada
+from core.texto import termo_de_consulta
 from fontes.adaptadores.base import (
     EpisodioRemoto,
     ExtratorDeSite,
@@ -122,7 +123,7 @@ class AnimesDriveProvider(ExtratorDeSite):
         return True
 
     def buscar(self, cliente: ClienteDeSite, titulo: str) -> list[ResultadoBusca]:
-        consulta = " ".join(re.sub(r"[-_]+", " ", titulo).split())
+        consulta = termo_de_consulta(titulo)
         url = f"{self.BASE_URL}/?{urllib.parse.urlencode({'s': consulta})}"
         try:
             html = cliente.obter_html(url, timeout_s=_TIMEOUT_S)

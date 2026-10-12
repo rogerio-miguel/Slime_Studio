@@ -41,13 +41,19 @@ async def obter_ou_criar_anime_id(
     (`separar_temporada`): filme/OVA/especial não tem posição narrativa
     numerada, mesmo que o título tenha algo que pareça um marcador.
 
-    `anilist_id` desambigua colisão de slug: `slugificar` descarta o que não é
-    ASCII, então "Go-toubun no Hanayome ∬" tem o mesmo slug da T1. Slug já usado
-    por linha com OUTRO `anilist_id` é outra obra — o slug novo ganha o sufixo
-    `-<anilist_id>`. Linha existente sem `anilist_id` (cadastro manual ainda não
-    enriquecido) continua sendo reaproveitada."""
+    `anilist_id` identifica a obra antes do slug: linha que já o tem é a mesma
+    obra, mesmo que o slug gravado seja de uma versão anterior de `slugificar`.
+    Também desambigua colisão: `slugificar` descarta símbolos, então
+    "Go-toubun no Hanayome ∬" tem o mesmo slug da T1. Slug já usado por linha com
+    OUTRO `anilist_id` é outra obra — o slug novo ganha o sufixo `-<anilist_id>`.
+    Linha existente sem `anilist_id` (cadastro manual ainda não enriquecido)
+    continua sendo reaproveitada."""
     slug = slugificar(titulo)
     async with sessionmaker() as sessao:
+        if anilist_id is not None:
+            existente = await sessao.scalar(select(Anime.id).where(Anime.anilist_id == anilist_id))
+            if existente is not None:
+                return existente
         dono = (
             await sessao.execute(select(Anime.id, Anime.anilist_id).where(Anime.slug == slug))
         ).one_or_none()

@@ -27,19 +27,38 @@ function tituloSemMarcadores(titulo) {
   return atual === '' ? titulo : atual;
 }
 
-// Equivalente de `core/texto.py::slugificar` (NFKD + descarte de diacríticos +
-// `[^a-z0-9]+` -> `-`).
+// Letras que o NFKD não decompõe, o "×" de "Hunter × Hunter" e as aspas
+// tipográficas — a mesma tabela de `core/texto.py::_TRANSLITERACAO`.
+const TRANSLITERACAO = {
+  '×': 'x', ø: 'o', æ: 'ae', œ: 'oe', ß: 'ss', đ: 'd', ł: 'l', þ: 'th',
+  '’': "'", '‘': "'", ʼ: "'", '′': "'",
+};
+
+// Equivalente de `core/texto.py::slugificar` (transliteração + NFKD + descarte
+// de diacríticos + `[^a-z0-9]+` -> `-`).
 function slugificar(texto) {
   return texto
+    .toLowerCase()
+    .replace(/[×øæœßđłþ’‘ʼ′]/g, (c) => TRANSLITERACAO[c])
     .normalize('NFKD')
     .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
 
+// Equivalente de `core/texto.py::sem_simbolo_final`: a AniList marca a sequência
+// de uma obra com um símbolo solto no fim ("Kakegurui ××", "... Hanayome ∬").
+function semSimboloFinal(titulo) {
+  const indice = titulo.lastIndexOf(' ');
+  const ultima = titulo.slice(indice + 1);
+  const base = titulo.slice(0, indice).trim();
+  const ehSimbolo =
+    indice > 0 && ultima !== '' && [...ultima].every((c) => c > '\x7f' && /\p{S}/u.test(c));
+  return ehSimbolo && base !== '' ? base : titulo;
+}
+
 function slugDeFranquia(titulo) {
-  return slugificar(tituloSemMarcadores(titulo));
+  return slugificar(tituloSemMarcadores(semSimboloFinal(titulo)));
 }
 
 // `tituloSemMarcadores` cobre os marcadores explícitos ("X Season 2", "X II").

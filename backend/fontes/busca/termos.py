@@ -29,7 +29,7 @@ as variantes até achar resultado é de quem chama — este módulo só calcula.
 
 import re
 
-from core.texto import slugificar
+from core.texto import sem_simbolo_final, slugificar
 
 # `/pesquisar/<termo>` do AnimeFire (e sites com busca por prefixo em geral)
 # casam pelo título principal, não por texto completo — qualquer palavra de
@@ -212,7 +212,8 @@ def _prefixos_crescentes(texto: str) -> list[str]:
 
 
 def remover_marcadores_temporada_parte(texto: str) -> str:
-    """Aplica `_REGEX_MARCADOR_TEMPORADA_PARTE` repetidamente até estabilizar.
+    """Aplica `_REGEX_MARCADOR_TEMPORADA_PARTE` e `sem_simbolo_final`
+    repetidamente até estabilizar.
 
     O regex é ancorado em `\\s*$`, então um único `.sub()` só alcança o
     marcador mais à direita — títulos com dois marcadores empilhados (ex.
@@ -223,7 +224,7 @@ def remover_marcadores_temporada_parte(texto: str) -> str:
     atual = texto
     while atual != anterior:
         anterior = atual
-        atual = _REGEX_MARCADOR_TEMPORADA_PARTE.sub("", atual).strip()
+        atual = sem_simbolo_final(_REGEX_MARCADOR_TEMPORADA_PARTE.sub("", atual).strip())
     return atual
 
 
