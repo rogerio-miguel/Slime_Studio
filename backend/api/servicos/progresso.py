@@ -74,18 +74,9 @@ leitura caiu no cache-miss acima (2026-09-19): sem isso o usuário só via a
 still/título certos depois de um F5 manual. `paginas/Inicio.jsx` usa a flag
 pra decidir se vale reconsultar a prateleira de novo em alguns segundos.
 
-`listar_continuar_assistindo` também dispara `sondagem.agendar_sondagens`
-(2026-09-19) — mas só para os animes JÁ nesta prateleira (`ids_ativos`), não o
-catálogo inteiro; isso era exclusivo da Galeria (`?aquecer=true`) e da página
-do anime, que continuam existindo (cobrem quem nunca foi assistido, fora do
-escopo daqui). Mesmo problema do still: episódio novo na fonte só aparece
-aqui depois que a sondagem em segundo plano atualiza `episodios_na_fonte` —
-mas como um anime sem `Episodio` pro próximo número some de `itens` por
-inteiro (`_escolher_slot` devolve `None`), não dá pra pendurar uma flag por
-item. `ResultadoContinuarAssistindo.sondagem_em_andamento` cobre isso: um
-booleano no nível da resposta (peek em `sondagem._sondagens_em_voo`,
-`sondagem.sondagem_em_andamento`), que `Inicio.jsx` usa pra decidir se vale
-reconsultar a prateleira inteira de novo.
+Esta leitura **não** dispara sondagem de fonte: episódio novo na fonte chega via
+`Anime.episodios_na_fonte`, atualizado pelo zelador (`api/servicos/zelador.py`);
+a Home refaz a consulta periodicamente (`paginas/Inicio.jsx`).
 """
 
 import asyncio
@@ -157,21 +148,6 @@ class ItemContinuarAssistindo:
     versao: str | None
     episodio_novo: bool
     still_pendente: bool
-
-
-@dataclass(slots=True)
-class ResultadoContinuarAssistindo:
-    """Corpo de `GET /api/episodios/continuar-assistindo` — `sondagem_em_
-    andamento` cobre o caso que nenhuma flag por item resolve: um anime cujo
-    próximo episódio ainda não existe (`_escolher_slot` devolve `None` pra ele
-    quando `episodios_na_fonte` está desatualizado) simplesmente NÃO aparece em
-    `itens` até a sondagem atualizar a contagem — não dá pra pendurar uma flag
-    num item que não existe ainda. `paginas/Inicio.jsx` usa esta flag (em vez
-    de `still_pendente`, item a item) pra saber se vale reconsultar a
-    prateleira inteira de novo."""
-
-    itens: list["ItemContinuarAssistindo"]
-    sondagem_em_andamento: bool
 
 
 @dataclass(slots=True)
@@ -394,7 +370,7 @@ def _thumb_do_episodio(episodio: Episodio, anime: Anime) -> str | None:
 
 async def listar_continuar_assistindo(
     sessionmaker: _SessionMaker, limite: int = _LIMITE_PADRAO
-) -> ResultadoContinuarAssistindo:
+) -> list[ItemContinuarAssistindo]:
     async with sessionmaker() as sessao:
         # Toda temporada com QUALQUER episódio regular local entra (2026-09-30):
         # antes só entrava quem tinha progresso/`assistido_em`, então um
@@ -415,7 +391,7 @@ async def listar_continuar_assistindo(
 
         ids_ativos = [*ids_com_episodio, *novas, *primeiras]
         if not ids_ativos:
-            return ResultadoContinuarAssistindo(itens=[], sondagem_em_andamento=False)
+            return []
 
         animes_result = await sessao.execute(select(Anime).where(Anime.id.in_(ids_ativos)))
         animes_por_id = {anime.id: anime for anime in animes_result.scalars()}
@@ -432,35 +408,6 @@ async def listar_continuar_assistindo(
         versoes_ativas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
             sessao, ids_ativos
         )
-
-        # Gatilho estreito de sondagem (2026-09-19): só os animes já na
-        # prateleira (`ids_ativos`), não o catálogo inteiro — a Galeria
-        # (`?aquecer=true`) e a página do anime continuam cobrindo o resto do
-        # catálogo (quem nunca foi assistido não aparece aqui de qualquer
-        # forma). Reaproveita 100% da infra de `agendar_sondagens` (TTL de 6h,
-        # semáforo global, teto por lote, dedupe) — fire-and-forget, não
-        # bloqueia esta resposta. Anime ainda sem fonte (temporada nova, fonte
-        # perdida) entra como resolução, com a mesma política da Galeria.
-        versoes_de_sondagem = await servico_sondagem.versoes_de_sondagem_por_anime(
-            sessao, ids_ativos
-        )
-        em_espera = await servico_sondagem.ids_em_espera(sessao, ids_ativos)
-        a_resolver = await servico_sondagem.versoes_para_resolver_fonte(
-            sessao,
-            animes_por_id.values(),
-            versoes_de_sondagem,
-            com_episodios=ids_com_episodio,
-            temporadas_novas=novas,
-            em_espera=em_espera,
-        )
-        servico_sondagem.agendar_sondagens(
-            sessionmaker,
-            list(animes_por_id.values()),
-            {**versoes_de_sondagem, **a_resolver},
-            a_resolver=frozenset(a_resolver),
-            em_espera=em_espera,
-        )
-        sondagem_em_andamento = servico_sondagem.sondagem_em_andamento(ids_ativos)
 
     candidatos: list[_Candidato] = []
     for anime_id, episodios in episodios_por_anime.items():
@@ -531,4 +478,4 @@ async def listar_continuar_assistindo(
                 still_pendente=candidato.still_pendente,
             )
         )
-    return ResultadoContinuarAssistindo(itens=itens, sondagem_em_andamento=sondagem_em_andamento)
+    return itens

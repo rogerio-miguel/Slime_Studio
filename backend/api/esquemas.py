@@ -239,20 +239,6 @@ class AnimeSaida(BaseModel):
     proxima_temporada: TemporadaIrmaSaida | None = None
 
 
-class AquecimentoCatalogoSaida(BaseModel):
-    """Corpo de `GET /api/animes/aquecimento-em-andamento` — peek síncrono (sem
-    I/O) nas duas cargas fire-and-forget que `?aquecer=true` agenda
-    (`api/servicos/sondagem.py::agendar_sondagens` e `api/servicos/
-    descoberta.py::agendar_refreshs_do_catalogo`). A Galeria
-    (`paginas/Galeria.jsx`) usa esta flag pra saber se vale reconsultar
-    `GET /api/animes` de novo em alguns segundos — mesmo papel de
-    `ContinuarAssistindoRespostaSaida.sondagem_em_andamento`, só que num
-    endpoint próprio (não dá pra pendurar a flag na lista crua de `AnimeSaida`
-    sem quebrar o contrato que a Home também consome sem `?aquecer=true`)."""
-
-    em_andamento: bool
-
-
 class AnimeEmAltaSaida(BaseModel):
     """Item do feed `GET /api/animes/em-alta` (`integrations.base.AnimeEmAlta`)
     já cruzado com o catálogo local — `anime_id` vem preenchido pelo servidor
@@ -608,20 +594,6 @@ class ContinuarAssistindoSaida(BaseModel):
     # decidir se vale recarregar a prateleira de novo em alguns segundos, sem
     # precisar de F5 (`paginas/Inicio.jsx`).
     still_pendente: bool = False
-
-
-class ContinuarAssistindoRespostaSaida(BaseModel):
-    """Corpo de `GET /api/episodios/continuar-assistindo` — envelope em vez de
-    lista crua pra caber `sondagem_em_andamento` (nível da resposta, não por
-    item: um anime cujo próximo episódio ainda não existe some inteiro de
-    `itens` até a sondagem em segundo plano confirmar a contagem da fonte,
-    `api/servicos/progresso.py::listar_continuar_assistindo`). Mesmo papel de
-    `still_pendente` por item, só que pro caso que não tem item pra pendurar a
-    flag — `paginas/Inicio.jsx` usa os dois pra decidir se vale reconsultar a
-    prateleira de novo em alguns segundos."""
-
-    itens: list[ContinuarAssistindoSaida]
-    sondagem_em_andamento: bool
 
 
 # --- sites (api/rotas/sites.py) ---

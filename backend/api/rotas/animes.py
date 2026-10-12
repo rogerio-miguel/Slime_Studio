@@ -15,7 +15,6 @@ from api.esquemas import (
     AnimeDetalheSaida,
     AnimeEmAltaSaida,
     AnimeSaida,
-    AquecimentoCatalogoSaida,
     BuscaEmFontesSaida,
     CandidatoDeBannerSaida,
     ConfirmarFonteRequest,
@@ -30,7 +29,6 @@ from api.esquemas import (
     TemporadaIrmaSaida,
 )
 from api.seguranca import limitar
-from api.servicos import aquecimento
 from api.servicos import busca as servico_busca
 from api.servicos import catalogo as servico_catalogo
 from api.servicos import descoberta as servico_descoberta
@@ -280,9 +278,7 @@ async def restaurar_banner(
 
 @router_publico.get("", response_model=list[AnimeSaida])
 async def listar_animes(
-    aquecer: bool = False,
     sessao: AsyncSession = Depends(obter_sessao),
-    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> list[AnimeSaida]:
     # Filme/OVA/ONA/especial (`formato_midia` não nulo) se agrupam no anime
     # original (seletor de temporada, `agrupar_franquias`/`_temporadas_e_proxima`)
@@ -301,19 +297,6 @@ async def listar_animes(
     versoes_confirmadas = await servico_sondagem.versoes_confirmadas_mais_recentes_por_anime(
         sessao, ids
     )
-    # Aquecimento opt-in via `?aquecer=true`: carona fire-and-forget que sonda a
-    # fonte real (scraping) dos animes em lançamento com contagem velha/ausente e
-    # aquece o `status_lancamento` (filtro do badge) via AniList/Kitsu. Só a
-    # Galeria (`paginas/Galeria.jsx`, rota `/animes` — catálogo completo com os
-    # badges) envia a flag; a Home (`paginas/Inicio.jsx`) chama sem ela e não
-    # paga esse custo a cada abertura. O resultado entra no banco para a PRÓXIMA
-    # leitura do catálogo, não para esta — logo o badge de "episódios novos" na
-    # Home reflete a última passada da Galeria. Zero `await` de rede aqui: a
-    # query de versões só alimenta o agendamento, que é síncrono.
-    if aquecer:
-        await aquecimento.aquecer_catalogo(
-            sessionmaker, sessao, animes, grupos_de_franquia, com_episodios
-        )
     # `status_lancamento` e `proximo_ep_em` vêm do `model_validate` (campos
     # mapeados 1:1 com colunas de `Anime`); `episodios_novos`, `tem_episodios`,
     # `assistido` e `episodios_atuais` são derivados e precisam ser injetados à
@@ -341,21 +324,6 @@ async def listar_animes(
             )
         )
     return resultado_saida
-
-
-# Mesma armadilha de ordem de `/em-alta` abaixo: precisa vir ANTES de
-# `/{anime_id}`, senão casaria com `anime_id="aquecimento-em-andamento"`.
-@router_publico.get("/aquecimento-em-andamento", response_model=AquecimentoCatalogoSaida)
-async def aquecimento_em_andamento(
-    sessao: AsyncSession = Depends(obter_sessao),
-) -> AquecimentoCatalogoSaida:
-    grupos = await servico_catalogo.agrupar_franquias(sessao)
-    animes = (await sessao.execute(select(Anime))).scalars()
-    ids = [anime.id for anime in servico_catalogo.visiveis_no_catalogo(animes, grupos)]
-    em_andamento = servico_sondagem.sondagem_em_andamento(
-        ids
-    ) or servico_descoberta.refresh_em_andamento(ids)
-    return AquecimentoCatalogoSaida(em_andamento=em_andamento)
 
 
 # `/em-alta` precisa vir ANTES de `/{anime_id}` — um `{anime_id}` declarado
@@ -516,12 +484,10 @@ async def obter_anime(
     anime = await sessao.get(Anime, anime_id)
     if anime is None or eh_conteudo_adulto(anime.generos):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="anime não encontrado")
-    # F4b: refresh lazy fire-and-forget do estado de lançamento — não aguarda,
-    # só agenda para a próxima leitura (ver `descoberta.agendar_refresh_de_lancamento`).
-    servico_descoberta.agendar_refresh_de_lancamento(sessionmaker, anime)
-    # Mesma carona, para sinopse/banner/cor/gêneros ainda faltando (anime
-    # materializado do feed "em alta", que nunca traz sinopse) — ver
-    # `descoberta.agendar_enriquecimento_de_metadados`.
+    # Completa sinopse/banner/cor/gêneros ainda faltando (anime materializado do
+    # feed "em alta", que nunca traz sinopse) — fire-and-forget, ver
+    # `descoberta.agendar_enriquecimento_de_metadados`. Verificar fonte/status é do
+    # zelador (`api/servicos/zelador.py`), não de quem lê a página.
     servico_descoberta.agendar_enriquecimento_de_metadados(sessionmaker, anime)
     resultado = await sessao.execute(
         select(FonteAnime.versao, FonteAnime.resolvido_em).where(FonteAnime.anime_id == anime_id)
@@ -533,22 +499,6 @@ async def obter_anime(
         servico_jobs.versao_episodio_da_fonte(mais_recente.versao)
         if mais_recente is not None
         else None
-    )
-    # Sondagem oportunista da fonte real — mesma carona fire-and-forget do
-    # `agendar_refresh_de_lancamento` de F4b acima, mas alimentando
-    # `Anime.episodios_na_fonte`. Reusa a linha de `FonteAnime` já lida (sem
-    # `versao_confirmada`/`DESCONHECIDA` da tradução de F4: aqui é
-    # `versao_de_sondagem`, `NAO_DIFERENCIADA -> LEGENDADO`).
-    versoes_de_sondagem = (
-        {anime.id: servico_sondagem.versao_de_sondagem(mais_recente.versao)}
-        if mais_recente is not None
-        else {}
-    )
-    servico_sondagem.agendar_sondagens(
-        sessionmaker,
-        [anime],
-        versoes_de_sondagem,
-        em_espera=await servico_sondagem.ids_em_espera(sessao, [anime.id]),
     )
     grupos = await servico_catalogo.agrupar_franquias(sessao)
     temporadas, proxima_temporada = _temporadas_e_proxima(

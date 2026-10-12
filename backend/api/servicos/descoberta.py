@@ -9,7 +9,6 @@ import asyncio
 import logging
 import re
 import time
-from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 
@@ -47,24 +46,23 @@ logger = logging.getLogger(__name__)
 
 _SessionMaker = async_sessionmaker[AsyncSession]
 
-# F4/F14 — aquecimento oportunista do estado de lançamento. Sem scheduler/cron
-# (decisão de produto): o dado só é atualizado em três momentos de "carona":
+# F4/F14 — atualização do estado de lançamento, sem scheduler próprio. O dado
+# se renova em dois momentos:
 #   1. o cruzamento do feed "em alta" (F4a, de graça: o feed já traz o bloco
 #      fresco da AniList);
-#   2. a abertura da página de um anime, ou a listagem do catálogo, para animes
-#      COM `anilist_id` e dado mais velho que este TTL (F4b/F14, busca lazy por
-#      id: `servico.buscar_lancamento_por_anilist_id`);
-#   3. a listagem do catálogo, para animes SEM `anilist_id` (F14, busca lazy por
-#      TÍTULO: `servico.buscar_por_titulo`, cadeia AniList→Kitsu) — senão esses
-#      animes ficam com `status_lancamento` NULL para sempre e o badge de
-#      "episódios novos" nunca dispara.
+#   2. a passada do zelador (`api/servicos/zelador.py` → `agendar_refreshs_do_catalogo`),
+#      para animes com dado mais velho que este TTL — COM `anilist_id` por busca lazy
+#      por id (`servico.buscar_lancamento_por_anilist_id`), SEM por TÍTULO
+#      (`servico.buscar_por_titulo`, cadeia AniList→Kitsu; sem isso `status_lancamento`
+#      ficaria NULL para sempre e o badge de "episódios novos" nunca dispararia).
 _TTL_LANCAMENTO_S = 6 * 3600
 
-# Referência forte às buscas lazy em andamento: (1) deduplica aberturas
-# concorrentes da mesma página / passadas do catálogo e (2) impede o GC de
+# Referência forte às buscas lazy em andamento: (1) deduplica passadas
+# concorrentes sobre o mesmo anime e (2) impede o GC de
 # coletar uma `Task` fire-and-forget antes de ela terminar. A entrada sai no
-# `add_done_callback`. Compartilhado pelos caminhos 2 e 3 acima — as listas de
-# candidatos de cada um são disjuntas (um anime tem OU não tem `anilist_id`).
+# `add_done_callback`. Compartilhado pelos dois caminhos de
+# `agendar_refreshs_do_catalogo` — as listas de candidatos de cada um são
+# disjuntas (um anime tem OU não tem `anilist_id`).
 _refreshs_de_lancamento_em_voo: dict[int, asyncio.Task] = {}
 
 # F14 — teto de animes por listagem de catálogo que disparam busca à AniList
@@ -84,7 +82,7 @@ _MAX_BUSCAS_POR_TITULO_POR_LOTE = 2
 _MAX_REPAROS_DE_CLASSIFICACAO_POR_LOTE = 2
 # Cooldown por anime e por processo, contado da TENTATIVA (não do sucesso): série
 # cujo walk nunca resolve (ciclo, prequel ambíguo) ficaria retentando a cada
-# `?aquecer=true` pra sempre. Em memória de propósito — reiniciar o processo
+# passada do zelador pra sempre. Em memória de propósito — reiniciar o processo
 # zera, que é exatamente quando vale tentar de novo.
 _COOLDOWN_REPARO_DE_CLASSIFICACAO_S = 3600
 _reparos_de_classificacao_em_voo: dict[int, asyncio.Task] = {}
@@ -703,16 +701,6 @@ def agendar_reparos_de_classificacao(sessionmaker: _SessionMaker, animes: list[A
         tarefa.add_done_callback(
             lambda _tarefa, aid=anime_id: _reparos_de_classificacao_em_voo.pop(aid, None)
         )
-
-
-def refresh_em_andamento(ids: Iterable[int]) -> bool:
-    """`True` se algum dos `ids` tem uma busca lazy de lançamento em voo agora
-    (peek em `_refreshs_de_lancamento_em_voo`, sem I/O) — espelha
-    `api/servicos/sondagem.py::sondagem_em_andamento`. Usado por
-    `GET /api/animes/aquecimento-em-andamento` (`api/rotas/animes.py`) junto
-    com `sondagem_em_andamento` pra sinalizar à Galeria que vale reconsultar o
-    catálogo em alguns segundos em vez de esperar F5."""
-    return any(anime_id in _refreshs_de_lancamento_em_voo for anime_id in ids)
 
 
 def _elegivel_para_aquecimento(anime: Anime, limite: datetime) -> bool:

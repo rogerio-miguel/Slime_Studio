@@ -2,9 +2,9 @@
 atualização de status dos animes que a política de ciclo de vida
 (`core/ciclo_de_vida.py`) manda verificar.
 
-Mesma lógica para quem chama: a Galeria (`GET /api/animes?aquecer=true`) e o
-zelador de fontes (`api/servicos/zelador.py`). Tudo fire-and-forget — o resultado
-entra no banco para a PRÓXIMA leitura do catálogo.
+Só o zelador de fontes (`api/servicos/zelador.py`) chama: nenhuma leitura de
+página dispara verificação. Tudo fire-and-forget — o resultado entra no banco
+para a PRÓXIMA leitura do catálogo.
 """
 
 from collections.abc import Collection

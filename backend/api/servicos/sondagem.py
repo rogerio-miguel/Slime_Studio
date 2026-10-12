@@ -9,10 +9,9 @@ provedor externo por API JSON pública): aqui é scraping de site com bypass
 anti-bot, custo real por anime — daí o intervalo longo, o teto por lote e o semáforo
 global que serializa os scrapes.
 
-Mesmo padrão de refresh oportunista de F4b
-(`descoberta.agendar_refresh_de_lancamento`): `agendar_sondagens` é síncrona e
-fire-and-forget, dispara `Task`s que rodam à margem da request e cujo resultado
-entra no banco para a PRÓXIMA leitura do catálogo, não para esta. Não importa
+`agendar_sondagens` é síncrona e fire-and-forget: dispara `Task`s à margem de quem
+chama (o zelador, `api/servicos/zelador.py`), e o resultado entra no banco para a
+PRÓXIMA leitura do catálogo. Não importa
 `fastapi` nem Pydantic (regra de dependência da Clean Architecture, CLAUDE.md
 §1) — `api/rotas/animes.py` é quem traduz para os esquemas de saída.
 """
@@ -331,17 +330,6 @@ def quantidade_em_voo() -> int:
     """Sondagens em andamento agora — o zelador desconta do orçamento por hora,
     senão passadas seguidas agendariam mais enquanto as anteriores ainda rodam."""
     return len(_sondagens_em_voo)
-
-
-def sondagem_em_andamento(ids: Iterable[int]) -> bool:
-    """`True` se algum dos `ids` tem uma sondagem em voo agora (peek em
-    `_sondagens_em_voo`, sem I/O) — usado por `api/servicos/progresso.py` pra
-    sinalizar ao frontend que vale reconsultar a prateleira "Continuar
-    assistindo" em alguns segundos em vez de esperar F5 (mesmo padrão de
-    `ItemContinuarAssistindo.still_pendente`). Chamar DEPOIS de
-    `agendar_sondagens` na mesma passada: cobre tanto a sondagem que acabou de
-    ser agendada agora quanto uma já em voo de uma passada anterior."""
-    return any(anime_id in _sondagens_em_voo for anime_id in ids)
 
 
 def _ordem_de_sondagem(anime: Anime) -> tuple[bool, datetime]:

@@ -14,7 +14,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.servicos import sondagem
+from api.servicos import sondagem, zelador
 from api.servicos.catalogo import ids_com_episodios
 from api.servicos.fontes import FonteComEpisodios
 from api.servicos.lancamentos import episodios_novos, maior_numero_capturado_por_anime
@@ -1150,26 +1150,27 @@ async def test_proxima_temporada_shape_e_ordem_de_rotas(
     }
 
 
-# --- F12: GET /api/animes agenda sondagem fire-and-forget da fonte real, opt-in
-# via `?aquecer=true` (só a Galeria manda a flag; a Home chama sem ela) ---
+# --- verificação da fonte: só o zelador dispara; ler o catálogo não ---
 
 
-async def test_listar_animes_so_agenda_carona_de_aquecimento_com_a_flag(
+async def _passada_do_zelador(sessionmaker: _SessionMaker) -> None:
+    await zelador.Zelador(sessionmaker).executar_passada()
+
+
+async def test_listar_animes_nao_dispara_verificacao_nenhuma(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
-    """A carona fire-and-forget (sondagem da fonte real + aquecimento de
-    `status_lancamento` via AniList/Kitsu) é opt-in via `?aquecer=true` — só a
-    Galeria a envia. Sem a flag, `GET /api/animes` devolve o catálogo e nada
-    mais: a Home não paga esse custo a cada abertura."""
-    sondagens: list[int] = []
-    refreshs: list[int] = []
+    """Sondagem da fonte e atualização de `status_lancamento` são do zelador;
+    `GET /api/animes` (inclusive com a antiga flag `?aquecer=true`, hoje ignorada)
+    devolve o catálogo e nada mais."""
+    disparos: list[str] = []
     monkeypatch.setattr(
         "api.servicos.sondagem.agendar_sondagens",
-        lambda sessionmaker, animes, versoes, **_: sondagens.append(len(animes)),
+        lambda *_, **__: disparos.append("sondagem"),
     )
     monkeypatch.setattr(
         "api.servicos.descoberta.agendar_refreshs_do_catalogo",
-        lambda sessionmaker, animes: refreshs.append(len(animes)),
+        lambda *_, **__: disparos.append("refresh"),
     )
     await _criar_anime_catalogado(
         sessionmaker_api,
@@ -1177,15 +1178,11 @@ async def test_listar_animes_so_agenda_carona_de_aquecimento_com_a_flag(
         status_lancamento=StatusLancamento.EM_LANCAMENTO,
     )
 
-    sem_flag = await cliente.get("/api/animes")
-    assert sem_flag.status_code == 200
-    assert sondagens == []
-    assert refreshs == []
+    for caminho in ("/api/animes", "/api/animes?aquecer=true"):
+        resposta = await cliente.get(caminho)
+        assert resposta.status_code == 200
 
-    com_flag = await cliente.get("/api/animes?aquecer=true")
-    assert com_flag.status_code == 200
-    assert sondagens == [1]
-    assert refreshs == [1]
+    assert disparos == []
 
 
 def _espiar_sondagem(
@@ -1215,7 +1212,7 @@ def _espiar_sondagem(
     return chamadas
 
 
-async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura(
+async def test_passada_do_zelador_sonda_e_badge_atualiza_na_proxima_leitura(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
     chamadas = _espiar_sondagem(
@@ -1231,11 +1228,12 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
     await _mapear_fonte(sessionmaker_api, anime_id)
     await _capturar_episodio(sessionmaker_api, anime_id, numero=1)
 
-    primeira = await cliente.get("/api/animes?aquecer=true")
+    primeira = await cliente.get("/api/animes")
     assert primeira.status_code == 200
     item = next(i for i in primeira.json() if i["id"] == anime_id)
     assert item["episodios_novos"] == 0  # badge desta leitura: 1 na fonte, fronteira no ep 1
 
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_sondagens()
     assert chamadas == [(anime_id, VersaoEpisodio.LEGENDADO)]
     async with sessionmaker_api() as sessao:
@@ -1243,12 +1241,12 @@ async def test_listar_animes_agenda_sondagem_e_badge_atualiza_na_proxima_leitura
         assert anime.episodios_na_fonte == 3
         assert anime.fonte_verificada_dominio == "animefire.one"
 
-    segunda = await cliente.get("/api/animes?aquecer=true")
+    segunda = await cliente.get("/api/animes")
     item = next(i for i in segunda.json() if i["id"] == anime_id)
     assert item["episodios_novos"] == 2  # 3 na fonte, fronteira no ep 1
 
 
-async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(
+async def test_passada_do_zelador_nao_sonda_dentro_do_ttl(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
     chamadas = _espiar_sondagem(monkeypatch)
@@ -1261,14 +1259,13 @@ async def test_listar_animes_nao_agenda_sondagem_dentro_do_ttl(
     )
     await _mapear_fonte(sessionmaker_api, anime_id)
 
-    resposta = await cliente.get("/api/animes?aquecer=true")
+    await _passada_do_zelador(sessionmaker_api)
     await _drenar_sondagens()
 
-    assert resposta.status_code == 200
     assert chamadas == []
 
 
-async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha(
+async def test_sondagem_que_falha_no_zelador_mantem_o_badge_antigo(
     cliente: AsyncClient,
     sessionmaker_api: _SessionMaker,
     monkeypatch: pytest.MonkeyPatch,
@@ -1285,11 +1282,12 @@ async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha
     await _mapear_fonte(sessionmaker_api, anime_id)
 
     with caplog.at_level("WARNING"):
-        resposta = await cliente.get("/api/animes?aquecer=true")
+        await _passada_do_zelador(sessionmaker_api)
+        await _drenar_sondagens()  # gather sem return_exceptions: re-levantaria se propagasse
+        resposta = await cliente.get("/api/animes")
         assert resposta.status_code == 200
         item = next(i for i in resposta.json() if i["id"] == anime_id)
         assert item["episodios_novos"] == 5  # badge antigo; falha de site não derruba a home
-        await _drenar_sondagens()  # gather sem return_exceptions: re-levantaria se propagasse
 
     assert "sondagem de fonte falhou" in caplog.text
     async with sessionmaker_api() as sessao:
@@ -1298,7 +1296,7 @@ async def test_listar_animes_responde_200_com_badge_antigo_quando_sondagem_falha
         assert anime.fonte_verificada_em is None
 
 
-async def test_listar_animes_duas_chamadas_concorrentes_deduplicam_sondagem(
+async def test_duas_passadas_concorrentes_do_zelador_deduplicam_sondagem(
     cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
 ):
     chamadas = _espiar_sondagem(monkeypatch)
@@ -1308,7 +1306,7 @@ async def test_listar_animes_duas_chamadas_concorrentes_deduplicam_sondagem(
     await _mapear_fonte(sessionmaker_api, anime_id)
 
     await asyncio.gather(
-        cliente.get("/api/animes?aquecer=true"), cliente.get("/api/animes?aquecer=true")
+        _passada_do_zelador(sessionmaker_api), _passada_do_zelador(sessionmaker_api)
     )
     await _drenar_sondagens()
 
