@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
+import { CLASSE_PAINEL_FLUTUANTE } from './painelFlutuante.js';
+import { useFecharAoClicarFora } from '../hooks/useFecharAoClicarFora.js';
 
 // Seletor de temporada da página do anime (Fase 5) — vive na barra de ações
 // abaixo do hero (`paginas/PaginaDoAnime.jsx`), como PRIMEIRO controle antes
@@ -57,15 +59,7 @@ export default function SeletorDeTemporada({
       ? `Temporada ${temporada.numero_temporada}`
       : temporada.titulo;
 
-  // Fecha ao clicar fora ou ao focar algo fora do componente.
-  useEffect(() => {
-    if (!aberto) return;
-    const aoApontarFora = (evento) => {
-      if (!containerRef.current?.contains(evento.target)) setAberto(false);
-    };
-    document.addEventListener('pointerdown', aoApontarFora);
-    return () => document.removeEventListener('pointerdown', aoApontarFora);
-  }, [aberto]);
+  useFecharAoClicarFora(aberto, containerRef, () => setAberto(false));
 
   // Ao abrir, posiciona o foco no item da temporada atual.
   useEffect(() => {
@@ -114,7 +108,7 @@ export default function SeletorDeTemporada({
 
   if (temporadas.length === 0) {
     return (
-      <span className="inline-flex items-center h-8 text-[18px] text-ink-muted font-semibold">
+      <span className="inline-flex items-center h-8 text-[18px] text-white font-semibold">
         {numeroTemporadaAtual != null ? `Temporada ${numeroTemporadaAtual}` : tituloAtual}
       </span>
     );
@@ -135,7 +129,7 @@ export default function SeletorDeTemporada({
             setAberto(true);
           }
         }}
-        className="inline-flex items-center gap-2 pr-2.5 h-8 text-[18px] text-ink-muted font-semibold outline-none transition-colors hover:border-neon hover:text-white cursor-pointer"
+        className="inline-flex items-center gap-2 h-8 rounded-lg -ml-2.5 px-2.5 text-[18px] text-white font-semibold outline-none transition-colors hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-neon cursor-pointer"
       >
         {rotuloDe(temporadaAtual)}
         <ChevronDown
@@ -153,7 +147,7 @@ export default function SeletorDeTemporada({
           role="menu"
           aria-label="Temporada"
           onKeyDown={aoTeclarNoMenu}
-          className="absolute left-0 top-full z-10 mt-1 min-w-[20rem] overflow-hidden border rounded-2xl border-border-chrome bg-[#0f0f10] shadow-xl shadow-black/50"
+          className={`absolute left-0 top-full z-10 mt-2 min-w-[20rem] ${CLASSE_PAINEL_FLUTUANTE}`}
         >
           {temporadas.map((temporada, indice) => {
             const atual = temporada.id === animeIdAtual;

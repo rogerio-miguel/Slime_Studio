@@ -3,6 +3,8 @@ import { ChevronDown } from 'lucide-react';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 import { duracaoTotalDaTroca, pixelarTroca } from './ilha/pixelarTroca.js';
 import FiltrosDePixelizacao from './ilha/FiltrosDePixelizacao.jsx';
+import { FUNDO_DOS_MENUS_DA_ILHA } from './painelFlutuante.js';
+import { useFecharAoClicarFora } from '../hooks/useFecharAoClicarFora.js';
 
 // Duração-base da troca de texto do rótulo (ilha/pixelarTroca.js); a largura do
 // rótulo anima junto, nesse mesmo tempo.
@@ -258,14 +260,7 @@ export default function SeletorEmMenu({
     return () => aoMudarAberto?.(false);
   }, [aberto, aoMudarAberto]);
 
-  useEffect(() => {
-    if (!aberto) return undefined;
-    const aoApontarFora = (evento) => {
-      if (!containerRef.current?.contains(evento.target)) setAberto(false);
-    };
-    document.addEventListener('pointerdown', aoApontarFora);
-    return () => document.removeEventListener('pointerdown', aoApontarFora);
-  }, [aberto]);
+  useFecharAoClicarFora(aberto, containerRef, () => setAberto(false));
 
   useEffect(() => {
     if (!aberto) return;
@@ -434,7 +429,7 @@ export default function SeletorEmMenu({
           // `overflow-hidden`: o fundo de hover/foco da 1ª e da última opção é um
           // retângulo e, sem o recorte, ficava sobrando para fora dos cantos
           // arredondados do menu.
-          className={`absolute top-full z-20 mt-1 overflow-hidden border border-border-chrome rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50 ${
+          className={`absolute top-full z-20 mt-1 overflow-hidden border border-border-chrome rounded-2xl ${FUNDO_DOS_MENUS_DA_ILHA} shadow-xl shadow-black/50 ${
             ocuparLarguraDoPai ? 'inset-x-0' : 'left-0 min-w-full'
           }`}
         >

@@ -368,6 +368,17 @@ async def test_cache_de_busca_reaproveita_resposta_positiva_dentro_do_ttl(monkey
     assert segunda == primeira
 
 
+async def test_descartar_cache_da_busca_forca_nova_busca_nos_sites(monkeypatch):
+    chamadas = _contador_de_buscas(monkeypatch, _todas_com_candidato())
+
+    buscar = servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos
+    await buscar(None, "Overlord II")
+    servico_busca.descartar_cache_da_busca("  overlord ii ")
+    await buscar(None, "Overlord II")
+
+    assert chamadas["n"] == 2
+
+
 async def test_cache_de_busca_expira_depois_do_ttl(monkeypatch):
     chamadas = _contador_de_buscas(monkeypatch, _todas_com_candidato())
     relogio = {"t": 1000.0}

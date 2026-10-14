@@ -1,5 +1,6 @@
 import { Search, X } from 'lucide-react';
 import { useId, useRef } from 'react';
+import { FUNDO_DA_ILHA } from '../painelFlutuante.js';
 
 // Busca da navbar: pílula sempre aberta, borda neon. Filtro local ao vivo
 // (cada tecla chama `aoMudar`); Enter chama `aoSubmeter`, opcional, que hoje
@@ -11,7 +12,18 @@ import { useId, useRef } from 'react';
 // `onMouseDown` + `preventDefault` para o clique não disparar `blur` do input
 // antes do `onClick`; o cancelador nativo do `type="search"` é escondido porque
 // duplicaria o nosso.
-export default function CampoDeBusca({ termo, aoMudar, aoSubmeter }) {
+//
+// Reaproveitado pelo seletor de fonte (`components/SeletorDeFonte.jsx`): lá
+// `rotulo` troca o texto do campo, `larguraTotal` ocupa a coluna do painel em
+// vez dos 21.5rem da navbar e `focarAoMontar` põe o foco ao abrir o painel.
+export default function CampoDeBusca({
+  termo,
+  aoMudar,
+  aoSubmeter,
+  rotulo = 'Buscar animes',
+  larguraTotal = false,
+  focarAoMontar = false,
+}) {
   const id = useId();
   const inputRef = useRef(null);
   return (
@@ -21,12 +33,12 @@ export default function CampoDeBusca({ termo, aoMudar, aoSubmeter }) {
         aoSubmeter?.();
       }}
       role="search"
-      className="flex items-center"
+      className={`flex items-center ${larguraTotal ? 'w-full' : ''}`}
     >
       <label htmlFor={id} className="sr-only">
-        Buscar animes
+        {rotulo}
       </label>
-      <div className="relative flex items-center">
+      <div className={`relative flex items-center ${larguraTotal ? 'w-full' : ''}`}>
         <span
           aria-hidden="true"
           className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-ink-muted"
@@ -39,8 +51,9 @@ export default function CampoDeBusca({ termo, aoMudar, aoSubmeter }) {
           type="search"
           value={termo}
           onChange={(evento) => aoMudar(evento.target.value)}
-          placeholder="Buscar animes"
-          className="h-10 w-86 rounded-full bg-surface/80 pl-10 pr-9 text-sm font-bold text-white outline-none transition-colors [&::-webkit-search-cancel-button]:hidden"
+          placeholder={rotulo}
+          autoFocus={focarAoMontar}
+          className={`h-10 ${larguraTotal ? 'w-full' : 'w-86'} rounded-full ${FUNDO_DA_ILHA} pl-10 pr-9 text-sm font-bold text-white outline-none transition-colors [&::-webkit-search-cancel-button]:hidden`}
         />
         {termo && (
           <button

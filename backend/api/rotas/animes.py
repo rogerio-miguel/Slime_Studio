@@ -434,19 +434,24 @@ async def buscar_animes(
 )
 async def buscar_animes_em_fontes(
     titulo: str = Query(..., max_length=300),
+    atualizar: bool = Query(False),
     sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
 ) -> BuscaEmFontesSaida:
-    """Busca ao vivo em sites de extração — alimenta o diálogo "Trocar fonte":
-    cada site busca em paralelo, esgotando de forma independente e exaustiva sua
+    """Busca ao vivo em sites de extração — alimenta o seletor de fonte da página
+    do anime: cada site busca em paralelo, esgotando de forma independente e exaustiva sua
     própria escada de variantes, sem que um "roube a vez" do outro
     (`fontes.busca.servico.buscar_por_site_com_variantes`). Devolve a UNIÃO
     das fontes onde o anime existe. `fontes` traz o status de cada site
     consultado (disponível ou não, com motivo) — a UI usa isso pra distinguir
     "não achei nada" de "não consegui nem tentar" (CLAUDE.md §4, erro nunca
-    silencioso)."""
+    silencioso). Repetir um título recente sai do cache em memória
+    (`api/servicos/busca.py`); `atualizar=true` o ignora, para a busca pedida de
+    propósito pelo usuário."""
     if not titulo.strip():
         return BuscaEmFontesSaida(resultados=[], fontes=[])
 
+    if atualizar:
+        servico_busca.descartar_cache_da_busca(titulo)
     fontes = await servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos(
         sessionmaker, titulo
     )
@@ -525,6 +530,8 @@ async def obter_anime(
         versoes_disponiveis=_versoes_disponiveis(versoes_de_fonte),
         versao_confirmada_mais_recente=versao_confirmada_mais_recente,
         status_lancamento=anime.status_lancamento,
+        proximo_ep_numero=anime.proximo_ep_numero,
+        proximo_ep_em=anime.proximo_ep_em,
         serie_ancora=anime.serie_ancora,
         numero_temporada=anime.numero_temporada,
         temporadas=temporadas,
