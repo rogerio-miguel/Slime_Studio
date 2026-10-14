@@ -61,14 +61,18 @@ export function listarEpisodiosRemotos(animeId, versao) {
   return requisitar(`/api/admin/animes/${animeId}/episodios-remotos${query}`);
 }
 
-// Busca ao vivo em sites de extração (DialogoDeTrocaDeFonte): varre todos os
+// Busca ao vivo em sites de extração (components/SeletorDeFonte.jsx): varre todos os
 // domínios/versões e devolve a UNIÃO das fontes onde o anime existe. Resolve
 // para `{ resultados, fontes }`: `resultados` são os candidatos achatados,
 // `fontes` é o status de cada site consultado (`{ dominio, indisponivel,
 // motivo }`) — distingue "busquei e não achei nada" de "não consegui nem
 // tentar" (cooldown/erro).
-export function buscarEmFontes(titulo) {
-  return requisitar(`/api/animes/buscar-fontes?titulo=${encodeURIComponent(titulo)}`);
+//
+// O servidor guarda o resultado de um título por alguns minutos; `atualizar`
+// (busca pedida de propósito pelo usuário) o ignora e vai de verdade aos sites.
+export function buscarEmFontes(titulo, { atualizar = false } = {}) {
+  const query = `titulo=${encodeURIComponent(titulo)}${atualizar ? '&atualizar=true' : ''}`;
+  return requisitar(`/api/animes/buscar-fontes?${query}`);
 }
 
 export function marcarAssistido(episodioId) {

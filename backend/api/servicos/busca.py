@@ -57,8 +57,11 @@ _SessionMaker = async_sessionmaker[AsyncSession]
 # sites. Só guarda resposta COMPLETA e positiva (todo site consultado e disponível e ao menos
 # um candidato) — "não achei" e "não consegui tentar" nunca ficam presos, porque o
 # usuário que busca de novo espera uma tentativa de verdade. Vive só no processo da
-# API (some no restart) e é limitado em tamanho.
-_TTL_CACHE_DE_BUSCA_S = 120
+# API (some no restart) e é limitado em tamanho. Os candidatos de um anime quase não
+# mudam em minutos, então a validade é longa; quem pesquisa de novo de propósito
+# (botão "Buscar"/Enter do seletor) passa `atualizar` e descarta a entrada antes
+# (`descartar_cache_da_busca`) — o cache só serve à abertura do seletor.
+_TTL_CACHE_DE_BUSCA_S = 900
 _MAXIMO_ENTRADAS_CACHE_DE_BUSCA = 64
 _relogio = time.monotonic
 _cache_de_busca: dict[str, tuple[float, list[ResultadoDeFonte]]] = {}
@@ -66,6 +69,11 @@ _cache_de_busca: dict[str, tuple[float, list[ResultadoDeFonte]]] = {}
 
 def _chave_do_cache_de_busca(titulo: str) -> str:
     return slugificar(titulo) or titulo.strip().casefold()
+
+
+def descartar_cache_da_busca(titulo: str) -> None:
+    """Esquece a entrada de `titulo`: a próxima busca vai de verdade aos sites."""
+    _cache_de_busca.pop(_chave_do_cache_de_busca(titulo), None)
 
 
 async def buscar_em_todas_as_fontes_com_titulos_alternativos(

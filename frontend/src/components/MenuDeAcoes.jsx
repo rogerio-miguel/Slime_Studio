@@ -1,5 +1,7 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import { MoreVertical } from 'lucide-react';
+import { CLASSE_PAINEL_FLUTUANTE } from './painelFlutuante.js';
+import { useFecharAoClicarFora } from '../hooks/useFecharAoClicarFora.js';
 
 // Menu de ações genérico — extraído de `MenuDeAcoesDoAnime.jsx` (pedido do
 // usuário: "Continuar assistindo" da Home ganhou o mesmo padrão de menu
@@ -12,7 +14,10 @@ import { MoreVertical } from 'lucide-react';
 // estado é interno a este componente e cada skin reage a ele de forma
 // diferente).
 //
-// `itens`: [{chave, rotulo, Icone, aoClicar, desabilitado, destrutivo}] —
+// `larguraMinima`: classe `min-w-*` do painel (padrão serve ao card; o menu da
+// página do anime é mais largo por causa da segunda linha de cada item).
+// `itens`: [{chave, rotulo, descricao?, separadorAntes?, Icone, aoClicar,
+// desabilitado, destrutivo}] — `descricao` é uma segunda linha opcional;
 // mesmo formato que `MenuDeAcoesDoAnime` já usava internamente.
 // `classeGatilho(aberto)`: className completa do botão-gatilho — cada
 // chamador decide a própria skin (`MenuDeAcoesDoAnime`: quadrado com borda
@@ -41,6 +46,7 @@ export default function MenuDeAcoes({
   ancoragem = 'right',
   posicao = 'baixo',
   tamanhoIcone = 18,
+  larguraMinima = 'min-w-[13rem]',
 }) {
   const [aberto, setAberto] = useState(false);
   const [indiceAtivo, setIndiceAtivo] = useState(0);
@@ -49,15 +55,7 @@ export default function MenuDeAcoes({
   const gatilhoRef = useRef(null);
   const itensRef = useRef([]);
 
-  // Fecha ao clicar fora ou ao focar algo fora do componente.
-  useEffect(() => {
-    if (!aberto) return;
-    const aoApontarFora = (evento) => {
-      if (!containerRef.current?.contains(evento.target)) setAberto(false);
-    };
-    document.addEventListener('pointerdown', aoApontarFora);
-    return () => document.removeEventListener('pointerdown', aoApontarFora);
-  }, [aberto]);
+  useFecharAoClicarFora(aberto, containerRef, () => setAberto(false));
 
   // Ao abrir, posiciona o foco no primeiro item.
   useEffect(() => {
@@ -129,15 +127,18 @@ export default function MenuDeAcoes({
           role="menu"
           aria-label={rotuloGatilho}
           onKeyDown={aoTeclarNoMenu}
-          className={`absolute z-10 min-w-[13rem] overflow-hidden border border-border-chrome rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50 ${
+          className={`absolute z-10 ${larguraMinima} ${CLASSE_PAINEL_FLUTUANTE} ${
             posicao === 'lado'
-              ? 'right-full top-0 mr-1'
-              : `top-full mt-1 ${ancoragem === 'right' ? 'right-0' : 'left-0'}`
+              ? 'right-full top-0 mr-2'
+              : `top-full mt-2 ${ancoragem === 'right' ? 'right-0' : 'left-0'}`
           }`}
         >
           {itens.map((item, indice) => (
+            <Fragment key={item.chave}>
+            {item.separadorAntes && (
+              <div role="separator" className="my-1 border-t border-[#23262e]" />
+            )}
             <button
-              key={item.chave}
               ref={(no) => {
                 itensRef.current[indice] = no;
               }}
@@ -146,15 +147,23 @@ export default function MenuDeAcoes({
               tabIndex={indice === indiceAtivo ? 0 : -1}
               disabled={item.desabilitado}
               onClick={() => escolher(item)}
-              className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm font-semibold outline-none transition-colors focus-visible:bg-white/10 disabled:cursor-auto disabled:opacity-50 cursor-pointer ${
+              className={`flex w-full items-center ${item.descricao ? 'gap-3 py-2.5' : 'gap-2 py-2'} px-4 text-left text-sm font-semibold outline-none transition-colors focus-visible:bg-white/10 disabled:cursor-auto disabled:opacity-50 cursor-pointer ${
                 item.destrutivo
                   ? 'text-red-300 hover:bg-red-500/10 hover:text-red-200'
                   : 'text-ink-muted hover:bg-white/5 hover:text-white'
               }`}
             >
               <item.Icone aria-hidden="true" className="h-4 w-4 shrink-0" />
-              {item.rotulo}
+              {item.descricao ? (
+                <span className="flex min-w-0 flex-col leading-snug">
+                  {item.rotulo}
+                  <span className="text-xs font-normal text-ink-muted">{item.descricao}</span>
+                </span>
+              ) : (
+                item.rotulo
+              )}
             </button>
+            </Fragment>
           ))}
         </div>
       )}

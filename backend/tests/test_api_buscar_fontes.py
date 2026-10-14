@@ -360,3 +360,26 @@ async def test_buscar_fontes_aceita_titulo_longo_de_ate_300_caracteres(
 
     acima = await cliente.get("/api/animes/buscar-fontes", params={"titulo": "a" * 301})
     assert acima.status_code == 422
+
+
+async def test_buscar_fontes_atualizar_descarta_o_cache_do_titulo(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    descartados: list[str] = []
+
+    async def _sem_resultados(sessionmaker, titulo):
+        return []
+
+    monkeypatch.setattr(
+        "api.rotas.animes.servico_busca.buscar_em_todas_as_fontes_com_titulos_alternativos",
+        _sem_resultados,
+    )
+    monkeypatch.setattr(
+        "api.rotas.animes.servico_busca.descartar_cache_da_busca", descartados.append
+    )
+
+    await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto"})
+    assert descartados == []
+
+    await cliente.get("/api/animes/buscar-fontes", params={"titulo": "naruto", "atualizar": "true"})
+    assert descartados == ["naruto"]

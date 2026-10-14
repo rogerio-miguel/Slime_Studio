@@ -17,7 +17,8 @@ import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
-import DialogoDeTrocaDeFonte from '../components/DialogoDeTrocaDeFonte.jsx';
+import SeletorDeFonte from '../components/SeletorDeFonte.jsx';
+import { FUNDO_DOS_CONTROLES } from '../components/painelFlutuante.js';
 import { SeletorDeBannerNaIlha } from '../components/SeletorDeBanner.jsx';
 import LinhaDeEpisodio from '../components/LinhaDeEpisodio.jsx';
 import MenuDeAcoesDoAnime from '../components/MenuDeAcoesDoAnime.jsx';
@@ -31,12 +32,14 @@ import {
   ALTURA_DA_ARTE,
   GRADIENTE_DO_HERO,
   imagemEmAltaResolucao,
+  textoProximoEpisodio,
 } from '../inicio/CarrosselDestaques.jsx';
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
 import { textoDeProximaTemporada, tituloBaseDeTemporada } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
+import { ArrowDownUp } from 'lucide-react';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
 
 // Rótulo legível de `versaoAtiva`/`Episodio.versao` — inclui 'desconhecida'
@@ -80,6 +83,7 @@ function pertenceAFonteAtiva(episodio, { dominioAtivo, versaoAtiva }) {
 // Chave da preferência lista/grade da lista de episódios (persistida por
 // `usePreferencia` — mesmo prefixo `slime.` de `slime.preset`/`slime.hudVisivel`).
 const CHAVE_MODO_VISUALIZACAO = 'slime.modoVisualizacaoEpisodios';
+const CHAVE_ORDEM_EPISODIOS = 'slime.ordemEpisodios';
 
 // Ícones do alternador grade/lista — SVG à mão (Escada de Minimalismo,
 // CLAUDE.md §4, mesmo padrão de `player/Icones.jsx`): o `lucide-react` já
@@ -90,14 +94,12 @@ const CHAVE_MODO_VISUALIZACAO = 'slime.modoVisualizacaoEpisodios';
 // (2026-09-15) — a proposta inicial era duotone (metade pintada, metade
 // contorno) só no `IconeGrade`; o `IconeLista` já nasceu com os 3 marcadores
 // sólidos e as barras em opacidade reduzida, e o `IconeGrade` virou 100%
-// sólido a pedido do usuário (mesma sessão), sem duotone. `width`/`height`
-// (22 na lista, 20 na grade — ajuste fino pedido explícito do usuário,
-// mesma sessão: com 22 os blocos cheios da grade pareciam pesados demais
-// perto da lista) cabem na caixa útil dentro do `<button>` `h-8 w-8` com
-// `border-2` (32px menos 2×2px de borda = 28px, com folga de cada lado): o
-// botão passou a ter tamanho FIXO (não mais o padding+conteúdo de antes) só
-// pra isso ser possível sem inflar o botão junto. `aria-hidden`: o texto
-// acessível vem do `aria-label` de cada <button>.
+// sólido a pedido do usuário (mesma sessão), sem duotone. Tamanhos (20 na
+// grade, 22 na lista — ajuste fino pedido explícito do usuário: com 22 os
+// blocos cheios da grade pareciam pesados demais perto da lista) cabem nos
+// botões `h-7` do alternador segmentado (32px com o `p-0.5` da caixa, a
+// mesma altura dos botões soltos ao lado). `aria-hidden`: o texto acessível
+// vem do `aria-label` de cada <button>.
 const propsIconeVisualizacao = {
   viewBox: '0 0 24 24',
   width: 22,
@@ -293,6 +295,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   // válidos — mantém `aria-pressed` e o container sempre coerentes.
   const [modoArmazenado, mudarModoVisualizacao] = usePreferencia(CHAVE_MODO_VISUALIZACAO, 'lista');
   const modoVisualizacao = modoArmazenado === 'grade' ? 'grade' : 'lista';
+  const [ordemArmazenada, mudarOrdemEpisodios] = usePreferencia(CHAVE_ORDEM_EPISODIOS, 'asc');
+  const ordemInvertida = ordemArmazenada === 'desc';
 
   const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   // Sinopse completa aberta (painel da ilha: components/SinopseNaIlha.jsx, via
@@ -302,6 +306,20 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   const [removendo, setRemovendo] = useState(false);
   const [erroRemocao, setErroRemocao] = useState(null);
 
+  const [trocandoBanner, setTrocandoBanner] = useState(false);
+  // Modo "Trocar banner": as opções e os botões moram na ilha da navbar
+  // (`modoDaIlha` abaixo) e o hero mostra ao vivo a opção marcada. O resto da página
+  // fica como está.
+  const seletorDeBanner = useSeletorDeBanner({
+    aberto: trocandoBanner,
+    animeId,
+    bannerAtual: anime?.banner_path ?? null,
+    aoSalvar: () => {
+      setTrocandoBanner(false);
+      recarregarAnime();
+    },
+    aoFechar: () => setTrocandoBanner(false),
+  });
   // Troca manual de fonte por site — solução barata pedida explicitamente em
   // vez da modelagem completa (versão como parte da chave de resolução de
   // fonte). `FonteAnime` (backend/models/fonte_anime.py) tem PK composta
@@ -320,21 +338,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   // do mesmo domínio ao mesmo tempo) é trabalho futuro documentado, não
   // implementado aqui — mesmo espírito do docstring de escopo em
   // `backend/extractors/animesdrive.py`.
-  const [trocandoFonte, setTrocandoFonte] = useState(false);
-  const [trocandoBanner, setTrocandoBanner] = useState(false);
-  // Modo "Trocar banner": as opções e os botões moram na ilha da navbar
-  // (`modoDaIlha` abaixo) e o hero mostra ao vivo a opção marcada. O resto da página
-  // fica como está.
-  const seletorDeBanner = useSeletorDeBanner({
-    aberto: trocandoBanner,
-    animeId,
-    bannerAtual: anime?.banner_path ?? null,
-    aoSalvar: () => {
-      setTrocandoBanner(false);
-      recarregarAnime();
-    },
-    aoFechar: () => setTrocandoBanner(false),
-  });
   const [confirmandoTrocaFonte, setConfirmandoTrocaFonte] = useState(false);
   const [erroTrocaFonte, setErroTrocaFonte] = useState(null);
   const [versaoAtiva, setVersaoAtiva] = useState('legendado');
@@ -560,6 +563,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
     return [...linhasNumericas, ...linhasSemNumero];
   }, [episodios.dados, remotos.dados, versaoAtiva, thumbDoAnime]);
 
+  // Ordem de exibição. Linhas sem número ("Especial") ficam sempre no fim —
+  // invertê-las junto jogaria os especiais pro topo da lista.
+  const linhasExibidas = useMemo(() => {
+    if (!ordemInvertida) return linhas;
+    return [
+      ...linhas.filter((linha) => linha.numero != null).reverse(),
+      ...linhas.filter((linha) => linha.numero == null),
+    ];
+  }, [linhas, ordemInvertida]);
+
   // Estado do botão "Marcar como assistido" (abaixo): `true` só quando toda
   // linha NUMÉRICA da grade (`numero != null` — rótulos não numéricos, ex.
   // "Especial", ficam fora de escopo de captura/assistido e não contam) já
@@ -568,28 +581,23 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   // "✓ assistido"). Sem linha nenhuma ainda (anime sem episódios, ou tudo
   // carregando) fica `false` — nesse caso o botão seguir clicável não é
   // confuso, é só irrelevante.
-  const tudoAssistido = useMemo(() => {
+  const { totalNumerado, pendentes } = useMemo(() => {
     const comNumero = linhas.filter((linha) => linha.numero != null);
-    return (
-      comNumero.length > 0 &&
-      comNumero.every((linha) => (linha.episodio ?? linha.episodioDescartado)?.assistido_em != null)
-    );
+    return {
+      totalNumerado: comNumero.length,
+      pendentes: comNumero.filter(
+        (linha) => (linha.episodio ?? linha.episodioDescartado)?.assistido_em == null
+      ).length,
+    };
   }, [linhas]);
+  const tudoAssistido = totalNumerado > 0 && pendentes === 0;
 
-  // Dados derivados do bloco de conteúdo do hero (estilo AnimeFire, coluna
-  // única). `fatos` é a ficha "ano / episódios / fonte / versão" do painel de
-  // informações ABAIXO do hero (sinopse + fatos saíram de sobre a arte pra
-  // esse painel — a fonte, `nomeDaFonte(remotos.dados.dominio)`, só aparece
-  // depois que a listagem remota resolve; até lá o `.filter(Boolean)` a
-  // omite);
-  // os gêneros (`generosTraduzidos`, até 3, traduzidos por `traduzirGenero`)
-  // entram nela como o fato "Gêneros" — mesmo recorte e formato do carrossel
-  // da Home. Declarado aqui (não junto de `anime`) porque a
-  // contagem depende de `linhas`, que já une episódios locais + remotos.
-  // `AnimeDetalheSaida` não expõe nota/rating — por isso o painel não tem
-  // fato de rating, ao contrário do AnimeFire. Rótulo da versão via
-  // `ROTULO_VERSAO` (mesmo mapa usado por LinhaDeEpisodio.jsx pra exibir a
-  // versão).
+  // Dados derivados do bloco de conteúdo do hero. `fatos` é a ficha da OBRA
+  // ("ano / gêneros / próximo episódio"), mesmo formato do carrossel da Home; os
+  // gêneros (`generosTraduzidos`) são até 3, traduzidos por `traduzirGenero`.
+  // `AnimeDetalheSaida` não expõe nota/rating — por isso não há fato de rating,
+  // ao contrário do AnimeFire. Rótulo da versão via `ROTULO_VERSAO` (mesmo mapa
+  // usado por LinhaDeEpisodio.jsx pra exibir a versão).
   // Título do H1 — quando a franquia tem 2+ temporadas catalogadas, o marcador
   // de temporada sai do título (o seletor de temporada logo abaixo já diz "qual
   // temporada"); `tituloBaseDeTemporada` cobre inclusive o número solto no fim
@@ -613,15 +621,21 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
       : null;
   const generosTraduzidos = (anime?.generos ?? []).slice(0, 3).map((g) => traduzirGenero(g));
   const avisoProximaTemporada = textoDeProximaTemporada(anime?.proxima_temporada);
+  const proximoEpisodio = anime ? textoProximoEpisodio(anime) : null;
   const fatos = [
     anime?.ano != null ? { rotulo: 'Ano', valor: String(anime.ano) } : null,
     generosTraduzidos.length > 0 ? { rotulo: 'Gêneros', valor: generosTraduzidos.join(', ') } : null,
-    linhas.length > 0 ? { rotulo: 'Episódios', valor: String(linhas.length) } : null,
-    nomeDaFonte(remotos.dados?.dominio)
-      ? { rotulo: 'Fonte', valor: nomeDaFonte(remotos.dados.dominio) }
-      : null,
-    { rotulo: 'Versão', valor: ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva },
+    proximoEpisodio ? { rotulo: 'Próximo episódio', valor: proximoEpisodio } : null,
   ].filter(Boolean);
+  // Fonte e versão ativas — dado de reprodução, não da obra: mora na barra de
+  // controles (junto do menu com "Trocar fonte"), não nos fatos do hero. A
+  // fonte só aparece depois que a listagem remota resolve.
+  const fonteEVersao = [
+    nomeDaFonte(remotos.dados?.dominio),
+    ROTULO_VERSAO[versaoAtiva] ?? versaoAtiva,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   // Fluxo de criação de job em modo "site" é síncrono no servidor e pode
   // levar até ~120s (resolver fonte + listar episódios dentro do próprio
@@ -807,7 +821,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           versao: candidato.versao ?? null,
         });
         setVersaoAtiva(versao);
-        setTrocandoFonte(false);
         // Não é redundante mesmo com `remotos` agora dependendo de
         // `versaoAtiva`: se o usuário troca de domínio SEM trocar de versão
         // (ex. legendado no site A → legendado no site B), `versaoAtiva` não
@@ -815,9 +828,11 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
         // `recarregar()` explícito a grade continuaria mostrando a listagem
         // do domínio antigo.
         remotos.recarregar();
+        return true;
       } catch (erroCapturado) {
         console.error('falha ao trocar fonte', erroCapturado);
         setErroTrocaFonte('Não foi possível confirmar esta fonte — tente novamente.');
+        return false;
       } finally {
         setConfirmandoTrocaFonte(false);
       }
@@ -825,11 +840,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [animeId, remotos.recarregar]
   );
-
-  const fecharDialogoTrocaDeFonte = useCallback(() => {
-    setTrocandoFonte(false);
-    setErroTrocaFonte(null);
-  }, []);
 
   return (
     <>
@@ -961,8 +971,8 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           {/* Bloco de conteúdo — esqueleto compartilhado com o carrossel da
               Home (inicio/BlocoConteudoHero.jsx: pills → título/subtítulo →
               sinopse → metaExtra). Usa os slots `sinopse` (clamp embutido no
-              componente) e `metaExtra` (fatos rotulados — "Ano"/"Episódios"/
-              "Fonte"/"Versão" — em vez do `meta` de linha única com "•" que o
+              componente) e `metaExtra` (fatos rotulados — "Ano"/"Gêneros"/
+              "Próximo episódio" — em vez do `meta` de linha única com "•" que o
               esqueleto também aceita; o rótulo por fato é o formato já
               adotado no resto da página). `relative` pra pintar acima da arte
               e do gradiente (ambos `absolute` e antes no DOM). `pt-24`
@@ -1097,7 +1107,15 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           </p>
         )}
         {!animeNaoEncontrado && (
-          <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-ink-muted">
+          // Sem fundo nem borda (o usuário tirou a cápsula). `relative z-20`
+          // mantém os menus (temporada, ações) por cima da grade.
+          // `role="group"` e não `toolbar`: toolbar promete navegação por
+          // setas entre os controles, que esta barra não implementa.
+          <div
+            role="group"
+            aria-label="Controles dos episódios"
+            className="relative z-20 mb-5 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-ink-muted"
+          >
             {/* Seletor de temporada (Fase 5) — PRIMEIRO controle da barra, à
                 esquerda de "Trocar fonte". `anime.temporadas` já vem ordenada
                 por número e inclui a atual; trocar de temporada é NAVEGAÇÃO de
@@ -1125,9 +1143,18 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             {avisoProximaTemporada && (
               <span className="text-[18px] font-semibold text-neon">{avisoProximaTemporada}</span>
             )}
-            {/* A fonte ativa (`remotos.dados.dominio`) e a versão
-                ("Legendado"/"Dublado") já aparecem na linha meta do hero
-                (`ano • N episódios • fonte • versão`) — não repetir aqui. */}
+            <span aria-hidden="true" className="h-5 w-px bg-border-chrome" />
+            <SeletorDeFonte
+              rotulo={fonteEVersao}
+              fonteRespondeu={Boolean(remotos.dados)}
+              dominioAtivo={remotos.dados?.dominio ?? null}
+              versaoAtiva={versaoAtiva}
+              tituloAnime={anime?.titulo ?? ''}
+              aoEscolher={aoConfirmarTrocaDeFonte}
+              aoAbrir={() => setErroTrocaFonte(null)}
+              confirmando={confirmandoTrocaFonte}
+              erro={erroTrocaFonte}
+            />
             {anime?.versoes_disponiveis &&
               versaoAtiva !== 'desconhecida' &&
               !anime.versoes_disponiveis.includes(versaoAtiva) && (
@@ -1138,8 +1165,20 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
               <span className="text-amber-400">pode não estar disponível nesta fonte ainda</span>
             )}
             <div className="ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => mudarOrdemEpisodios(ordemInvertida ? 'asc' : 'desc')}
+                aria-pressed={ordemInvertida}
+                aria-label="Inverter ordem dos episódios"
+                title={ordemInvertida ? 'Do último ao primeiro' : 'Do primeiro ao último'}
+                className={`flex h-8 w-8 items-center justify-center rounded-[10px] outline-none transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-neon ${
+                  ordemInvertida ? 'bg-neon-soft text-white' : `${FUNDO_DOS_CONTROLES} text-ink-muted hover:text-white`
+                }`}
+              >
+                <ArrowDownUp aria-hidden="true" width={18} height={18} />
+              </button>
               <div
-                className="flex items-center gap-1"
+                className={`flex items-center gap-0.5 rounded-[10px] ${FUNDO_DOS_CONTROLES} p-0.5`}
                 role="group"
                 aria-label="Modo de exibição dos episódios"
               >
@@ -1153,27 +1192,28 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
                     onClick={() => mudarModoVisualizacao(modo)}
                     aria-pressed={modoVisualizacao === modo}
                     aria-label={rotulo}
-                    className={`flex h-8 w-8 items-center justify-center rounded-md border-2 outline-none transition-colors cursor-pointer ${
+                    className={`flex h-7 w-9 items-center justify-center rounded-lg outline-none transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-neon ${
                       modoVisualizacao === modo
-                        ? 'border-neon text-white'
-                        : 'border-border-chrome text-ink-muted hover:border-neon hover:text-white'
+                        ? 'bg-neon-soft text-white'
+                        : 'text-ink-muted hover:text-white'
                     }`}
                   >
                     <Icone />
                   </button>
                 ))}
               </div>
-              {/* "Trocar fonte"/"Marcar como assistido"/"Remover do
-                  catálogo" — saíram de botões soltos pra dentro deste menu
+              {/* "Marcar como assistido"/"Remover do catálogo" — saíram de botões soltos pra dentro deste menu
                   (`MenuDeAcoesDoAnime`), gatilho ao lado do alternador
                   grade/lista (pedido explícito do usuário, mesma geometria
                   `h-8 w-8`). */}
               <MenuDeAcoesDoAnime
-                aoTrocarFonte={() => setTrocandoFonte(true)}
                 aoTrocarBanner={() => setTrocandoBanner(true)}
                 aoMarcarAssistidos={aoMarcarTodosAssistidos}
                 marcandoAssistidos={marcandoTodosAssistidos}
                 tudoAssistido={tudoAssistido}
+                pendentes={pendentes}
+                totalNumerado={totalNumerado}
+                temporadasNoCatalogo={anime?.temporadas?.length ?? 1}
                 aoRemover={() => setConfirmandoRemocao(true)}
               />
             </div>
@@ -1194,7 +1234,7 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
               : 'flex flex-col gap-2'
           }
         >
-          {linhas.map((linha) => {
+          {linhasExibidas.map((linha) => {
             const {
               chave,
               numero,
@@ -1304,15 +1344,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           candidatos={fonteAmbigua?.candidatos}
           aoEscolher={aoConfirmarFonte}
           aoFechar={() => setFonteAmbigua(null)}
-        />
-
-        <DialogoDeTrocaDeFonte
-          aberto={trocandoFonte}
-          tituloAnime={anime?.titulo ?? ''}
-          aoConfirmar={aoConfirmarTrocaDeFonte}
-          aoFechar={fecharDialogoTrocaDeFonte}
-          confirmando={confirmandoTrocaFonte}
-          erro={erroTrocaFonte}
         />
 
         <DialogoDeConfirmacao

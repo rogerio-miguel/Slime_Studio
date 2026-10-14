@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, X, Sparkles, Keyboard, AudioLines, Activity, Sun } from 'lucide-react';
 import { PRESETS } from './presets.js';
 import { IconeEngrenagem } from './Icones.jsx';
+import { FUNDO_DO_MENU_DO_PLAYER } from '../components/painelFlutuante.js';
 
 // Ordem de EXIBIÇÃO do dropdown (maior custo de GPU primeiro, pedido do
 // usuário 2026-09-24) — não é a mesma coisa que ESCADA_DE_DEGRADACAO de
@@ -202,7 +203,7 @@ export default function MenuDeConfiguracoes({
           // cobre a linha de progresso + o respiro entre as duas linhas da
           // barra (pt-8 do container + altura do texto/slider da linha 1 +
           // gap-3 ≈ 68px), sobrando ~12px de vão real entre painel e barra.
-          className="absolute bottom-full right-0 z-10 mb-12 w-96 overflow-hidden rounded-2xl bg-[#0f0f10] shadow-xl shadow-black/50"
+          className={`absolute bottom-full right-0 z-10 mb-12 w-96 overflow-hidden rounded-2xl ${FUNDO_DO_MENU_DO_PLAYER} shadow-xl shadow-black/50`}
         >
           {/* Cabeçalho — título alinhado à ESQUERDA (não centralizado: era o
               que estava errado antes), fechar sempre à direita, sem borda

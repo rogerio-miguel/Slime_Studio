@@ -8,6 +8,7 @@ import { useCapsulaVisivel, useSinopseNaCapsula } from '../hooks/useSinopseNaCap
 import { ESTILO_FUNDO_INICIAL_TRANSPARENTE, useScrollDaNavbar } from '../hooks/useScrollDaNavbar.js';
 import { useTrocaAntesDaIlha } from '../hooks/useTrocaAntesDaIlha.js';
 import CampoDeBusca from './ilha/CampoDeBusca.jsx';
+import { COR_DA_ILHA } from './painelFlutuante.js';
 import ConteudoDaIlha from './ilha/ConteudoDaIlha.jsx';
 import { ATRASO_APOS_TROCA_MS, DURACAO_ABRE_MS, estilosDaIlha } from './ilha/coreografiaDaIlha.js';
 import RegiaoDaSinopse from './ilha/RegiaoDaSinopse.jsx';
@@ -69,8 +70,9 @@ import SinopseNaIlha from './SinopseNaIlha.jsx';
 //
 // A cápsula mora no <ul> central, que some abaixo de `sm`: no celular não há
 // ilha (o app é desktop-first).
-// Sólido (a sinopse deixa a arte da página aparecer por baixo; os filtros não).
-const FUNDO_DO_PAINEL_DE_FILTROS = '#0d0d0d';
+// Mesma cor da ilha, como os menus que saem dela (o seletor de seções da Início).
+// Alternativa: omitir `fundoExpandido` abaixo usa o fundo da sinopse.
+const FUNDO_DO_PAINEL_DE_FILTROS = COR_DA_ILHA;
 const LARGURA_DO_PAINEL_DE_FILTROS_PX = 584;
 const ROTULO_DO_PAINEL_ABERTO = 'Ordem e filtros';
 // Cápsula fechada = link + `ml-2` do conteúdo + conteúdo + `px-3` dos dois lados.

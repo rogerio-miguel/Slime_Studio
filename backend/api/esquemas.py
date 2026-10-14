@@ -348,6 +348,11 @@ class AnimeDetalheSaida(BaseModel):
     versao_confirmada_mais_recente: VersaoEpisodio | None
     # Estado de lançamento da AniList (1:1 com a coluna homônima).
     status_lancamento: StatusLancamento | None = None
+    # Próximo episódio (1:1 com as colunas homônimas) — fato "Próximo episódio"
+    # do hero, mesmo formato da tagline do carrossel. O frontend esconde o fato
+    # quando a data já passou.
+    proximo_ep_numero: int | None = None
+    proximo_ep_em: datetime | None = None
     # Seletor de temporada da página do anime (Fase 5). `serie_ancora`/
     # `numero_temporada` saem 1:1 das colunas homônimas; `temporadas` lista as
     # temporadas irmãs (mesmo `serie_ancora`, inclui a própria) já ordenadas por
