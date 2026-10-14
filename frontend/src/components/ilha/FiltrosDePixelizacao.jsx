@@ -1,6 +1,6 @@
 // Filtros SVG que `pixelarTroca` anima: A pixeliza o nó que sai, B o que entra.
 // Célula de 2px é o estado neutro. `margem` (% do nó) alarga a região do filtro
-// pra o que passa da caixa — a lâmina aberta da claquete — não ser cortado.
+// pra o que passa da caixa — a dilatação da célula pixelada — não ser cortado.
 export default function FiltrosDePixelizacao({ svgRef, sufixo, margem = 0 }) {
   return (
     <svg

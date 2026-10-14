@@ -211,35 +211,79 @@ html::-webkit-scrollbar {
   }
 }
 
-/* "Clap" da lâmina de cima do ícone de claquete na navbar
-   (components/LogoSlimeStudio.jsx, IconeClaquete) — pedido do usuário
-   2026-09-24 ("deixar ele mais vivo"). Só `transform: rotate` num <g>
-   isolado (a base do ícone fica parada), mesma disciplina de performance
-   do preencher-progresso-dot acima: compositor-only, não disputa a thread
-   principal com o resto da navbar (scroll, fade do fundo).
-   Reajustado (pedido do usuário, 2026-09-26: "a lâmina começar alta e
-   bater") — ANTES a lâmina nascia fechada (0deg) e abria sozinha (0%-15%)
-   antes de bater; agora já NASCE aberta (-24deg em 0%), segura um instante
-   (30%) e bate com leve overshoot pra frente (50%), assentando com um
-   pequeno recuo (70%) antes de fechar de vez (100%). Começa quando o ícone
-   começa a ganhar nitidez (`animation-delay` = atraso de entrada da troca
-   pixelada). Replay controlado pelo componente (classe só entra quando o
-   ícone está montado), não um loop `infinite` aqui. */
-@keyframes claquete-clap {
+/* Entrada e olhar do slime pixelado da navbar (components/LogoSlimeStudio.jsx,
+   IconeSlime) — pedidos do usuário 2026-10-14; substituiu o "clap" da
+   claquete. Os quadros da entrada (repouso, agachado, esticado) são
+   cada um um <path> por cor que liga e desliga por `opacity`: `step-end` na
+   classe do componente segura cada valor até o próximo keyframe, sem
+   interpolar, igual à pixelização da troca nome ↔ ícone.
+   1) Entrada (800ms, 1% = 8ms): cai esticado de 7 células acima (7 → 6 → 4 → 0,
+   100ms por degrau), amassa ao bater (37,5%, 200ms) e pula DIRETO do amassado
+   (pedido do usuário: o pulo demorava): esticado a 2 células (62,5%) e a 1
+   (72,5%), amassa ao pousar (82,5%, 100ms) e assenta (95%, repouso). O repouso
+   é o estado base, então não precisa de keyframe no fim. `translateY` em px de
+   SVG = unidades do viewBox (1 célula = 2,5px na tela, ícone de 40px). O
+   `backwards` da classe aplica o 0% durante o atraso de entrada
+   (`animation-delay` = atraso da troca pixelada).
+   Os gestos dos olhos (olhar de lado, piscar...) não ficam aqui: são sorteados
+   em JS (`useOlhosVivos`) pra cada execução ser diferente, o que um keyframe
+   não faz. Replay da entrada controlado pelo componente (classe só entra
+   quando o ícone está montado). */
+@keyframes slime-repouso {
   0% {
-    transform: rotate(-24deg);
+    opacity: 0;
   }
-  30% {
-    transform: rotate(-24deg);
+  95% {
+    opacity: 1;
   }
-  50% {
-    transform: rotate(3deg);
+}
+
+@keyframes slime-agachado {
+  0% {
+    opacity: 0;
   }
-  70% {
-    transform: rotate(-2deg);
+  37.5% {
+    opacity: 1;
   }
-  100% {
-    transform: rotate(0deg);
+  62.5% {
+    opacity: 0;
+  }
+  82.5% {
+    opacity: 1;
+  }
+  95% {
+    opacity: 0;
+  }
+}
+
+@keyframes slime-esticado {
+  0% {
+    opacity: 1;
+    transform: translateY(-7px);
+  }
+  12.5% {
+    opacity: 1;
+    transform: translateY(-6px);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+  37.5% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  62.5% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+  72.5% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+  82.5% {
+    opacity: 0;
+    transform: translateY(0);
   }
 }
 
