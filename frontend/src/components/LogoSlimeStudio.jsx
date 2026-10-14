@@ -14,7 +14,7 @@ import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion';
 // bordas não borram, mas em tela 1× as células alternam 2 e 3px.
 //
 // Cada letra do desenho é uma cor: `b` corpo (`currentColor`, o neon da navbar),
-// `h` fones (branco, igual ao SLIME ao lado) e `l` brilho; `.` é vazio (olhos e
+// `h` fones (cinza neutro `#262626`: a navbar rolada é preto puro e o `#0d0d0d` da busca some em traço de 1 célula) e `l` brilho; `.` é vazio (olhos e
 // boca são o fundo aparecendo). Cada quadro vira um `<path>` por cor, gerado
 // das linhas abaixo — o desenho fica legível aqui em vez de virar um monte de
 // `d` escrito à mão. Tentativas descartadas: slime com ponta no topo (lia como
@@ -28,7 +28,7 @@ import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion';
 // só o esticado sai do lugar (ver `slime-esticado` em `index.css`).
 const CORES_DO_SLIME = [
   { letra: 'b', classe: '' },
-  { letra: 'h', classe: 'fill-white' },
+  { letra: 'h', classe: 'fill-[#262626]' },
   { letra: 'l', classe: 'fill-blue-300' },
 ];
 
@@ -284,7 +284,7 @@ export default function LogoSlimeStudio({ className = '', colapsada = false }) {
       <span className="relative -ml-0.5 w-0 self-stretch text-neon">
         <span
           className="absolute left-2 top-1/2"
-          style={{ transform: 'translateY(calc(-50% - 2px))' }}
+          style={{ transform: 'translateY(calc(-50% - 4px))' }}
         >
           <IconeSlime
             ref={iconeRef}
