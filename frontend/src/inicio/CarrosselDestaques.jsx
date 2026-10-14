@@ -290,6 +290,7 @@ const SEM_ITENS = [];
 
 export default function CarrosselDestaques({
   itens,
+  rankingInicial = 0,
   aoMaterializar,
   materializando,
   aoAbrirSinopse,
@@ -477,7 +478,7 @@ export default function CarrosselDestaques({
             // Posição no ranking do feed `em-alta` (já vem ordenado). O item é a
             // MESMA referência de objeto (a janela não clona item), então
             // `indexOf` casa. -1 (não deve acontecer) → sem pill.
-            const rank = pool.indexOf(item) + 1;
+            const rank = pool.indexOf(item) + 1 + rankingInicial;
             // Sem arte horizontal: só temos o pôster retrato pra trabalhar.
             const semBanner = !item.banner_url && Boolean(item.capa_url);
             const fonteImagem = item.banner_url || item.capa_url || null;
