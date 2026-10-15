@@ -272,7 +272,7 @@ export default function FileiraDeCards({
             id={idTitulo}
             className={
               destaque
-                ? 'text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-5xl'
+                ? 'text-2xl font-extrabold tracking-tight text-white sm:text-3xl lg:text-4xl'
                 : 'text-[22px] font-bold text-[#dbdcde]'
             }
           >

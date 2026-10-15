@@ -22,7 +22,7 @@ export default function SecaoDaHome({ titulo, descricao, cabecalhoOculto = false
       >
         <h2
           id={idTitulo}
-          className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-5xl"
+          className="text-2xl font-extrabold tracking-tight text-white sm:text-3xl lg:text-4xl"
         >
           {titulo}
         </h2>
