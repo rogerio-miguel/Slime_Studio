@@ -1,137 +1,15 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 import FiltrosDePixelizacao from './ilha/FiltrosDePixelizacao';
 import { duracaoTotalDaTroca, pixelarTroca } from './ilha/pixelarTroca';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion';
-
-// Mascote slime em pixel art (pedido do usuário, 2026-10-14; substituiu a
-// claquete do lucide). Escada de Minimalismo, CLAUDE.md §4 passo 6: nenhuma lib
-// de ícones tem esse mascote, então o desenho mora aqui. Segue a arte do
-// projeto (`assets/icone-Slime_Studio2.png`): cúpula larga e baixa, brilho no
-// canto, olhos semicerrados em traço e fones de ouvido.
-//
-// Grade 16×16 num ícone de `TAMANHO_DO_ICONE_PX` (40px = células de 2,5px; 32px
-// e 48px são os tamanhos de células inteiras, 2 e 3px). Com `crispEdges` as
-// bordas não borram, mas em tela 1× as células alternam 2 e 3px.
-//
-// Cada letra do desenho é uma cor: `b` corpo (`currentColor`, o neon da navbar),
-// `h` fones (cinza neutro `#262626`: a navbar rolada é preto puro e o `#0d0d0d` da busca some em traço de 1 célula) e `l` brilho; `.` é vazio (olhos e
-// boca são o fundo aparecendo). Cada quadro vira um `<path>` por cor, gerado
-// das linhas abaixo — o desenho fica legível aqui em vez de virar um monte de
-// `d` escrito à mão. Tentativas descartadas: slime com ponta no topo (lia como
-// gota), brilho de 1 célula (lia como terceiro olho) e olhos em L (liam como
-// zangados).
-//
-// Os quadros alternam em degraus (sem interpolar, igual à pixelização da troca
-// nome ↔ ícone). Entrada: o slime cai esticado, amassa ao bater, dá um pulinho e
-// assenta. Depois, de tempos em tempos, ele pisca (`usePiscar`: o quadro do
-// repouso sem os olhos). Os quadros da entrada têm a base alinhada na linha 13;
-// só o esticado sai do lugar (ver `slime-esticado` em `index.css`).
-const CORES_DO_SLIME = [
-  { letra: 'b', classe: '' },
-  { letra: 'h', classe: 'fill-[#262626]' },
-  { letra: 'l', classe: 'fill-blue-300' },
-];
-
-function caminhoDaCor(linhaInicial, linhas, letra) {
-  const corridas = new RegExp(`${letra}+`, 'g');
-  return linhas
-    .flatMap((linha, i) =>
-      [...linha.matchAll(corridas)].map(
-        ({ 0: trecho, index }) =>
-          `M${index} ${linhaInicial + i}h${trecho.length}v1h-${trecho.length}z`,
-      ),
-    )
-    .join('');
-}
-
-function montarQuadro(linhaInicial, linhas) {
-  return CORES_DO_SLIME.map(({ letra, classe }) => ({
-    letra,
-    classe,
-    d: caminhoDaCor(linhaInicial, linhas, letra),
-  }));
-}
-
-const LINHAS_DO_REPOUSO = [
-  '.....hhhhhh.....',
-  '...hh......hh...',
-  '..h...bbbb...h..',
-  '.h..bllbbbbb..h.',
-  'hh.blllbbbbbb.hh',
-  'hhbbbbbbbbbbbbhh',
-  'hhbbbbbbbbbbbbhh',
-  'hhbb..bbbb..bbhh',
-  '.hbbbbbbbbbbbbh.',
-  '..bbbbbbbbbbbb..',
-  '...bbbbbbbbbb...',
-];
-const TOPO_DO_REPOUSO = 3;
-const QUADRO_REPOUSO = montarQuadro(TOPO_DO_REPOUSO, LINHAS_DO_REPOUSO);
-
-// Piscar: o repouso com os olhos (linha 7, buracos de 2 células nas colunas 4-5
-// e 10-11) preenchidos pelo corpo. Já houve outros gestos (olhar de lado, cima e
-// baixo, arregalar ao passar o mouse num card) e foram tirados a pedido.
-const LINHA_DOS_OLHOS = 7;
-const QUADRO_PISCANDO = montarQuadro(
-  TOPO_DO_REPOUSO,
-  LINHAS_DO_REPOUSO.map((linha, i) => (i === LINHA_DOS_OLHOS ? 'hhbbbbbbbbbbbbhh' : linha)),
-);
-
-const DURACAO_DA_PISCADA_MS = 120;
-const ESPERA_ENTRE_PISCADAS_MS = [3000, 8000];
-const ESPERA_ATE_A_PRIMEIRA_PISCADA_MS = [2500, 5000];
-
-const sortearEntre = ([minimo, maximo]) => minimo + Math.random() * (maximo - minimo);
-
-// `true` enquanto o slime está de olhos fechados. Fica parado enquanto `ativo`
-// for falso (ícone escondido, movimento reduzido) e só começa depois de
-// `atrasoInicialMs`, pra não brigar com a entrada pelo mesmo quadro de repouso.
-// O intervalo é sorteado em `setTimeout`, e não em CSS, pra nunca ser o mesmo.
-function usePiscar(ativo, atrasoInicialMs) {
-  const [piscando, setPiscando] = useState(false);
-  useEffect(() => {
-    if (!ativo) return undefined;
-    let temporizador;
-    const agendarProxima = (espera) => {
-      temporizador = setTimeout(() => {
-        setPiscando(true);
-        temporizador = setTimeout(() => {
-          setPiscando(false);
-          agendarProxima(sortearEntre(ESPERA_ENTRE_PISCADAS_MS));
-        }, DURACAO_DA_PISCADA_MS);
-      }, espera);
-    };
-    agendarProxima(atrasoInicialMs + sortearEntre(ESPERA_ATE_A_PRIMEIRA_PISCADA_MS));
-    return () => clearTimeout(temporizador);
-  }, [ativo, atrasoInicialMs]);
-  return ativo && piscando;
-}
-const QUADRO_AGACHADO = montarQuadro(5, [
-  '.....hhhhhh.....',
-  '...hh......hh...',
-  '..h..bbbbbb..h..',
-  '.h.bllbbbbbbb.h.',
-  'hhbbbbbbbbbbbbhh',
-  'hhbb..bbbb..bbhh',
-  '.hbbbbbbbbbbbbh.',
-  '..bbbbbbbbbbbb..',
-  '...bbbbbbbbbb...',
-]);
-const QUADRO_ESTICADO = montarQuadro(1, [
-  '.....hhhhhh.....',
-  '...hh......hh...',
-  '..h...bbbb...h..',
-  '..h.bllbbbbb.h..',
-  '.hhbllbbbbbbbhh.',
-  '.hhbbbbbbbbbbhh.',
-  '.hhbbbbbbbbbbhh.',
-  '.hhbb.bbbb.bbhh.',
-  '.hhbb.bbbb.bbhh.',
-  '..hbbbbbbbbbbh..',
-  '...bbbbbbbbbb...',
-  '...bbbbbbbbbb...',
-  '....bbbbbbbb....',
-]);
+import { QuadroDoSlime } from './mascote/MascoteSlime';
+import {
+  QUADRO_AGACHADO,
+  QUADRO_ESTICADO,
+  QUADRO_OLHOS_FECHADOS,
+  QUADRO_REPOUSO,
+} from './mascote/quadros';
+import { usePiscar } from './mascote/usePiscar';
 
 // Entrada (800ms, ver `index.css`): queda, impacto e pulinho. `backwards`:
 // durante o atraso de entrada já vale o 0% (esticado lá em cima), senão o
@@ -191,16 +69,6 @@ function useAtrasado(alvo, esperaAoLigar, esperaAoDesligar) {
 // novo a cada volta do ícone. Os quadros agachado e esticado nascem invisíveis
 // (`opacity-0`): sem animação (movimento reduzido), sobra só o repouso. `overflow: visible`: o SVG recorta no próprio viewBox, e a queda vem
 // de fora.
-function QuadroDoSlime({ partes, className, atraso }) {
-  return (
-    <g className={className} style={atraso}>
-      {partes.map(({ letra, classe, d }) => (
-        <path key={letra} d={d} className={classe} />
-      ))}
-    </g>
-  );
-}
-
 function IconeSlime({ montado, animar, atrasoMs, ...props }) {
   const atraso = { animationDelay: `${atrasoMs}ms` };
   const piscando = usePiscar(montado && animar, ATRASO_DO_OLHAR_MS);
@@ -235,7 +103,7 @@ function IconeSlime({ montado, animar, atrasoMs, ...props }) {
         className={`opacity-0 ${montado ? CLASSE_ESTICADO : ''}`}
         atraso={atraso}
       />
-      {piscando && <QuadroDoSlime partes={QUADRO_PISCANDO} />}
+      {piscando && <QuadroDoSlime partes={QUADRO_OLHOS_FECHADOS} />}
     </svg>
   );
 }
