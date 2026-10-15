@@ -287,6 +287,80 @@ html::-webkit-scrollbar {
   }
 }
 
+/* Pulo em laço do MascoteSlime (pose `pulando`, 1000ms): repouso, agacha,
+   sobe esticado, desce, agacha de novo ao pousar e volta ao repouso. Mesma
+   técnica da entrada do logo (um quadro por animação, `step-end`, opacidade
+   alternando); o translateY é em células do SVG (1 = 1/16 do mascote). */
+@keyframes slime-pulo-repouso {
+  0% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0;
+  }
+  80% {
+    opacity: 1;
+  }
+}
+
+@keyframes slime-pulo-agachado {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  40% {
+    opacity: 0;
+  }
+  70% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0;
+  }
+}
+
+@keyframes slime-pulo-esticado {
+  0% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+  48% {
+    transform: translateY(-3px);
+  }
+  56% {
+    transform: translateY(-4px);
+  }
+  64% {
+    transform: translateY(-3px);
+  }
+  70% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+}
+
+/* "Z" do MascoteSlime dormindo (2400ms): some, aparece e sobe uma célula. */
+@keyframes slime-zzz {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  60% {
+    transform: translateY(-1px);
+  }
+  90% {
+    opacity: 0;
+  }
+}
+
 /* `claquete-fecha` (flourish de fechamento da lâmina na volta ícone→nome)
    foi REMOVIDO (2026-09-26); a troca nome↔ícone hoje é a dissolução
    pixelada de `LogoSlimeStudio.jsx`. Histórico: `git log -p` neste arquivo. */
