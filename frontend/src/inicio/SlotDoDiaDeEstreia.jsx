@@ -13,6 +13,8 @@ const fmtMes = new Intl.DateTimeFormat('pt-BR', { month: 'short' });
 // A linha de quem NÃO é o último do dia vai até o slot vizinho (`-mr-4`, o
 // `gap-x-4` da trilha), pra ela ser contínua dentro do dia e interrompida entre
 // dias. O rótulo tem altura fixa pra todos os cards alinharem pela linha.
+// Só as pontas de FORA do dia são arredondadas (esquerda no primeiro, direita no
+// último): arredondar todo segmento deixava um corte na junção entre os cards.
 export default function SlotDoDiaDeEstreia({ data, primeiro, ultimo, children }) {
   const relativo = data ? rotuloHojeAmanha(data) : null;
   const hoje = relativo === 'Hoje';
@@ -26,7 +28,7 @@ export default function SlotDoDiaDeEstreia({ data, primeiro, ultimo, children })
                 {data.getDate()}
               </span>
               <span
-                className={`text-xs font-bold uppercase tracking-wider ${
+                className={`text-xs font-semibold uppercase tracking-wider ${
                   hoje ? 'text-neon' : 'text-ink-muted'
                 }`}
               >
@@ -44,7 +46,7 @@ export default function SlotDoDiaDeEstreia({ data, primeiro, ultimo, children })
       </div>
       <div
         aria-hidden="true"
-        className={`mb-4 h-0.5 rounded-full ${ultimo ? '' : '-mr-4'} ${
+        className={`mb-4 h-1 ${primeiro ? 'rounded-l-full' : ''} ${ultimo ? 'rounded-r-full' : '-mr-4'} ${
           hoje ? 'bg-neon' : data ? 'bg-white/25' : 'bg-white/10'
         }`}
       />
