@@ -15,7 +15,6 @@ import {
 import { useRecurso } from '../api/useRecurso.js';
 import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
-import DialogoDeConfirmacao from '../components/DialogoDeConfirmacao.jsx';
 import DialogoDeFonteAmbigua from '../components/DialogoDeFonteAmbigua.jsx';
 import SeletorDeFonte from '../components/SeletorDeFonte.jsx';
 import { FUNDO_DOS_CONTROLES } from '../components/painelFlutuante.js';
@@ -786,13 +785,29 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
     }
   }, [anime, animeId, navigate]);
 
-  // Fecha o dialog (cancelar, ou Esc/backdrop via DialogoDeConfirmacao) e
+  const totalDeTemporadas = anime?.temporadas?.length ?? 1;
+  const textoConfirmacaoDeRemocao =
+    totalDeTemporadas > 1
+      ? `Remover "${tituloExibicao ?? `Anime #${animeId}`}" (${totalDeTemporadas} temporadas) e os episódios?`
+      : `Remover "${anime?.titulo ?? `Anime #${animeId}`}" e os episódios?`;
+
+  // Sai da confirmação na ilha (Cancelar, Esc ou "Fechar" depois de um erro) e
   // limpa `erroRemocao` junto — sem isto, um erro de uma tentativa anterior
-  // "vazaria" pra próxima abertura do dialog.
-  const fecharDialogoRemocao = useCallback(() => {
+  // "vazaria" pra próxima confirmação.
+  const fecharConfirmacaoDeRemocao = useCallback(() => {
     setConfirmandoRemocao(false);
     setErroRemocao(null);
   }, []);
+
+  // Esc cancela a confirmação; ignorado enquanto remove (o laço não é cancelável).
+  useEffect(() => {
+    if (!confirmandoRemocao || removendo) return undefined;
+    const aoTeclar = (evento) => {
+      if (evento.key === 'Escape') fecharConfirmacaoDeRemocao();
+    };
+    window.addEventListener('keydown', aoTeclar);
+    return () => window.removeEventListener('keydown', aoTeclar);
+  }, [confirmandoRemocao, removendo, fecharConfirmacaoDeRemocao]);
 
   // Confirma a fonte escolhida pro domínio do candidato (sobrescreve
   // `FonteAnime` desse domínio, ver comentário do bloco de estado acima) e
@@ -864,6 +879,20 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
                 aoFechar: () => setSinopseEmFoco(null),
               }
             : null
+        }
+        gerenciar={
+          confirmandoRemocao
+            ? {
+                // Reaproveita o modo Gerenciar da Galeria (ilha/ConteudoGerenciarIlha.jsx)
+                // só nas fases de confirmação; a seleção em lote não se aplica aqui.
+                fase: removendo ? 'removendo' : erroRemocao ? 'erro' : 'confirmando',
+                textoConfirmacao: textoConfirmacaoDeRemocao,
+                resultado: erroRemocao,
+                aoConfirmarRemocao: confirmarRemocao,
+                aoCancelarRemocao: fecharConfirmacaoDeRemocao,
+                aoSair: fecharConfirmacaoDeRemocao,
+              }
+            : undefined
         }
         modoDaIlha={
           trocandoBanner ? (
@@ -1344,20 +1373,6 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           candidatos={fonteAmbigua?.candidatos}
           aoEscolher={aoConfirmarFonte}
           aoFechar={() => setFonteAmbigua(null)}
-        />
-
-        <DialogoDeConfirmacao
-          aberto={confirmandoRemocao}
-          titulo="Remover do catálogo"
-          mensagem={
-            (anime?.temporadas?.length ?? 1) > 1
-              ? `Remover "${tituloExibicao ?? `Anime #${animeId}`}" e suas ${anime.temporadas.length} temporadas do catálogo? Todos os episódios e capturas da franquia serão apagados.`
-              : `Remover "${anime?.titulo ?? `Anime #${animeId}`}" do catálogo? Episódios e capturas associados serão apagados.`
-          }
-          erro={erroRemocao}
-          aoConfirmar={confirmarRemocao}
-          aoFechar={fecharDialogoRemocao}
-          confirmando={removendo}
         />
       </main>
     </>
