@@ -136,7 +136,7 @@ export default function MenuDeAcoes({
           {itens.map((item, indice) => (
             <Fragment key={item.chave}>
             {item.separadorAntes && (
-              <div role="separator" className="my-1 border-t border-[#23262e]" />
+              <div role="separator" className="border-t border-[#23262e]" />
             )}
             <button
               ref={(no) => {
