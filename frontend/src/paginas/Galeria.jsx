@@ -13,13 +13,15 @@ import { agruparEmFranquias } from '../inicio/franquia.js';
 import {
   contarPorGenero,
   filtrarFranquias,
-  FILTRO_PROXIMAS_ESTREIAS,
+  agruparPorDiaDoFiltro,
+  temOrdemFixa,
   OPCOES_DE_ORDEM,
   ORDEM_PADRAO,
   ordenarFranquias,
 } from '../inicio/filtrosDeCatalogo.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
+import SlotDoDiaDeEstreia from '../inicio/SlotDoDiaDeEstreia.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
@@ -48,6 +50,9 @@ const ROTULOS_STATUS_LANCAMENTO = {
 // aparecer quando este valor está selecionado.
 const VALOR_FILTRO_VIDEOS_LOCAIS = 'videos-locais';
 const CHAVE_DA_ORDEM = 'slime.galeria.ordem';
+const CHAVE_DO_FILTRO = 'slime.galeria.filtro';
+const CHAVE_DA_ORDEM_AVULSA = 'slime.galeria.ordemAvulsa';
+const CHAVE_DOS_GENEROS = 'slime.galeria.generos';
 
 // A verificação das fontes é do zelador (backend, `api/servicos/zelador.py`) e roda
 // sem esta página aberta; ela só relê o catálogo de tempos em tempos (e ao voltar à
@@ -109,7 +114,11 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   );
   useAtualizacaoPeriodica(atualizar, INTERVALO_ATUALIZACAO_CATALOGO_MS);
 
-  const [filtroSelecionado, setFiltroSelecionado] = useState('');
+  // Filtro, ordem avulsa e gêneros do painel também ficam salvos no navegador e
+  // voltam ao recarregar. O valor salvo pode ter perdido o sentido (status que
+  // saiu do catálogo, gênero removido, vídeos locais zerados): `filtroSelecionado`
+  // e `generosAtivos` abaixo descartam o que não existe mais, sem apagar o salvo.
+  const [filtroSalvo, setFiltroSelecionado] = usePreferencia(CHAVE_DO_FILTRO, '');
   // A ordem escolhida só persiste em "Todos" — e persiste de verdade: fica salva
   // no navegador (`slime.galeria.ordem`) e volta ao reabrir a página. Em qualquer
   // outro filtro dá pra trocar, mas ela vale só enquanto aquele filtro está ativo
@@ -119,8 +128,11 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   const ordemEmTodos = OPCOES_DE_ORDEM.some((opcao) => opcao.valor === ordemSalva)
     ? ordemSalva
     : ORDEM_PADRAO;
-  const [ordemAvulsa, setOrdemAvulsa] = useState(null);
-  const [generosSelecionados, setGenerosSelecionados] = useState(() => new Set());
+  const [ordemAvulsaSalva, setOrdemAvulsa] = usePreferencia(CHAVE_DA_ORDEM_AVULSA, null);
+  const ordemAvulsa = OPCOES_DE_ORDEM.some((opcao) => opcao.valor === ordemAvulsaSalva)
+    ? ordemAvulsaSalva
+    : null;
+  const [generosSalvos, setGenerosSalvos] = usePreferencia(CHAVE_DOS_GENEROS, []);
   // Painel de filtros da ilha (BarraDeNavegacao.jsx): fica `true` até a animação
   // de volta terminar (`aoFechar`), não só até o pedido de fechar.
   const [painelAberto, setPainelAberto] = useState(false);
@@ -175,7 +187,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
       window.scrollTo(0, 0);
       ultimoScrollYRef.current = 0;
     }
-  }, [filtroSelecionado, generosSelecionados, ordemEmTodos, ordemAvulsa]);
+  }, [filtroSalvo, generosSalvos, ordemEmTodos, ordemAvulsa]);
 
   // Opções construídas a partir do catálogo já carregado — nunca hardcoded:
   // um status que não aparece em nenhum anime não vira opção morta no
@@ -193,6 +205,19 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
       (ROTULOS_STATUS_LANCAMENTO[a] ?? a).localeCompare(ROTULOS_STATUS_LANCAMENTO[b] ?? b, 'pt-BR')
     );
   }, [animes]);
+
+  // Filtro salvo só vale se ainda existe: com o catálogo carregado, um status
+  // ausente (ou "Vídeos locais" sem vídeo nenhum) volta a "Todos" em vez de
+  // esvaziar a grade sem opção visível pra desfazer. Antes de carregar, confia.
+  const filtroSelecionado = useMemo(() => {
+    if (filtroSalvo === VALOR_FILTRO_VIDEOS_LOCAIS) {
+      return VIDEOS_LOCAIS.length > 0 ? filtroSalvo : '';
+    }
+    if (filtroSalvo.startsWith('status:') && animes != null) {
+      return statusDisponiveis.includes(filtroSalvo.slice('status:'.length)) ? filtroSalvo : '';
+    }
+    return filtroSalvo;
+  }, [filtroSalvo, animes, statusDisponiveis]);
 
   // Opções do dropdown "Filtrar" (SeletorEmMenu) — um único dropdown pra três
   // eixos diferentes (status_lancamento × assistido × novos episódios, pedido
@@ -237,20 +262,17 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
     [franquias],
   );
   const generosAtivos = useMemo(
-    () => new Set([...generosSelecionados].filter((genero) => listaDeGeneros.includes(genero))),
-    [generosSelecionados, listaDeGeneros],
+    () => new Set(generosSalvos.filter((genero) => listaDeGeneros.includes(genero))),
+    [generosSalvos, listaDeGeneros],
   );
   const alternarGenero = useCallback((genero) => {
-    setGenerosSelecionados((anterior) => {
-      const novo = new Set(anterior);
-      if (novo.has(genero)) novo.delete(genero);
-      else novo.add(genero);
-      return novo;
-    });
-  }, []);
+    setGenerosSalvos((anterior) =>
+      anterior.includes(genero) ? anterior.filter((g) => g !== genero) : [...anterior, genero],
+    );
+  }, [setGenerosSalvos]);
 
   const emVideosLocais = filtroSelecionado === VALOR_FILTRO_VIDEOS_LOCAIS;
-  const emProximasEstreias = filtroSelecionado === FILTRO_PROXIMAS_ESTREIAS;
+  const emOrdemFixa = temOrdemFixa(filtroSelecionado);
   const ordemEfetiva =
     filtroSelecionado === '' ? ordemEmTodos : (ordemAvulsa ?? ORDEM_PADRAO);
   const selecaoAtiva = filtroSelecionado !== '' || generosAtivos.size > 0;
@@ -258,7 +280,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   const mudarFiltro = useCallback((valor) => {
     setFiltroSelecionado(valor);
     setOrdemAvulsa(null);
-  }, []);
+  }, [setFiltroSelecionado, setOrdemAvulsa]);
   const filtrosAtivos =
     (filtroSelecionado !== '' ? 1 : 0) +
     generosAtivos.size +
@@ -270,8 +292,8 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   const ordemSalvaAtiva = ordemEmTodos !== ORDEM_PADRAO;
   const limparSelecao = useCallback(() => {
     mudarFiltro('');
-    setGenerosSelecionados(new Set());
-  }, [mudarFiltro]);
+    setGenerosSalvos([]);
+  }, [mudarFiltro, setGenerosSalvos]);
   const limparOrdem = useCallback(() => setOrdemEmTodos(ORDEM_PADRAO), [setOrdemEmTodos]);
   const limparFiltros = useCallback(() => {
     limparSelecao();
@@ -355,9 +377,26 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
     [franquias, termoBuscaNormalizado, filtroSelecionado, generosAtivos, ordemEfetiva],
   );
 
+  // Filtros de ordem fixa ("Em lançamento": dia do próximo episódio; "Próximas
+  // estreias": dia da estreia): cada card ganha a marca do dia acima (mesma
+  // `SlotDoDiaDeEstreia` das "Próximas estreias" da Home); `primeiro`/
+  // `ultimo` dizem a posição dele dentro do dia. Os grupos saem de
+  // `animesExibidos`, já na ordem do próximo ep.
+  const posicaoNoDia = useMemo(() => {
+    if (!emOrdemFixa) return null;
+    return new Map(
+      agruparPorDiaDoFiltro(animesExibidos, filtroSelecionado).flatMap((grupo) =>
+        grupo.itens.map((franquia, indice) => [
+          franquia.id,
+          { data: grupo.data, primeiro: indice === 0, ultimo: indice === grupo.itens.length - 1 },
+        ]),
+      ),
+    );
+  }, [emOrdemFixa, animesExibidos, filtroSelecionado]);
+
   // Painel de filtros da ilha (ilha/RegiaoDoPainelDeFiltros.jsx). Em "Vídeos
   // locais" não há ordem nem gênero (a grade é de arquivos, não do catálogo) e em
-  // "Próximas estreias" a ordem é fixa (data da temporada futura): a seção some.
+  // "Próximas estreias" e "Em lançamento" a ordem é fixa (temporada futura / próximo ep): a seção some.
   // O gênero mostra quantos animes sobrariam ao marcá-lo; contagem 0 apaga o botão.
   const contagemPorGenero = useMemo(
     () =>
@@ -384,14 +423,14 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   const resumoDoPainel = useMemo(() => {
     const rotuloDoFiltro = opcoesFiltro.find((opcao) => opcao.valor === filtroSelecionado)?.rotulo;
     const partes = [rotuloDoFiltro ?? 'Todos'];
-    if (!emVideosLocais && !emProximasEstreias) {
+    if (!emVideosLocais && !emOrdemFixa) {
       partes.push(OPCOES_DE_ORDEM.find((opcao) => opcao.valor === ordemEfetiva).curto);
     }
     if (!emVideosLocais && generosAtivos.size > 0) {
       partes.push(generosAtivos.size === 1 ? '1 gênero' : `${generosAtivos.size} gêneros`);
     }
     return partes.join(' · ');
-  }, [opcoesFiltro, filtroSelecionado, emVideosLocais, emProximasEstreias, ordemEfetiva, generosAtivos]);
+  }, [opcoesFiltro, filtroSelecionado, emVideosLocais, emOrdemFixa, ordemEfetiva, generosAtivos]);
   const totalNoPainel = emVideosLocais ? VIDEOS_LOCAIS.length : animesExibidos.length;
   const rotuloDoTotal = emVideosLocais
     ? totalNoPainel === 1 ? 'vídeo' : 'vídeos'
@@ -550,7 +589,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
                 aoRemover: () => setFase('selecionando'),
                 total: `${totalNoPainel} ${rotuloDoTotal}`,
                 ordenacao:
-                  emVideosLocais || emProximasEstreias
+                  emVideosLocais || emOrdemFixa
                     ? null
                     : { opcoes: OPCOES_DE_ORDEM, valor: ordemEfetiva, aoMudar: mudarOrdem },
                 generos: emVideosLocais
@@ -657,10 +696,20 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
                   selecionado: selecionados.has(anime.id),
                   aoAlternarSelecao: () => alternarSelecao(anime),
                 };
-                return !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
-                  <CartaoDeEstreia item={anime} {...propsDeSelecao} />
+                const card =
+                  !anime.tem_episodios && anime.status_lancamento === 'nao_lancado' ? (
+                    <CartaoDeEstreia
+                      item={anime}
+                      semTextoDeData={posicaoNoDia?.get(anime.id)?.data != null}
+                      {...propsDeSelecao}
+                    />
+                  ) : (
+                    <AnimeCard anime={anime} {...propsDeSelecao} />
+                  );
+                return posicaoNoDia ? (
+                  <SlotDoDiaDeEstreia {...posicaoNoDia.get(anime.id)}>{card}</SlotDoDiaDeEstreia>
                 ) : (
-                  <AnimeCard anime={anime} {...propsDeSelecao} />
+                  card
                 );
               }}
             />
