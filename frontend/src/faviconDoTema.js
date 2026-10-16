@@ -1,9 +1,8 @@
 import { QUADRO_REPOUSO } from './components/mascote/quadros.js';
 
 // Favicon = o mascote de repouso na cor do tema. O SVG nasce dos mesmos `d` do
-// quadro que a UI usa, então os dois não divergem. O PNG fixo de `index.html`
-// fica como reserva pra navegador sem favicon SVG; o `sizes="any"` daqui faz
-// quem suporta preferir este.
+// quadro que a UI usa, então os dois não divergem. Navegador sem suporte a
+// favicon SVG fica sem ícone: não há PNG de reserva.
 //
 // Fones mais claros que o `#262626` da UI: na aba escura do navegador aquele
 // cinza some em 16px.
