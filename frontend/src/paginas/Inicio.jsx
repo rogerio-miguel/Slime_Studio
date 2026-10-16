@@ -111,6 +111,7 @@ const _MAX_TENTATIVAS_POLL_STILL = 16;
 export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   const navigate = useNavigate();
   const idResultadosBiblioteca = useId();
+  const idResultadosCatalogo = useId();
   const {
     statusCapturaIlha,
     aoClicarStatusCapturaIlha,
@@ -336,6 +337,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
     () => (catalogo.dados ?? []).filter((anime) => anime.titulo.toLowerCase().includes(termoBuscaNormalizado)),
     [catalogo.dados, termoBuscaNormalizado]
   );
+  const mostrarCatalogoLocal = catalogo.carregando || Boolean(catalogo.erro) || animesFiltrados.length > 0;
 
   // Busca na biblioteca (AniList): ao contrário do filtro local acima (ao
   // vivo, a cada tecla), só dispara no submit (Enter na navbar) — evita
@@ -778,45 +780,47 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
           // slot da grade não tem padding próprio), mesmo tratamento de
           // paginas/Galeria.jsx.
           <section aria-label="Resultados da busca" className="pb-20">
-            <h2
-              style={{ paddingInline: PADDING_TITULO_GRADE }}
-              className="mt-20 text-2xl font-semibold text-white"
-            >
-              Resultados para “{termoBusca.trim()}”
-            </h2>
-            {/* Estados transitórios do catálogo local — condições inalteradas.
-                O wrapper só repõe o `paddingInline` que antes vinha do `px` da
-                <section>; cada mensagem leva o próprio `mt-[22px]` (mesmo
-                respiro título->conteúdo que a grade traz no `pt-[22px]`). */}
-            <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
-              {catalogo.carregando && (
-                <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
-              )}
-              {catalogo.erro && (
-                <EstadoComMascote alerta mensagem="Não foi possível carregar o catálogo.">
-                  <BotaoDeEstado onClick={catalogo.recarregar}>Tentar novamente</BotaoDeEstado>
-                </EstadoComMascote>
-              )}
-              {!catalogo.carregando && !catalogo.erro && animesFiltrados.length === 0 && (
-                <EstadoComMascote mensagem={`Nenhum anime encontrado para “${termoBusca.trim()}”.`} />
-              )}
-            </div>
-            {!catalogo.carregando && !catalogo.erro && animesFiltrados.length > 0 && (
-              <GradeDeCatalogo
-                itens={animesFiltrados}
-                tamanho="pequeno"
-                comSombra={false}
-                comAnimacao={false}
-                chaveDoItem={(anime) => anime.id}
-                renderItem={(anime) => <AnimeCard anime={anime} />}
-              />
+            {/* Catálogo local só aparece quando tem algo a dizer (carregando,
+                erro ou acertos). Sem acerto não há mensagem de vazio: a seção
+                "Adicionar ao catálogo" logo abaixo já responde à busca, e dois
+                "nenhum anime" empilhados só confundiam. */}
+            {mostrarCatalogoLocal && (
+              <section aria-labelledby={idResultadosCatalogo}>
+                <h2
+                  id={idResultadosCatalogo}
+                  style={{ paddingInline: PADDING_TITULO_GRADE }}
+                  className="mt-20 text-2xl font-semibold text-white"
+                >
+                  No seu catálogo
+                </h2>
+                <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
+                  {catalogo.carregando && (
+                    <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
+                  )}
+                  {catalogo.erro && (
+                    <EstadoComMascote alerta mensagem="Não foi possível carregar o catálogo.">
+                      <BotaoDeEstado onClick={catalogo.recarregar}>Tentar novamente</BotaoDeEstado>
+                    </EstadoComMascote>
+                  )}
+                </div>
+                {!catalogo.carregando && !catalogo.erro && animesFiltrados.length > 0 && (
+                  <GradeDeCatalogo
+                    itens={animesFiltrados}
+                    tamanho="pequeno"
+                    comSombra={false}
+                    comAnimacao={false}
+                    chaveDoItem={(anime) => anime.id}
+                    renderItem={(anime) => <AnimeCard anime={anime} />}
+                  />
+                )}
+              </section>
             )}
 
             <section aria-labelledby={idResultadosBiblioteca}>
               <h2
                 id={idResultadosBiblioteca}
                 style={{ paddingInline: PADDING_TITULO_GRADE }}
-                className="mt-12 text-2xl font-semibold text-white"
+                className={`${mostrarCatalogoLocal ? 'mt-12' : 'mt-20'} text-2xl font-semibold text-white`}
               >
                 Adicionar ao catálogo
               </h2>

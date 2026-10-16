@@ -1,11 +1,13 @@
-// Botão de ação do `EstadoComMascote` (pílula neon, igual ao "Limpar filtros" da
-// Galeria).
-export default function BotaoDeEstado({ onClick, children }) {
+// Botão de ação do `EstadoComMascote` e do "Mostrar mais" da Home: pílula
+// branca do CTA do hero (`CLASSE_BOTAO_HERO`), no tamanho de `h-12` — o hero
+// escala até `lg:h-14`, grande demais pra um estado vazio.
+export default function BotaoDeEstado({ onClick, children, ...resto }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="h-8 cursor-pointer rounded-full border border-neon bg-neon-soft px-4 text-sm font-semibold text-white outline-none transition-colors hover:bg-neon/30 focus-visible:border-white"
+      className="inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl bg-white px-8 font-bold text-[#17171b] outline-none transition hover:brightness-90 focus-visible:ring-2 focus-visible:ring-neon focus-visible:ring-offset-2 focus-visible:ring-offset-black motion-reduce:transition-none"
+      {...resto}
     >
       {children}
     </button>
