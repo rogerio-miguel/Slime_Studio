@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState } from 'react';
-import { MoreVertical } from 'lucide-react';
-import { CLASSE_PAINEL_FLUTUANTE } from './painelFlutuante.js';
+import { Check, MoreVertical } from 'lucide-react';
+import { CLASSE_PAINEL_FLUTUANTE, FUNDO_DA_ILHA } from './painelFlutuante.js';
 import { useFecharAoClicarFora } from '../hooks/useFecharAoClicarFora.js';
 
 // Menu de ações genérico — extraído de `MenuDeAcoesDoAnime.jsx` (pedido do
@@ -17,8 +17,15 @@ import { useFecharAoClicarFora } from '../hooks/useFecharAoClicarFora.js';
 // `larguraMinima`: classe `min-w-*` do painel (padrão serve ao card; o menu da
 // página do anime é mais largo por causa da segunda linha de cada item).
 // `itens`: [{chave, rotulo, descricao?, separadorAntes?, Icone, aoClicar,
-// desabilitado, destrutivo}] — `descricao` é uma segunda linha opcional;
-// mesmo formato que `MenuDeAcoesDoAnime` já usava internamente.
+// desabilitado, destrutivo, marcado?}] — `descricao` é uma segunda linha opcional;
+// mesmo formato que `MenuDeAcoesDoAnime` já usava internamente. `marcado`
+// (boolean) transforma o item em opção exclusiva (`menuitemradio`) com um ✓ no
+// escolhido — usado pelo seletor de tema; `undefined` é item comum.
+// `dica`: texto de uma dica ao passar o mouse/focar o gatilho (some com o menu
+// aberto); o gatilho ganha `peer` pra isso, e a dica segue a mesma âncora e o
+// mesmo alinhamento do painel. `gatilho` (padrão: ícone ⋯): conteúdo do botão no lugar do ícone — o logo da
+// navbar é o gatilho do seletor de tema. `classeDoContainer` entra no wrapper
+// `relative` (âncora do painel) quando ele precisa participar de um flex.
 // `classeGatilho(aberto)`: className completa do botão-gatilho — cada
 // chamador decide a própria skin (`MenuDeAcoesDoAnime`: quadrado com borda
 // da barra de controles; card de "Continuar assistindo": ícone sem chip
@@ -26,6 +33,8 @@ import { useFecharAoClicarFora } from '../hooks/useFecharAoClicarFora.js';
 // `ancoragem`: lado que o painel abre (`'right'` por padrão) — evita vazar a
 // viewport quando o gatilho é o item mais à direita do contexto. Só importa
 // quando `posicao="baixo"` (painel abre abaixo do gatilho, `top-full`).
+// `'centro'`: o wrapper deixa de ser `relative` e o painel centraliza no
+// ancestral posicionado mais próximo — o logo, pra o menu ficar sob o nome todo.
 // `tamanhoIcone` (default 18, mesmo valor de sempre pro botão quadrado de
 // `MenuDeAcoesDoAnime`): pedido explícito do usuário pro ícone do card de
 // "Continuar assistindo" (`CartaoContinuarAssistindo.jsx`) ficar maior — só
@@ -39,6 +48,8 @@ import { useFecharAoClicarFora } from '../hooks/useFecharAoClicarFora.js';
 // topo), nunca embaixo — evita vazar por baixo da miniatura 16:9 e mantém o
 // painel sobre o card. `ancoragem` é ignorado nesse modo (a lateral já
 // resolve o vazamento de viewport que `ancoragem` resolveria no modo baixo).
+const CLASSE_ALINHAMENTO = { right: 'right-0', centro: 'left-1/2 -translate-x-1/2' };
+
 export default function MenuDeAcoes({
   itens,
   rotuloGatilho,
@@ -46,6 +57,9 @@ export default function MenuDeAcoes({
   ancoragem = 'right',
   posicao = 'baixo',
   tamanhoIcone = 18,
+  gatilho = null,
+  dica = null,
+  classeDoContainer = '',
   larguraMinima = 'min-w-[13rem]',
 }) {
   const [aberto, setAberto] = useState(false);
@@ -101,7 +115,10 @@ export default function MenuDeAcoes({
   };
 
   return (
-    <div ref={containerRef} className="relative">
+    <div
+      ref={containerRef}
+      className={`${ancoragem === 'centro' ? '' : 'relative'} ${classeDoContainer}`}
+    >
       <button
         ref={gatilhoRef}
         type="button"
@@ -116,10 +133,19 @@ export default function MenuDeAcoes({
             setAberto(true);
           }
         }}
-        className={classeGatilho(aberto)}
+        className={`${classeGatilho(aberto)} ${dica ? 'peer' : ''}`}
       >
-        <MoreVertical width={tamanhoIcone} height={tamanhoIcone} aria-hidden="true" />
+        {gatilho ?? <MoreVertical width={tamanhoIcone} height={tamanhoIcone} aria-hidden="true" />}
       </button>
+
+      {dica && !aberto && (
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute top-full z-10 mt-2.5 ${CLASSE_ALINHAMENTO[ancoragem] ?? 'left-0'} whitespace-nowrap rounded-lg border border-border-chrome ${FUNDO_DA_ILHA} px-2.5 py-1 text-xs font-semibold normal-case leading-normal text-white opacity-0 transition-opacity duration-150 peer-hover:opacity-100 peer-hover:delay-300 peer-focus-visible:opacity-100 motion-reduce:transition-none`}
+        >
+          {dica}
+        </span>
+      )}
 
       {aberto && (
         <div
@@ -130,7 +156,7 @@ export default function MenuDeAcoes({
           className={`absolute z-10 ${larguraMinima} ${CLASSE_PAINEL_FLUTUANTE} ${
             posicao === 'lado'
               ? 'right-full top-0 mr-2'
-              : `top-full mt-2 ${ancoragem === 'right' ? 'right-0' : 'left-0'}`
+              : `top-full mt-2 ${CLASSE_ALINHAMENTO[ancoragem] ?? 'left-0'}`
           }`}
         >
           {itens.map((item, indice) => (
@@ -143,14 +169,15 @@ export default function MenuDeAcoes({
                 itensRef.current[indice] = no;
               }}
               type="button"
-              role="menuitem"
+              role={item.marcado === undefined ? 'menuitem' : 'menuitemradio'}
+              aria-checked={item.marcado}
               tabIndex={indice === indiceAtivo ? 0 : -1}
               disabled={item.desabilitado}
               onClick={() => escolher(item)}
               className={`flex w-full items-center ${item.descricao ? 'gap-3 py-2.5' : 'gap-2 py-2'} px-4 text-left text-sm font-semibold outline-none transition-colors focus-visible:bg-white/10 disabled:cursor-auto disabled:opacity-50 cursor-pointer ${
                 item.destrutivo
                   ? 'text-red-300 hover:bg-red-500/10 hover:text-red-200'
-                  : 'text-ink-muted hover:bg-white/5 hover:text-white'
+                  : `${item.marcado ? 'text-white' : 'text-ink-muted'} hover:bg-white/5 hover:text-white`
               }`}
             >
               <item.Icone aria-hidden="true" className="h-4 w-4 shrink-0" />
@@ -162,7 +189,17 @@ export default function MenuDeAcoes({
               ) : (
                 item.rotulo
               )}
+              {item.marcado && <Check aria-hidden="true" className="ml-auto h-4 w-4 shrink-0 text-neon" />}
             </button>
+
+      {dica && !aberto && (
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute top-full z-10 mt-2.5 ${CLASSE_ALINHAMENTO[ancoragem] ?? 'left-0'} whitespace-nowrap rounded-lg border border-border-chrome ${FUNDO_DA_ILHA} px-2.5 py-1 text-xs font-semibold normal-case leading-normal text-white opacity-0 transition-opacity duration-150 peer-hover:opacity-100 peer-hover:delay-300 peer-focus-visible:opacity-100 motion-reduce:transition-none`}
+        >
+          {dica}
+        </span>
+      )}
             </Fragment>
           ))}
         </div>

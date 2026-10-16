@@ -169,7 +169,7 @@ export default function SeletorDeFonte({
         {fonteRespondeu && (
           <span
             aria-hidden="true"
-            className="h-2 w-2 rounded-full bg-neon shadow-[0_0_0_3px_rgba(32,128,240,0.25)]"
+            className="h-2 w-2 rounded-full bg-neon shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-neon)_25%,transparent)]"
           />
         )}
         {rotulo}
