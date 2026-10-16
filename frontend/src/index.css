@@ -344,23 +344,6 @@ html::-webkit-scrollbar {
   }
 }
 
-/* "Z" do MascoteSlime dormindo (2400ms): some, aparece e sobe uma célula. */
-@keyframes slime-zzz {
-  0% {
-    opacity: 0;
-  }
-  25% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  60% {
-    transform: translateY(-1px);
-  }
-  90% {
-    opacity: 0;
-  }
-}
-
 /* `claquete-fecha` (flourish de fechamento da lâmina na volta ícone→nome)
    foi REMOVIDO (2026-09-26); a troca nome↔ícone hoje é a dissolução
    pixelada de `LogoSlimeStudio.jsx`. Histórico: `git log -p` neste arquivo. */

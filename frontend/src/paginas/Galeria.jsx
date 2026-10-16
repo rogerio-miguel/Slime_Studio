@@ -23,6 +23,8 @@ import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
 import { VIDEOS_LOCAIS } from '../videosLocais.js';
+import EstadoComMascote from '../components/mascote/EstadoComMascote.jsx';
+import BotaoDeEstado from '../components/mascote/BotaoDeEstado.jsx';
 
 // Rótulos em `core/enums.py::StatusLancamento` (backend) — mesmos valores
 // StrEnum, traduzidos aqui pra exibição no filtro de status. Cunhados aqui,
@@ -617,37 +619,26 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
                 <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
               )}
               {erro && (
-                <div
-                  role="alert"
-                  className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-                >
-                  Não foi possível carregar o catálogo.{' '}
-                  <button type="button" onClick={recarregar} className="underline">
-                    Tentar novamente
-                  </button>
-                </div>
+                <EstadoComMascote alerta mensagem="Não foi possível carregar o catálogo.">
+                  <BotaoDeEstado onClick={recarregar}>Tentar novamente</BotaoDeEstado>
+                </EstadoComMascote>
               )}
               {!carregando && !erro && animes?.length === 0 && (
                 <p className="mt-[22px] text-sm text-ink-muted">Nenhum anime cadastrado ainda.</p>
               )}
 
               {!carregando && !erro && animes?.length > 0 && animesExibidos.length === 0 && (
-                <div className="flex flex-col items-center gap-4 py-24 text-center">
-                  <p className="text-base font-semibold text-ink-muted">
-                    {termoBusca.trim()
+                <EstadoComMascote
+                  mensagem={
+                    termoBusca.trim()
                       ? `Nenhum anime encontrado para “${termoBusca.trim()}”.`
-                      : 'Nenhum anime encontrado com os filtros selecionados.'}
-                  </p>
+                      : 'Nenhum anime encontrado com os filtros selecionados.'
+                  }
+                >
                   {filtrosAtivos > 0 && (
-                    <button
-                      type="button"
-                      onClick={limparFiltros}
-                      className="h-8 cursor-pointer rounded-full border border-neon bg-neon-soft px-4 text-sm font-semibold text-white outline-none transition-colors hover:bg-neon/30 focus-visible:border-white"
-                    >
-                      Limpar filtros
-                    </button>
+                    <BotaoDeEstado onClick={limparFiltros}>Limpar filtros</BotaoDeEstado>
                   )}
-                </div>
+                </EstadoComMascote>
               )}
             </div>
 
