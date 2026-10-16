@@ -163,6 +163,9 @@ export function textoDeProximaTemporada(proxima, { curto = false } = {}) {
 //   - `adicionado_em`: o `criado_em` mais recente entre as temporadas (a franquia
 //     sobe em "Adicionados recentemente" quando QUALQUER temporada entra, não só
 //     a que a representa).
+//   - `proximosEpisodiosEm`: `proximo_ep_em` de cada temporada `em_lancamento`
+//     com próximo episódio datado — o filtro "Em lançamento" do catálogo ordena
+//     pelo mais próximo (inicio/filtrosDeCatalogo.js).
 //   - `temporadaFutura`: a temporada `nao_lancado` de menor número (ou `null`) —
 //     o que o filtro "Próximas estreias" do catálogo ordena por data
 //     (inicio/filtrosDeCatalogo.js).
@@ -241,6 +244,9 @@ function montarFranquia(temporadas) {
     idsDaFranquia: temporadas.map((t) => t.id),
     contagemDeTemporadas: temporadas.length,
     adicionado_em: dataMaisRecente(temporadas.map((t) => t.criado_em)),
+    proximosEpisodiosEm: temporadas
+      .filter((t) => t.status_lancamento === 'em_lancamento' && t.proximo_ep_em)
+      .map((t) => t.proximo_ep_em),
     temporadaFutura: temporadas
       .filter((t) => t.status_lancamento === 'nao_lancado')
       .reduce(
