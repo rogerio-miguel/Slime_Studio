@@ -14,11 +14,31 @@
   --color-surface-hover: #1b1e25;
   --color-neon: #2080f0;
   --color-neon-soft: #1c3b5f;
+  --color-neon-claro: #93c5fd;
+  --color-on-neon: #000;
   --color-ink-muted: #9aa0a6;
 }
 
 :root {
   color-scheme: dark;
+}
+
+/* Temas de accent: o azul acima é o padrão (sem `data-tema`, ou `azul`). Cada
+   tema só escolhe o `neon`; `soft` (fundo escuro tingido) e `claro` (brilho do
+   mascote) derivam dele. `on-neon` é a cor do texto sobre `bg-neon` — o preto
+   padrão não passa em contraste sobre o roxo. O HUD do player (`hud-*`) e o
+   ambient glow ficam fora do tema de propósito. */
+:root[data-tema='roxo'],
+:root[data-tema='laranja'] {
+  --color-neon-soft: color-mix(in oklab, var(--color-neon) 35%, var(--color-surface));
+  --color-neon-claro: color-mix(in oklab, var(--color-neon) 40%, white);
+}
+:root[data-tema='roxo'] {
+  --color-neon: #b026ff;
+  --color-on-neon: #fff;
+}
+:root[data-tema='laranja'] {
+  --color-neon: #ff7518;
 }
 
 html,
@@ -341,6 +361,44 @@ html::-webkit-scrollbar {
   70% {
     opacity: 0;
     transform: translateY(0);
+  }
+}
+
+/* Reação do logo ao hover/foco (LogoSlimeStudio.jsx), uma vez por entrada do
+   mouse. Rolado: o slime faz o pulo da pose `pulando` do MascoteSlime (agacha,
+   sobe esticado, desce e agacha ao pousar), reaproveitando os keyframes
+   `slime-pulo-*` acima. Os quadros do pulo são uma cópia (`.logo-pulo`) que
+   assume o lugar do desenho normal (`.logo-original`) por 900ms (a pose `pulando` do mascote, 1000ms, é lenta como reação de hover): mexer nas
+   animações dos quadros da entrada faria a queda recomeçar ao tirar o mouse.
+   Os dois grupos terminam em repouso, então a volta é sem salto. Topo, onde não
+   há mascote: o STUDIO não anima (só a dica "Trocar tema"). Só sem preferência de movimento reduzido. */
+@keyframes logo-esconde {
+  0% {
+    opacity: 0;
+  }
+}
+
+@keyframes logo-mostra {
+  0% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .logo-gatilho:is(:hover, :focus-visible) .logo-original {
+    animation: logo-esconde 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo {
+    animation: logo-mostra 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo-repouso {
+    animation: slime-pulo-repouso 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo-agachado {
+    animation: slime-pulo-agachado 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo-esticado {
+    animation: slime-pulo-esticado 900ms step-end 1;
   }
 }
 

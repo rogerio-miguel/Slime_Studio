@@ -168,7 +168,7 @@ export default function ListaDeLancamentos({ itens, chaveDoItem, aoAtivar, desab
                         {generos && <span className="text-sm text-ink-muted font-bold">{generos}</span>}
                         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                           {item.episodio_lancado != null && (
-                            <span className="rounded-md bg-neon-soft px-2 py-0.5 text-xs font-extrabold tabular-nums text-[#9cc8ff]">
+                            <span className="rounded-md bg-neon-soft px-2 py-0.5 text-xs font-extrabold tabular-nums text-neon-claro">
                               EP.{item.episodio_lancado}
                             </span>
                           )}

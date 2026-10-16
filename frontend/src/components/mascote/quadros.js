@@ -20,7 +20,7 @@
 export const CORES_DO_SLIME = [
   { letra: 'b', classe: '' },
   { letra: 'h', classe: 'fill-[#262626]' },
-  { letra: 'l', classe: 'fill-blue-300' },
+  { letra: 'l', classe: 'fill-neon-claro' },
 ];
 
 function caminhoDaCor(linhaInicial, colunaInicial, linhas, letra) {

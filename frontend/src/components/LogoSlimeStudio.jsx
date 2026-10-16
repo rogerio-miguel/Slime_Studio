@@ -10,6 +10,7 @@ import {
   QUADRO_REPOUSO,
 } from './mascote/quadros';
 import { usePiscar } from './mascote/usePiscar';
+import SeletorDeTema from './SeletorDeTema.jsx';
 
 // Entrada (800ms, ver `index.css`): queda, impacto e pulinho. `backwards`:
 // durante o atraso de entrada já vale o 0% (esticado lá em cima), senão o
@@ -82,28 +83,36 @@ function IconeSlime({ montado, animar, atrasoMs, ...props }) {
       style={{ overflow: 'visible', visibility: montado ? 'visible' : 'hidden' }}
       {...props}
     >
-      {/* O repouso some enquanto o quadro de olhos fechados ocupa o lugar dele:
-          os dois têm o mesmo corpo, e sobrepostos os olhos do repouso
-          continuariam à mostra. O `opacity` daqui não mexe na animação de
-          entrada (outro nó). */}
-      <g style={{ opacity: piscando ? 0 : 1 }}>
+      <g className="logo-original">
+        {/* O repouso some enquanto o quadro de olhos fechados ocupa o lugar dele:
+            os dois têm o mesmo corpo, e sobrepostos os olhos do repouso
+            continuariam à mostra. O `opacity` daqui não mexe na animação de
+            entrada (outro nó). */}
+        <g style={{ opacity: piscando ? 0 : 1 }}>
+          <QuadroDoSlime
+            partes={QUADRO_REPOUSO}
+            className={montado ? CLASSE_REPOUSO : ''}
+            atraso={atraso}
+          />
+        </g>
         <QuadroDoSlime
-          partes={QUADRO_REPOUSO}
-          className={montado ? CLASSE_REPOUSO : ''}
+          partes={QUADRO_AGACHADO}
+          className={`opacity-0 ${montado ? CLASSE_AGACHADO : ''}`}
           atraso={atraso}
         />
+        <QuadroDoSlime
+          partes={QUADRO_ESTICADO}
+          className={`opacity-0 ${montado ? CLASSE_ESTICADO : ''}`}
+          atraso={atraso}
+        />
+        {piscando && <QuadroDoSlime partes={QUADRO_OLHOS_FECHADOS} />}
       </g>
-      <QuadroDoSlime
-        partes={QUADRO_AGACHADO}
-        className={`opacity-0 ${montado ? CLASSE_AGACHADO : ''}`}
-        atraso={atraso}
-      />
-      <QuadroDoSlime
-        partes={QUADRO_ESTICADO}
-        className={`opacity-0 ${montado ? CLASSE_ESTICADO : ''}`}
-        atraso={atraso}
-      />
-      {piscando && <QuadroDoSlime partes={QUADRO_OLHOS_FECHADOS} />}
+      {/* Cópia dos quadros do pulo do hover (ver `.logo-pulo` em `index.css`). */}
+      <g className="logo-pulo opacity-0">
+        <QuadroDoSlime partes={QUADRO_REPOUSO} className="logo-pulo-repouso" />
+        <QuadroDoSlime partes={QUADRO_AGACHADO} className="logo-pulo-agachado opacity-0" />
+        <QuadroDoSlime partes={QUADRO_ESTICADO} className="logo-pulo-esticado opacity-0" />
+      </g>
     </svg>
   );
 }
@@ -144,12 +153,19 @@ export default function LogoSlimeStudio({ className = '', colapsada = false }) {
   }, [colapsada, movimentoReduzido, sufixoDoFiltro]);
 
   return (
-    <div className={`flex items-center gap-0.5 uppercase leading-none ${className}`}>
+    <div className={`relative flex items-center gap-0.5 uppercase leading-none ${className}`}>
       <span className="font-extrabold tracking-tight text-white text-3xl">SLIME</span>
+      {/* STUDIO + mascote são o gatilho do seletor de tema (SLIME fica inerte):
+          com o texto aberto o alvo é o STUDIO, recolhido é o mascote — o botão
+          cobre os dois. O container leva o `-ml-0.5` que antes era da âncora e desfaz
+          `uppercase`/`leading-none` herdados, que não valem pro menu. */}
+      <SeletorDeTema
+        classeDoContainer="-ml-0.5 normal-case leading-normal"
+        classeDoGatilho="logo-gatilho flex items-center gap-0.5 rounded-sm uppercase leading-none outline-none cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-neon"
+      >
       {/* Âncora de largura zero ANTES do STUDIO: o ícone fica parado onde o
-          STUDIO começa e o recolhimento do texto não o empurra. `-ml-0.5`
-          cancela o gap da âncora (o STUDIO continua a 2px do SLIME). */}
-      <span className="relative -ml-0.5 w-0 self-stretch text-neon">
+          STUDIO começa e o recolhimento do texto não o empurra. */}
+      <span className="relative w-0 self-stretch text-neon">
         <span
           className="absolute left-2 top-1/2"
           style={{ transform: 'translateY(calc(-50% - 4px))' }}
@@ -178,6 +194,7 @@ export default function LogoSlimeStudio({ className = '', colapsada = false }) {
         </span>
         <span className="sr-only">STUDIO</span>
       </span>
+      </SeletorDeTema>
       <FiltrosDePixelizacao
         svgRef={filtrosRef}
         sufixo={sufixoDoFiltro}
