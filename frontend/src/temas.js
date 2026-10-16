@@ -1,3 +1,5 @@
+import { aplicarFavicon } from './faviconDoTema.js';
+
 // Temas de accent. As cores de verdade moram em `index.css`
 // (`:root[data-tema='...']`); `cor` aqui é só a amostra do menu e precisa
 // acompanhar o `--color-neon` de cada bloco. Tema novo: um bloco no CSS + uma
@@ -11,7 +13,8 @@ export const TEMAS = [
 export const TEMA_PADRAO = 'azul';
 const CHAVE_DO_TEMA = 'slime.tema';
 
-const ehTemaValido = (id) => TEMAS.some((tema) => tema.id === id);
+const temaPorId = (id) => TEMAS.find((tema) => tema.id === id);
+const ehTemaValido = (id) => temaPorId(id) !== undefined;
 
 // Valor salvo é entrada não confiável (storage editável, tema removido numa
 // versão nova): id desconhecido cai no padrão em vez de aplicar um atributo
@@ -26,7 +29,9 @@ export function lerTemaSalvo() {
 }
 
 export function aplicarTema(id) {
-  document.documentElement.dataset.tema = ehTemaValido(id) ? id : TEMA_PADRAO;
+  const tema = temaPorId(id) ?? temaPorId(TEMA_PADRAO);
+  document.documentElement.dataset.tema = tema.id;
+  aplicarFavicon(tema.cor);
 }
 
 export function salvarTema(id) {

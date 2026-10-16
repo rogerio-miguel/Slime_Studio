@@ -1,8 +1,8 @@
 // Mascote slime em pixel art (pedido do usuário, 2026-10-14; substituiu a
 // claquete do lucide). Escada de Minimalismo, CLAUDE.md §4 passo 6: nenhuma lib
-// de ícones tem esse mascote, então o desenho mora aqui. Segue a arte do
-// projeto (`assets/icone-Slime_Studio2.png`): cúpula larga e baixa, brilho no
-// canto, olhos semicerrados em traço e fones de ouvido.
+// de ícones tem esse mascote, então o desenho mora aqui. Segue a arte original
+// do projeto: cúpula larga e baixa, brilho no canto, olhos semicerrados em
+// traço e fones de ouvido.
 //
 // Grade 16×16. Cada letra do desenho é uma cor: `b` corpo (`currentColor`, o
 // neon), `h` fones (cinza neutro `#262626`: a navbar rolada é preto puro e o

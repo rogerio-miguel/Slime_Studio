@@ -8,8 +8,7 @@ import capaVideosLocais from './assets/capa.jpeg';
 // .m3u8 nativamente via `video.src`, sem hls.js — nenhuma mudança de player
 // foi necessária.
 //
-// `capa`: uma imagem só (assets/capa.jpeg, importada — mesmo padrão de
-// `logo2.png` em components/BarraDeNavegacao.jsx) compartilhada por TODOS os
+// `capa`: uma imagem só (assets/capa.jpeg, importada) compartilhada por TODOS os
 // itens — pedido explícito do usuário, 2026-09-17, pra CartaoDeVideoLocal.jsx
 // seguir o mesmo layout com capa de components/AnimeCard.jsx (não há capa por
 // vídeo real aqui, só o placeholder da seção inteira).
