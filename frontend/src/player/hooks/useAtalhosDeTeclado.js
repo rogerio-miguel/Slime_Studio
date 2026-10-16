@@ -67,7 +67,24 @@ export function useAtalhosDeTeclado({ videoRef, acoes }) {
       }
     }
 
+    // Clique de mouse num botão/slider da barra deixa o foco nele, e aí
+    // Espaço reativaria o botão (ex.: "avançar" de novo em vez de pausar) e as
+    // setas moveriam o slider em vez de buscar 5s. Soltar o foco após clique de
+    // mouse (detail > 0) devolve o teclado aos atalhos globais; clique gerado
+    // por teclado (detail === 0) mantém o foco, preservando a navegação por Tab.
+    function aoClicar(event) {
+      if (event.detail === 0) return;
+      const controle = event.target instanceof Element
+        ? event.target.closest('button, input[type="range"]')
+        : null;
+      controle?.blur();
+    }
+
     document.addEventListener('keydown', aoTeclar);
-    return () => document.removeEventListener('keydown', aoTeclar);
+    document.addEventListener('click', aoClicar);
+    return () => {
+      document.removeEventListener('keydown', aoTeclar);
+      document.removeEventListener('click', aoClicar);
+    };
   }, [videoRef, acoes]);
 }
