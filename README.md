@@ -1,8 +1,8 @@
 <div align="center">
 
-<h1>
-  <img src="frontend/src/assets/logo2.png" alt="Slime Studio" height="200"/>
-</h1>
+<img src="frontend/src/assets/mascote-slime.svg" alt="Mascote do Slime Studio" width="192" />
+
+<h1>Slime Studio</h1>
 
 Catálogo pessoal de animes com captura, empacotamento HLS e um player <br>
 WebGPU com upscaling Anime4K por frame.
@@ -26,8 +26,10 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 </div>
 
 - Destaques da temporada vindos de um feed externo (AniList) — não é o catálogo local.
-- Carrossel com sinopse, gêneros e próximo episódio, e fileiras horizontais: Próximas estreias, Continuar assistindo, Top 10 em alta, Novos lançamentos e fileiras temáticas.
+- Carrossel com sinopse, gêneros e próximo episódio, seguido das seções: Continue de onde parou, Top 10 em alta (em coverflow), Acabou de sair (episódios recém-lançados) e Próximas estreias.
 - Escolher um item **materializa** o anime no catálogo antes de abrir a página dele.
+- Estados vazios e de erro ganham o mascote do slime.
+- A navbar é uma "ilha" dinâmica: ela se expande para a busca, os filtros e a sinopse do item em foco, e o logo abre o menu de **tema de cor**, que fica salvo no navegador (as capturas abaixo mostram temas diferentes).
 
 ### Página do anime
 
@@ -36,6 +38,7 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 </div>
 
 - Resolve a fonte de vídeo entre os sites suportados (AnimeFire, MeusAnimes e AnimesDrive, nessa ordem de prioridade).
+- Seletor de fonte para trocar de site de streaming, e seletor de banner (miniaturas, aplicar ou restaurar o padrão) dentro da ilha da navbar.
 - Lista os episódios por temporada, em grade ou lista.
 - Nada é baixado até o clique em **Capturar** — a captura é sob demanda, com o status do job em tempo real (WebSocket).
 - Guarda o progresso de reprodução e permite marcar episódios como assistidos.
@@ -48,6 +51,7 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 
 - Um card por franquia, com o estado de cada título (episódio atual, versão, estreia futura).
 - Badge de episódios novos nos títulos já catalogados.
+- Filtros por status e gênero e ordenação (A–Z, Z–A, adicionados recentemente, estreia), salvos no navegador. Em "Em lançamento", os títulos são agrupados pelo dia do episódio.
 - Listar, abrir e remover animes do catálogo local.
 - Busca por título na barra de navegação.
 
@@ -71,7 +75,8 @@ barra de controles própria (sem os controles nativos do `<video>`).
 - **Continuar assistindo:** a posição é salva durante a reprodução e restaurada ao
   reabrir o episódio. O episódio é marcado como assistido ao passar de 90%.
 - **Menu de configurações:** qualidade (preset do Anime4K ou Automático), Áudio
-  Cinema, estatísticas (HUD com preset, resolução e telemetria) e a lista de atalhos.
+  Cinema, Brilho ambiente (liga e desliga, lembrado no navegador), estatísticas (HUD com
+  preset, resolução e telemetria) e a lista de atalhos.
 
 | Tecla | Ação |
 |-------|------|
@@ -140,9 +145,13 @@ Halo de cor ao redor do quadro, no estilo do Ambient Mode do YouTube, desenhado 
   em baixo vira halo escuro em baixo.
 - **Cor suave:** cada quadro se funde parcialmente com o anterior (média móvel), para a
   cor fluir em vez de pular nos cortes de cena.
-- **Intensidade pelo movimento:** o halo acende mais em cenas de ação. O movimento é
-  medido ~8 vezes por segundo num canvas fora do DOM, para a leitura de pixels não travar
-  a apresentação, e o laço pausa com a aba em segundo plano.
+- **Intensidade pela cor útil e pelo movimento:** borda escura ou sem cor apaga o halo,
+  cena parada e colorida mostra um halo calmo, e a ação sobe até o teto. Cortes de cena
+  reagem rápido (ataque curto, decaimento lento) sem piscar. A leitura de pixels acontece
+  ~8 vezes por segundo num canvas fora do DOM, para não travar a apresentação, e o laço
+  pausa com a aba em segundo plano.
+- **Interruptor:** desligado no menu, o componente é desmontado, então a amostragem e o
+  desfoque param de fato.
 
 <div>
   <img src="frontend/src/assets/player2.png" alt="Brilho ambiente em tela cheia" width="full" />
@@ -167,20 +176,27 @@ Slime_Studio/
   SQLAlchemy + SQLite (modo WAL), Alembic, `uv`.
 - **API e worker não são acoplados diretamente** — trocam estado só via a tabela `Job`
   no SQLite (polling), sem fila externa (Celery/Redis).
-- **`extractors/`** — um adapter por site de streaming (Strategy Pattern), resolve
-  vídeo com cache de sessão, retry e circuit breaker (bypass anti-bot). A resolução
-  de fonte tenta os sites em cadeia de fallback (AnimeFire → MeusAnimes → AnimesDrive),
-  com busca por correspondência de título (`busca/`); `blogger.py` é um helper
-  compartilhado para players do Blogger embutidos, e o download cai para `yt-dlp`
-  quando a CDN serve manifesto DASH.
+- **`fontes/`** — só sites de streaming. Um adapter por site (`adaptadores/`, Strategy
+  Pattern) resolve vídeo com cache de sessão, retry e circuit breaker (`rede/`, bypass
+  anti-bot). A resolução de fonte tenta os sites em cadeia de fallback (AnimeFire →
+  MeusAnimes → AnimesDrive), com busca por correspondência de título (`busca/`).
+  `recorte.py` separa as temporadas quando o site serve a franquia inteira numa lista só,
+  e `blogger.py` é um helper compartilhado para players do Blogger embutidos.
+- **`captura/`** — o download em si, que depende de `fontes/` e nunca o contrário. Cai
+  para `yt-dlp` quando a CDN serve manifesto DASH.
+- **Zelador de fontes** (`api/servicos/zelador.py`) — laço em segundo plano na API, ligado
+  por `ZELADOR_ATIVO`, que verifica as fontes em ritmo limitado e guarda o backoff de quem
+  falhou. Nunca abre navegador; leitura de página nunca dispara sondagem.
 - **`integrations/`** — mesmo padrão, mas para metadados: AniList como provedor
   principal (feed da Home) e Kitsu como fallback na busca de metadados por título, com
   cache do feed (memória + espelho no SQLite, com revalidação em segundo plano).
   `tmdb.py` fornece a arte (capa, banner, thumb de episódio) quando há token do TMDB;
-  sem ele, a arte cai para a AniList.
+  sem ele, a arte cai para a AniList. `classificacao.py` separa série de extra
+  (filme, especial, etc.).
 - **`worker/pipeline/`** — encapsula `ffmpeg`/`ffprobe` como subprocessos: sonda a
   mídia, decide por stream entre copiar ou recodificar, empacota em HLS e gera o
-  storyboard de prévia de cena usado no player.
+  storyboard de prévia de cena usado no player. AV1 8-bit (perfil Main) é copiado sem
+  recodificar, em segmentos fMP4, e o storyboard usa só keyframes.
 - **API sem autenticação, só local:** aceita apenas `Host` `localhost`/`127.0.0.1` e
   `Origin` da lista permitida (o Vite em `5173`) — pensada para uso pessoal.
 
@@ -188,7 +204,8 @@ Slime_Studio/
 backend/
 ├── api/           # rotas FastAPI, serviços, WebSocket
 ├── worker/        # loop assíncrono + pipeline de vídeo (ffmpeg)
-├── extractors/    # adapters de site (vídeo)
+├── fontes/        # sites de streaming: adapters, busca, rede/resiliência, recorte
+├── captura/       # download do episódio (depende de fontes/)
 ├── integrations/  # adapters de metadados (AniList/Kitsu) e arte (TMDB)
 ├── core/          # domínio puro — enums, erros, config, texto, franquia
 ├── models/        # SQLAlchemy
@@ -208,10 +225,12 @@ backend/
 frontend/src/
 ├── paginas/    # Inicio, Galeria, PaginaDoAnime, player (HLS e vídeo local)
 ├── player/     # canvas WebGPU, controles, Anime4K, Áudio Cinema, brilho ambiente
-├── inicio/     # carrossel, fileiras e grades dirigidas pelo feed externo
+├── inicio/     # carrossel, coverflow, fileiras e grades dirigidas pelo feed externo
 ├── api/        # cliente HTTP para o backend
 ├── eventos/    # eventos de jobs em tempo real (WebSocket)
-└── components/ # UI compartilhada (navbar, cards, seletor de temporada, etc.)
+├── hooks/      # hooks compartilhados (atualização periódica, ilha, rolagem, etc.)
+├── temas.js    # temas de cor (o CSS de cada um mora em index.css)
+└── components/ # UI compartilhada (navbar e ilha, cards, mascote, seletores, etc.)
 ```
 
 </details>
