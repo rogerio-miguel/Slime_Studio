@@ -33,6 +33,8 @@ import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
 import SlotDoDiaDeEstreia from '../inicio/SlotDoDiaDeEstreia.jsx';
 import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
+import EstadoComMascote from '../components/mascote/EstadoComMascote.jsx';
+import BotaoDeEstado from '../components/mascote/BotaoDeEstado.jsx';
 
 const LIMITE_PROXIMAS_ESTREIAS = 20;
 const INTERVALO_NOVOS_LANCAMENTOS_MS = 2 * 60 * 1000;
@@ -791,20 +793,12 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                 <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
               )}
               {catalogo.erro && (
-                <div
-                  role="alert"
-                  className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-                >
-                  Não foi possível carregar o catálogo.{' '}
-                  <button type="button" onClick={catalogo.recarregar} className="underline">
-                    Tentar novamente
-                  </button>
-                </div>
+                <EstadoComMascote alerta mensagem="Não foi possível carregar o catálogo.">
+                  <BotaoDeEstado onClick={catalogo.recarregar}>Tentar novamente</BotaoDeEstado>
+                </EstadoComMascote>
               )}
               {!catalogo.carregando && !catalogo.erro && animesFiltrados.length === 0 && (
-                <p className="mt-[22px] text-sm text-ink-muted">
-                  Nenhum anime encontrado para “{termoBusca.trim()}”.
-                </p>
+                <EstadoComMascote mensagem={`Nenhum anime encontrado para “${termoBusca.trim()}”.`} />
               )}
             </div>
             {!catalogo.carregando && !catalogo.erro && animesFiltrados.length > 0 && (
@@ -849,23 +843,19 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
                   <p className="mt-[22px] text-sm text-ink-muted">Buscando animes…</p>
                 )}
                 {buscaBibliotecaAtiva && buscaBiblioteca.erro && (
-                  <div
-                    role="alert"
-                    className="mt-[22px] rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
-                  >
-                    Não foi possível buscar animes.{' '}
-                    <button type="button" onClick={buscaBiblioteca.recarregar} className="underline">
+                  <EstadoComMascote alerta compacto mensagem="Não foi possível buscar animes.">
+                    <BotaoDeEstado onClick={buscaBiblioteca.recarregar}>
                       Tentar novamente
-                    </button>
-                  </div>
+                    </BotaoDeEstado>
+                  </EstadoComMascote>
                 )}
                 {buscaBibliotecaAtiva &&
                   !buscaBiblioteca.carregando &&
                   !buscaBiblioteca.erro &&
                   resultadosBiblioteca.length === 0 && (
-                    <p className="mt-[22px] text-sm text-ink-muted">
-                      Nenhum anime novo encontrado para “{termoBuscaSubmetido}”.
-                    </p>
+                    <EstadoComMascote
+                      mensagem={`Nenhum anime novo encontrado para “${termoBuscaSubmetido}”.`}
+                    />
                   )}
               </div>
               {buscaBibliotecaAtiva &&
@@ -906,15 +896,13 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
             )}
             {emAlta.erro && (
               <div className="mx-auto max-w-6xl px-6 pb-16 pt-10">
-                <div
-                  role="alert"
-                  className="rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+                <EstadoComMascote
+                  alerta
+                  compacto
+                  mensagem="Não foi possível carregar os destaques da temporada."
                 >
-                  Não foi possível carregar os destaques da temporada.{' '}
-                  <button type="button" onClick={emAlta.recarregar} className="underline">
-                    Tentar novamente
-                  </button>
-                </div>
+                  <BotaoDeEstado onClick={emAlta.recarregar}>Tentar novamente</BotaoDeEstado>
+                </EstadoComMascote>
               </div>
             )}
             {erroMaterializacao && (

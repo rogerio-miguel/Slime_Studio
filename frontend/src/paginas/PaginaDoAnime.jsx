@@ -40,6 +40,8 @@ import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
 import { PADDING_TITULO } from '../inicio/tamanhoDeCard.js';
 import { ArrowDownUp } from 'lucide-react';
 import { usePreferencia } from '../player/hooks/usePreferencia.js';
+import EstadoComMascote from '../components/mascote/EstadoComMascote.jsx';
+import BotaoDeEstado from '../components/mascote/BotaoDeEstado.jsx';
 
 // Rótulo legível de `versaoAtiva`/`Episodio.versao` — inclui 'desconhecida'
 // (fonte NAO_DIFERENCIADA, o backend nunca finge saber qual versão foi
@@ -1086,21 +1088,19 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
             FORA deste wrapper (são overlays fixos, não conteúdo de coluna). */}
         <div className="relative z-10" style={{ paddingInline: PADDING_TITULO }}>
         {erroAnime && (
-          <div
-            role="alert"
-            className="mb-4 rounded-md border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+          <EstadoComMascote
+            alerta
+            compacto
+            mensagem={
+              animeNaoEncontrado
+                ? 'Este anime não foi encontrado — pode ter sido removido do catálogo.'
+                : 'Não foi possível carregar os dados do anime.'
+            }
           >
-            {animeNaoEncontrado ? (
-              'Este anime não foi encontrado — pode ter sido removido do catálogo.'
-            ) : (
-              <>
-                Não foi possível carregar os dados do anime.{' '}
-                <button type="button" onClick={recarregarAnime} className="underline">
-                  Tentar novamente
-                </button>
-              </>
+            {!animeNaoEncontrado && (
+              <BotaoDeEstado onClick={recarregarAnime}>Tentar novamente</BotaoDeEstado>
             )}
-          </div>
+          </EstadoComMascote>
         )}
         {remotos.erro && !animeNaoEncontrado && !versaoIndisponivelNaFonte && (
           <div
@@ -1317,13 +1317,16 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
           // publicou episódios (o anime pode já ter estreado na AniList — o
           // atraso é do site); sem `remotos.dados` (erro), o alerta vermelho
           // acima já cobre e aqui fica o texto genérico.
-          <p role="status" className="text-sm font-bold text-ink-muted">
-            {remotos.dados
-              ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios${AVISO_POR_VERSAO[versaoPedida] ? ` ${AVISO_POR_VERSAO[versaoPedida]}` : ''} deste anime.`
-              : versaoIndisponivelNaFonte
-                ? `A versão ${(ROTULO_VERSAO[versaoPedida] ?? versaoPedida).toLowerCase()} ainda não foi publicada em nenhuma fonte. Tente de novo mais tarde.`
-                : 'Nenhum episódio encontrado.'}
-          </p>
+          <EstadoComMascote
+            compacto
+            mensagem={
+              remotos.dados
+                ? `${nomeDaFonte(remotos.dados.dominio) ?? 'A fonte'} ainda não publicou episódios${AVISO_POR_VERSAO[versaoPedida] ? ` ${AVISO_POR_VERSAO[versaoPedida]}` : ''} deste anime.`
+                : versaoIndisponivelNaFonte
+                  ? `A versão ${(ROTULO_VERSAO[versaoPedida] ?? versaoPedida).toLowerCase()} ainda não foi publicada em nenhuma fonte. Tente de novo mais tarde.`
+                  : 'Nenhum episódio encontrado.'
+            }
+          />
         )}
         </div>
 
