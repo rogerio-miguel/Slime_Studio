@@ -634,11 +634,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
                       ? `Nenhum anime encontrado para “${termoBusca.trim()}”.`
                       : 'Nenhum anime encontrado com os filtros selecionados.'
                   }
-                >
-                  {filtrosAtivos > 0 && (
-                    <BotaoDeEstado onClick={limparFiltros}>Limpar filtros</BotaoDeEstado>
-                  )}
-                </EstadoComMascote>
+                />
               )}
             </div>
 

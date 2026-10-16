@@ -2,6 +2,7 @@ import { Play } from 'lucide-react';
 import { useState } from 'react';
 import BrilhoDaCapa from '../components/BrilhoDaCapa.jsx';
 import IconeSalvar from '../components/IconeSalvar.jsx';
+import BotaoDeEstado from '../components/mascote/BotaoDeEstado.jsx';
 import AtivadorDeAnime from './AtivadorDeAnime.jsx';
 import { traduzirGenero } from './generos.js';
 import { PADDING_TITULO } from './tamanhoDeCard.js';
@@ -10,13 +11,6 @@ const fmtHora = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-d
 const fmtDiaDaSemana = new Intl.DateTimeFormat('pt-BR', { weekday: 'long' });
 const fmtDiaEMes = new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'short' });
 const MS_POR_DIA = 86_400_000;
-
-// Mesmo visual do CTA do carrossel (`CLASSE_BOTAO_HERO`: pílula clara, texto
-// escuro), numa escala menor — o do carrossel cresce até `lg:h-14 lg:text-xl`,
-// grande demais pra um "Mostrar mais".
-const CLASSE_BOTAO_MOSTRAR_MAIS =
-  'inline-flex h-12 cursor-pointer items-center gap-2 rounded-xl bg-white px-8 font-bold text-[#17171b] outline-none transition hover:brightness-90 focus-visible:ring-2 focus-visible:ring-neon focus-visible:ring-offset-2 focus-visible:ring-offset-black motion-reduce:transition-none';
-
 
 // Dias entre o dia LOCAL de `data` e hoje (meia-noite a meia-noite, não 24h).
 function diasAtras(data) {
@@ -211,14 +205,9 @@ export default function ListaDeLancamentos({ itens, chaveDoItem, aoAtivar, desab
       })}
       {temMais && (
         <div className="flex justify-center">
-          <button
-            type="button"
-            aria-expanded={expandida}
-            onClick={() => setExpandida((atual) => !atual)}
-            className={CLASSE_BOTAO_MOSTRAR_MAIS}
-          >
+          <BotaoDeEstado aria-expanded={expandida} onClick={() => setExpandida((atual) => !atual)}>
             {expandida ? 'Mostrar menos' : 'Mostrar mais'}
-          </button>
+          </BotaoDeEstado>
         </div>
       )}
     </div>
