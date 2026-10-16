@@ -124,6 +124,8 @@ export default function ListaDeLancamentos({ itens, chaveDoItem, aoAtivar, desab
   const recolhida = deHoje.length > 0 ? deHoje : itens.slice(0, LIMITE_INICIAL_DA_LISTA);
   const temMais = recolhida.length < itens.length;
   const grupos = agruparPorDia(expandida ? itens : recolhida);
+  // Contagem do rótulo é do dia inteiro, não só do que está visível recolhido.
+  const totalPorDia = new Map(agruparPorDia(itens).map((g) => [g.chave, g.itens.length]));
 
   return (
     <div className="flex flex-col gap-10">
@@ -138,7 +140,7 @@ export default function ListaDeLancamentos({ itens, chaveDoItem, aoAtivar, desab
               </span>
               <span className="text-sm font-bold text-ink-muted">
                 {dias != null && dias >= 1 && dias < 7 && `${fmtDiaEMes.format(grupo.data).replace('.', '')} · `}
-                {grupo.itens.length} {grupo.itens.length === 1 ? 'episódio' : 'episódios'}
+                {totalPorDia.get(grupo.chave)} {totalPorDia.get(grupo.chave) === 1 ? 'episódio' : 'episódios'}
               </span>
             </h3>
             <span
