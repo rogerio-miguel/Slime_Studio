@@ -10,6 +10,7 @@ import {
   INTERVALO_ROTACAO_MS,
   TAMANHO_DA_JANELA,
 } from './janelaDeDestaques.js';
+import { chaveDoItemDoFeed } from './fileiras.js';
 import { rotuloHojeAmanha } from './rotuloHojeAmanha.js';
 import { ATRIBUTO_PAUSA_POR_MOUSE, useHoverAposFechar } from './useHoverAposFechar.js';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion.js';
@@ -486,7 +487,7 @@ export default function CarrosselDestaques({
 
             return (
               <li
-                key={item.anilist_id ?? item.titulo_romaji ?? i}
+                key={chaveDoItemDoFeed(item) ?? i}
                 role="group"
                 aria-roledescription="slide"
                 aria-label={`${i + 1} de ${n}: ${titulo}`}
@@ -651,7 +652,7 @@ export default function CarrosselDestaques({
                 const ehAtiva = i === indiceAtivo;
                 return (
                   <button
-                    key={item.anilist_id ?? item.titulo_romaji ?? i}
+                    key={chaveDoItemDoFeed(item) ?? i}
                     type="button"
                     onClick={(evento) => {
                       irParaIndice(i);

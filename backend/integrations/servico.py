@@ -32,6 +32,7 @@ sem introduzir Redis nem um novo padrão de infraestrutura.
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, replace
 
@@ -50,6 +51,8 @@ from integrations.base import (
     LancamentoDeAnime,
     MetadadosDeAnime,
     NoDeSerie,
+    PaginaDeAnimes,
+    ProvedorComDescoberta,
     ProvedorComFileirasTematicas,
     ProvedorComLancamento,
     ProvedorComRecomendacoes,
@@ -62,6 +65,7 @@ from integrations.base import (
 from integrations.classificacao import eh_serie
 from integrations.registro import (
     FILEIRAS_TEMATICAS,
+    GENEROS_DE_DESCOBERTA,
     PROVEDORES,
     PROVEDORES_DE_FEED,
     PROVEDORES_DE_TITULO,
@@ -106,6 +110,14 @@ _TTL_FILEIRA_TEMATICA_S = 12 * 3600
 # Home), nem as 10 em paralelo (risco de rate limit — mesma preocupação do
 # comentário de `PROVEDORES_DE_FEED` em `registro.py`).
 _CONCORRENCIA_FILEIRAS_TEMATICAS = 3
+
+# Página da Descobrir (`listar_descoberta`): ranking de popularidade por gênero,
+# tão lento quanto o das fileiras temáticas — mesmo TTL. Memo por `(gênero,
+# página)` em vez do cache de feed fixo (stale-while-revalidate + persistência):
+# são até 19 chaves × N páginas, buscadas sob demanda pelo scroll, não os feeds
+# fixos que a Home precisa ter quentes após um restart.
+_TTL_DESCOBERTA_S = _TTL_FILEIRA_TEMATICA_S
+_LIMITE_MEMO_DESCOBERTA = 400
 
 # Overlay de arte (TMDB, PLANO_ARTE_TMDB.md D4) — TTL do memo >= o maior TTL de
 # feed acima (`_TTL_FILEIRA_TEMATICA_S`, 12h): um feed já cacheado nunca
@@ -162,6 +174,36 @@ class ProvedorEmCooldown(RuntimeError):
     para o próximo provedor / marcam falho / levantam `FalhaDeMetadados` se
     todos falharam. Não conta como falha nova (não incrementa o contador)."""
 
+
+# --- freio de ritmo por provedor (janela deslizante, em memória de processo) ---
+#
+# O cooldown acima reage DEPOIS do 429; o freio evita o 429. A AniList aguenta
+# ~30 chamadas/min (medido em 2026-10-04) e Home, zelador, reparos e a grade da
+# Descobrir dividem esse teto — sem freio, rolar a Descobrir rápido pode estourar
+# o limite e o cooldown, que é global por provedor, derruba os feeds da Home.
+# Margem abaixo do teto medido. Um burst até o limite passa direto (a cache fria
+# da Home faz ~13 queries quase juntas); só o que passa disso espera a vaga mais
+# antiga sair da janela. Conta OPERAÇÕES de `_chamar`: o walk de séries faz vários
+# HTTP numa só, mas é raro e memoizado, então fica dentro da margem.
+_CHAMADAS_POR_MINUTO: dict[str, int] = {"anilist": 24}
+_JANELA_DO_FREIO_S = 60.0
+# Espera máxima por uma vaga. Passou disso, falha na hora em vez de segurar a
+# requisição do usuário por quase um minuto.
+_ESPERA_MAXIMA_DO_FREIO_S = 15.0
+
+
+class ProvedorSaturado(RuntimeError):
+    """A janela do freio está cheia e a próxima vaga demora mais que
+    `_ESPERA_MAXIMA_DO_FREIO_S`: a chamada falha na hora, sem tocar a rede. É
+    `RuntimeError` (já em `_ERROS_DE_PROVEDOR`), então a cadeia de provedores e os
+    feeds a tratam como "provedor falhou". Não alimenta o cooldown — o provedor
+    não falhou, nós é que seguramos a chamada."""
+
+
+# `nome do provedor -> instantes (time.monotonic) das chamadas na janela`. Só o
+# event loop lê/escreve (single-thread, sem lock). `tests/conftest.py` zera isto
+# entre testes.
+_chamadas_na_janela: dict[str, deque[float]] = {}
 
 # `nome do provedor -> (falhas_consecutivas, cooldown_ate em time.monotonic())`.
 # Lido e escrito SÓ no contexto async de `_chamar` (antes/depois do
@@ -316,6 +358,12 @@ _memo_titulos: dict[str, tuple[float, TitulosDeAnime | None]] = {}
 # de navegação do usuário. `tests/test_integrations_metadados.py` tem fixture
 # autouse que zera este memo entre testes junto dos demais.
 _memo_relacionados: dict[int, tuple[float, list[AnimeEmAlta]]] = {}
+
+# Memo de `listar_descoberta`: `(gênero ou None, página) -> (expira_em_monotonic,
+# PaginaDeAnimes)`. Mesma política de `_memo_relacionados` (sem lock — o scroll
+# pede uma página por vez; só sucesso é gravado; ao estourar o limite limpa o
+# dict inteiro). `tests/test_integrations_metadados.py` zera isto entre testes.
+_memo_descoberta: dict[tuple[str | None, int], tuple[float, PaginaDeAnimes]] = {}
 
 # Memo do overlay de still/nome/sinopse de episódio (PLANO_ARTE_TMDB.md
 # Fatia 5/6). Chave de `_memo_info_episodio`: `(slug do título, ano,
@@ -952,6 +1000,54 @@ async def _buscar_fileira_tematica_sem_cache(fileira: FileiraTematica) -> list[A
 
     raise FalhaDeMetadados(
         f"todos os provedores falharam ao listar fileira temática {fileira.chave!r}"
+    ) from ultimo_erro
+
+
+async def listar_descoberta(genero: str | None, pagina: int) -> PaginaDeAnimes:
+    """Uma página da Descobrir: títulos por popularidade, opcionalmente de um
+    `genero`, 50 por página (`pagina` 1-based; o frontend revela 20 de cada
+    vez). Só provedores que implementam `ProvedorComDescoberta` (hoje a AniList;
+    o Kitsu não tem o filtro e não é fallback aqui, como nas fileiras
+    temáticas). Memo por `(genero, pagina)` por `_TTL_DESCOBERTA_S`.
+
+    Sem overlay de arte (TMDB): a grade só mostra a capa, então o custo de
+    resolver banner por item não se paga — o mesmo critério da busca livre.
+    Levanta `ValueError` para gênero fora de `GENEROS_DE_DESCOBERTA` e propaga
+    `FalhaDeMetadados` se os provedores falharem (nunca `[]` no lugar de "fora do
+    ar", CLAUDE.md §4)."""
+    if genero is not None and genero not in GENEROS_DE_DESCOBERTA:
+        raise ValueError(f"gênero desconhecido: {genero!r}")
+
+    chave = (genero, pagina)
+    memo = _memo_descoberta.get(chave)
+    if memo is not None and time.monotonic() < memo[0]:
+        return memo[1]
+
+    ultimo_erro: Exception | None = None
+    for provedor in PROVEDORES:
+        if not isinstance(provedor, ProvedorComDescoberta):
+            continue
+        try:
+            resultado = await _chamar(provedor, provedor.listar_descoberta, genero, pagina)
+        except _ERROS_DE_PROVEDOR as excecao:
+            logger.log(
+                _nivel_de_log_de_falha(excecao),
+                "provedor de metadados %r falhou ao listar descoberta %r página %d: %s",
+                provedor.nome,
+                genero,
+                pagina,
+                excecao,
+            )
+            ultimo_erro = excecao
+            continue
+
+        if len(_memo_descoberta) >= _LIMITE_MEMO_DESCOBERTA:
+            _memo_descoberta.clear()
+        _memo_descoberta[chave] = (time.monotonic() + _TTL_DESCOBERTA_S, resultado)
+        return resultado
+
+    raise FalhaDeMetadados(
+        f"todos os provedores falharam ao listar descoberta {genero!r} página {pagina}"
     ) from ultimo_erro
 
 
@@ -1751,6 +1847,35 @@ def _abortar_se_em_cooldown(nome: str) -> None:
     )
 
 
+async def _aguardar_vaga_do_freio(nome: str) -> None:
+    """Reserva uma vaga na janela deslizante de `nome` (sem limite configurado
+    em `_CHAMADAS_POR_MINUTO`, passa direto), esperando a mais antiga sair se
+    estiver cheia. A espera acontece ANTES do `wait_for` de `_chamar`: o
+    `asyncio.sleep` é cancelável e não conta contra o timeout do provedor — se
+    contasse, a fila viraria `TimeoutError` e abriria o cooldown. Levanta
+    `ProvedorSaturado` quando a vaga demoraria mais que o teto de espera."""
+    limite = _CHAMADAS_POR_MINUTO.get(nome)
+    if limite is None:
+        return
+    chamadas = _chamadas_na_janela.setdefault(nome, deque())
+    prazo = time.monotonic() + _ESPERA_MAXIMA_DO_FREIO_S
+    while True:
+        agora = time.monotonic()
+        while chamadas and agora - chamadas[0] >= _JANELA_DO_FREIO_S:
+            chamadas.popleft()
+        if len(chamadas) < limite:
+            chamadas.append(agora)
+            return
+        liberacao = chamadas[0] + _JANELA_DO_FREIO_S
+        if liberacao > prazo:
+            raise ProvedorSaturado(
+                f"{nome} saturado: {limite} chamadas por {_JANELA_DO_FREIO_S:.0f}s, "
+                f"próxima vaga em {liberacao - agora:.0f}s"
+            )
+        logger.debug("freio de %r cheio — esperando %.1fs por uma vaga", nome, liberacao - agora)
+        await asyncio.sleep(liberacao - agora)
+
+
 def _registrar_sucesso_de_provedor(nome: str) -> None:
     """Zera `falhas_consecutivas` e fecha o cooldown de `nome`. Sem registro
     prévio não há o que zerar. Só uma resposta bem-sucedida chama isto — uma
@@ -1800,7 +1925,9 @@ async def _chamar[T](
     escrito, sempre no event loop (antes/depois do `await`), nunca dentro da
     thread (ver o comentário de `_cooldown_por_provedor`).
 
-    Curto-circuita com `ProvedorEmCooldown` quando o provedor está degradado.
+    Curto-circuita com `ProvedorEmCooldown` quando o provedor está degradado, e
+    segura a chamada no freio de ritmo (`_aguardar_vaga_do_freio`) antes de tocar
+    a rede.
     Só falha de indisponibilidade (timeout do `wait_for`, `ConnectionError` /
     `Timeout` do `requests`, HTTP 429/5xx) alimenta o cooldown; só uma resposta
     bem-sucedida o zera. Todo o resto (4xx não-429, `RuntimeError` de formato
@@ -1810,6 +1937,7 @@ async def _chamar[T](
     # ANTES do `try`: um curto-circuito não deve passar pelo tratamento de
     # falha abaixo (não conta como falha nova, não chama `registrar_sucesso`).
     _abortar_se_em_cooldown(provedor.nome)
+    await _aguardar_vaga_do_freio(provedor.nome)
 
     try:
         resultado = await asyncio.wait_for(

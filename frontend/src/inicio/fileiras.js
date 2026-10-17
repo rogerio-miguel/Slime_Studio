@@ -58,6 +58,11 @@ export function agruparPorDiaDeEstreia(itens) {
   return [...grupos.values()];
 }
 
+// Chave estável de um item de feed/busca: `anilist_id`, ou o título quando o
+// provedor não traz id. Usada pra deduplicar, pra `key` do React e pra marcar
+// qual card está em materialização.
+export const chaveDoItemDoFeed = (item) => item.anilist_id ?? item.titulo_romaji;
+
 // Top N da temporada. O feed já chega ordenado por trending/popularidade da
 // AniList — NÃO adicionar sort aqui, é de propósito; só recorta os primeiros n.
 export function topDaTemporada(itens, n = 10) {

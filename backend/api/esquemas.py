@@ -307,6 +307,15 @@ class FileiraTematicaSaida(BaseModel):
     itens: list[AnimeEmAltaSaida]
 
 
+class PaginaDeDescobertaSaida(BaseModel):
+    """`GET /api/animes/descobrir`: uma página de títulos já cruzados com o
+    catálogo local e se existe a próxima (a grade da Descobrir para de pedir
+    quando `tem_mais` é falso)."""
+
+    itens: list[AnimeEmAltaSaida]
+    tem_mais: bool
+
+
 class AnimeDetalheSaida(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

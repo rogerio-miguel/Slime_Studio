@@ -196,6 +196,23 @@ async def listar_fileiras_tematicas_com_catalogo(
     return resultado
 
 
+async def listar_descoberta_com_catalogo(
+    sessionmaker: _SessionMaker, genero: str | None, pagina: int
+) -> tuple[list[tuple[AnimeEmAlta, int | None]], bool]:
+    """Uma página da Descobrir (`integrations.servico.listar_descoberta`) pareada
+    com `Anime.id` local, mais se há página seguinte. Propaga `FalhaDeMetadados`
+    (a rota devolve 502, nunca uma página vazia no lugar de "provedor fora do ar")
+    e `ValueError` (gênero fora da lista aceita).
+
+    Só o cruzamento com o catálogo, como na busca livre: sem refresh oportunista
+    de lançamento nem troca de banner — a grade só exibe a capa, e popularidade
+    histórica não tem a correlação com "em lançamento" que justifica o refresh do
+    feed "em alta"."""
+    pagina_de_animes = await servico.listar_descoberta(genero, pagina)
+    pares = await _cruzar_com_catalogo(sessionmaker, pagina_de_animes.itens)
+    return pares, pagina_de_animes.tem_mais
+
+
 async def listar_proxima_temporada_com_catalogo(
     sessionmaker: _SessionMaker,
 ) -> list[tuple[AnimeEmAlta, int | None]]:

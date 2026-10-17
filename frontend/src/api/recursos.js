@@ -24,6 +24,14 @@ export function listarFileirasTematicas() {
   return requisitar('/api/animes/fileiras-tematicas');
 }
 
+// Uma página da grade da Descobrir: `{ itens, tem_mais }`, itens no mesmo formato
+// do feed "em alta". Sem `genero` = todos; `genero` é o nome AniList (ex. "Action").
+export function listarDescoberta({ genero, pagina }) {
+  const parametros = new URLSearchParams({ pagina: String(pagina) });
+  if (genero) parametros.set('genero', genero);
+  return requisitar(`/api/animes/descobrir?${parametros}`);
+}
+
 // Busca livre na biblioteca de metadados (AniList) — alimenta a busca da Home.
 // Mesmo formato de item do feed "em alta" (`{ titulo_romaji, capa_url,
 // banner_url, anilist_id, anime_id, generos, capa_cor, ... }`); `anime_id` vem
@@ -203,6 +211,26 @@ export function criarAnime({
   }).then((resultado) => {
     invalidar('animes');
     return resultado;
+  });
+}
+
+// Materializa no catálogo local um item de feed/busca do provedor (AniList):
+// banner, cor dominante, título em inglês, gêneros, sinopse e formato vão no
+// payload pra alimentar o hero de `PaginaDoAnime` já no primeiro render; o que
+// faltar (ex. sinopse num resultado de busca) o backend preenche no primeiro
+// carregamento da página (`agendar_enriquecimento_de_metadados`). Fonte única
+// do mapeamento item → payload: Home, Descobrir e "Relacionados" usam esta.
+export function criarAnimeDoFeed(item) {
+  return criarAnime({
+    titulo: item.titulo_romaji,
+    tituloIngles: item.titulo_ingles ?? undefined,
+    anilistId: item.anilist_id ?? undefined,
+    capaUrl: item.capa_url ?? item.banner_url ?? undefined,
+    bannerUrl: item.banner_url ?? undefined,
+    capaCor: item.capa_cor ?? undefined,
+    generos: item.generos ?? undefined,
+    sinopse: item.sinopse ?? undefined,
+    formato: item.formato ?? undefined,
   });
 }
 

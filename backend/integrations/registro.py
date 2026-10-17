@@ -67,6 +67,32 @@ FILEIRAS_TEMATICAS: list[FileiraTematica] = [
     FileiraTematica(chave="prepare_o_lenco", valor="Tragedy", tipo="tag"),
 ]
 
+# Gêneros aceitos pela página Descobrir (`GET /api/animes/descobrir?genero=`) —
+# o conjunto fechado de gêneros da AniList, menos "Hentai" (conteúdo adulto nunca
+# entra, ver `core/conteudo_adulto.py`). Espelha as chaves de
+# `frontend/src/inicio/generos.js::GENEROS_PT`; gênero fora daqui é recusado na
+# rota em vez de ir à AniList com texto livre do cliente.
+GENEROS_DE_DESCOBERTA: tuple[str, ...] = (
+    "Action",
+    "Adventure",
+    "Comedy",
+    "Drama",
+    "Ecchi",
+    "Fantasy",
+    "Horror",
+    "Mahou Shoujo",
+    "Mecha",
+    "Music",
+    "Mystery",
+    "Psychological",
+    "Romance",
+    "Sci-Fi",
+    "Slice of Life",
+    "Sports",
+    "Supernatural",
+    "Thriller",
+)
+
 # Provedores de ARTE (capa/banner) — tupla PRÓPRIA, não a `PROVEDORES` acima:
 # `ProvedorDeArte` é uma capability autônoma (D1 do PLANO_ARTE_TMDB.md), não um
 # `ProvedorDeMetadados` filtrável por `isinstance` a partir daquela tupla.

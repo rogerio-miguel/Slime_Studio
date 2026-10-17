@@ -25,6 +25,7 @@ from api.esquemas import (
     EscolherBannerRequest,
     FileiraTematicaSaida,
     FonteConsultadaSaida,
+    PaginaDeDescobertaSaida,
     ResultadoBuscaFonteSaida,
     TemporadaIrmaSaida,
 )
@@ -47,6 +48,7 @@ from fontes.adaptadores.versao import inferir_versao
 from fontes.resolucao import confirmar_fonte
 from integrations import servico as servico_metadados
 from integrations.base import AnimeEmAlta
+from integrations.registro import GENEROS_DE_DESCOBERTA
 from integrations.tmdb import url_de_banner
 from models.anime import Anime
 from models.episodio import Episodio
@@ -373,6 +375,40 @@ async def listar_animes_fileiras_tematicas(
         )
         for chave, pares in fileiras
     ]
+
+
+# Teto de páginas da grade (50 títulos cada): quem chega aqui já passou de 2000
+# cards, e sem teto a rota seria uma varredura aberta da AniList. A última página
+# informa `tem_mais = False` pra a grade parar em vez de pedir uma 51ª e levar 422.
+_PAGINA_MAXIMA_DA_DESCOBERTA = 50
+
+
+# `/descobrir` — mesma armadilha de ordem de `/em-alta`: precisa vir ANTES de
+# `/{anime_id}`, senão casaria com `anime_id="descobrir"`.
+@router_publico.get(
+    "/descobrir",
+    response_model=PaginaDeDescobertaSaida,
+    dependencies=[limitar("descobrir", maximo=60)],
+)
+async def descobrir_animes(
+    genero: str | None = Query(None, max_length=40),
+    pagina: int = Query(1, ge=1, le=_PAGINA_MAXIMA_DA_DESCOBERTA),
+    sessionmaker: _SessionMaker = Depends(obter_sessionmaker),
+) -> PaginaDeDescobertaSaida:
+    """Grade da página Descobrir: títulos por popularidade, de um `genero`
+    (nome AniList, ex. "Action") ou de todos, 50 por `pagina` — a grade carrega a
+    próxima ao rolar enquanto `tem_mais`."""
+    if genero is not None and genero not in GENEROS_DE_DESCOBERTA:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="gênero desconhecido"
+        )
+    pares, tem_mais = await servico_descoberta.listar_descoberta_com_catalogo(
+        sessionmaker, genero, pagina
+    )
+    return PaginaDeDescobertaSaida(
+        itens=[_para_saida_em_alta(item, anime_id) for item, anime_id in pares],
+        tem_mais=tem_mais and pagina < _PAGINA_MAXIMA_DA_DESCOBERTA,
+    )
 
 
 def _para_saida_em_alta(item: AnimeEmAlta, anime_id: int | None) -> AnimeEmAltaSaida:

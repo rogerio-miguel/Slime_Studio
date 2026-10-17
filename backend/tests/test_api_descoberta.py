@@ -24,7 +24,7 @@ from api.servicos.fontes import FonteComEpisodios
 from core.enums import StatusLancamento, VersaoDeFonte
 from core.erros import FalhaDeMetadados
 from core.texto import slugificar
-from integrations.base import AnimeEmAlta, LancamentoDeAnime, MetadadosDeAnime
+from integrations.base import AnimeEmAlta, LancamentoDeAnime, MetadadosDeAnime, PaginaDeAnimes
 from models.anime import Anime
 from models.fonte_anime import FonteAnime
 
@@ -570,6 +570,113 @@ async def test_fileiras_tematicas_cruza_com_catalogo_local_no_schema_de_resposta
     assert fileira["itens"][0]["generos"] == ["Action", "Fantasy"]
     assert fileira["itens"][1]["anime_id"] is None
     assert fileira["itens"][1]["titulo_romaji"] == "Ainda Nao Catalogado"
+
+
+# --- GET /api/animes/descobrir ---
+
+
+async def test_descobrir_propaga_502_se_todos_provedores_falham(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    async def _fake(genero, pagina):
+        raise FalhaDeMetadados("todos os provedores de metadados falharam")
+
+    monkeypatch.setattr("integrations.servico.listar_descoberta", _fake)
+
+    resposta = await cliente.get("/api/animes/descobrir")
+
+    assert resposta.status_code == 502
+
+
+async def test_descobrir_recusa_genero_fora_da_lista_com_422(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    async def _fake(genero, pagina):
+        raise AssertionError("não deveria consultar o provedor")
+
+    monkeypatch.setattr("integrations.servico.listar_descoberta", _fake)
+
+    for invalido in ("Hentai", "texto livre"):
+        resposta = await cliente.get("/api/animes/descobrir", params={"genero": invalido})
+        assert resposta.status_code == 422
+
+
+async def test_descobrir_recusa_pagina_invalida_com_422(cliente: AsyncClient):
+    for invalida in (0, -1, 51):
+        resposta = await cliente.get("/api/animes/descobrir", params={"pagina": invalida})
+        assert resposta.status_code == 422
+
+
+async def test_descobrir_cruza_com_catalogo_e_repassa_genero_pagina_e_tem_mais(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, monkeypatch: pytest.MonkeyPatch
+):
+    """A rota `/descobrir` vem antes de `/{anime_id}` (não é lida como id), repassa
+    `genero`/`pagina` ao serviço e devolve `{itens, tem_mais}` com o `anime_id`
+    local nos itens já catalogados."""
+    anime_id = await _criar_anime(sessionmaker_api, "Tokyo Ghoul", "tokyo-ghoul", anilist_id=7)
+    catalogado = AnimeEmAlta(
+        titulo_romaji="Tokyo Ghoul",
+        titulo_ingles=None,
+        capa_url="https://img/7.jpg",
+        banner_url=None,
+        anilist_id=7,
+        generos=("Horror",),
+    )
+    novo = AnimeEmAlta(
+        titulo_romaji="Outro", titulo_ingles=None, capa_url=None, banner_url=None, anilist_id=8
+    )
+    pedidos = []
+
+    async def _fake(genero, pagina):
+        pedidos.append((genero, pagina))
+        return PaginaDeAnimes(itens=[catalogado, novo], tem_mais=True)
+
+    monkeypatch.setattr("integrations.servico.listar_descoberta", _fake)
+
+    resposta = await cliente.get("/api/animes/descobrir", params={"genero": "Horror", "pagina": 2})
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert pedidos == [("Horror", 2)]
+    assert corpo["tem_mais"] is True
+    assert [item["anime_id"] for item in corpo["itens"]] == [anime_id, None]
+    assert corpo["itens"][0]["generos"] == ["Horror"]
+
+
+async def test_descobrir_na_ultima_pagina_permitida_informa_que_nao_ha_mais(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """A AniList ainda tem páginas, mas a rota para na 50ª: `tem_mais` falso evita
+    a grade pedir a 51ª e receber 422."""
+
+    async def _fake(genero, pagina):
+        return PaginaDeAnimes(itens=[], tem_mais=True)
+
+    monkeypatch.setattr("integrations.servico.listar_descoberta", _fake)
+
+    antepenultima = await cliente.get("/api/animes/descobrir", params={"pagina": 49})
+    ultima = await cliente.get("/api/animes/descobrir", params={"pagina": 50})
+
+    assert antepenultima.json()["tem_mais"] is True
+    assert ultima.json()["tem_mais"] is False
+
+
+async def test_descobrir_sem_parametros_pede_pagina_1_sem_genero(
+    cliente: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    pedidos = []
+
+    async def _fake(genero, pagina):
+        pedidos.append((genero, pagina))
+        return PaginaDeAnimes(itens=[], tem_mais=False)
+
+    monkeypatch.setattr("integrations.servico.listar_descoberta", _fake)
+
+    resposta = await cliente.get("/api/animes/descobrir")
+
+    assert resposta.status_code == 200
+    assert resposta.json() == {"itens": [], "tem_mais": False}
+    assert pedidos == [(None, 1)]
 
 
 # --- POST /api/admin/animes: enriquecimento best-effort ---
