@@ -540,3 +540,28 @@ dialog.sinopse-ilha::backdrop {
     animation: none;
   }
 }
+
+/* Troca em crossfade (inicio/TrocaComCrossfade.jsx): a camada nova entra enquanto a
+   anterior sai, sem passar pelo preto. Duração = DURACAO_DO_CROSSFADE_MS. */
+.crossfade-entra {
+  animation: crossfade-entra 0.5s ease-in-out;
+}
+.crossfade-sai {
+  animation: crossfade-sai 0.5s ease-in-out forwards;
+}
+@keyframes crossfade-entra {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes crossfade-sai {
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crossfade-entra,
+  .crossfade-sai {
+    animation: none;
+  }
+}

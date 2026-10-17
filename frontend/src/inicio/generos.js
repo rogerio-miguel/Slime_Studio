@@ -22,6 +22,12 @@ export const GENEROS_PT = {
   Thriller: 'Suspense',
 };
 
+// Gêneros da página Descobrir, na ordem dos chips: os do mapa acima, menos
+// "Hentai" (conteúdo adulto nunca entra). Espelha
+// `backend/integrations/registro.py::GENEROS_DE_DESCOBERTA`, que é quem recusa
+// qualquer outro valor em `GET /api/animes/descobrir`.
+export const GENEROS_DE_DESCOBERTA = Object.keys(GENEROS_PT).filter((g) => g !== 'Hentai');
+
 export function traduzirGenero(g) {
   return GENEROS_PT[g] ?? g;
 }

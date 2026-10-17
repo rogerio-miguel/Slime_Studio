@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
 import {
-  buscarAnimes,
-  criarAnime,
+  criarAnimeDoFeed,
   criarJobSite,
-  listarAnimes,
   listarAnimesEmAlta,
   listarContinuarAssistindo,
   listarNovosLancamentos,
@@ -14,10 +12,11 @@ import {
   removerAnime,
 } from '../api/recursos.js';
 import { useRecurso } from '../api/useRecurso.js';
-import AnimeCard from '../components/AnimeCard.jsx';
 import BarraDeNavegacao from '../components/BarraDeNavegacao.jsx';
 import CartaoContinuarAssistindo from '../components/CartaoContinuarAssistindo.jsx';
 import { useAtualizacaoPeriodica } from '../hooks/useAtualizacaoPeriodica.js';
+import { useBuscaDeAnimes } from '../hooks/useBuscaDeAnimes.js';
+import { useMaterializarAnime } from '../hooks/useMaterializarAnime.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 // DestaquePrincipal desativado temporariamente (pivot de produto, Fase 4) —
 // o arquivo continua em inicio/DestaquePrincipal.jsx, não é código morto,
@@ -25,13 +24,17 @@ import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import CarrosselDestaques from '../inicio/CarrosselDestaques.jsx';
 import CartaoDeEstreia from '../inicio/CartaoDeEstreia.jsx';
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
-import { agruparPorDiaDeEstreia, ordenarPorEstreia, topDaTemporada } from '../inicio/fileiras.js';
-import GradeDeCatalogo from '../inicio/GradeDeCatalogo.jsx';
+import {
+  agruparPorDiaDeEstreia,
+  chaveDoItemDoFeed,
+  ordenarPorEstreia,
+  topDaTemporada,
+} from '../inicio/fileiras.js';
 import ListaDeLancamentos from '../inicio/ListaDeLancamentos.jsx';
+import ResultadosDaBusca from '../inicio/ResultadosDaBusca.jsx';
 import CoverflowDeEmAlta from '../inicio/CoverflowDeEmAlta.jsx';
 import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
 import SlotDoDiaDeEstreia from '../inicio/SlotDoDiaDeEstreia.jsx';
-import { PADDING_TITULO_GRADE } from '../inicio/tamanhoDeCard.js';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 import EstadoComMascote from '../components/mascote/EstadoComMascote.jsx';
 import BotaoDeEstado from '../components/mascote/BotaoDeEstado.jsx';
@@ -70,19 +73,9 @@ const INTERVALO_NOVOS_LANCAMENTOS_MS = 2 * 60 * 1000;
 // linkada na navbar). `DestaquePrincipal` também não está nesta ordem (pivot
 // de produto anterior) — ver import comentado abaixo.
 //
-// Busca ao vivo (navbar, controlada aqui): digitar substitui inteiramente
-// "Destaques da temporada" por (1) uma grade sobre o catálogo LOCAL
-// (`listarAnimes`, filtro em memória a cada tecla) e (2) "Adicionar ao
-// catálogo" — busca na AniList (`buscarAnimes`, só no Enter). Item ainda
-// não catalogado materializa ao clicar (`materializarEIrPara`, mesmo fluxo
-// dos cards do feed); item já catalogado (`item.anime_id` presente) passa
-// pro `AnimeCard` como `anime.anime_id` — o próprio card já sabe virar
-// `<Link>` direto pra ele nesse caso (ver topo de `components/AnimeCard.jsx`)
-// em vez de materializar de novo, com a pill "Já no catálogo"
-// (`indicarCatalogado`, pedido explícito do usuário, mesmo padrão do
-// "Relacionados" de `paginas/PaginaDoAnime.jsx`). Sem `aoRemover` nos
-// resultados, de propósito: a gestão do catálogo (remover) fica centralizada
-// em `Galeria.jsx`/`PaginaDoAnime.jsx`, esta página não duplica isso.
+// Busca da navbar: digitar substitui inteiramente "Destaques da temporada" pelos
+// resultados (inicio/ResultadosDaBusca.jsx, o mesmo da Descobrir; estado em
+// hooks/useBuscaDeAnimes.js, materialização em hooks/useMaterializarAnime.js).
 //
 // Fronteira Clean Architecture (D5 do plano): esta página e tudo em
 // src/inicio/ só importam de src/api/, components/, hooks/ e
@@ -109,9 +102,6 @@ const INTERVALO_NOVOS_LANCAMENTOS_MS = 2 * 60 * 1000;
 const _INTERVALO_POLL_STILL_MS = 4000;
 const _MAX_TENTATIVAS_POLL_STILL = 16;
 export default function Inicio({ jobsPorEpisodio, snapshotId }) {
-  const navigate = useNavigate();
-  const idResultadosBiblioteca = useId();
-  const idResultadosCatalogo = useId();
   const {
     statusCapturaIlha,
     aoClicarStatusCapturaIlha,
@@ -129,10 +119,6 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   const novosLancamentos = useRecurso(listarNovosLancamentos, []);
   // Episódio sai a qualquer hora: sem isto a fileira só mudaria com reload.
   useAtualizacaoPeriodica(novosLancamentos.recarregar, INTERVALO_NOVOS_LANCAMENTOS_MS);
-  // Chave 'animes' (invalidacao.js): recarrega sozinho quando `criarAnime`/
-  // `removerAnime` resolve em qualquer lugar do app (ex. materializar um
-  // item do feed abaixo), sem precisar de um `recarregar()` manual aqui.
-  const catalogo = useRecurso(listarAnimes, [], 'animes');
   // Prateleira "Continuar assistindo" — independente do feed `em-alta`
   // (posição em episódio já capturado, ou próximo passo dele — extensão do
   // catálogo/página do anime, 2026-09-18: um item por ANIME, cobrindo
@@ -313,8 +299,13 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
     [animeMarcandoAssistido, continuando]
   );
 
-  const [chaveEmMaterializacao, setChaveEmMaterializacao] = useState(null);
-  const [erroMaterializacao, setErroMaterializacao] = useState(null);
+  const materializacao = useMaterializarAnime();
+  const {
+    materializarEIrPara,
+    chaveEmMaterializacao,
+    erro: erroMaterializacao,
+    definirErro: setErroMaterializacao,
+  } = materializacao;
 
   // Sinopse completa aberta pelo carrossel (inicio/CarrosselDestaques.jsx): vive
   // aqui, e não nele, porque o painel é da ilha da navbar (BarraDeNavegacao.jsx),
@@ -326,93 +317,8 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
     if (sinopseNaIlha?.porPonteiro) document.activeElement?.blur();
     setSinopseNaIlha(null);
   }, [sinopseNaIlha]);
-  const [termoBusca, setTermoBusca] = useState('');
-  const termoBuscaNormalizado = termoBusca.trim().toLowerCase();
-  const buscando = termoBuscaNormalizado !== '';
-
-  // Mesmo padrão de filtro em memória de `Galeria.jsx` — sem endpoint de
-  // busca no backend, a lista local já carregada é pequena o bastante (uso
-  // pessoal) pra não justificar um novo endpoint.
-  const animesFiltrados = useMemo(
-    () => (catalogo.dados ?? []).filter((anime) => anime.titulo.toLowerCase().includes(termoBuscaNormalizado)),
-    [catalogo.dados, termoBuscaNormalizado]
-  );
-  const mostrarCatalogoLocal = catalogo.carregando || Boolean(catalogo.erro) || animesFiltrados.length > 0;
-
-  // Busca na biblioteca (AniList): ao contrário do filtro local acima (ao
-  // vivo, a cada tecla), só dispara no submit (Enter na navbar) — evita
-  // martelar a AniList a cada tecla. Limpa junto com o campo pra não deixar
-  // resultado de busca antiga visível depois que o usuário apaga tudo.
-  const [termoBuscaSubmetido, setTermoBuscaSubmetido] = useState('');
-  useEffect(() => {
-    if (termoBuscaNormalizado === '') setTermoBuscaSubmetido('');
-  }, [termoBuscaNormalizado]);
-
-  const submeterBusca = useCallback(() => {
-    setTermoBuscaSubmetido(termoBusca.trim());
-  }, [termoBusca]);
-
-  const buscaBiblioteca = useRecurso(
-    () => (termoBuscaSubmetido ? buscarAnimes(termoBuscaSubmetido) : Promise.resolve([])),
-    [termoBuscaSubmetido]
-  );
-  const resultadosBiblioteca = buscaBiblioteca.dados ?? [];
-
-  // Guarda contra o campo ter sido editado depois do último Enter: enquanto
-  // `termoBusca` diverge de `termoBuscaSubmetido`, os cards de
-  // `buscaBiblioteca.dados` são de uma busca antiga e não devem ser
-  // renderizados (risco de materializar o anime errado) — a seção mostra um
-  // aviso de "desatualizado" no lugar até o usuário apertar Enter de novo.
-  const resultadosDesatualizados =
-    termoBuscaSubmetido !== '' && termoBusca.trim() !== termoBuscaSubmetido;
-  const buscaBibliotecaAtiva = termoBuscaSubmetido !== '' && !resultadosDesatualizados;
-
-  // Guard de concorrência + estado de erro + navegação pro anime criado,
-  // compartilhado pelos cards do feed e pelos resultados da biblioteca.
-  const materializar = useCallback(
-    async (chave, criar) => {
-      if (chaveEmMaterializacao != null) return;
-      setChaveEmMaterializacao(chave);
-      setErroMaterializacao(null);
-      try {
-        const criado = await criar();
-        navigate(`/anime/${criado.id}`);
-      } catch (erroCapturado) {
-        console.error('falha ao adicionar anime ao catálogo', erroCapturado);
-        setErroMaterializacao('Não foi possível adicionar este anime ao catálogo — tente novamente.');
-      } finally {
-        setChaveEmMaterializacao(null);
-      }
-    },
-    [chaveEmMaterializacao, navigate]
-  );
-
-  // Ação dos cards do feed ("Destaques da temporada") E dos resultados da
-  // busca na biblioteca: materializa o item AniList no catálogo local
-  // (`POST /api/admin/animes`, get-or-create por slug no servidor — reenvio
-  // acidental não duplica; um resultado de busca já catalogado só navega) e vai
-  // pro anime. Banner, cor dominante, título em inglês e — para itens do feed
-  // "em alta" — a sinopse vão no payload pra alimentar o hero de
-  // `PaginaDoAnime` já no primeiro render. O que faltar (ex. sinopse num
-  // resultado de busca, que não a traz) é preenchido no primeiro carregamento
-  // da página (`agendar_enriquecimento_de_metadados`).
-  const materializarEIrPara = useCallback(
-    (item) =>
-      materializar(item.anilist_id ?? item.titulo_romaji, () =>
-        criarAnime({
-          titulo: item.titulo_romaji,
-          tituloIngles: item.titulo_ingles ?? undefined,
-          anilistId: item.anilist_id ?? undefined,
-          capaUrl: item.capa_url ?? item.banner_url ?? undefined,
-          bannerUrl: item.banner_url ?? undefined,
-          capaCor: item.capa_cor ?? undefined,
-          generos: item.generos ?? undefined,
-          sinopse: item.sinopse ?? undefined,
-          formato: item.formato ?? undefined,
-        })
-      ),
-    [materializar]
-  );
+  const busca = useBuscaDeAnimes();
+  const { termoBusca, setTermoBusca, buscando, submeterBusca } = busca;
 
   // "Próximas estreias": os cards NÃO navegam. O anime da próxima temporada
   // ainda não existe em nenhuma fonte extratora — abrir `/anime/:id` levaria a
@@ -439,10 +345,6 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
   const [estreiasRemovidas, setEstreiasRemovidas] = useState(() => new Set());
   const [chaveSalvandoEstreia, setChaveSalvandoEstreia] = useState(null);
 
-  // Mesma chave usada por TODOS os feeds AniList não catalogados desta página
-  // ("Próximas estreias", "Top 10", "Acabou de sair") — declarada aqui porque o
-  // bloco de "Próximas estreias" precisa dela primeiro.
-  const chaveDoItemDoFeed = (item) => item.anilist_id ?? item.titulo_romaji;
   const estreiaEstaSalva = (item) => {
     const chave = chaveDoItemDoFeed(item);
     return (item.anime_id != null || estreiasSalvas.has(chave)) && !estreiasRemovidas.has(chave);
@@ -471,16 +373,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
             return novo;
           });
         } else {
-          const criado = await criarAnime({
-            titulo: item.titulo_romaji,
-            tituloIngles: item.titulo_ingles ?? undefined,
-            anilistId: item.anilist_id ?? undefined,
-            capaUrl: item.capa_url ?? item.banner_url ?? undefined,
-            bannerUrl: item.banner_url ?? undefined,
-            capaCor: item.capa_cor ?? undefined,
-            generos: item.generos ?? undefined,
-            sinopse: item.sinopse ?? undefined,
-          });
+          const criado = await criarAnimeDoFeed(item);
           setEstreiasSalvas((atual) => new Set(atual).add(chave));
           setEstreiasSalvasIds((atual) => new Map(atual).set(chave, criado.id));
           setEstreiasRemovidas((atual) => {
@@ -504,7 +397,13 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
         setChaveSalvandoEstreia(null);
       }
     },
-    [chaveSalvandoEstreia, estreiasSalvas, estreiasSalvasIds, estreiasRemovidas]
+    [
+      chaveSalvandoEstreia,
+      estreiasSalvas,
+      estreiasSalvasIds,
+      estreiasRemovidas,
+      setErroMaterializacao,
+    ]
   );
 
   // Navegação por seção na ilha dinâmica — dropdown reaproveitado do filtro
@@ -779,118 +678,7 @@ export default function Inicio({ jobsPorEpisodio, snapshotId }) {
           // card via `paddingInline: PADDING_TITULO_GRADE` (só o gutter — o
           // slot da grade não tem padding próprio), mesmo tratamento de
           // paginas/Galeria.jsx.
-          <section aria-label="Resultados da busca" className="pb-20">
-            {/* Catálogo local só aparece quando tem algo a dizer (carregando,
-                erro ou acertos). Sem acerto não há mensagem de vazio: a seção
-                "Adicionar ao catálogo" logo abaixo já responde à busca, e dois
-                "nenhum anime" empilhados só confundiam. */}
-            {mostrarCatalogoLocal && (
-              <section aria-labelledby={idResultadosCatalogo}>
-                <h2
-                  id={idResultadosCatalogo}
-                  style={{ paddingInline: PADDING_TITULO_GRADE }}
-                  className="mt-20 text-2xl font-semibold text-white"
-                >
-                  No seu catálogo
-                </h2>
-                <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
-                  {catalogo.carregando && (
-                    <p className="mt-[22px] text-sm text-ink-muted">Carregando catálogo…</p>
-                  )}
-                  {catalogo.erro && (
-                    <EstadoComMascote alerta mensagem="Não foi possível carregar o catálogo.">
-                      <BotaoDeEstado onClick={catalogo.recarregar}>Tentar novamente</BotaoDeEstado>
-                    </EstadoComMascote>
-                  )}
-                </div>
-                {!catalogo.carregando && !catalogo.erro && animesFiltrados.length > 0 && (
-                  <GradeDeCatalogo
-                    itens={animesFiltrados}
-                    tamanho="pequeno"
-                    comSombra={false}
-                    comAnimacao={false}
-                    chaveDoItem={(anime) => anime.id}
-                    renderItem={(anime) => <AnimeCard anime={anime} />}
-                  />
-                )}
-              </section>
-            )}
-
-            <section aria-labelledby={idResultadosBiblioteca}>
-              <h2
-                id={idResultadosBiblioteca}
-                style={{ paddingInline: PADDING_TITULO_GRADE }}
-                className={`${mostrarCatalogoLocal ? 'mt-12' : 'mt-20'} text-2xl font-semibold text-white`}
-              >
-                Adicionar ao catálogo
-              </h2>
-              {/* Textos de estado — wrapper só repõe o `paddingInline`; a grade
-                  de resultados fica FORA dele (o `paddingInline` dobraria o
-                  gutter dos cards). */}
-              <div style={{ paddingInline: PADDING_TITULO_GRADE }}>
-                {erroMaterializacao && (
-                  <div role="alert" className="mt-[22px]">
-                    <p className="text-sm text-red-400">{erroMaterializacao}</p>
-                  </div>
-                )}
-                {termoBuscaSubmetido === '' && (
-                  <p className="mt-[22px] text-sm text-ink-muted">
-                    Aperte Enter para buscar novos animes e adicionar ao catálogo.
-                  </p>
-                )}
-                {termoBuscaSubmetido !== '' && resultadosDesatualizados && (
-                  <p className="mt-[22px] text-sm text-ink-muted">
-                    Aperte Enter para atualizar os resultados.
-                  </p>
-                )}
-                {buscaBibliotecaAtiva && buscaBiblioteca.carregando && (
-                  <p className="mt-[22px] text-sm text-ink-muted">Buscando animes…</p>
-                )}
-                {buscaBibliotecaAtiva && buscaBiblioteca.erro && (
-                  <EstadoComMascote alerta compacto mensagem="Não foi possível buscar animes.">
-                    <BotaoDeEstado onClick={buscaBiblioteca.recarregar}>
-                      Tentar novamente
-                    </BotaoDeEstado>
-                  </EstadoComMascote>
-                )}
-                {buscaBibliotecaAtiva &&
-                  !buscaBiblioteca.carregando &&
-                  !buscaBiblioteca.erro &&
-                  resultadosBiblioteca.length === 0 && (
-                    <EstadoComMascote
-                      mensagem={`Nenhum anime novo encontrado para “${termoBuscaSubmetido}”.`}
-                    />
-                  )}
-              </div>
-              {buscaBibliotecaAtiva &&
-                !buscaBiblioteca.carregando &&
-                !buscaBiblioteca.erro &&
-                resultadosBiblioteca.length > 0 && (
-                  <GradeDeCatalogo
-                    itens={resultadosBiblioteca}
-                    tamanho="pequeno"
-                    comSombra={false}
-                    comAnimacao={false}
-                    chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
-                    renderItem={(item) => {
-                      const chave = item.anilist_id ?? item.titulo_romaji;
-                      return (
-                        <AnimeCard
-                          anime={{
-                            titulo: item.titulo_romaji,
-                            capa_url: item.capa_url,
-                            anime_id: item.anime_id,
-                          }}
-                          aoAtivar={() => materializarEIrPara(item)}
-                          desabilitado={chaveEmMaterializacao === chave}
-                          indicarCatalogado
-                        />
-                      );
-                    }}
-                  />
-                )}
-            </section>
-          </section>
+          <ResultadosDaBusca busca={busca} materializacao={materializacao} />
         ) : (
           <>
             {emAlta.carregando && (

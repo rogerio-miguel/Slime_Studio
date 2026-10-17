@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ErroDeApi } from '../api/cliente.js';
 import {
   confirmarFonte,
-  criarAnime,
   criarJobSite,
   listarEpisodios,
   listarEpisodiosRemotos,
@@ -24,6 +23,7 @@ import MenuDeAcoesDoAnime from '../components/MenuDeAcoesDoAnime.jsx';
 import SeletorDeTemporada from '../components/SeletorDeTemporada.jsx';
 import { nomeDaFonte } from '../fontes.js';
 import { useFocoAoMontar } from '../hooks/useFocoAoMontar.js';
+import { useMaterializarAnime } from '../hooks/useMaterializarAnime.js';
 import { useSeletorDeBanner } from '../hooks/useSeletorDeBanner.js';
 import { useStatusDeCapturaIlha } from '../hooks/useStatusDeCapturaIlha.js';
 import BlocoConteudoHero from '../inicio/BlocoConteudoHero.jsx';
@@ -34,6 +34,7 @@ import {
   textoProximoEpisodio,
 } from '../inicio/CarrosselDestaques.jsx';
 import FileiraDeCards from '../inicio/FileiraDeCards.jsx';
+import { chaveDoItemDoFeed } from '../inicio/fileiras.js';
 import { textoDeProximaTemporada, tituloBaseDeTemporada } from '../inicio/franquia.js';
 import { traduzirGenero } from '../inicio/generos.js';
 import SecaoDaHome from '../inicio/SecaoDaHome.jsx';
@@ -181,43 +182,14 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
   // suplementar best-effort, mesmo espírito do backend).
   const relacionados = useRecurso(() => listarRelacionados(animeId), [animeId]);
 
-  // Ativação de um card de "Relacionados" ainda não catalogado: materializa
-  // no catálogo local (`POST /api/admin/animes`, get-or-create por slug) e
-  // navega pro anime criado — mesmo payload/fluxo de
-  // `paginas/Inicio.jsx::materializarEIrPara`, duplicado aqui de propósito
-  // (a versão de lá fecha sobre estado só da Home — `chaveEmMaterializacao`,
-  // `navigate` da Home — reusar exigiria içar tudo pra um hook compartilhado
-  // por uma única chamada). Item já catalogado (`anime.anime_id` presente)
-  // nem chama isto — `AnimeCard` renderiza `<Link>` direto nesse caso.
-  const [relacionadoEmVoo, setRelacionadoEmVoo] = useState(null);
-  const [erroRelacionado, setErroRelacionado] = useState(null);
-  const materializarRelacionado = useCallback(
-    async (item) => {
-      if (relacionadoEmVoo != null) return;
-      setRelacionadoEmVoo(item.anilist_id);
-      setErroRelacionado(null);
-      try {
-        const criado = await criarAnime({
-          titulo: item.titulo_romaji,
-          tituloIngles: item.titulo_ingles ?? undefined,
-          anilistId: item.anilist_id ?? undefined,
-          capaUrl: item.capa_url ?? item.banner_url ?? undefined,
-          bannerUrl: item.banner_url ?? undefined,
-          capaCor: item.capa_cor ?? undefined,
-          generos: item.generos ?? undefined,
-          sinopse: item.sinopse ?? undefined,
-          formato: item.formato ?? undefined,
-        });
-        navigate(`/anime/${criado.id}`);
-      } catch (erroCapturado) {
-        console.error('falha ao adicionar anime relacionado ao catálogo', erroCapturado);
-        setErroRelacionado('Não foi possível adicionar este anime ao catálogo — tente novamente.');
-      } finally {
-        setRelacionadoEmVoo(null);
-      }
-    },
-    [relacionadoEmVoo, navigate]
-  );
+  // Ativação de um card de "Relacionados" ainda não catalogado: materializa e
+  // navega (hooks/useMaterializarAnime.js). Item já catalogado (`anime.anime_id`
+  // presente) nem chama isto — `AnimeCard` renderiza `<Link>` direto nesse caso.
+  const {
+    materializarEIrPara: materializarRelacionado,
+    chaveEmMaterializacao: relacionadoEmVoo,
+    erro: erroRelacionado,
+  } = useMaterializarAnime();
 
   // Guard anti-loop do efeito abaixo: cada par `episodio.id:job.id` cujo job
   // já chegou a `pronto` sem o REST ainda refletir dispara UM `recarregar()`,
@@ -1351,12 +1323,12 @@ export default function PaginaDoAnime({ jobsPorEpisodio, snapshotId }) {
                 itens={relacionados.dados}
                 tamanho="pequeno"
                 comSombra={false}
-                chaveDoItem={(item) => item.anilist_id ?? item.titulo_romaji}
+                chaveDoItem={chaveDoItemDoFeed}
                 renderItem={(item) => (
                   <AnimeCard
                     anime={item}
                     aoAtivar={() => materializarRelacionado(item)}
-                    desabilitado={relacionadoEmVoo != null && relacionadoEmVoo === item.anilist_id}
+                    desabilitado={relacionadoEmVoo === chaveDoItemDoFeed(item)}
                     indicarCatalogado
                   />
                 )}

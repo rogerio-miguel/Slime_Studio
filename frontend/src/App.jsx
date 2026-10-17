@@ -5,6 +5,7 @@ import { useEventosDeJobs } from './eventos/useEventosDeJobs.js';
 import BarraDeRolagem from './components/BarraDeRolagem.jsx';
 import Player from './player/Player.jsx';
 import Inicio from './paginas/Inicio.jsx';
+import Descobrir from './paginas/Descobrir.jsx';
 import Galeria from './paginas/Galeria.jsx';
 import PaginaDoAnime from './paginas/PaginaDoAnime.jsx';
 import PaginaDoPlayer from './paginas/PaginaDoPlayer.jsx';
@@ -25,13 +26,13 @@ export default function App() {
 // dinâmica da navbar). `components/Toasts.jsx` foi removido, 2026-09-27: os
 // toasts de conclusão/erro que vivam ali migraram pra dentro da própria
 // navbar (`hooks/useStatusDeCapturaIlha.js`, consumido por Inicio/Galeria/
-// PaginaDoAnime) — sem contrapartida nas rotas de player
+// Descobrir/PaginaDoAnime) — sem contrapartida nas rotas de player
 // (`/assistir/:episodioId`, `/assistir-local/:slug`), que não montam
 // `BarraDeNavegacao`: um erro de captura enquanto o usuário está assistindo
 // só aparece quando ele volta pra uma página com a ilha, lacuna aceita (a
 // mesma que já existia pro sinal "episódio pronto").
 function Shell() {
-  // `snapshotId` (hooks/useStatusDeCapturaIlha.js): só as 3 rotas que usam
+  // `snapshotId` (hooks/useStatusDeCapturaIlha.js): só as 4 rotas que usam
   // esse hook precisam dele — as outras (`Player`, `RotaDebugFonte`) nem o
   // recebem.
   const { jobsPorEpisodio, snapshotId } = useEventosDeJobs();
@@ -47,6 +48,10 @@ function Shell() {
         <Route
           path="/animes"
           element={<Galeria jobsPorEpisodio={jobsPorEpisodio} snapshotId={snapshotId} />}
+        />
+        <Route
+          path="/descobrir"
+          element={<Descobrir jobsPorEpisodio={jobsPorEpisodio} snapshotId={snapshotId} />}
         />
         <Route
           path="/anime/:id"

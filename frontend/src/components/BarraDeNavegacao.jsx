@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, LibraryBig, Tags } from 'lucide-react';
+import { Compass, Home, LibraryBig } from 'lucide-react';
 import { usePrefersReducedMotion } from '../inicio/usePrefersReducedMotion.js';
 import { useFilaDaIlha } from '../hooks/useFilaDaIlha.js';
 import { useLarguraMedida } from '../hooks/useLarguraMedida.js';
@@ -24,7 +24,8 @@ import SinopseNaIlha from './SinopseNaIlha.jsx';
 //
 // `transparente` (Início, Galeria, Página do Anime): sem fundo no topo, para o
 // conteúdo full-bleed aparecer atrás; ao rolar ganha fundo escuro.
-// Gêneros: desabilitado, mas visível (não existe gênero no modelo da navbar).
+// Descobrir (`/descobrir`): link simples nas outras páginas; na própria Descobrir é a
+// cápsula, com o filtro de gênero (`opcoesFiltro`), como o Início na Home.
 // Logo: decorativa; "Início" na lista é quem leva a `/`.
 //
 // Busca: `termoBusca`/`aoMudarBusca` controlados pelo pai; sem `aoMudarBusca` o
@@ -40,7 +41,8 @@ import SinopseNaIlha from './SinopseNaIlha.jsx';
 //
 // Seções (`opcoesSecoes`/`secaoSelecionada`/`aoMudarSecao`) — Início, scroll-spy.
 // Mesmo contrato do filtro, mas SEPARADO porque muda qual link vira a cápsula
-// (`capsulaNoInicio`): na Início é o "Início", nas demais é o "Meu Catálogo".
+// (`capsulaNoInicio`): na Início é o "Início", na Descobrir é o "Descobrir" e nas demais é o
+// "Meu Catálogo".
 //
 // Modos, que seguram a ilha aberta e tomam o lugar do seletor:
 //   `gerenciar` — Galeria: seleção em lote para remover, ligada pelo "Remover"
@@ -61,7 +63,7 @@ import SinopseNaIlha from './SinopseNaIlha.jsx';
 //
 // Painel de filtros (`painelDeFiltros`) — Galeria: o gatilho "Filtros" ocupa o
 // lugar do dropdown e a cápsula cresce para baixo e vira o painel, como na sinopse
-// (mesma mecânica, ilha/RegiaoDoPainelDeFiltros.jsx). Início e Gêneros somem
+// (mesma mecânica, ilha/RegiaoDoPainelDeFiltros.jsx). Início e Descobrir somem
 // enquanto está aberto e clicar fora só fecha (a cortina engole o clique).
 // Contrato: ver ilha/RegiaoDoPainelDeFiltros.jsx (`aberto`, `aoAbrir` e `aoFechar`
 // — que só dispara depois da animação de volta — e `resumo`, o texto do gatilho,
@@ -113,6 +115,7 @@ export default function BarraDeNavegacao({
   const movimentoReduzido = usePrefersReducedMotion();
   const emInicio = pathname === '/';
   const emAnimes = pathname.startsWith('/animes');
+  const emDescobrir = pathname === '/descobrir';
   const { navRef, logoColapsada, ilhaAtiva } = useScrollDaNavbar(transparente);
 
   // Abaixo de `sm` o <ul> some e vale o <dialog> da sinopse; o painel de filtros
@@ -146,6 +149,7 @@ export default function BarraDeNavegacao({
   // A cápsula (fundo, padding, seletor) envolve "Início" quando a página navega
   // por seção, e "Meu Catálogo" nas demais. O outro link renderiza puro.
   const capsulaNoInicio = temSecoesNaIlha;
+  const capsulaNoDescobrir = emDescobrir && !temSecoesNaIlha;
   const opcoesDoSeletor = temSecoesNaIlha ? opcoesSecoes : opcoesFiltro;
   const valorDoSeletor = temSecoesNaIlha ? secaoSelecionada : filtroSelecionado;
   const aoMudarDoSeletor = temSecoesNaIlha ? aoMudarSecao : aoMudarFiltro;
@@ -207,7 +211,10 @@ export default function BarraDeNavegacao({
   const mensagemExibida = temSinopse ? { texto: 'Sinopse' } : mensagemIlha;
   const ilhaPedida = ilhaPedidaPorMenu || Boolean(mensagemExibida);
 
-  const exigeTrocaAntes = emInicio && !logoColapsada;
+  // Início e Descobrir hospedam a cápsula num link que, ao rolar, assume o slot do
+  // meio (onde ela abre) — ver `linksTrocados`.
+  const comTrocaDeLinks = emInicio || emDescobrir;
+  const exigeTrocaAntes = comTrocaDeLinks && !logoColapsada;
   const { simulandoScroll, liberada } = useTrocaAntesDaIlha(exigeTrocaAntes, ilhaPedida);
   const capsulaExpandidaIlha = ilhaPedida && (!exigeTrocaAntes || liberada);
   const estilos = estilosDaIlha(capsulaExpandidaIlha);
@@ -298,18 +305,25 @@ export default function BarraDeNavegacao({
     if (!emInicio) return;
     rolarAoTopo();
   };
-  // Início e Meu Catálogo trocam de POSIÇÃO ao rolar na Início (o Início assume
-  // o slot do meio, onde a cápsula abre). Troca por ORDEM DE RENDER (não CSS
-  // `order`) para a ordem de tab seguir a visual. Também troca com a ilha pedida
-  // sem scroll (sinopse, captura...), simulando o scroll só nos links.
-  const linksTrocados = emInicio && (logoColapsada || simulandoScroll);
+  // Mesma coisa na Descobrir: o link da própria página rola ao topo.
+  const aoClicarLinkDescobrir = () => {
+    if (!emDescobrir) return;
+    rolarAoTopo();
+  };
+  // O link da cápsula troca de POSIÇÃO ao rolar na Início (o Início assume o slot
+  // do meio, onde a cápsula abre) e na Descobrir (o Descobrir toma o lugar do
+  // Meu Catálogo). Troca por ORDEM DE RENDER (não CSS `order`) para a ordem de tab
+  // seguir a visual. Também troca com a ilha pedida sem scroll (sinopse,
+  // captura...), simulando o scroll só nos links.
+  const linksTrocados = comTrocaDeLinks && (logoColapsada || simulandoScroll);
 
   // Dropdown do filtro/seções — ou, na Galeria, o gatilho do painel de filtros.
+  const rotuloDoPainelAberto = painelDeFiltros?.rotuloAberto ?? ROTULO_DO_PAINEL_ABERTO;
   const gatilhoDoPainel = painelDeFiltros && {
-    rotulo: painelDeFiltrosEmUso ? ROTULO_DO_PAINEL_ABERTO : painelDeFiltros.resumo,
+    rotulo: painelDeFiltrosEmUso ? rotuloDoPainelAberto : painelDeFiltros.resumo,
     aberto: painelDeFiltrosEmUso,
     aoClicar: temPainelDeFiltros ? painel.fechar : painelDeFiltros.aoAbrir,
-    rotuloAberto: ROTULO_DO_PAINEL_ABERTO,
+    rotuloAberto: rotuloDoPainelAberto,
     rotuloRepouso: painelDeFiltros.resumo,
     aoMedirRotulos: setRotulosDoGatilho,
   };
@@ -398,10 +412,12 @@ export default function BarraDeNavegacao({
                 ...painelDeFiltros,
                 // O painel cobre os cards: pra selecionar o que remover ele tem
                 // que sair da frente.
-                aoRemover: () => {
-                  removerAoFecharRef.current = true;
-                  painel.fechar();
-                },
+                aoRemover: painelDeFiltros.aoRemover
+                  ? () => {
+                      removerAoFecharRef.current = true;
+                      painel.fechar();
+                    }
+                  : undefined,
               }}
               filtro={{ opcoes: opcoesFiltro, valor: filtroSelecionado, aoMudar: aoMudarFiltro }}
             />
@@ -449,9 +465,38 @@ export default function BarraDeNavegacao({
     onClick: aoClicarLinkDaCapsula,
   };
   const linkInicio = capsulaNoInicio ? renderLinkComCapsula(dadosInicio) : renderLinkPuro(dadosInicio);
-  const linkCatalogo = capsulaNoInicio
-    ? renderLinkPuro({ ...dadosCatalogo, onClick: undefined })
-    : renderLinkComCapsula(dadosCatalogo);
+  // Na Descobrir a troca de slots (Descobrir ↔ Meu Catálogo) reordena o array, e o
+  // React reposiciona no DOM o nó cuja posição antiga é MENOR que a do já colocado —
+  // na volta, o `Descobrir` (a cápsula). Reinserir um nó cancela as transições CSS
+  // dele: o fechamento da cápsula era cortado e ela saltava ao fim, o que na Início
+  // não acontece (lá quem se move é o Meu Catálogo). A `key` do Meu Catálogo muda a
+  // cada troca: ele é recriado (é só um link) e a cápsula fica no lugar.
+  const chaveDoCatalogo = capsulaNoDescobrir
+    ? `${dadosCatalogo.chave}-${linksTrocados ? 'ao-fim' : 'no-meio'}`
+    : dadosCatalogo.chave;
+  const linkCatalogo =
+    capsulaNoInicio || capsulaNoDescobrir
+      ? renderLinkPuro({ ...dadosCatalogo, chave: chaveDoCatalogo, onClick: undefined })
+      : renderLinkComCapsula(dadosCatalogo);
+  const dadosDescobrir = {
+    chave: 'descobrir',
+    to: '/descobrir',
+    ativo: emDescobrir,
+    Icone: Compass,
+    rotulo: 'Descobrir',
+    onClick: aoClicarLinkDescobrir,
+  };
+  const linkDescobrir = capsulaNoDescobrir
+    ? renderLinkComCapsula(dadosDescobrir)
+    : renderLinkPuro(dadosDescobrir);
+  // Ordem de render = ordem de tab. Na Descobrir, rolado, o Descobrir sobe pro slot
+  // do meio; na Início, rolada, é o Início que sobe pra lá.
+  const linksNaOrdem =
+    emDescobrir && linksTrocados
+      ? [linkInicio, linkDescobrir, linkCatalogo]
+      : linksTrocados
+        ? [linkCatalogo, linkInicio, linkDescobrir]
+        : [linkInicio, linkCatalogo, linkDescobrir];
 
   return (
     <>
@@ -480,21 +525,7 @@ export default function BarraDeNavegacao({
             painel.ancorada ? 'pointer-events-none z-10 [&>li]:opacity-0' : ''
           } [&>li]:transition-opacity`}
         >
-          {!linksTrocados && linkInicio}
-          {linkCatalogo}
-          {linksTrocados && linkInicio}
-          <li key="generos" inert={painel.ancorada || undefined}>
-            <button
-              type="button"
-              disabled
-              aria-disabled="true"
-              title="Em breve"
-              className="flex items-center gap-2 cursor-not-allowed opacity-50 font-bold"
-            >
-              <Tags aria-hidden="true" strokeWidth={2.5} className="h-5 w-5" />
-              Gêneros
-            </button>
-          </li>
+          {linksNaOrdem}
         </ul>
         {aoMudarBusca && (
           <CampoDeBusca termo={termoBusca} aoMudar={aoMudarBusca} aoSubmeter={aoSubmeterBusca} />

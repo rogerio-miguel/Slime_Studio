@@ -24,6 +24,12 @@ import { useId } from 'react';
 //                                Set, aoAlternar } | null
 // `ordenacao`/`generos` null = a seção não aparece. `filtro` é o mesmo
 // `{ opcoes, valor, aoMudar }` do filtro da cápsula.
+//
+// Campos opcionais, pra outras páginas usarem o mesmo painel (paginas/Descobrir.jsx:
+// só a escolha de gênero, sem ordenar nem remover):
+//   tituloDoFiltro             — título da seção do `filtro` (padrão "Filtrar")
+//   rotuloAcessivel            — nome do diálogo (padrão "Ordem e filtros do catálogo")
+//   aoRemover, total           — sem eles, o "Remover" e o contador do rodapé somem
 
 function Opcao({ ativa, apagada = false, onClick, children, contagem }) {
   return (
@@ -63,7 +69,16 @@ const CLASSE_BOTAO_RODAPE =
   'inline-flex h-8 cursor-pointer items-center whitespace-nowrap text-sm font-semibold outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none';
 
 export default function RegiaoDoPainelDeFiltros({ painel, painelDeFiltros, filtro }) {
-  const { ordenacao, generos, filtrosAtivos, total, aoLimpar, aoRemover } = painelDeFiltros;
+  const {
+    ordenacao,
+    generos,
+    filtrosAtivos,
+    total,
+    aoLimpar,
+    aoRemover,
+    tituloDoFiltro = 'Filtrar',
+    rotuloAcessivel = 'Ordem e filtros do catálogo',
+  } = painelDeFiltros;
   return (
     <div
       className="grid"
@@ -76,7 +91,7 @@ export default function RegiaoDoPainelDeFiltros({ painel, painelDeFiltros, filtr
         ref={painel.regiaoRef}
         role="dialog"
         aria-modal="false"
-        aria-label="Ordem e filtros do catálogo"
+        aria-label={rotuloAcessivel}
         tabIndex={-1}
         data-visivel={painel.expandida ? '' : undefined}
         data-rolavel={painel.rolavel ? '' : undefined}
@@ -101,7 +116,7 @@ export default function RegiaoDoPainelDeFiltros({ painel, painelDeFiltros, filtr
               ))}
             </Secao>
           )}
-          <Secao titulo="Filtrar">
+          <Secao titulo={tituloDoFiltro}>
             {filtro.opcoes.map((opcao) => (
               <Opcao
                 key={opcao.valor}
@@ -142,16 +157,20 @@ export default function RegiaoDoPainelDeFiltros({ painel, painelDeFiltros, filtr
               Limpar tudo
             </button>
             <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={aoRemover}
-                className={`${CLASSE_BOTAO_RODAPE} font-bold text-white hover:text-red-300 focus-visible:text-red-300`}
-              >
-                Remover
-              </button>
-              <span role="status" className="text-sm font-semibold text-ink-muted">
-                {total}
-              </span>
+              {aoRemover && (
+                <button
+                  type="button"
+                  onClick={aoRemover}
+                  className={`${CLASSE_BOTAO_RODAPE} font-bold text-white hover:text-red-300 focus-visible:text-red-300`}
+                >
+                  Remover
+                </button>
+              )}
+              {total && (
+                <span role="status" className="text-sm font-semibold text-ink-muted">
+                  {total}
+                </span>
+              )}
             </div>
           </div>
         </div>
