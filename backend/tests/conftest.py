@@ -148,6 +148,9 @@ def _isola_cooldown_de_provedor(monkeypatch: pytest.MonkeyPatch):
     `time.monotonic` reais — o suficiente para curto-circuitar chamadas de
     testes seguintes na mesma execução. Zera antes de cada teste."""
     monkeypatch.setattr(servico_metadados, "_cooldown_por_provedor", {})
+    # Freio de ritmo (janela deslizante): mesma razão, o dict vazaria chamadas de um
+    # teste pro outro.
+    monkeypatch.setattr(servico_metadados, "_chamadas_na_janela", {})
 
 
 @pytest.fixture(autouse=True)

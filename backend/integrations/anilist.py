@@ -27,6 +27,8 @@ from integrations.base import (
     LancamentoDeAnime,
     MetadadosDeAnime,
     NoDeSerie,
+    PaginaDeAnimes,
+    ProvedorComDescoberta,
     ProvedorComFileirasTematicas,
     ProvedorComLancamento,
     ProvedorComRecomendacoes,
@@ -213,6 +215,38 @@ query ($genero: String) {
 }
 """
 
+# Página da Descobrir: popularidade, com ou sem gênero (`$genero` omitido das
+# variáveis = sem filtro). 50 por página (o máximo da AniList): é a página mais
+# cara em chamadas, e o frontend entrega os cards de 20 em 20 a partir dela.
+# `status_not` tira o que ainda não estreou — sem fonte de
+# vídeo, abrir esse título levaria a uma página vazia. `hasNextPage` é o que a
+# grade usa pra parar de pedir mais.
+_QUERY_DESCOBERTA = """
+query ($pagina: Int, $genero: String) {
+  Page(page: $pagina, perPage: 50) {
+    pageInfo { hasNextPage }
+    media(
+      genre: $genero
+      isAdult: false
+      type: ANIME
+      status_not: NOT_YET_RELEASED
+      sort: POPULARITY_DESC
+    ) {
+      id
+      title { romaji english }
+      coverImage { extraLarge color }
+      bannerImage
+      genres
+      seasonYear
+      startDate { year }
+      status
+      episodes
+      nextAiringEpisode { episode airingAt }
+    }
+  }
+}
+"""
+
 _QUERY_PROXIMA_TEMPORADA = """
 query ($estacao: MediaSeason, $ano: Int, $status: MediaStatus) {
   Page(page: 1, perPage: 50) {
@@ -378,6 +412,7 @@ class AniListProvider(
     ProvedorDeMetadados,
     ProvedorComLancamento,
     ProvedorComFileirasTematicas,
+    ProvedorComDescoberta,
     ProvedorComRelacoes,
     ProvedorComRecomendacoes,
 ):
@@ -490,6 +525,16 @@ class AniListProvider(
         else:
             dados = self._executar(_QUERY_POR_TAG, {"tag": fileira.valor})
         return _pagina_para_animes_em_alta(dados, f"fileira temática {fileira.chave!r}")
+
+    def listar_descoberta(self, genero: str | None, pagina: int) -> PaginaDeAnimes:
+        variaveis: dict[str, int | str] = {"pagina": pagina}
+        if genero is not None:
+            variaveis["genero"] = genero
+        dados = self._executar(_QUERY_DESCOBERTA, variaveis)
+        itens = _pagina_para_animes_em_alta(dados, f"descoberta {genero!r} página {pagina}")
+        info = dados["Page"].get("pageInfo")
+        tem_mais = isinstance(info, dict) and info.get("hasNextPage") is True
+        return PaginaDeAnimes(itens=itens, tem_mais=tem_mais)
 
     def _media_de_relacoes(self, anilist_id: int) -> dict | None:
         """`Media` de `_QUERY_RELACOES` (cache por `_TTL_RELACOES_S`); `None` quando

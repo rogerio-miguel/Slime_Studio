@@ -24,6 +24,8 @@ from integrations.base import (
     FileiraTematica,
     LancamentoDeAnime,
     MetadadosDeAnime,
+    PaginaDeAnimes,
+    ProvedorComDescoberta,
     ProvedorComFileirasTematicas,
     ProvedorComLancamento,
     ProvedorDeArte,
@@ -298,6 +300,74 @@ def test_anilist_listar_em_alta_sem_ano_nem_generos(monkeypatch: pytest.MonkeyPa
 
     assert item.ano_estreia is None
     assert item.generos == ()
+
+
+def _corpo_de_pagina_de_descoberta(*, tem_mais: bool) -> dict:
+    return {
+        "data": {
+            "Page": {
+                "pageInfo": {"hasNextPage": tem_mais},
+                "media": [
+                    {
+                        "id": 7,
+                        "title": {"romaji": "Tokyo Ghoul", "english": None},
+                        "coverImage": {"extraLarge": "https://img/7.jpg", "color": None},
+                        "bannerImage": None,
+                        "genres": ["Horror"],
+                        "seasonYear": 2014,
+                        "startDate": {"year": 2014},
+                    }
+                ],
+            }
+        }
+    }
+
+
+def test_anilist_listar_descoberta_com_genero_envia_pagina_e_genero(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    capturado = {}
+
+    def _post(*a, **k):
+        capturado.update(k["json"])
+        return _RespostaFalsa(corpo=_corpo_de_pagina_de_descoberta(tem_mais=True))
+
+    monkeypatch.setattr("integrations.anilist.requests.post", _post)
+
+    resultado = AniListProvider().listar_descoberta("Horror", 3)
+
+    assert capturado["variables"] == {"pagina": 3, "genero": "Horror"}
+    assert resultado.tem_mais is True
+    assert [item.anilist_id for item in resultado.itens] == [7]
+
+
+def test_anilist_listar_descoberta_sem_genero_omite_a_variavel(monkeypatch: pytest.MonkeyPatch):
+    """`genero=None` não pode ir como `null` nas variáveis: a ausência é o que
+    faz a AniList não filtrar. Sem `hasNextPage` verdadeiro a grade para de pedir."""
+    capturado = {}
+
+    def _post(*a, **k):
+        capturado.update(k["json"])
+        return _RespostaFalsa(corpo=_corpo_de_pagina_de_descoberta(tem_mais=False))
+
+    monkeypatch.setattr("integrations.anilist.requests.post", _post)
+
+    resultado = AniListProvider().listar_descoberta(None, 1)
+
+    assert capturado["variables"] == {"pagina": 1}
+    assert resultado.tem_mais is False
+
+
+def test_anilist_listar_descoberta_resposta_malformada_levanta_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "integrations.anilist.requests.post",
+        lambda *a, **k: _RespostaFalsa(corpo={"data": {"Page": {"media": "ruim"}}}),
+    )
+
+    with pytest.raises(RuntimeError):
+        AniListProvider().listar_descoberta(None, 1)
 
 
 def test_anilist_listar_fileira_tematica(monkeypatch: pytest.MonkeyPatch):
@@ -1788,6 +1858,45 @@ class _ProvedorComFileirasTematicasFake(ProvedorDeMetadados, ProvedorComFileiras
         ]
 
 
+class _ProvedorComDescobertaFake(ProvedorDeMetadados, ProvedorComDescoberta):
+    """Provedor fake da capability `ProvedorComDescoberta` — `chamadas` registra
+    `(genero, pagina)` de cada chamada real, pra verificar o memo."""
+
+    def __init__(self, nome: str, *, erro: Exception | None = None):
+        self._nome = nome
+        self._erro = erro
+        self.chamadas: list[tuple[str | None, int]] = []
+
+    @property
+    def nome(self) -> str:
+        return self._nome
+
+    def buscar_por_titulo(self, titulo: str):
+        return None
+
+    def listar_em_alta(self):
+        return []
+
+    def listar_proxima_temporada(self):
+        return []
+
+    def buscar_titulos(self, titulo: str):
+        return None
+
+    def listar_descoberta(self, genero: str | None, pagina: int) -> PaginaDeAnimes:
+        self.chamadas.append((genero, pagina))
+        if self._erro is not None:
+            raise self._erro
+        item = AnimeEmAlta(
+            titulo_romaji=f"{genero}-{pagina}",
+            titulo_ingles=None,
+            capa_url=None,
+            banner_url=None,
+            anilist_id=pagina,
+        )
+        return PaginaDeAnimes(itens=[item], tem_mais=True)
+
+
 class _ProvedorDeArteFake(ProvedorDeArte):
     """Provedor fake de `ProvedorDeArte` (overlay de banner TMDB,
     PLANO_ARTE_TMDB.md) — instalado via
@@ -1851,6 +1960,7 @@ def _limpa_overlay_de_arte(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(servico, "_memo_titulos", {})
     monkeypatch.setattr(servico, "_memo_serie", {})
     monkeypatch.setattr(servico, "_memo_relacionados", {})
+    monkeypatch.setattr(servico, "_memo_descoberta", {})
     monkeypatch.setattr(servico, "_arte_desabilitada_por_auth", False)
 
 
@@ -2325,6 +2435,149 @@ async def test_servico_fileiras_tematicas_levanta_falha_de_metadados_quando_toda
 
     with pytest.raises(FalhaDeMetadados):
         await servico.listar_fileiras_tematicas()
+
+
+# --- servico.listar_descoberta (página paginada da Descobrir) ---
+
+
+async def test_servico_descoberta_genero_desconhecido_levanta_value_error():
+    with pytest.raises(ValueError):
+        await servico.listar_descoberta("Nao Existe", 1)
+
+
+async def test_servico_descoberta_hentai_nao_e_aceito():
+    with pytest.raises(ValueError):
+        await servico.listar_descoberta("Hentai", 1)
+
+
+async def test_servico_descoberta_usa_memo_por_genero_e_pagina(monkeypatch: pytest.MonkeyPatch):
+    provedor = _ProvedorComDescobertaFake("anilist")
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    primeira = await servico.listar_descoberta("Horror", 1)
+    repetida = await servico.listar_descoberta("Horror", 1)
+    outra_pagina = await servico.listar_descoberta("Horror", 2)
+    sem_genero = await servico.listar_descoberta(None, 1)
+
+    assert repetida == primeira
+    assert outra_pagina.itens[0].titulo_romaji == "Horror-2"
+    assert sem_genero.itens[0].titulo_romaji == "None-1"
+    assert provedor.chamadas == [("Horror", 1), ("Horror", 2), (None, 1)]
+
+
+async def test_servico_descoberta_refaz_a_busca_depois_do_ttl(monkeypatch: pytest.MonkeyPatch):
+    provedor = _ProvedorComDescobertaFake("anilist")
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    await servico.listar_descoberta(None, 1)
+    expira_em, pagina = servico._memo_descoberta[(None, 1)]
+    servico._memo_descoberta[(None, 1)] = (expira_em - servico._TTL_DESCOBERTA_S - 1, pagina)
+    await servico.listar_descoberta(None, 1)
+
+    assert provedor.chamadas == [(None, 1), (None, 1)]
+
+
+async def test_servico_descoberta_falha_do_provedor_levanta_falha_de_metadados_e_nao_cacheia(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provedor = _ProvedorComDescobertaFake("anilist", erro=requests.ConnectionError("falhou"))
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.listar_descoberta("Comedy", 1)
+
+    assert servico._memo_descoberta == {}
+
+
+async def test_servico_descoberta_sem_provedor_capaz_levanta_falha_de_metadados(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(servico, "PROVEDORES", (_ProvedorFake("kitsu"),))
+
+    with pytest.raises(FalhaDeMetadados):
+        await servico.listar_descoberta(None, 1)
+
+
+# --- freio de ritmo por provedor (servico._aguardar_vaga_do_freio) ---
+
+
+def _provedor_que_conta_chamadas(nome: str) -> _ProvedorComDescobertaFake:
+    return _ProvedorComDescobertaFake(nome)
+
+
+async def test_freio_deixa_passar_ate_o_limite_sem_esperar(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(servico, "_CHAMADAS_POR_MINUTO", {"anilist": 3})
+    provedor = _provedor_que_conta_chamadas("anilist")
+
+    inicio = time.monotonic()
+    for pagina in (1, 2, 3):
+        await servico._chamar(provedor, provedor.listar_descoberta, None, pagina)
+
+    assert len(provedor.chamadas) == 3
+    assert time.monotonic() - inicio < 0.5
+
+
+async def test_freio_segura_a_chamada_alem_do_limite_ate_a_janela_liberar(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A 3ª chamada espera a 1ª sair da janela (0,3s aqui), roda e NÃO vira falha de
+    provedor — a espera é antes do `wait_for`, então não conta como timeout."""
+    monkeypatch.setattr(servico, "_CHAMADAS_POR_MINUTO", {"anilist": 2})
+    monkeypatch.setattr(servico, "_JANELA_DO_FREIO_S", 0.3)
+    provedor = _provedor_que_conta_chamadas("anilist")
+
+    inicio = time.monotonic()
+    for pagina in (1, 2, 3):
+        await servico._chamar(provedor, provedor.listar_descoberta, None, pagina)
+
+    assert len(provedor.chamadas) == 3
+    assert time.monotonic() - inicio >= 0.25
+    assert servico._cooldown_por_provedor == {}
+
+
+async def test_freio_recusa_quando_a_vaga_demora_mais_que_o_teto_e_nao_toca_a_rede(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(servico, "_CHAMADAS_POR_MINUTO", {"anilist": 1})
+    monkeypatch.setattr(servico, "_ESPERA_MAXIMA_DO_FREIO_S", 0.05)
+    provedor = _provedor_que_conta_chamadas("anilist")
+
+    await servico._chamar(provedor, provedor.listar_descoberta, None, 1)
+    with pytest.raises(servico.ProvedorSaturado):
+        await servico._chamar(provedor, provedor.listar_descoberta, None, 2)
+
+    assert provedor.chamadas == [(None, 1)]
+    assert servico._cooldown_por_provedor == {}
+
+
+async def test_freio_so_vale_para_provedor_com_limite_configurado(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(servico, "_CHAMADAS_POR_MINUTO", {"anilist": 1})
+    monkeypatch.setattr(servico, "_ESPERA_MAXIMA_DO_FREIO_S", 0.05)
+    outro = _provedor_que_conta_chamadas("kitsu")
+
+    for pagina in (1, 2, 3):
+        await servico._chamar(outro, outro.listar_descoberta, None, pagina)
+
+    assert len(outro.chamadas) == 3
+
+
+async def test_servico_descoberta_saturada_levanta_falha_de_metadados(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Freio cheio vira `FalhaDeMetadados` (a rota responde 502) e nada é
+    memoizado — a próxima tentativa, com a janela livre, busca de verdade."""
+    monkeypatch.setattr(servico, "_CHAMADAS_POR_MINUTO", {"anilist": 1})
+    monkeypatch.setattr(servico, "_ESPERA_MAXIMA_DO_FREIO_S", 0.05)
+    provedor = _ProvedorComDescobertaFake("anilist")
+    monkeypatch.setattr(servico, "PROVEDORES", (provedor,))
+
+    await servico.listar_descoberta(None, 1)
+    with pytest.raises(FalhaDeMetadados):
+        await servico.listar_descoberta(None, 2)
+
+    assert (None, 2) not in servico._memo_descoberta
 
 
 # --- overlay de banner (integrations/servico.py, PLANO_ARTE_TMDB.md) ---

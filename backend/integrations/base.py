@@ -165,6 +165,16 @@ class FileiraTematica:
 
 
 @dataclass(frozen=True, slots=True)
+class PaginaDeAnimes:
+    """Uma página de `ProvedorComDescoberta.listar_descoberta` — os itens e se
+    existe página seguinte (a grade da Descobrir carrega mais ao rolar e precisa
+    saber quando parar)."""
+
+    itens: list[AnimeEmAlta]
+    tem_mais: bool
+
+
+@dataclass(frozen=True, slots=True)
 class NoDeSerie:
     """Um nó do grafo de `relations` da AniList — uma `Media` TV da franquia.
 
@@ -449,3 +459,17 @@ class ProvedorComFileirasTematicas(ABC):
         """Lista animes cuja tag/gênero AniList é `fileira.valor` (conforme
         `fileira.tipo`), ordenados por popularidade — mesmo formato de
         `ProvedorDeMetadados.listar_em_alta`."""
+
+
+class ProvedorComDescoberta(ABC):
+    """Capability opcional: listagem paginada por gênero (hoje só `anilist.py` —
+    o Kitsu não tem filtro de gênero equivalente). `integrations/servico.py`
+    filtra `PROVEDORES` por `isinstance(p, ProvedorComDescoberta)` antes de
+    consultar. Síncrona pela mesma razão de `ProvedorDeMetadados` (o
+    `to_thread`/timeout mora só no serviço)."""
+
+    @abstractmethod
+    def listar_descoberta(self, genero: str | None, pagina: int) -> PaginaDeAnimes:
+        """Animes do `genero` (nome cru do provedor, ex. "Action"; `None` = sem
+        filtro), por popularidade, na `pagina` pedida (1-based). Só títulos que
+        já estrearam — a Descobrir não tem o que abrir de um anime sem fonte."""
