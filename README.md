@@ -89,17 +89,6 @@ barra de controles própria (sem os controles nativos do `<video>`).
   Cinema, Brilho ambiente (liga e desliga, lembrado no navegador), estatísticas (HUD com
   preset, resolução e telemetria) e a lista de atalhos.
 
-| Tecla | Ação |
-|-------|------|
-| `Espaço` | Reproduzir / pausar |
-| `←` `→` | Retroceder / avançar 5 s |
-| `↑` `↓` | Volume |
-| `F` | Tela cheia |
-| `M` | Mudo |
-| `C` | Áudio Cinema |
-| `H` | Estatísticas |
-| `P` | Avançar 1 min 30 s |
-
 As duas maiores melhorias do player foram feitas de forma independente uma da outra.
 
 ### Imagem — Upscaling Anime4K
