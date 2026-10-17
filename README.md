@@ -29,19 +29,18 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 - Carrossel com sinopse, gêneros e próximo episódio, seguido das seções: Continue de onde parou, Top 10 em alta (em coverflow), Acabou de sair (episódios recém-lançados) e Próximas estreias.
 - Escolher um item **materializa** o anime no catálogo antes de abrir a página dele.
 - Estados vazios e de erro ganham o mascote do slime.
-- A navbar é uma "ilha" dinâmica: ela se expande para a busca, os filtros e a sinopse do item em foco, e o logo abre o menu de **tema de cor**, que fica salvo no navegador (as capturas abaixo mostram temas diferentes).
+- A navbar é uma "ilha" dinâmica: ela se expande para a busca, os filtros e a sinopse do item em foco, e o logo abre o menu de **tema de cor**, que fica salvo no navegador (as capturas deste README mostram temas diferentes).
 
-### Página do anime
+### Descobrir
 
 <div>
-  <img src="frontend/src/assets/anime-page.png" alt="Página do anime" width="full" />
+  <img src="frontend/src/assets/descobrir.png" alt="Página Descobrir" width="full" />
 </div>
 
-- Resolve a fonte de vídeo entre os sites suportados (AnimeFire, MeusAnimes e AnimesDrive, nessa ordem de prioridade).
-- Seletor de fonte para trocar de site de streaming, e seletor de banner (miniaturas, aplicar ou restaurar o padrão) dentro da ilha da navbar.
-- Lista os episódios por temporada, em grade ou lista.
-- Nada é baixado até o clique em **Capturar** — a captura é sob demanda, com o status do job em tempo real (WebSocket).
-- Guarda o progresso de reprodução e permite marcar episódios como assistidos.
+- Grade única dos títulos mais populares da AniList, sem fim: carrega mais ao rolar, com a página seguinte buscada antes de você chegar nela.
+- Chips de gênero no cabeçalho (e o painel de gêneros da ilha da navbar) recomeçam a grade no gênero escolhido; o cabeçalho mostra uma parede de capas do resultado.
+- Como na Home, escolher um título não catalogado **materializa** o anime antes de abrir a página dele; os já catalogados são marcados no card e abrem direto.
+- Alimentada por `GET /api/animes/descobrir` (páginas de 50, até 50 páginas por gênero).
 
 ### Catálogo
 
@@ -54,6 +53,18 @@ que por sua vez é a evolução do projeto original [Slime Shell](https://github
 - Filtros por status e gênero e ordenação (A–Z, Z–A, adicionados recentemente, estreia), salvos no navegador. Em "Em lançamento", os títulos são agrupados pelo dia do episódio.
 - Listar, abrir e remover animes do catálogo local.
 - Busca por título na barra de navegação.
+
+### Página do anime
+
+<div>
+  <img src="frontend/src/assets/anime-page.png" alt="Página do anime" width="full" />
+</div>
+
+- Resolve a fonte de vídeo entre os sites suportados (AnimeFire, MeusAnimes e AnimesDrive, nessa ordem de prioridade).
+- Seletor de fonte para trocar de site de streaming, e seletor de banner (miniaturas, aplicar ou restaurar o padrão) dentro da ilha da navbar.
+- Lista os episódios por temporada, em grade ou lista.
+- Nada é baixado até o clique em **Capturar** — a captura é sob demanda, com o status do job em tempo real (WebSocket).
+- Guarda o progresso de reprodução e permite marcar episódios como assistidos.
 
 ## Player
 
@@ -166,7 +177,8 @@ Monorepo com dois escopos independentes, comunicando-se só por HTTP/WebSocket:
 ```
 Slime_Studio/
 ├── backend/     API FastAPI + worker assíncrono + extractors + integrations
-└── frontend/    React + Vite + Tailwind + player WebGPU
+├── frontend/    React + Vite + Tailwind + player WebGPU
+└── scripts/     dev.sh (sobe tudo e instala o lançador do GNOME)
 ```
 
 <details>
@@ -210,6 +222,7 @@ backend/
 ├── core/          # domínio puro — enums, erros, config, texto, franquia
 ├── models/        # SQLAlchemy
 ├── db/            # engine, fila e migrations (Alembic)
+├── scripts/       # reparos e backfills de metadados, resolução manual de fonte
 └── tests/         # pytest (suíte offline por padrão)
 ```
 
@@ -219,17 +232,20 @@ backend/
 <summary><b>Frontend</b> — páginas, player e cliente da API</summary>
 
 - **Stack:** React 19, Vite, Tailwind 4, React Router, `hls.js`, `anime4k-webgpu`.
-- **Rotas:** `/` (Home), `/animes` (catálogo), `/anime/:id`, `/assistir/:episodioId` e `/assistir-local/:slug` (vídeo local, sem backend).
+- **Rotas:** `/` (Home), `/animes` (catálogo), `/descobrir`, `/anime/:id`, `/assistir/:episodioId` e `/assistir-local/:slug` (vídeo local, sem backend). `/debug/fonte` é uma rota de depuração do seletor de fonte.
 
 ```
 frontend/src/
-├── paginas/    # Inicio, Galeria, PaginaDoAnime, player (HLS e vídeo local)
+├── paginas/    # Inicio, Galeria, Descobrir, PaginaDoAnime, player (HLS e vídeo local)
 ├── player/     # canvas WebGPU, controles, Anime4K, Áudio Cinema, brilho ambiente
 ├── inicio/     # carrossel, coverflow, fileiras e grades dirigidas pelo feed externo
 ├── api/        # cliente HTTP para o backend
 ├── eventos/    # eventos de jobs em tempo real (WebSocket)
 ├── hooks/      # hooks compartilhados (atualização periódica, ilha, rolagem, etc.)
 ├── temas.js    # temas de cor (o CSS de cada um mora em index.css)
+├── fontes.js   # nomes de exibição dos sites de streaming
+├── faviconDoTema.js  # favicon que acompanha o tema de cor
+├── videosLocais.js   # catálogo dos vídeos locais (sem backend)
 └── components/ # UI compartilhada (navbar e ilha, cards, mascote, seletores, etc.)
 ```
 
@@ -297,6 +313,8 @@ Ou, para subir os três de uma vez (e abrir o Brave já apontado para o dev serv
 ```bash
 ./scripts/dev.sh
 ```
+
+Na primeira vez, o `dev.sh` também cria o lançador "Slime Studio" no menu de aplicativos do GNOME (dá para fixar na barra); se você mover a pasta do projeto, ele refaz o lançador sozinho.
 
 Depois de subir, acesse `http://localhost:5173`. A API sobe em `http://127.0.0.1:8000`.
 
