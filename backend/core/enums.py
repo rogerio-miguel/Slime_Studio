@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Final
 
 # Discriminador do modo "arquivo local" em `Episodio.site_origem` — distingue do
-# domínio de um site real (ex. "animefire.io") para decidir se `resolver_fonte`
+# domínio de um site real (ex. "animefire.one") para decidir se `resolver_fonte`
 # (worker/pipeline/fonte.py) pula a extração remota.
 SITE_LOCAL: Final[str] = "local"
 
@@ -47,8 +47,34 @@ class TipoEpisodio(StrEnum):
 
 
 class VersaoEpisodio(StrEnum):
+    """Versão do arquivo capturado — o que o usuário assiste (`Episodio`)."""
+
     LEGENDADO = "legendado"
     DUBLADO = "dublado"
+    # Fonte é `VersaoDeFonte.NAO_DIFERENCIADA` (site não separa legendado de
+    # dublado no próprio markup) — o episódio capturado sob ela nunca herda
+    # cegamente o que o cliente pediu, é rotulado `DESCONHECIDA` (worker/jobs.py).
+    DESCONHECIDA = "desconhecida"
+
+
+class VersaoDeFonte(StrEnum):
+    """Estado do *mapeamento* de uma fonte (`FonteAnime`) — o que o site oferece,
+    não o episódio. Mantido separado de `VersaoEpisodio` de propósito: não
+    fundir os dois enums."""
+
+    LEGENDADO = "legendado"
+    DUBLADO = "dublado"
+    NAO_DIFERENCIADA = "nao_diferenciada"
+
+
+class OrigemDeFonte(StrEnum):
+    """Quem decidiu um mapeamento `FonteAnime`: o usuário (escolha na desambiguação
+    ou "Trocar fonte") ou a resolução automática. Uma escolha manual nunca é
+    rebaixada por uma escrita automática, e só a automática pode, no futuro, ser
+    trocada sem perguntar."""
+
+    MANUAL = "manual"
+    AUTOMATICA = "automatica"
 
 
 class StatusEpisodio(StrEnum):
@@ -56,6 +82,53 @@ class StatusEpisodio(StrEnum):
     PRONTO = "pronto"
     FALHOU = "falhou"
     SOMENTE_720P = "somente_720p"
+    # Terminou de ser assistido (limiar de `usePontoDeAssistido`) e teve seus
+    # arquivos em disco liberados (`api/servicos/catalogo.py::
+    # liberar_episodio`) — distinto de `PENDENTE` (nunca chegou a ser
+    # capturado) porque preserva `assistido_em`/`url_fonte`/`site_origem` da
+    # captura original; uma recaptura volta o episódio para `PENDENTE`
+    # (D2, `api/servicos/jobs.py::criar_job_site`).
+    LIBERADO = "liberado"
+
+
+class StatusLancamento(StrEnum):
+    """Estado de lançamento de um `Anime` — espelha `MediaStatus` da AniList.
+
+    Alimenta o detector de episódios novos (badge no catálogo): animes em
+    `EM_LANCAMENTO` ou `NAO_LANCADO` recebem o refresh oportunista de
+    `proximo_ep_*` (`NAO_LANCADO` para não congelar a data de estreia de um
+    bookmark de "Próximas estreias" — ver `api/servicos/descoberta.py`).
+    Persistido como name (não value), igual aos demais enums de `models/`
+    (`SAEnum(..., native_enum=False)`).
+    """
+
+    EM_LANCAMENTO = "em_lancamento"
+    FINALIZADO = "finalizado"
+    NAO_LANCADO = "nao_lancado"
+    CANCELADO = "cancelado"
+    HIATO = "hiato"
+
+
+class TarefaDeVerificacao(StrEnum):
+    """Tipo de verificação periódica de um anime (`VerificacaoDeAnime`).
+
+    Persistido como name; só `FONTE` existe hoje (sondagem do site). `STATUS`
+    (AniList) e `CLASSIFICACAO` entram quando o agendador as executar — coluna
+    varchar, acrescentar valor não exige migration."""
+
+    FONTE = "fonte"
+
+
+class ResultadoDeVerificacao(StrEnum):
+    """Desfecho de uma tentativa de verificação — define o backoff
+    (`core.ciclo_de_vida.proxima_tentativa`)."""
+
+    OK = "ok"
+    NAO_ENCONTRADO = "nao_encontrado"  # anime/versão não existe no site
+    PRECISA_SESSAO = "precisa_sessao"  # Cloudflare rejeitou a sessão
+    SITE_INDISPONIVEL = "site_indisponivel"  # circuit breaker do site aberto
+    AMBIGUO = "ambiguo"  # mais de um candidato: espera decisão do usuário
+    ERRO = "erro"  # timeout, banco, falha de extração genérica
 
 
 # Estados que contam como "em andamento" para fins de reclaim por heartbeat

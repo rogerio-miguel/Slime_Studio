@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.jsx';
+import { aplicarTema, lerTemaSalvo } from './temas.js';
+
+// Tema antes do primeiro render: #root ainda está vazio, então não há piscada.
+aplicarTema(lerTemaSalvo());
 
 // StrictMode mantido de propósito: monta/desmonta cada componente duas vezes
 // em dev, o que expõe qualquer vazamento de GPUDevice/rVFC que o teardown de

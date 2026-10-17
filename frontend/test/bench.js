@@ -868,7 +868,7 @@ function startAmbientGlow() {
   const AMBIENT_EDGE_FRACTION = 0.01;
 
   // Centro do canvas = o frame inteiro (mesma amostragem de antes, a tela
-  // também não recorta nada — #output-canvas usa object-fit: contain, então
+  // também não recorta nada — #output-canvas usa object-fit: fill, então
   // glow e cena ficam sincronizados sem matemática de crop). Margem = onde as
   // faixas de borda são esticadas pra fora; sai da mesma % que o CSS usa pra
   // esticar esse canvas pra fora do .frame (--ambient-bleed), lida daqui em
@@ -896,7 +896,7 @@ function startAmbientGlow() {
   // nenhum draw pisa na área que outro acabou de atualizar.
   const AMBIENT_SMOOTHING = 0.3;
 
-  function onFrame() {
+  function onFrame(_now, _metadata) {
     // Aba em segundo plano: sem efeito visível pra justificar o custo de
     // amostrar o vídeo. Fullscreen NÃO é mais motivo de skip aqui: o canvas
     // agora vive dentro de #fullscreen-stage no HTML, então o navegador

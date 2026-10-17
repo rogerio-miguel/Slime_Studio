@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { iniciarGlowAmbiente } from './glowAmbiente.js';
-import { obterRvfcOriginal } from './motorAnime4k.js';
 
 // Wrapper React fino sobre glowAmbiente.js — o <canvas id="ambient-glow">
 // precisa continuar dentro de #fullscreen-stage (via `elementoDeMedidaRef`,
@@ -16,8 +15,25 @@ export default function GlowAmbiente({ videoRef, elementoDeMedidaRef }) {
     const elementoDeMedida = elementoDeMedidaRef.current;
     if (!video || !canvas || !elementoDeMedida) return;
 
-    const rvfc = obterRvfcOriginal(video);
-    return iniciarGlowAmbiente({ video, canvas, elementoDeMedida, rvfc });
+    // rVFC direto do vídeo: motorAnime4k.js não intercepta mais esse método
+    // (a sessão WebGPU tem seu próprio laço local, cancelado só via a flag
+    // interna dela) — múltiplos rVFC concorrentes sobre o mesmo <video> são
+    // suportados nativamente pelo navegador, sem precisar de indireção.
+    const rvfc = video.requestVideoFrameCallback.bind(video);
+    // Mutação imperativa de estilo, não state React: `--action-intensity`
+    // muda a cada frame amostrado (glowAmbiente.js), e o próprio canvas já
+    // está referenciado aqui — nenhum ref novo, nenhum re-render por frame.
+    // Setado no #ambient-glow em si porque é ele quem lê a variável (ver
+    // regra `opacity` em player.css).
+    return iniciarGlowAmbiente({
+      video,
+      canvas,
+      elementoDeMedida,
+      rvfc,
+      aoAtualizarIntensidadeAcao: (intensidade) => {
+        canvas.style.setProperty('--action-intensity', String(intensidade));
+      },
+    });
   }, [videoRef, elementoDeMedidaRef]);
 
   return <canvas ref={canvasRef} id="ambient-glow" aria-hidden="true" />;

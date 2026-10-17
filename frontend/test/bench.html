@@ -5,11 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Slime Studio — Bench</title>
 <style>
-  :root { color-scheme: dark; --frame-ar: 1.777778; --page-chrome: 7rem; --fullscreen-margin: 6vmin; --ambient-bleed: 10%; }
+  :root { color-scheme: dark; --bar-height: 5rem; --bar-height-fullscreen: 5rem; --ambient-bleed: 5%; }
   html, body {
     margin: 0;
     padding: 0;
     height: 100%;
+    /* .frame agora toca as bordas da viewport e o #ambient-glow vaza pra
+       fora dele (--ambient-bleed) — sem isso, esse vazamento e qualquer
+       arredondamento de 1px do calc() em .frame criam barra de scroll
+       vertical/horizontal por causa de meio pixel de conteúdo fora da
+       tela, não porque sobrou algo pra ver. */
+    overflow: hidden;
   }
   /* Preto só no html (vira o "canvas background" do navegador, propagado
      automaticamente — não pinta de novo na própria caixa do html). Se body
@@ -52,9 +58,9 @@
     /* width/height explícitos, não `inset`: canvas é replaced element — com
        width/height auto renderiza no tamanho intrínseco (32x18px de
        bench.js). right/bottom ficam auto de propósito, senão a caixa fica
-       over-constrained. Também não pode receber object-fit:contain (ver
-       regra do #output-canvas): letterboxaria o bitmap 32x18 dentro da caixa
-       16:9 e criaria barras pretas nas laterais do halo. */
+       over-constrained. Também não pode receber object-fit (ver regra do
+       #output-canvas): fill/contain redistorceriam o bitmap 32x18 do jeito
+       errado — este canvas já nasce no tamanho final via width/height. */
     top: calc(-1 * var(--ambient-bleed));
     left: calc(-1 * var(--ambient-bleed));
     width: calc(100% + 2 * var(--ambient-bleed));
@@ -99,77 +105,59 @@
     align-items: center;
     justify-content: center;
     gap: 16px;
-    padding: 0 16px 16px;
+    /* Sem padding lateral: o .frame precisa tocar as duas bordas da
+       viewport (ver regra .frame). O padding vertical fica só embaixo —
+       não afeta as laterais e dá uma folga mínima antes da borda da
+       tela pro .fatal-error/.note, quando aparecem. */
+    padding: 0 0 16px;
   }
 
   /* Alvo do fullscreen é este wrapper, não o .frame — o navegador força esse
-     elemento a 100vw/100vh do jeito que quiser (não brigamos com isso). O
-     .frame fica dentro, como item de flex, e mantém 16:9 via aspect-ratio +
-     width calculado explicitamente (ver regra .frame): como ele nunca é o
-     próprio alvo do :fullscreen, nenhuma regra nativa do navegador
-     sobrescreve o tamanho dele. */
+     elemento a 100vw/100vh do jeito que quiser (não brigamos com isso).
+     flex:1 fora de fullscreen faz o MESMO papel: preenche toda a altura que
+     sobra em `main` abaixo do header, sem precisar saber o tamanho real do
+     header (o próprio flex resolve isso). padding-block + box-sizing:border-
+     box em AMBOS os estados é o mesmo mecanismo nos dois — só a variável
+     muda (--bar-height-fullscreen na regra abaixo), pra permitir barra de
+     tamanho diferente em fullscreen. */
   .fullscreen-stage {
     display: flex;
-    align-items: center;
-    justify-content: center;
     width: 100%;
+    flex: 1;
+    padding-block: var(--bar-height);
+    box-sizing: border-box;
   }
-  /* padding cria a moldura nos 4 lados (em vez de 0 margem no eixo que
-     .frame estica até tocar) — também é o que deixa o #ambient-glow (agora
-     dentro deste elemento, ver abaixo) visível ao redor do vídeo em
-     fullscreen, não só nos 2 lados que sobravam antes. box-sizing:border-box
-     pra 100vw/100vh já incluir o padding, senão o .frame calcularia o espaço
-     disponível errado (ver regra abaixo). */
   .fullscreen-stage:fullscreen,
   .fullscreen-stage:-webkit-full-screen {
     width: 100vw;
     height: 100vh;
     background: #000;
-    padding: var(--fullscreen-margin);
-    box-sizing: border-box;
+    padding-block: var(--bar-height-fullscreen);
   }
+  /* .frame preenche 100%x100% do conteúdo (pós-padding) de .fullscreen-stage
+     nos dois estados — mesma regra, sem override específico de fullscreen.
+     O descompasso de proporção com o vídeo fica por conta do
+     object-fit:fill do #output-canvas: a imagem estica até cobrir a caixa
+     toda, sem pillarbox/letterbox e sem recorte (trade-off aceito: leve
+     distorção pra não sobrar borda nas laterais). */
   .frame {
-    /* Largura calculada explicitamente (não max-height + aspect-ratio) de
-       propósito: .frame é item de um container flex (.fullscreen-stage) com
-       align-items:center, e o tamanho no eixo principal (largura) de um item
-       flex é resolvido pelo algoritmo de flex-basis ANTES do eixo cruzado —
-       "transferred size" (CSS Sizing 4) não alimenta de volta uma largura já
-       fixada por esse passo anterior. Convertendo o teto de altura em um
-       termo de largura equivalente (`* var(--frame-ar)`) dentro do próprio
-       min(), a largura já nasce correta e o aspect-ratio só precisa resolver
-       a altura (auto) a partir dela — sem depender de nenhum feedback entre
-       eixos. --page-chrome cobre header + padding de main + folga, é o que
-       evita que o vídeo em 16:9 estoure a viewport típica (sem teto fixo de
-       largura: o vídeo cresce até esbarrar no container ou nessa altura).
-       Mesma técnica já usada nas fórmulas de :fullscreen abaixo. */
-    width: min(100%, calc((100dvh - var(--page-chrome)) * var(--frame-ar, 1.777778)));
-    aspect-ratio: var(--frame-ar, 1.777778);
+    width: 100%;
+    height: 100%;
     background: #000;
     position: relative;
-    margin-inline: auto;
+    /* Sem isso, .frame não forma stacking context próprio (position:relative
+       sozinho não basta) e o z-index:-1 do #ambient-glow (filho) escapa pro
+       stacking context do ancestral mais próximo que tiver um — risco de o
+       background:#000 deste .frame pintar por cima do glow em algum cenário
+       futuro de stacking. Paridade com player.css (código real), que já
+       tinha isso. */
+    isolation: isolate;
   }
-  /* width/height:auto colapsava pra 0×0 aqui: o único conteúdo do .frame
-     é position:absolute (fora do fluxo), então não há base de conteúdo pro
-     "auto" — tela cheia ficava toda preta. Tamanho vem só de viewport units
-     (min() escolhe o eixo que limita, preservando 16:9), sem depender do
-     conteúdo interno. */
   /* Sem overflow:hidden: o #ambient-glow é filho e PRECISA vazar pra fora
-     da caixa. Nada mais transborda — o #output-canvas usa object-fit:
-     contain (o hidden era vestígio da era do crop 2.2:1 "cover"). Se um dia
+     da caixa. Nada mais transborda — o #output-canvas usa object-fit:fill,
+     preenchendo a caixa exatamente, sem sobra em nenhum eixo. Se um dia
      entrar border-radius aqui, revisar: aí o clip volta a fazer falta e o
      glow precisa de um wrapper posicionado por fora. */
-  /* 100% já é o content-box de .fullscreen-stage (pós-padding, .frame é
-     flex item) — só o outro termo do min()/max() precisa descontar
-     --fullscreen-margin manualmente, porque vem direto de vw/vh (unidade
-     de viewport, não afetada por padding do pai). */
-  .fullscreen-stage:fullscreen .frame,
-  .fullscreen-stage:-webkit-full-screen .frame {
-    width: min(100%, calc((100vh - 2 * var(--fullscreen-margin)) * var(--frame-ar)));
-    height: min(100%, calc((100vw - 2 * var(--fullscreen-margin)) / var(--frame-ar)));
-    max-width: none;
-    max-height: none;
-    margin: 0;
-  }
   .frame video {
     position: absolute;
     inset: 0;
@@ -178,23 +166,24 @@
     opacity: 0;
     pointer-events: none;
   }
-  /* "Contain", igual dentro e fora de tela cheia: o canvas de saída do
-     WebGPU (#output-canvas) ocupa a caixa toda do .frame, mas object-fit
-     preserva a proporção do bitmap e nunca corta — o que sobrar em qualquer
-     eixo vira faixa preta invisível (.frame e html já são #000). Antes isto
-     era um "cover"/crop 2.2:1 ancorado por --anchor, criado pra fugir de
-     hardsub sobre barra baked-in; cropdetect nos três mp4 da pasta dá
-     1280:720:0:0 (nenhum tem barra), então o crop só comia imagem real e
-     exigia recalibrar o anchor a cada episódio. Seletor por id, não mais
-     `.frame canvas`: o #ambient-glow também é um <canvas> filho de .frame
-     agora, e inset:0 + object-fit:contain aqui sobrescreveria o
-     posicionamento do glow (passo 3) e criaria barras pretas no halo. */
+  /* "Fill", igual dentro e fora de tela cheia: o canvas de saída do WebGPU
+     (#output-canvas) ocupa a caixa toda do .frame e object-fit:fill estica
+     o bitmap pra cobrir os dois eixos exatamente — sem sobra (logo, sem
+     pillarbox/letterbox), mas também sem preservar a proporção original
+     quando a caixa não é 16:9 (trade-off deliberado, ver comentário do
+     .frame). Antes disto era "contain" (sem distorcer, com barra preta no
+     eixo que sobrasse) e, antes ainda, um "cover"/crop 2.2:1 ancorado por
+     --anchor pra fugir de hardsub sobre barra baked-in — cropdetect nos três
+     mp4 da pasta dá 1280:720:0:0 (nenhum tem barra), então aquele crop só
+     comia imagem real. Seletor por id, não mais `.frame canvas`: o
+     #ambient-glow também é um <canvas> filho de .frame agora, e inset:0 +
+     object-fit aqui sobrescreveria o posicionamento do glow (passo 3). */
   #output-canvas {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: fill;
   }
 
   .hud {

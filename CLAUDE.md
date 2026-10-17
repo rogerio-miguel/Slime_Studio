@@ -1,18 +1,18 @@
-# Projeto Slime Studio - Diretrizes de Desenvolvimento
+# Projeto Slime Studio — Diretrizes de Desenvolvimento
 
-Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga estas regras rigorosamente para otimizar o consumo de tokens e manter a consistência do código.
+Guia de contexto e regras para o Claude Code neste projeto.
 
 > **Nome do projeto**: Slime Studio (repositório `Slime_Studio`, decidido em 2026-08-10). O nome de trabalho "novo-projeto-anime4k" foi aposentado junto com os dois documentos de spec antigos, consolidados em `ESPECIFICACAO.md`.
 >
-> **Estado do projeto**: fora do estágio de scaffold. `backend/` tem API FastAPI, worker assíncrono e extractors (Strategy Pattern) funcionais, mais a camada `integrations/` de metadados de provedor externo (AniList/Kitsu, adicionada em 2026-08-16) com `uv run pytest`/`uv run ruff check` passando. `frontend/` é um projeto Vite+Tailwind funcional com rotas, home dirigida por provedor externo e fluxo de captura on-demand ponta a ponta (`npm run lint`/`npm run build` passando). O protótipo original do player WebGPU permanece isolado em `teste/` (sandbox, sem lint/teste) — não confirmado nesta passada se já foi portado pro pipeline real do `frontend/`, ver seção 3E de `ESPECIFICACAO.md`. `ESPECIFICACAO.md` está desatualizado em relação às decisões descritas abaixo (o usuário vai atualizá-lo separadamente — não edite esse arquivo sem pedido explícito). Consulte-o mesmo assim para o racional histórico de cada decisão antes de implementar.
+> **Estado do projeto**: fora do estágio de scaffold. `backend/` tem API FastAPI, worker assíncrono e `fontes/` (adapters por site, Strategy Pattern) funcionais, mais a camada `integrations/` de metadados de provedor externo (AniList/Kitsu, adicionada em 2026-08-16) com `uv run pytest`/`uv run ruff check` passando. `frontend/` é um projeto Vite+Tailwind funcional com rotas, home dirigida por provedor externo e fluxo de captura on-demand ponta a ponta (`npm run lint`/`npm run build` passando). O protótipo original do player WebGPU permanece isolado em `teste/` (sandbox, sem lint/teste) — não confirmado nesta passada se já foi portado pro pipeline real do `frontend/`, ver seção 3E de `ESPECIFICACAO.md`. `ESPECIFICACAO.md` está desatualizado em relação às decisões descritas abaixo (o usuário vai atualizá-lo separadamente — não edite esse arquivo sem pedido explícito). Consulte-o mesmo assim para o racional histórico de cada decisão antes de implementar.
 >
 > **Gatilho de hardware**: a GPU atual é uma Radeon RX 580 (8GB) e várias decisões do projeto existem só por causa dela (ramo GAN excluído, presets mais leves, pipeline em lote adiado, chunks pequenos por VRAM). Se o usuário mencionar em qualquer conversa que trocou de GPU — RTX 5060 Ti ou qualquer RTX 50xx/superior —, **pare e trate isso como gatilho de replanejamento de arquitetura**: leia a seção 12 de `ESPECIFICACAO.md` e siga o procedimento de lá antes de seguir com a tarefa em curso.
 
-## 1. Arquitetura do Sistema
+## 1. Arquitetura
 - **Estrutura:** Monorepo com dois escopos principais: `backend/` (Python + FastAPI para a API, worker `asyncio` nativo como **processo separado**, SQLAlchemy + SQLite em modo WAL, `uv` como gerenciador de pacotes) e `frontend/` (React + Vite + Tailwind). Estrutura de pastas completa proposta na seção 10.1 do documento de especificação. **Onde mora a qualidade de imagem hoje:** no frontend (Anime4K/WebGPU por frame, seção 3E) — o backend é baixador, empacotador HLS, catálogo e agregador de metadados de provedor externo (capa/sinopse/lançamentos via `integrations/`, seção 2). O upscaling em lote no worker só entra depois do gatilho de hardware (seção 12).
-- **Duas famílias de adapter, não confunda:** `extractors/` resolve **vídeo** em sites de streaming (scraping, bypass anti-bot, sessão/cookie, circuit breaker) e alimenta o pipeline de captura. `integrations/` resolve **metadados** (capa, sinopse, lançamentos) em APIs JSON públicas (AniList, Kitsu) e alimenta a home/catálogo. Mesmo Strategy Pattern nos dois, infraestrutura de resiliência bem diferente — ver seção 2.
-- **Escopo Base:** Ao receber uma tarefa, opere estritamente dentro do escopo correspondente (backend, frontend). Não misture contextos ou faça buscas globais desnecessárias.
-- **Clean Architecture (regra de dependência):** código de domínio/regras de negócio não importa nada de framework, banco de dados, UI ou I/O externo — esses detalhes dependem do domínio, nunca o contrário. Antes de adicionar um import ou acoplar uma camada a outra, confirme de que lado da fronteira cada uma está.
+- **Duas famílias de adapter, não confunda:** `fontes/` resolve **vídeo** em sites de streaming (scraping, bypass anti-bot, sessão/cookie, circuit breaker: adapters, rede/resiliência, busca por título, resolução do `FonteAnime`, listagem) e alimenta o pipeline de captura; o download em si fica em `captura/` e depende de `fontes/`, nunca o contrário. **"Fonte" no projeto é só site de streaming** (`FonteAnime`, "Trocar fonte"); AniList/Kitsu/TMDB são provedores de metadados (`integrations/`) e `fontes/` nunca importa de lá. `integrations/` resolve **metadados** (capa, sinopse, lançamentos) em APIs JSON públicas (AniList, Kitsu) e alimenta a home/catálogo. Mesmo Strategy Pattern nos dois, infraestrutura de resiliência bem diferente — ver seção 2.
+- **Escopo:** trabalhe estritamente dentro do escopo da tarefa (backend, frontend); não misture contextos nem faça buscas globais desnecessárias.
+- **Regra de dependência (Clean Architecture):** código de domínio/regras de negócio não importa nada de framework, banco de dados, UI ou I/O externo — esses detalhes dependem do domínio, nunca o contrário. Antes de adicionar um import ou acoplar uma camada a outra, confirme de que lado da fronteira cada uma está.
 
 ---
 
@@ -21,8 +21,10 @@ Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga
 - **Dois entry points, um pacote:** `api/` (sempre no ar, serve player/painel/WebSocket) e `worker/` (roda o pipeline, pode levar horas por job) vivem no mesmo pacote Python mas rodam como processos separados — um crash/restart de um não derruba o outro. Não acople os dois além do que já é compartilhado via `models/`.
 - **Scripts:** `uv run pytest` (testes), `uv run ruff check` (lint), `uv run alembic upgrade head` (migrations, planejado — ainda não existe).
 - **Convenções de nomenclatura:** snake_case tanto no banco (SQLAlchemy) quanto no código Python — o schema do documento (seção 4) já usa nomes em português nesse padrão (`anime_id`, `titulo`, `criado_em`); manter consistência com isso, não inventar tradução para inglês/camelCase.
-- **Extratores por site:** seguem Strategy Pattern (`extractors/base.py` + uma classe por site, ex. `animefire.py`). Cada adapter ganha a camada de cache de sessão/retry/circuit breaker (seção 3A do documento) — não reimplementar isso por site.
-- **Integrações de metadados (`integrations/`):** mesmo Strategy Pattern (`integrations/base.py`, domínio puro, sem `requests`/framework — os adapters `anilist.py`/`kitsu.py` é que trazem HTTP), orquestrados em `integrations/servico.py` (único lugar com `asyncio.to_thread`+`wait_for`, cadeia de fallback AniList→Kitsu, cache do feed em memória de processo com TTL). **Não reaproveitar `extractors/resiliencia.py`** aqui — ele é acoplado a `SessaoBypass`/`ClienteNavegador`/`EstadoSite` por domínio, que fazem sentido pra site com bypass anti-bot, não pra API JSON pública. Metadado confirmado (capa/sinopse/ids) **persiste** nas colunas de `Anime` que já existem pra isso (`capa_path` guarda URL do provedor, não caminho em disco); feed volátil ("em alta") fica só em cache de memória.
+- **Extratores por site:** seguem Strategy Pattern (`fontes/adaptadores/base.py` + uma classe por site, ex. `animefire.py`). Cada adapter ganha a camada de cache de sessão/retry/circuit breaker (seção 3A do documento) — não reimplementar isso por site.
+- **Integrações de metadados (`integrations/`):** mesmo Strategy Pattern (`integrations/base.py`, domínio puro, sem `requests`/framework — os adapters `anilist.py`/`kitsu.py` é que trazem HTTP), orquestrados em `integrations/servico.py` (único lugar com `asyncio.to_thread`+`wait_for`, cadeia de fallback AniList→Kitsu, cache do feed em memória de processo com TTL e stale-while-revalidate). **Não reaproveitar `fontes/rede/resiliencia.py`** aqui — ele é acoplado a `SessaoBypass`/`ClienteNavegador`/`EstadoSite` por domínio, que fazem sentido pra site com bypass anti-bot, não pra API JSON pública. Metadado confirmado (capa/sinopse/ids) **persiste** nas colunas de `Anime` que já existem pra isso (`capa_path` guarda URL do provedor, não caminho em disco); feed volátil ("em alta" e demais feeds da Home) vive em cache de memória com TTL, **espelhado na tabela `cache_de_feed`** (descartável, não é fonte de verdade): `integrations/` não conhece banco, então a API injeta a persistência no lifespan (`api/servicos/cache_de_feeds.py`, `instalar_persistencia_de_feeds`/`restaurar_feeds_persistidos`). Após reinício o feed persistido volta como cache expirado — servido na hora e revalidado em segundo plano — porque a cache fria (busca AniList + overlay de arte TMDB por item) levava dezenas de segundos. Ao medir feed fora da API, chame `instalar_provedores_de_arte`, senão o TMDB não entra e a medição sai ~10x mais rápida.
+- **Texto e temporada em fonte achatada:** `core/texto.py::slugificar` é o normalizador único de título (slug gravado em `Anime.slug`, termo do AnimeFire, base da chave de comparação de card): símbolo (`★`, `♪`) separa palavra, `×` vira `x`, aspas tipográficas viram ASCII; slug de título ASCII não pode mudar (orfanaria a linha), e `obter_ou_criar_anime_id` acha a obra por `anilist_id` antes do slug. Site que serve a franquia inteira numa lista só é cortado por `fontes/recorte.py::recortar_se_fonte_achatada` (offset/partes irmãs vêm de `db/franquias.py`); **todo caminho que lista a fonte pra casar episódio por número passa por ele** — exibição, sondagem, captura e a troca de site no meio do download (`captura/servico.py`).
+- **Verificação das fontes é só do zelador** (`api/servicos/zelador.py`, laço no lifespan da API; liga/desliga com `ZELADOR_ATIVO` no `.env`, padrão ligado). Uma passada a cada 60s (primeira após 120s), no máximo 30 sondagens por hora; QUEM verificar e QUANDO é a política pura de `core/ciclo_de_vida.py`, e o backoff de quem falhou fica persistido em `verificacao_de_anime`. Roda em segundo plano (`fontes.rede.resiliencia.em_segundo_plano`): **nunca abre navegador** — site que exige Turnstile (MeusAnimes) só abre o navegador sob demanda do usuário. Nenhuma leitura de página (`GET /api/animes`, página do anime, "continuar assistindo") dispara sondagem ou refresh de status; o frontend só relê periodicamente (`useAtualizacaoPeriodica`). Mapeamento `FonteAnime.origem = MANUAL` não é sobrescrito pela resolução automática.
 - **`/api/admin/*` é rótulo de escrita/descoberta, não fronteira de autenticação.** A API não tem gate de auth hoje (uso local/pessoal) — várias rotas `admin` já são chamadas direto de página pública do frontend (ex. resolução de fonte, criação de anime). Se autenticação entrar no projeto, é aí que a separação passa a importar; até lá, não deduza controle de acesso a partir do prefixo.
 - **Pipeline de vídeo (`worker/pipeline/`):** roda `ffmpeg`/`realesrgan-ncnn-vulkan` como subprocessos. **Processar sempre em chunks** (500–1000 frames) — nunca extrair/manter o episódio inteiro em disco de uma vez (seção 3C do documento: risco real e documentado de estourar disco/VRAM). Este pipeline está **condicionado à troca de GPU** (seção 12 do documento) — não implementar antes disso.
 
@@ -36,19 +38,38 @@ Este arquivo serve como guia de contexto e restrições para o Claude Code. Siga
 
 ---
 
-## 4. Regras de Comportamento para o Agente (Claude Code)
-- **Foco Cirúrgico:** Sempre que for criar ou alterar código, use a referência exata do arquivo utilizando `@nome_do_arquivo` para evitar varrer pastas completas.
-- **Modo Silencioso de Token:** Não explique conceitos básicos de programação ou arquitetura a menos que explicitamente solicitado. Foque em entregar código funcional, limpo e direto ao ponto.
-- **Não quebre o Ecossistema:** Ao instalar ou atualizar pacotes, respeite as versões/dependências já estabelecidas nos arquivos de manifesto do projeto.
-- **Clean Code:** nomes que revelam intenção, funções pequenas com responsabilidade única, sem duplicação, tratamento de erro explícito (nunca silencioso), comentários só onde o código não consegue falar por si.
-- **Escada de Minimalismo (código mínimo, nunca menos que o correto):** Antes de escrever qualquer código novo, percorra em ordem: (1) isso precisa existir? — se não, não escreva; (2) já existe algo no projeto que resolve? — reutilize; (3) a stdlib da linguagem resolve? — use; (4) uma dependência já instalada resolve? — use; (5) cabe em uma linha clara? — uma linha; (6) só então escreva o mínimo necessário. Esta regra reduz código e tokens, mas **nunca** justifica cortar validação de entrada, tratamento de erro, segurança ou acessibilidade.
-- **Timing de commit:** a skill `commit` não se auto-invoca (`disable-model-invocation`), então só quem pode notar o momento certo de rodá-la é você, aqui, com o contexto vivo. Ao terminar cada unidade de trabalho — antes de começar a próxima — avalie se é hora de sugerir `commit`: assunto fechado, `git status` acumulando arquivos, ou trecho de código chegando a um estado estável. Anuncie a sugestão em uma linha; se o usuário preferir adiar, siga para o próximo passo sem insistir.
-- **Controle Rígido de Testes e Terminal:** É ESTRITAMENTE PROIBIDO executar ferramentas de bash, rodar testes ou iniciar servidores de validação por conta própria. Ao finalizar a escrita ou alteração de um código, NUNCA enfileire comandos no terminal sem a permissão explícita do usuário. Apenas entregue o código e pergunte: "Deseja que eu rode os testes agora?". Isso vale em dobro aqui: comandos podem envolver scraping/bypass anti-bot ou jobs de GPU de longa duração (upscaling), nunca dispare isso sem confirmação explícita.
+## 4. Padrões de Código
+- **Nomes e funções:** nomes que revelam intenção; funções pequenas, de responsabilidade única.
+- **Sem redundância:** ao notar o mesmo trecho pela 2ª vez, sinalize; na 3ª, extraia. Antes de escrever código novo, percorra a Escada de Minimalismo: precisa existir? → já existe no projeto? → a stdlib resolve? → uma dependência já instalada resolve? → cabe em uma linha clara? → só então o mínimo necessário.
+- **Erros:** explícitos, nunca silenciosos. Valide entrada nas fronteiras do sistema.
+- **Comentários:** só o porquê (decisão, restrição, armadilha), nunca o que o código já diz.
+- **Mínimo não é menos que o correto:** economia de código nunca justifica cortar validação de entrada, tratamento de erro, segurança ou acessibilidade.
 
 ---
 
-## 5. Comandos de Validação
-A skill `transicao` lê esta seção para saber o que rodar ao gerar um checkpoint.
+## 5. Segurança
+Baseline de fundamentos; para revisão e endurecimento use a skill `security`.
+- **API HTTP:** valide entrada na fronteira com schema (Pydantic); não vaze stack trace nem detalhe interno em erros (a mensagem crua vai pro log). A ausência de auth em `/api/admin/*` é decisão de uso local (seção 2), sustentada por `TrustedHostMiddleware` + `ProtecaoDeOrigem` (`api/seguranca.py`): `Host` só `localhost`/`127.0.0.1` e `Origin` exata (`_ORIGENS_PERMITIDAS`) em escrita e WebSocket — Vite em porta diferente de 5173 exige ajustar a lista. Se a API for exposta além do localhost, auth vem antes.
+- **Banco:** SQLAlchemy/consulta parametrizada, nunca concatenar entrada em SQL.
+- **Frontend:** nunca renderize HTML não sanitizado (sinopse/título vindos de provedor são entrada de terceiros); sem segredo no bundle. O CSP roda em Report-Only (`frontend/vite.config.js`, dev e preview): violação só aparece no console; promover a `Content-Security-Policy` quando o console estiver limpo no uso real.
+- **URLs de terceiros:** URL vinda de scraping ou provedor (AniList/Kitsu/TMDB) e repassada a `ffmpeg`/`yt-dlp`/`requests` passa por allowlist de destino (evita SSRF); mídia passa por `exigir_url_de_midia_segura` e os GETs por `get_validando_redirects` (`fontes/rede/rede_segura.py`), que barram IP interno, nome que resolve pra IP interno e redirect pra destino interno; resta a janela de DNS rebinding entre verificar e usar (ffmpeg/yt-dlp resolvem por conta própria). Nunca interpole em shell — subprocesso sempre com lista de argumentos. O modo `local` não existe na API: arquivo local só via `scripts/enfileirar_local.py`.
+- **Caminhos e nomes de arquivo:** título/episódio vindo de scraping ou provedor que vira caminho em disco (`media/`, chunks do `ffmpeg`) usa nome gerado ou slug sanitizado; nunca aceite `..` nem caminho absoluto de fora.
+- **Segredos:** chaves de API (ex. TMDB) só em `.env` fora do git, nunca no repositório nem no bundle do frontend; se vazou, rotacione. O hook `.githooks/pre-commit` roda `gitleaks` nos arquivos em stage (ativar por clone: `git config core.hooksPath .githooks`).
+- **Dependências:** lockfiles (`uv.lock`, `package-lock.json`) versionados; auditoria periódica (`pip-audit`/`osv-scanner` no backend, `npm audit` no frontend), atenção especial a `yt-dlp` (o worker loga a versão no start e avisa acima de 90 dias), `cloudscraper` e `drissionpage`. `ruff` roda com a regra `S` (bandit; `tests/` ignora S101/S105/S108) e `frontend/.npmrc` usa `ignore-scripts=true`.
+
+---
+
+## 6. Comportamento do Agente
+- **Foco cirúrgico:** use `@arquivo` em vez de varrer pastas.
+- **Conciso:** não explique conceitos básicos a menos que peçam; entregue código funcional e direto.
+- **Dependências:** ao instalar ou atualizar pacotes, respeite as versões dos manifestos do projeto.
+- **Commit:** a skill `commit` não se auto-invoca. Ao fechar cada unidade de trabalho — antes de começar a próxima —, sugira-a em uma linha (assunto fechado, `git status` acumulando, código estável); se o usuário adiar, siga sem insistir.
+- **Terminal:** peça permissão antes de qualquer comando, exceto `uv run ruff check`, `npm run lint` (análise estática, sem `--fix`) e `uv run pytest` (suíte offline, ~16 s; o `addopts` do `pyproject.toml` já exclui `-m rede`), liberados no `.claude/settings.json`. Peça sempre para `-m rede` (scraping real), para jobs de GPU (upscaling) e para servidores ou build — comandos podem envolver scraping/bypass anti-bot ou GPU de longa duração, nunca dispare isso sem confirmação explícita. O `settings.json` não trava argumentos, então essa restrição a `-m rede` é regra de texto. `gh pr merge` só depois do "pode mesclar" do usuário no chat.
+
+---
+
+## 7. Comandos de Validação
+Lidos pela skill `checkpoint`. O build só roda mediante permissão; lint e `uv run pytest` são as exceções (ver Comportamento do Agente).
 
 | Escopo | Comando |
 |---|---|
@@ -59,61 +80,25 @@ A skill `transicao` lê esta seção para saber o que rodar ao gerar um checkpoi
 
 ---
 
-## 6. Orquestração (Custo/Desempenho)
+## 8. Orquestração
+**Execute você mesmo (padrão).** Delegar abre um contexto frio que recarrega tudo do zero; só compensa quando o subagente lê muito e devolve pouco. Delegue apenas nestes casos:
+- **`explorer`** — responder exigiria muitas leituras/buscas que virariam ruído no seu contexto (mapear convenção espalhada, achar todos os usos, entender subsistema desconhecido). Paralelize escopos independentes; se a informação já está na conversa, não delegue.
+- **`implementer`** — trabalho em vários arquivos ou refactor definido, grande demais para fazer inline. Passe a lista de arquivos e o plano (ele não re-explora). Bugfix pontual e mudança de 1-2 arquivos: faça direto.
+- **`architect`** (Opus, o mais caro) — só se um critério do próprio agente bater e depois de uma tentativa direta que falhou.
 
-A sessão principal orquestra; ela não é o executor padrão. Ao receber um pedido, faça a triagem
-e siga **um** dos dois caminhos abaixo. Anuncie qual escolheu, em uma linha, antes de agir.
+Correção depois de um subagente concluído: faça direto ou abra um novo, estreito; não o retome via `SendMessage` (recarrega o histórico inteiro). Ambiguidade de design sinalizada por subagente vai ao `architect`. Sem `reviewer` separado: o `implementer` autorrevisa o diff, e no caminho direto essa revisão é sua.
 
-### Princípio de custo (o que decide tudo abaixo)
-O contexto da sessão principal é cobrado em **todo** turno seguinte. Output de tool lido inline
-fica lá para sempre; output de tool de um subagente não entra — só o resumo entra. Por isso:
-**delegue o que precisa ser lido mas não precisa ser lembrado.** Um mapeamento de código que
-serve para uma decisão e depois vira ruído é o caso clássico: vale mais um relatório de
-200 linhas do `explorer` do que 20 arquivos despejados no contexto principal.
-O inverso também vale: o que a sessão principal *já tem* em contexto não deve ser re-lido por
-ninguém — repassar ao subagente é mais barato que mandá-lo redescobrir.
-
-### Caminho direto
-Use quando **todas** forem verdadeiras:
-- A mudança é trivial e de escopo óbvio (poucas linhas, 1 arquivo).
-- Segue padrão já estabelecido no projeto — não há decisão de design a tomar.
-- O contexto necessário já está na conversa ou em arquivos referenciados via `@arquivo`.
-
-Nesse caminho a sessão principal executa direto, sem `explorer`, sem `architect` e sem `reviewer`.
-Orquestrar uma tarefa de 3 linhas custa três contextos onde um resolveria.
-
-### Caminho orquestrado
-Qualquer coisa que não passe no teste acima. Sequência:
-
-1. **`explorer`** — só se faltar contexto. Se a informação já está na conversa, pule.
-   Paralelize: escopos independentes viram um `explorer` cada, na mesma leva, não em série.
-2. **`architect`** — só se ao menos um critério objetivo do agente for atendido (mais de uma
-   camada afetada, ausência de padrão estabelecido, ou bug sem causa óbvia **após** uma tentativa
-   direta do `implementer`). Não escalar "por segurança": escopo já claro vai direto ao passo 3.
-3. **`implementer`** — sempre. Recebe o plano do `architect` quando houve um, ou a instrução
-   direta quando não houve. Repasse o contexto que você já tem em vez de deixá-lo redescobrir.
-4. **`reviewer`** — sempre neste caminho, sobre o diff.
-
-### Falhas e reentrada
-- `implementer` sinalizou escopo ambíguo → volte ao passo 2 (`architect`), não improvise a decisão.
-- `implementer` falhou uma tentativa direta em bug → agora o `architect` é justificado (causa-raiz).
-- `reviewer` apontou problema → volte ao `implementer` com os achados; só re-invoque o `reviewer`
-  se a correção mudou o desenho, não a cada ajuste pontual.
+Fatie o trabalho do `implementer` por unidade natural (arquivo, rota, endpoint, componente), uma chamada por fatia: escopo grande ("a Fase X inteira") acumula contexto turno a turno (medido aqui: 354 turnos / 53M numa cadeia) e o `maxTurns` do frontmatter não corta isso (bug conhecido do Claude Code).
 
 ---
 
-## 7. Integração com Chrome (Debug Visual)
-A integração `claude-in-chrome` só deve ser usada para inspeção/depuração visual pontual. Cada screenshot ou frame de GIF é imagem e custa muito mais tokens que texto — trate o navegador como recurso caro, não como reflexo automático.
-- **Dois gatilhos, não um:**
-  1. **Manual:** só abra o navegador quando solicitado explicitamente ("testa no navegador", "abre no chrome", "verifica visualmente", "vê se ficou bom").
-  2. **Automático por esgotamento:** se o problema for de natureza visual/frontend e já houve 2-3 tentativas de correção via código sem resolver, pode abrir o navegador por conta própria para inspecionar — avise que está fazendo isso porque tentativas anteriores não resolveram, antes de agir.
-- **Uma tarefa, uma navegação:** vá direto para a URL/rota do componente em questão.
-- **Reuse de aba:** mantenha a mesma aba/sessão aberta durante toda a tarefa de verificação.
-- **Prefira texto a imagem quando possível:** para erros de JS, leia o console via DevTools em vez de tirar screenshot.
-- **Sem GIF por padrão:** nunca grave GIF de interação a menos que solicitado explicitamente.
-- **Sem loop de verificação:** no máximo uma rodada de checagem por ativação.
-- **Login/CAPTCHA:** se a integração pausar pedindo login ou CAPTCHA, pare e avise — não insista tentando contornar.
+## 9. Debug Visual (Chrome)
+`claude-in-chrome` só para inspeção visual pontual: cada screenshot ou frame de GIF custa muito mais tokens que texto.
+- **Quando abrir:** a pedido explícito ("testa no navegador", "abre no chrome", "verifica visualmente"), ou se o problema for visual e 2-3 correções por código falharam (avise antes de abrir).
+- **Uma tarefa, uma navegação:** vá direto à rota do componente e reuse a mesma aba.
+- **Texto antes de imagem:** para erro de JS, leia o console em vez de tirar screenshot. Sem GIF por padrão; no máximo uma rodada de checagem por ativação.
+- **Login/CAPTCHA:** pare e avise; não tente contornar.
 
 ---
 
-_Gerado pela skill `bootstrap` do kit `claude-toolkit` (versão 0.3.0) em 2026-08-10._
+_Gerado pela skill `bootstrap` do kit `claude-toolkit` (versão 0.16.0) em 2026-09-30, atualizando o CLAUDE.md gerado na versão 0.3.0 em 2026-08-10._

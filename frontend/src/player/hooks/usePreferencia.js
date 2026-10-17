@@ -1,8 +1,7 @@
 import { useCallback, useState } from 'react';
 
-// Hook único pra preferências persistidas em localStorage (slime.preset,
-// slime.cinemaAudio, slime.hudVisivel — mesmas chaves do protótipo, ver
-// bench.js:277-291). try/catch em leitura E escrita: localStorage pode
+// Hook único pra preferências persistidas em localStorage (slime.qualidade,
+// slime.cinemaAudio, slime.hudVisivel). try/catch em leitura E escrita: localStorage pode
 // estar bloqueado (ex. modo anônimo) — nesse caso a preferência simplesmente
 // não persiste, nunca quebra a UI. Valores são serializados via JSON (não o
 // '1'/'0' cru que o protótipo usava só pra slime.cinemaAudio) pra um único

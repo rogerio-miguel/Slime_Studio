@@ -29,6 +29,16 @@ class Config:
     ffmpeg: Path
     ffprobe: Path
     caminho_lock: Path
+    # Token do TMDB (provedor padrão de arte — capa/banner/thumb de episódio,
+    # ver PLANO_ARTE_TMDB.md). Default `None` obrigatório: ausência é DEGRADE
+    # pra AniList (D2 do plano), nunca `ErroDeConfiguracao` — ao contrário de
+    # `database_url`/`ffmpeg`/`ffprobe` acima, que são hard-fail. Campo NOVO
+    # no fim da dataclass pra não quebrar as construções por keyword já
+    # existentes em `tests/conftest.py` e outros arquivos de teste.
+    tmdb_token: str | None = None
+    # Liga o zelador de fontes (`api/servicos/zelador.py`). Ligado por padrão;
+    # `ZELADOR_ATIVO=false` no .env o desliga (vale no próximo start da API).
+    zelador_ativo: bool = True
 
 
 def carregar_config(env_path: Path | None = None) -> Config:
@@ -47,6 +57,7 @@ def carregar_config(env_path: Path | None = None) -> Config:
     ffmpeg = _localizar_ferramenta("ffmpeg")
     ffprobe = _localizar_ferramenta("ffprobe")
     caminho_lock = _extrair_caminho_banco(database_url).parent / _NOME_ARQUIVO_LOCK
+    tmdb_token = valores.get("TMDB_READ_ACCESS_TOKEN") or None
 
     return Config(
         database_url=database_url,
@@ -55,7 +66,20 @@ def carregar_config(env_path: Path | None = None) -> Config:
         ffmpeg=ffmpeg,
         ffprobe=ffprobe,
         caminho_lock=caminho_lock,
+        tmdb_token=tmdb_token,
+        zelador_ativo=_ler_booleano("ZELADOR_ATIVO", valores.get("ZELADOR_ATIVO"), padrao=True),
     )
+
+
+def _ler_booleano(nome: str, valor: str | None, *, padrao: bool) -> bool:
+    if valor is None or not valor.strip():
+        return padrao
+    normalizado = valor.strip().lower()
+    if normalizado in ("1", "true"):
+        return True
+    if normalizado in ("0", "false"):
+        return False
+    raise ErroDeConfiguracao(f"{nome} deve ser true ou false, recebido {valor!r}.")
 
 
 def _resolver_media_root(valor: str) -> Path:

@@ -5,16 +5,18 @@ job (ESPECIFICACAO.md §5, Passo 1.3 do plano da Fase 3).
 """
 
 import logging
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.enums import StatusEpisodio, TipoEpisodio, VersaoEpisodio
 from core.erros import EpisodioJaExiste, ErroSlimeStudio
+from core.temporada import PosicaoNaSerie, separar_temporada
 from core.texto import slugificar
 from db.fila import criar_job
-from integrations.base import MetadadosDeAnime
+from integrations.base import ArteDeAnime, LancamentoDeAnime, MetadadosDeAnime
 from models.anime import Anime
 from models.episodio import Episodio
 
@@ -23,15 +25,58 @@ logger = logging.getLogger(__name__)
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 
-async def obter_ou_criar_anime_id(sessionmaker: _SessionMaker, titulo: str, ano: int | None) -> int:
+async def obter_ou_criar_anime_id(
+    sessionmaker: _SessionMaker,
+    titulo: str,
+    ano: int | None,
+    *,
+    formato_midia: str | None = None,
+    anilist_id: int | None = None,
+) -> int:
+    """Get-or-create por slug. `formato_midia` (`format` cru da AniList —
+    `None` para série TV, "MOVIE"/"OVA"/"ONA"/"SPECIAL" caso contrário) só é
+    aplicado na CRIAÇÃO — um anime já existente não tem seu formato
+    retroativamente alterado (mesma convenção de `ano` acima: só pega no
+    primeiro cadastro). Não-nulo desliga o marcador de temporada do título
+    (`separar_temporada`): filme/OVA/especial não tem posição narrativa
+    numerada, mesmo que o título tenha algo que pareça um marcador.
+
+    `anilist_id` identifica a obra antes do slug: linha que já o tem é a mesma
+    obra, mesmo que o slug gravado seja de uma versão anterior de `slugificar`.
+    Também desambigua colisão: `slugificar` descarta símbolos, então
+    "Go-toubun no Hanayome ∬" tem o mesmo slug da T1. Slug já usado por linha com
+    OUTRO `anilist_id` é outra obra — o slug novo ganha o sufixo `-<anilist_id>`.
+    Linha existente sem `anilist_id` (cadastro manual ainda não enriquecido)
+    continua sendo reaproveitada."""
     slug = slugificar(titulo)
     async with sessionmaker() as sessao:
-        resultado = await sessao.execute(select(Anime.id).where(Anime.slug == slug))
-        anime_id = resultado.scalar_one_or_none()
-        if anime_id is not None:
-            return anime_id
+        if anilist_id is not None:
+            existente = await sessao.scalar(select(Anime.id).where(Anime.anilist_id == anilist_id))
+            if existente is not None:
+                return existente
+        dono = (
+            await sessao.execute(select(Anime.id, Anime.anilist_id).where(Anime.slug == slug))
+        ).one_or_none()
+        if (
+            dono is not None
+            and anilist_id is not None
+            and dono.anilist_id not in (None, anilist_id)
+        ):
+            slug = f"{slug}-{anilist_id}"
+            dono = (
+                await sessao.execute(select(Anime.id, Anime.anilist_id).where(Anime.slug == slug))
+            ).one_or_none()
+        if dono is not None:
+            return dono.id
 
-        anime = Anime(titulo=titulo, slug=slug, ano=ano)
+        numero_temporada = None if formato_midia is not None else separar_temporada(titulo)[1]
+        anime = Anime(
+            titulo=titulo,
+            slug=slug,
+            ano=ano,
+            numero_temporada=numero_temporada,
+            formato_midia=formato_midia,
+        )
         sessao.add(anime)
         try:
             await sessao.commit()
@@ -70,12 +115,29 @@ async def aplicar_metadados(
 
         if anime.capa_path is None and metadados.capa_url is not None:
             anime.capa_path = metadados.capa_url
+        if anime.banner_path is None and metadados.banner_url is not None:
+            anime.banner_path = metadados.banner_url
+        if anime.capa_cor is None and metadados.capa_cor is not None:
+            anime.capa_cor = metadados.capa_cor
+        if anime.generos is None and metadados.generos:
+            anime.generos = metadados.generos
+        if anime.ano is None and metadados.ano is not None:
+            anime.ano = metadados.ano
         if anime.sinopse is None and metadados.sinopse is not None:
             anime.sinopse = metadados.sinopse
+        # `titulo_ingles` é só exibição (nunca substitui `Anime.titulo`) — mesma
+        # regra só-quando-nulo dos demais.
+        if anime.titulo_ingles is None and metadados.titulo_ingles is not None:
+            anime.titulo_ingles = metadados.titulo_ingles
         if anime.anilist_id is None and metadados.anilist_id is not None:
             anime.anilist_id = metadados.anilist_id
         if anime.kitsu_id is None and metadados.kitsu_id is not None:
             anime.kitsu_id = metadados.kitsu_id
+
+        # Lançamento não é idempotente por campo como o resto: quando o payload
+        # traz o bloco, sobrescreve (mesma sessão, sem reabrir outra).
+        if metadados.lancamento is not None:
+            _aplicar_lancamento_no_anime(anime, metadados.lancamento, datetime.now(UTC))
 
         try:
             await sessao.commit()
@@ -87,6 +149,341 @@ async def aplicar_metadados(
                 anime_id,
                 excecao,
             )
+
+
+async def aplicar_posicao_na_serie(
+    sessionmaker: _SessionMaker, anime_id: int, posicao: PosicaoNaSerie
+) -> None:
+    """Grava `numero_temporada` (ordinal narrativo) e `serie_ancora` de `Anime`
+    — **só-quando-NULL por campo**, mesma disciplina de `aplicar_metadados`: o
+    marcador do título, derivado por `obter_ou_criar_anime_id` na criação,
+    sempre vence o ordinal do walk de `relations`
+    (`integrations/servico.py::resolver_serie` conciliado por
+    `core/temporada.py::conciliar_posicao`).
+
+    Chamada na materialização (`api/servicos/descoberta.py::
+    enriquecer_anime_criado`) e no backfill (`scripts/backfill_serie.py`);
+    re-executável — roda de novo depois de a AniList voltar e preenche o que
+    ficou `NULL` numa passada anterior.
+
+    Anime inexistente é no-op silencioso (mesma regra de `atualizar_lancamento`).
+    """
+    if posicao.numero_temporada is None and posicao.serie_ancora is None:
+        return
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        if anime.numero_temporada is None and posicao.numero_temporada is not None:
+            anime.numero_temporada = posicao.numero_temporada
+        if anime.serie_ancora is None and posicao.serie_ancora is not None:
+            anime.serie_ancora = posicao.serie_ancora
+        await sessao.commit()
+
+
+async def rebaixar_a_extra(sessionmaker: _SessionMaker, anime_id: int, formato: str) -> None:
+    """Marca como extra (`formato_midia` = `format` cru da AniList) um anime
+    criado como série — o feed não traz relações, então ONA/OVA longo com
+    aresta `PARENT` só é reconhecido depois (`integrations/servico.py::
+    formato_se_extra`). Zera `numero_temporada` e `serie_ancora`: extra não tem
+    posição narrativa numerada (o marcador do título gravado na criação não
+    vale) e `aplicar_posicao_na_serie` só preenche campo NULL — uma âncora
+    antiga (a do próprio anime, de quando era série) travaria a do pai."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.formato_midia = formato
+        anime.numero_temporada = None
+        anime.serie_ancora = None
+        await sessao.commit()
+
+
+async def promover_a_serie(sessionmaker: _SessionMaker, anime_id: int) -> None:
+    """Inverso de `rebaixar_a_extra`: tira `formato_midia` (e a âncora herdada do
+    pai) de um anime que a regra atual trata como série — caso do catálogo
+    anterior ao classificador, em que todo ONA nascia extra. A posição na série
+    é refeita depois por `_resolver_e_aplicar_serie`."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.formato_midia = None
+        anime.serie_ancora = None
+        await sessao.commit()
+
+
+async def sobrescrever_arte(sessionmaker: _SessionMaker, anime_id: int, arte: ArteDeAnime) -> None:
+    """Sobrescreve `banner_path` de um anime JÁ catalogado — ao contrário de
+    `aplicar_metadados` (só-quando-nulo, protege dado confirmado em todos os
+    outros caminhos de escrita), aqui a intenção explícita de quem chama é
+    SUBSTITUIR o banner existente pelo do TMDB. Mesmo assim só grava quando
+    `arte.banner_url` não é `None` — nunca apaga banner existente por um match
+    parcial (mesma regra de `_com_arte` em `integrations/servico.py`).
+
+    `ArteDeAnime` não carrega mais `capa_url` (capa voltou a ser
+    responsabilidade exclusiva da AniList/Kitsu — ver `sobrescrever_capa` para
+    o equivalente de sobrescrita de capa)."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+
+        if arte.banner_url is not None:
+            anime.banner_path = arte.banner_url
+
+        await sessao.commit()
+
+
+async def sobrescrever_capa(sessionmaker: _SessionMaker, anime_id: int, capa_url: str) -> None:
+    """Sobrescreve `capa_path` de um anime JÁ catalogado — usado por
+    `scripts/backfill_capa_anilist.py` pra restaurar a capa da AniList (fonte
+    exclusiva de capa desde a reversão do overlay de capa por temporada do
+    TMDB), mesmo quando já havia uma capa gravada (ex.: pôster de série do
+    TMDB de um backfill anterior). Sobrescrita incondicional — ao contrário de
+    `aplicar_metadados` (só-quando-nulo) — mas o chamador já garante
+    `capa_url` não-`None` antes de chamar (mesma responsabilidade que
+    `sobrescrever_arte` deixa pro chamador)."""
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.capa_path = capa_url
+        await sessao.commit()
+
+
+def _aplicar_lancamento_no_anime(
+    anime: Anime, lancamento: LancamentoDeAnime, agora: datetime
+) -> None:
+    """Escreve os campos de lançamento num `Anime` já carregado — sem I/O, só
+    mutação de atributos. Único lugar com a semântica de SOBRESCRITA (oposta a
+    `aplicar_metadados`, que só preenche nulo); reusado por `atualizar_lancamento`
+    e `aplicar_metadados`.
+
+    - `status_lancamento` / `proximo_ep_numero` / `proximo_ep_em` / `estreia_em`:
+      gravados SEMPRE, inclusive `None`. A transição EM_LANCAMENTO -> FINALIZADO
+      traz `proximo_ep_numero=None` e a coluna precisa zerar, senão o badge de
+      "episódios novos" fica preso no último valor.
+    - `total_episodios_anilist`: só grava se o provedor informou (não apagar um
+      total já conhecido por causa de um refresh que veio sem o campo).
+    - `ano`: EXCEÇÃO à semântica de sobrescrita desta função — preenchimento
+      só-quando-nulo, igual a `aplicar_metadados`. `ano` é metadado de catálogo,
+      não estado de lançamento; um bookmark de "Próximas estreias" nasce sem ele
+      e sem esta linha o card de bookmark cai no rótulo genérico "Estreia em
+      breve".
+    - `lancamento_atualizado_em`: carimbo de "sincronizei agora", não de "algo
+      mudou" — atualizado em toda chamada.
+    """
+    anime.status_lancamento = lancamento.status
+    anime.proximo_ep_numero = lancamento.proximo_ep_numero
+    anime.proximo_ep_em = lancamento.proximo_ep_em
+    anime.estreia_em = lancamento.estreia_em
+    if lancamento.total_episodios is not None:
+        anime.total_episodios_anilist = lancamento.total_episodios
+    if anime.ano is None and lancamento.ano_estreia is not None:
+        anime.ano = lancamento.ano_estreia
+    anime.lancamento_atualizado_em = agora
+
+
+async def atualizar_lancamento(
+    sessionmaker: _SessionMaker, anime_id: int, lancamento: LancamentoDeAnime
+) -> None:
+    """Sobrescreve os campos de lançamento de um `Anime` a partir de um refresh
+    de provedor (`api/servicos/lancamentos.py`). Semântica em
+    `_aplicar_lancamento_no_anime` — NÃO é idempotente por campo.
+
+    Anime inexistente (`anime_id` sem linha) é no-op silencioso: o refresh
+    oportunista não deve falhar porque a linha sumiu entre a leitura e a escrita.
+    """
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        _aplicar_lancamento_no_anime(anime, lancamento, datetime.now(UTC))
+        await sessao.commit()
+
+
+async def aplicar_lancamento_descoberto_por_titulo(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    *,
+    anilist_id: int | None,
+    lancamento: LancamentoDeAnime | None,
+) -> None:
+    """Persiste o resultado de um aquecimento de lançamento por BUSCA DE TÍTULO
+    (`api/servicos/descoberta._buscar_por_titulo_e_persistir`, F14). Caminho
+    deliberadamente separado de `aplicar_metadados` — não "simplifique"
+    reusando-o:
+
+    - **Nunca toca `capa_path`/`sinopse`/`kitsu_id`.** O match por título é
+      heurístico; capa/sinopse são permanentes e visíveis, um match ruim
+      gravaria lixo difícil de reverter. Só o bloco de lançamento (que o
+      próximo refresh corrige sozinho) e, sob corroboração de slug feita pelo
+      chamador, o `anilist_id`.
+    - **`anilist_id` só entra se ainda estiver livre.** A checagem `SELECT`
+      antes do `commit` evita a `IntegrityError` de `aplicar_metadados`, cujo
+      `rollback` arrastaria junto o bloco de lançamento — dois animes irmãos
+      (dub + leg) podem resolver pro mesmo id `unique=True`. O `except
+      IntegrityError` residual cobre só a corrida TOCTOU (rara, auto-corrige no
+      próximo refresh).
+    - **`lancamento is None` ainda carimba `lancamento_atualizado_em`.** É o
+      cache negativo ("busquei por título, provedor não achou") que impede a
+      listagem de re-buscar o mesmo título a cada request enquanto o TTL vale.
+
+    Anime inexistente é no-op silencioso (mesma regra de `atualizar_lancamento`).
+    """
+    agora = datetime.now(UTC)
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+
+        if anilist_id is not None and anime.anilist_id is None:
+            resultado = await sessao.execute(
+                select(Anime.id).where(Anime.anilist_id == anilist_id)
+            )
+            dono = resultado.scalar_one_or_none()
+            if dono is not None:
+                logger.warning(
+                    "anilist_id=%s descoberto por título já pertence ao anime_id=%s; não "
+                    "gravado em anime_id=%s (só o bloco de lançamento)",
+                    anilist_id,
+                    dono,
+                    anime_id,
+                )
+            else:
+                anime.anilist_id = anilist_id
+
+        if lancamento is not None:
+            _aplicar_lancamento_no_anime(anime, lancamento, agora)
+        else:
+            anime.lancamento_atualizado_em = agora
+
+        try:
+            await sessao.commit()
+        except IntegrityError as excecao:
+            await sessao.rollback()
+            logger.warning(
+                "corrida ao gravar anilist_id=%s descoberto por título (anime_id=%s); "
+                "aquecimento perdido nesta passada: %s",
+                anilist_id,
+                anime_id,
+                excecao,
+            )
+
+
+async def atualizar_lancamentos_em_lote(
+    sessionmaker: _SessionMaker, dados: dict[int, LancamentoDeAnime]
+) -> None:
+    """Sobrescreve os campos de lançamento de vários `Anime` num refresh em lote
+    (job periódico de `api/servicos/lancamentos.py`). Mesma semântica de
+    `atualizar_lancamento`, em no máximo duas queries no total — nunca uma por
+    anime.
+
+    O `update(Anime)` com lista de dicts (bulk update by primary key) exige que
+    todos os dicts do lote tenham o MESMO conjunto de chaves. Como
+    `total_episodios_anilist` só pode ser escrito quando o provedor informou o
+    total, os itens são particionados em dois lotes — com e sem
+    `total_episodios` — e cada lote não-vazio vira um `execute`.
+    """
+    if not dados:
+        return
+
+    agora = datetime.now(UTC)
+    com_total: list[dict[str, object]] = []
+    sem_total: list[dict[str, object]] = []
+    for anime_id, lanc in dados.items():
+        linha: dict[str, object] = {
+            "id": anime_id,
+            "status_lancamento": lanc.status,
+            "proximo_ep_numero": lanc.proximo_ep_numero,
+            "proximo_ep_em": lanc.proximo_ep_em,
+            "lancamento_atualizado_em": agora,
+        }
+        if lanc.total_episodios is not None:
+            linha["total_episodios_anilist"] = lanc.total_episodios
+            com_total.append(linha)
+        else:
+            sem_total.append(linha)
+
+    async with sessionmaker() as sessao:
+        for lote in (com_total, sem_total):
+            if lote:
+                await sessao.execute(update(Anime), lote)
+        await sessao.commit()
+
+
+async def _gravar_visual_em_lote(
+    sessionmaker: _SessionMaker, coluna: str, dados: dict[int, tuple[str, str | None]]
+) -> None:
+    """`anime_id -> (url, capa_cor)` gravado em `coluna` de vários `Anime`.
+    `capa_cor` vem junto da arte (a cor dominante é da capa) e só é escrita
+    quando o feed a traz — um `capa_cor` ausente não zera uma cor já conhecida.
+
+    Particionado em dois lotes (com e sem `capa_cor`), no máximo duas queries no
+    total — mesma restrição de `atualizar_lancamentos_em_lote` (o `update` bulk
+    por primary key exige o MESMO conjunto de chaves em todos os dicts do lote)."""
+    if not dados:
+        return
+    com_cor: list[dict[str, object]] = []
+    sem_cor: list[dict[str, object]] = []
+    for anime_id, (url, capa_cor) in dados.items():
+        linha: dict[str, object] = {"id": anime_id, coluna: url}
+        if capa_cor is not None:
+            linha["capa_cor"] = capa_cor
+            com_cor.append(linha)
+        else:
+            sem_cor.append(linha)
+
+    async with sessionmaker() as sessao:
+        for lote in (com_cor, sem_cor):
+            if lote:
+                await sessao.execute(update(Anime), lote)
+        await sessao.commit()
+
+
+async def preencher_banner_visual_em_lote(
+    sessionmaker: _SessionMaker, dados: dict[int, tuple[str, str | None]]
+) -> None:
+    """Grava `banner_path` (e `capa_cor`, quando o feed traz) de vários `Anime`
+    a partir do cruzamento do feed "em alta" (`api/servicos/descoberta.py`).
+    `dados` já vem filtrado pelo chamador para animes com `banner_path` NULL —
+    preenchimento só-quando-nulo (arte permanente e visível, mesma semântica de
+    `aplicar_metadados`, não a sobrescrita do bloco de lançamento)."""
+    await _gravar_visual_em_lote(sessionmaker, "banner_path", dados)
+
+
+async def sincronizar_capas_em_lote(
+    sessionmaker: _SessionMaker, dados: dict[int, tuple[str, str | None]]
+) -> None:
+    """Sobrescreve `capa_path` (e `capa_cor`) de vários `Anime` com a capa que o
+    feed da AniList traz AGORA. Ao contrário do banner (só-quando-nulo), a capa
+    muda na própria AniList — anime não lançado troca o placeholder pela arte
+    oficial — e `aplicar_metadados` só a grava na criação, então o catálogo
+    ficava com a capa antiga. O chamador já filtra para as que de fato mudaram."""
+    await _gravar_visual_em_lote(sessionmaker, "capa_path", dados)
+
+
+async def atualizar_contagem_na_fonte(
+    sessionmaker: _SessionMaker, anime_id: int, *, total: int, dominio: str
+) -> None:
+    """Grava o resultado de uma sondagem BEM-SUCEDIDA da fonte real
+    (`api/servicos/sondagem.py`): quantos episódios o site expõe e qual site
+    foi. `fonte_verificada_em` recebe `now(UTC)` — é o carimbo que o TTL da
+    próxima sondagem consulta. Semântica separada de `_aplicar_lancamento_no_anime`
+    de propósito: origem (fonte real x AniList) e ciclo de vida diferentes.
+
+    Anime inexistente é no-op silencioso — mesma razão de `atualizar_lancamento`:
+    a linha pode ter sumido entre a sondagem e a escrita.
+    """
+    async with sessionmaker() as sessao:
+        anime = await sessao.get(Anime, anime_id)
+        if anime is None:
+            return
+        anime.episodios_na_fonte = total
+        anime.fonte_verificada_dominio = dominio
+        anime.fonte_verificada_em = datetime.now(UTC)
+        await sessao.commit()
 
 
 async def localizar_animes_por_slug(
@@ -134,6 +531,8 @@ async def criar_episodio_e_job(
     url_fonte: str,
     site_origem: str,
     titulo_episodio: str | None = None,
+    capa_path: str | None = None,
+    sinopse: str | None = None,
     duracao_esperada_s: int | None = None,
 ) -> int:
     """Cria o `Episodio` e, em seguida, o `Job` (via `db.fila.criar_job`) — duas
@@ -155,8 +554,51 @@ async def criar_episodio_e_job(
         url_fonte=url_fonte,
         site_origem=site_origem,
         titulo_episodio=titulo_episodio,
+        capa_path=capa_path,
+        sinopse=sinopse,
     )
     return await criar_job(sessionmaker, episodio_id, duracao_esperada_s)
+
+
+async def criar_episodio_assistido(
+    sessionmaker: _SessionMaker,
+    anime_id: int,
+    *,
+    numero: int,
+    tipo: TipoEpisodio,
+    versao: VersaoEpisodio,
+    url_fonte: str,
+    site_origem: str,
+    titulo_episodio: str | None = None,
+    sinopse: str | None = None,
+) -> int:
+    """Cria o `Episodio` já `LIBERADO` + `assistido_em` (agora), sem `Job` —
+    "Marcar como assistido" (`api/servicos/jobs.py::marcar_todos_assistidos`)
+    aplicado a um episódio que a fonte remota lista mas que o usuário nunca
+    capturou. Mesma semântica de "assistido sem mídia em disco" que a Feature
+    "liberar arquivo" já grava (`api/servicos/jobs.py::
+    _reaproveitar_episodio_para_recaptura`): `hls_path`/`capa_path` ficam
+    `None` (nunca houve captura pra preencher), mas a linha já é reaproveitável
+    por uma "Recapturar" futura (`criar_job_site` trata `LIBERADO` como
+    recaptura, não como `EpisodioJaExiste`).
+
+    Levanta `EpisodioJaExiste` pelo mesmo motivo de `criar_episodio_e_job` —
+    o chamador (`marcar_todos_assistidos`) já filtra pelos números ainda sem
+    `Episodio` local antes de chamar isto, então só bate aqui numa corrida
+    genuína (dois cliques quase simultâneos do mesmo botão)."""
+    return await _inserir_episodio(
+        sessionmaker,
+        anime_id,
+        numero=numero,
+        tipo=tipo,
+        versao=versao,
+        url_fonte=url_fonte,
+        site_origem=site_origem,
+        titulo_episodio=titulo_episodio,
+        sinopse=sinopse,
+        status=StatusEpisodio.LIBERADO,
+        assistido_em=datetime.now(UTC),
+    )
 
 
 async def _inserir_episodio(
@@ -169,17 +611,24 @@ async def _inserir_episodio(
     url_fonte: str,
     site_origem: str,
     titulo_episodio: str | None,
+    capa_path: str | None = None,
+    sinopse: str | None = None,
+    status: StatusEpisodio = StatusEpisodio.PENDENTE,
+    assistido_em: datetime | None = None,
 ) -> int:
     async with sessionmaker() as sessao:
         episodio = Episodio(
             anime_id=anime_id,
             numero=numero,
             titulo=titulo_episodio,
+            sinopse=sinopse,
             tipo=tipo,
             versao=versao,
             url_fonte=url_fonte,
             site_origem=site_origem,
-            status=StatusEpisodio.PENDENTE,
+            capa_path=capa_path,
+            status=status,
+            assistido_em=assistido_em,
         )
         sessao.add(episodio)
         try:

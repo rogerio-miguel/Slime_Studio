@@ -42,6 +42,7 @@ from models.episodio import Episodio
 from models.job import Job
 from worker.pipeline.fonte import resolver_fonte
 from worker.pipeline.hls import empacotar
+from worker.pipeline.storyboard import gerar_storyboard
 from worker.pipeline.validacao import conferir_decodificacao, decidir_plano, sondar
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 _SessionMaker = async_sessionmaker[AsyncSession]
 
 # Mesma progressão documentada em ESPECIFICACAO.md §3A ("30s -> 2min -> 10min")
-# do circuit breaker por site (`extractors/circuit_breaker.py::_BACKOFF_S`) —
+# do circuit breaker por site (`fontes/rede/circuit_breaker.py::_BACKOFF_S`) —
 # mantida como constante própria aqui porque governa o *job* (retentativa de
 # um episódio específico), não o *site* (é um conceito relacionado, não o
 # mesmo dado; `_BACKOFF_S` de lá é privado ao módulo do breaker).
@@ -111,6 +112,16 @@ async def processar(job_id: int, sessionmaker: _SessionMaker, config: Config) ->
             "job %s: empacotamento HLS concluído em %.1fs", job_id, time.monotonic() - inicio
         )
 
+        # Best-effort — prévia de hover é acessório (frontend degrada sem ela
+        # se o arquivo não existir), nunca deve marcar o job/episódio como
+        # falho por causa disso.
+        try:
+            await gerar_storyboard(caminho_fonte, destino, sondagem.duracao_s, config.ffmpeg)
+        except FalhaDeFerramenta as excecao:
+            logger.warning(
+                "job %s: falha ao gerar storyboard (não crítico): %s", job_id, excecao
+            )
+
         await _marcar_episodio_pronto(
             sessionmaker,
             episodio.id,
@@ -144,7 +155,13 @@ async def processar(job_id: int, sessionmaker: _SessionMaker, config: Config) ->
                 await _marcar_episodio_falhou(sessionmaker, episodio_id)
         _remover_tmp_orfao(destino)
     except (FonteInvalida, FalhaDeFerramenta) as excecao:
-        logger.warning("job %s: falhou em %s: %s", job_id, etapa_atual, excecao)
+        # `cauda_stderr` só existe em `FalhaDeFerramenta` (não em `FonteInvalida`) e
+        # carrega o stderr do ffmpeg — sem ele no log o motivo real da falha some.
+        cauda_stderr = getattr(excecao, "cauda_stderr", "")
+        sufixo_stderr = f"\nstderr do ffmpeg: {cauda_stderr}" if cauda_stderr else ""
+        logger.warning(
+            "job %s: falhou em %s: %s%s", job_id, etapa_atual, excecao, sufixo_stderr
+        )
         if episodio_id is not None:
             await _marcar_episodio_falhou(sessionmaker, episodio_id)
         await falhar(sessionmaker, job_id, etapa=etapa_atual, erro=str(excecao))

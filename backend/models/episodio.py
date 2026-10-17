@@ -27,8 +27,14 @@ class Episodio(Base):
     )
     numero: Mapped[int] = mapped_column(Integer, nullable=False)
     # Nullable: só confirmado ao enfileirar (§3F); o produtor de jobs pode não
-    # ter um título ainda no momento da criação.
+    # ter um título ainda no momento da criação. Hoje vem do overlay TMDB
+    # (`api/servicos/jobs.py::criar_job_site`, `info_de_episodio`) — nenhum
+    # extractor de scraping expõe título de episódio.
     titulo: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Sinopse do episódio via TMDB (mesma fonte/momento de `titulo` acima) —
+    # nullable e sem backfill: episódio já capturado antes desta coluna fica
+    # `NULL` até uma recaptura.
+    sinopse: Mapped[str | None] = mapped_column(String, nullable=True)
     numero_fonte: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tipo: Mapped[TipoEpisodio] = mapped_column(
         SAEnum(TipoEpisodio, native_enum=False, validate_strings=True), nullable=False
@@ -52,6 +58,15 @@ class Episodio(Base):
     capa_path: Mapped[str | None] = mapped_column(String, nullable=True)
     tamanho_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duracao_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Posição de reprodução (Feature "continuar assistindo") — 1:1 com
+    # `Episodio`, sem tabela própria (app local mono-usuário). Nullable: nunca
+    # assistido parcialmente ainda. `progresso_atualizado_em` ordena a
+    # prateleira "Continuar assistindo" (mais recente primeiro) —
+    # `api/servicos/progresso.py::listar_continuar_assistindo`.
+    progresso_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    progresso_atualizado_em: Mapped[datetime | None] = mapped_column(
+        ColunaDataHoraUTC(), nullable=True
+    )
     assistido_em: Mapped[datetime | None] = mapped_column(ColunaDataHoraUTC(), nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         ColunaDataHoraUTC(), nullable=False, default=lambda: datetime.now(UTC)

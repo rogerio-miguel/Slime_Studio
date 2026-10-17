@@ -1,0 +1,24 @@
+{
+  "data": [
+    {
+      "id": "tensei-shitara-slime-datta-ken",
+      "titles": {"BR": "Tensei Shitara Slime Datta Ken"},
+      "audio": "Legendado",
+      "poster_src": "https://image.tmdb.org/t/p/original/slime1.jpg",
+      "status": "completed",
+      "published_at": "2018-10-02",
+      "last_episode_at": "2019-03-19"
+    },
+    {
+      "id": "tensei-shitara-slime-datta-ken-2",
+      "titles": {"BR": "Tensei Shitara Slime Datta Ken 2"},
+      "audio": "Legendado",
+      "poster_src": "https://image.tmdb.org/t/p/original/slime2.jpg",
+      "status": "completed",
+      "published_at": "2021-01-12",
+      "last_episode_at": "2021-09-25"
+    }
+  ],
+  "links": {},
+  "meta": {"current_page": 1, "last_page": 1, "per_page": 30, "total": 2}
+}

@@ -5,14 +5,34 @@ Síncrono via `requests`; ver `integrations/anilist.py` para a nota sobre onde
 mora a fronteira de exceção HTTP.
 """
 
+import re
+from datetime import date
+
 import requests
 
-from integrations.base import AnimeEmAlta, MetadadosDeAnime, ProvedorDeMetadados
+from core.enums import StatusLancamento
+from integrations.base import (
+    AnimeEmAlta,
+    LancamentoDeAnime,
+    MetadadosDeAnime,
+    ProvedorDeMetadados,
+    TitulosDeAnime,
+)
 
 _BASE_URL = "https://kitsu.io/api/edge"
 # Ver `integrations/anilist.py::_TIMEOUT_S` — mesmo raciocínio: estritamente
 # menor que o `wait_for` externo de `integrations/servico.py`.
 _TIMEOUT_S = 6
+
+_REGEX_DATA_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+_STATUS_KITSU: dict[str, StatusLancamento] = {
+    "current": StatusLancamento.EM_LANCAMENTO,
+    "finished": StatusLancamento.FINALIZADO,
+    "tba": StatusLancamento.NAO_LANCADO,
+    "unreleased": StatusLancamento.NAO_LANCADO,
+    "upcoming": StatusLancamento.NAO_LANCADO,
+}
 
 
 class KitsuProvider(ProvedorDeMetadados):
@@ -21,6 +41,33 @@ class KitsuProvider(ProvedorDeMetadados):
         return "kitsu"
 
     def buscar_por_titulo(self, titulo: str) -> MetadadosDeAnime | None:
+        item = self._primeiro_anime(titulo)
+        if item is None:
+            return None
+
+        atributos = item.get("attributes") or {}
+        titulo_romaji, titulo_ingles = _extrair_titulos(atributos)
+        return MetadadosDeAnime(
+            capa_url=_maior_imagem(atributos.get("posterImage")),
+            sinopse=_texto_ou_none(atributos.get("synopsis")),
+            anilist_id=None,
+            kitsu_id=_id_numerico(item.get("id")),
+            lancamento=_extrair_lancamento(atributos),
+            titulo_romaji=titulo_romaji,
+            titulo_ingles=titulo_ingles,
+        )
+
+    def buscar_titulos(self, titulo: str) -> TitulosDeAnime | None:
+        item = self._primeiro_anime(titulo)
+        if item is None:
+            return None
+
+        titulo_romaji, titulo_ingles = _extrair_titulos(item.get("attributes") or {})
+        if titulo_romaji is None and titulo_ingles is None:
+            return None
+        return TitulosDeAnime(titulo_romaji=titulo_romaji, titulo_ingles=titulo_ingles)
+
+    def _primeiro_anime(self, titulo: str) -> dict | None:
         resposta = requests.get(
             f"{_BASE_URL}/anime",
             params={"filter[text]": titulo, "page[limit]": 1},
@@ -31,44 +78,122 @@ class KitsuProvider(ProvedorDeMetadados):
         itens = resposta.json().get("data")
         if not isinstance(itens, list) or not itens:
             return None
-
-        item = itens[0]
-        atributos = item.get("attributes") or {}
-        return MetadadosDeAnime(
-            capa_url=_maior_imagem(atributos.get("posterImage")),
-            sinopse=_texto_ou_none(atributos.get("synopsis")),
-            anilist_id=None,
-            kitsu_id=_id_numerico(item.get("id")),
-        )
+        return itens[0]
 
     def listar_em_alta(self) -> list[AnimeEmAlta]:
         # Sem `page[limit]`, o endpoint volta só o padrão da API (~10-12
         # itens) — 20 é o teto real de `/trending/anime` no Kitsu (ao
         # contrário de `/anime`, que aceita páginas maiores); pedir mais que
         # isso não traz mais itens.
-        resposta = requests.get(
-            f"{_BASE_URL}/trending/anime", params={"page[limit]": 20}, timeout=_TIMEOUT_S
+        itens = self._buscar_lista("trending/anime", {"page[limit]": 20}, "em alta")
+        return _itens_para_animes_em_alta(itens)
+
+    def listar_proxima_temporada(self) -> list[AnimeEmAlta]:
+        # Fallback degradado: o Kitsu não tem enum de "próxima temporada". Em vez
+        # de recalcular estação/ano (o cálculo mora em `anilist._proxima_temporada`),
+        # aproxima com `filter[status]=upcoming` ordenado por popularidade —
+        # itens ainda não lançados, o suficiente para o feed quando a AniList cai.
+        itens = self._buscar_lista(
+            "anime",
+            {"filter[status]": "upcoming", "sort": "-userCount", "page[limit]": 20},
+            "próxima temporada",
         )
+        return _itens_para_animes_em_alta(itens)
+
+    def _buscar_lista(self, caminho: str, params: dict, contexto: str) -> list:
+        resposta = requests.get(f"{_BASE_URL}/{caminho}", params=params, timeout=_TIMEOUT_S)
         resposta.raise_for_status()
 
         itens = resposta.json().get("data")
         if not isinstance(itens, list):
-            raise RuntimeError("Kitsu: resposta de 'em alta' com formato inesperado")
+            raise RuntimeError(f"Kitsu: resposta de {contexto!r} com formato inesperado")
+        return itens
 
-        resultado = []
-        for item in itens:
-            atributos = item.get("attributes") or {}
-            titulos = atributos.get("titles") or {}
-            resultado.append(
-                AnimeEmAlta(
-                    titulo_romaji=titulos.get("ja_jp") or atributos.get("canonicalTitle") or "",
-                    titulo_ingles=titulos.get("en"),
-                    capa_url=_maior_imagem(atributos.get("posterImage")),
-                    banner_url=_maior_imagem(atributos.get("coverImage")),
-                    anilist_id=None,
-                )
+
+def _itens_para_animes_em_alta(itens: list) -> list[AnimeEmAlta]:
+    """Parser único de `data` reusado por `listar_em_alta` e
+    `listar_proxima_temporada` — nenhum dos dois endpoints (`/trending/anime`,
+    `/anime`) expõe gêneros, ano de estreia nem cor dominante de capa, que ficam
+    nos defaults do dataclass (caminho degradado)."""
+    resultado = []
+    for item in itens:
+        atributos = item.get("attributes") or {}
+        titulos = atributos.get("titles") or {}
+        resultado.append(
+            AnimeEmAlta(
+                # `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em kanji
+                # (mesmo cuidado de `buscar_titulos`).
+                titulo_romaji=titulos.get("en_jp") or atributos.get("canonicalTitle") or "",
+                titulo_ingles=titulos.get("en"),
+                capa_url=_maior_imagem(atributos.get("posterImage")),
+                banner_url=_maior_imagem(atributos.get("coverImage")),
+                anilist_id=None,
+                ano_estreia=None,
+                generos=(),
+                capa_cor=None,
+                lancamento=_extrair_lancamento(atributos),
             )
-        return resultado
+        )
+    return resultado
+
+
+def _extrair_lancamento(atributos: dict) -> LancamentoDeAnime | None:
+    """Estado de lançamento no Kitsu: `status`, `episodeCount` e `startDate` são
+    os únicos aproveitáveis — a API não expõe next-airing, então `proximo_ep_*`
+    fica sempre `None`. Devolve `None` quando nada é aproveitável, nunca uma
+    dataclass toda-nula."""
+    status = _STATUS_KITSU.get(atributos.get("status"))
+    contagem = atributos.get("episodeCount")
+    total_episodios = contagem if isinstance(contagem, int) else None
+    estreia_em, ano_estreia = _extrair_estreia(atributos.get("startDate"))
+    if (
+        status is None
+        and total_episodios is None
+        and estreia_em is None
+        and ano_estreia is None
+    ):
+        return None
+    return LancamentoDeAnime(
+        status=status,
+        total_episodios=total_episodios,
+        proximo_ep_numero=None,
+        proximo_ep_em=None,
+        estreia_em=estreia_em,
+        ano_estreia=ano_estreia,
+    )
+
+
+def _extrair_estreia(inicio: object) -> tuple[date | None, int | None]:
+    """`(estreia_em, ano_estreia)` a partir de `attributes.startDate` do Kitsu.
+    Defensivo: só uma string ISO `YYYY-MM-DD` válida rende a data completa;
+    formato parcial (`YYYY` ou `YYYY-MM`) ou data impossível rende só o ano;
+    qualquer outra coisa, `(None, None)`."""
+    if not isinstance(inicio, str):
+        return None, None
+    texto = inicio.strip()
+    if _REGEX_DATA_ISO.match(texto):
+        try:
+            completa = date.fromisoformat(texto)
+        except ValueError:
+            pass
+        else:
+            return completa, completa.year
+    prefixo = texto[:4]
+    return (None, int(prefixo)) if prefixo.isdigit() else (None, None)
+
+
+def _extrair_titulos(atributos: dict) -> tuple[str | None, str | None]:
+    """`(romaji, inglês)` a partir de `attributes` do Kitsu — extração comum a
+    `buscar_por_titulo` e `buscar_titulos`.
+
+    `en_jp`, não `ja_jp`: no Kitsu `ja_jp` é o título em kanji, inútil pros
+    sites de extração brasileiros (todos indexam romaji/inglês); sem `en_jp`,
+    cai pro `canonicalTitle`, nunca pro kanji.
+    """
+    titulos = atributos.get("titles") or {}
+    romaji = _texto_ou_none(titulos.get("en_jp")) or _texto_ou_none(atributos.get("canonicalTitle"))
+    ingles = _texto_ou_none(titulos.get("en"))
+    return romaji, ingles
 
 
 def _maior_imagem(imagem: dict | None) -> str | None:

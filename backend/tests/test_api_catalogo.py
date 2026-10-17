@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from captura.download import caminho_raw
 from core.config import Config
 from core.enums import StatusJob, TipoEpisodio, VersaoEpisodio
 from core.midia import diretorio_do_episodio
@@ -83,6 +84,53 @@ async def test_remover_episodio_sem_job_apaga_linha_e_arquivos(
     assert resposta.status_code == 204
     assert not await _episodio_existe(sessionmaker_api, episodio_id)
     assert not diretorio.exists()
+
+
+async def test_remover_ultimo_episodio_poda_pastas_vazias_do_anime(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
+):
+    anime_id, slug = await _criar_anime(sessionmaker_api, "Anime Poda Total")
+    diretorio = diretorio_do_episodio(
+        config_api.media_root, slug, 1, TipoEpisodio.REGULAR, VersaoEpisodio.LEGENDADO
+    )
+    diretorio.mkdir(parents=True)
+    (diretorio / "master.m3u8").write_text("#EXTM3U\n")
+    hls_path = str((diretorio / "master.m3u8").relative_to(config_api.media_root))
+    bruto = caminho_raw(
+        config_api.media_root, slug, 1, TipoEpisodio.REGULAR, VersaoEpisodio.LEGENDADO
+    )
+    bruto.parent.mkdir(parents=True)
+    bruto.write_bytes(b"conteudo")
+    episodio_id = await _criar_episodio(sessionmaker_api, anime_id, hls_path=hls_path)
+
+    resposta = await cliente.delete(f"/api/admin/episodios/{episodio_id}")
+
+    assert resposta.status_code == 204
+    assert not (config_api.media_root / "hls" / slug).exists()
+    assert not (config_api.media_root / "raw" / slug).exists()
+
+
+async def test_remover_episodio_preserva_pasta_do_anime_com_outra_subpasta(
+    cliente: AsyncClient, sessionmaker_api: _SessionMaker, config_api: Config
+):
+    anime_id, slug = await _criar_anime(sessionmaker_api, "Anime Poda Parcial")
+    subpastas = {}
+    for numero in (1, 2):
+        subpasta = diretorio_do_episodio(
+            config_api.media_root, slug, numero, TipoEpisodio.REGULAR, VersaoEpisodio.LEGENDADO
+        )
+        subpasta.mkdir(parents=True)
+        (subpasta / "master.m3u8").write_text("#EXTM3U\n")
+        subpastas[numero] = subpasta
+    hls_path = str((subpastas[1] / "master.m3u8").relative_to(config_api.media_root))
+    episodio_id = await _criar_episodio(sessionmaker_api, anime_id, numero=1, hls_path=hls_path)
+
+    resposta = await cliente.delete(f"/api/admin/episodios/{episodio_id}")
+
+    assert resposta.status_code == 204
+    assert not subpastas[1].exists()
+    assert subpastas[2].exists()
+    assert (config_api.media_root / "hls" / slug).is_dir()
 
 
 async def test_remover_episodio_com_job_finalizado_remove(

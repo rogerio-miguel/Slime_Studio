@@ -1,20 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { obterRvfcOriginal } from '../motorAnime4k.js';
 
 // setState no máximo a cada 250ms: o laço em si roda por frame (cadência
 // real de vídeo, ~41ms/24fps), mas re-renderizar o HUD nessa taxa não traz
 // informação nova pro olho humano e custa reconciliação de React à toa.
 const INTERVALO_MIN_SETSTATE_MS = 250;
 
-// Segundo loop de rVFC, independente do pipeline Anime4K (render() já roda
-// o seu por dentro) — só para instrumentação; múltiplos rVFC concorrentes
-// são suportados nativamente pelo navegador. Usa o rVFC ORIGINAL
-// (obterRvfcOriginal, não `video.requestVideoFrameCallback` direto):
-// motorAnime4k.js intercepta esse método por geração (D2), e o HUD precisa
-// sobreviver a trocas de preset.
+// Segundo loop de rVFC, independente do laço de frame da sessão Anime4K
+// (motorAnime4k.js) — só para instrumentação; múltiplos rVFC concorrentes
+// sobre o mesmo <video> são suportados nativamente pelo navegador, e este
+// loop não precisa de nenhuma indireção pra sobreviver a trocas de preset:
+// motorAnime4k.js não intercepta `requestVideoFrameCallback` mais.
 //
-// TODO (pós-MVP, ESPECIFICACAO §3E): se dropped/total cruzar limiar, descer
-// um degrau em ESCADA_DE_DEGRADACAO e avisar.
+// A degradação automática de preset por telemetria vive em
+// useControleAdaptativo.js (janela própria, não este loop por frame).
 export function useTelemetriaDeVideo({ videoRef, adaptador }) {
   const [estado, setEstado] = useState({ cadenciaMs: null, dropped: null, total: null, gpu: 'indisponível' });
   const ultimoSetStateEmRef = useRef(0);
@@ -24,7 +22,7 @@ export function useTelemetriaDeVideo({ videoRef, adaptador }) {
     const video = videoRef.current;
     if (!video) return;
 
-    const rvfc = obterRvfcOriginal(video);
+    const rvfc = video.requestVideoFrameCallback.bind(video);
     // GPUAdapter.info é atributo síncrono (GPUAdapterInfo) — não precisa await.
     const info = adaptador?.info;
     const gpu = info

@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import SeletorDeFonteDemo from './SeletorDeFonteDemo.jsx';
-import IndicadorDeAtencao from './components/IndicadorDeAtencao.jsx';
-import Toasts from './components/Toasts.jsx';
 import { useEventosDeJobs } from './eventos/useEventosDeJobs.js';
+import BarraDeRolagem from './components/BarraDeRolagem.jsx';
 import Player from './player/Player.jsx';
 import Inicio from './paginas/Inicio.jsx';
+import Descobrir from './paginas/Descobrir.jsx';
 import Galeria from './paginas/Galeria.jsx';
 import PaginaDoAnime from './paginas/PaginaDoAnime.jsx';
 import PaginaDoPlayer from './paginas/PaginaDoPlayer.jsx';
+import PaginaDoPlayerLocal from './paginas/PaginaDoPlayerLocal.jsx';
 
 export default function App() {
   return (
@@ -21,24 +22,43 @@ export default function App() {
 // Sem gate de autenticação (D5 do plano de remoção — API é de uso
 // pessoal/local, CLAUDE.md): todas as rotas são alcançáveis direto. WS único
 // (`useEventosDeJobs`) sobe aqui, no nível do app, sempre conectado — o Map
-// resultante desce por prop pra quem precisa (grade de episódios, indicador
-// de atenção, toasts).
+// resultante desce por prop pra quem precisa (grade de episódios, ilha
+// dinâmica da navbar). `components/Toasts.jsx` foi removido, 2026-09-27: os
+// toasts de conclusão/erro que vivam ali migraram pra dentro da própria
+// navbar (`hooks/useStatusDeCapturaIlha.js`, consumido por Inicio/Galeria/
+// Descobrir/PaginaDoAnime) — sem contrapartida nas rotas de player
+// (`/assistir/:episodioId`, `/assistir-local/:slug`), que não montam
+// `BarraDeNavegacao`: um erro de captura enquanto o usuário está assistindo
+// só aparece quando ele volta pra uma página com a ilha, lacuna aceita (a
+// mesma que já existia pro sinal "episódio pronto").
 function Shell() {
-  const jobsPorEpisodio = useEventosDeJobs();
-  const jobsPrecisandoAtencao = useMemo(
-    () => [...jobsPorEpisodio.values()].filter((job) => job.status === 'aguardando_intervencao'),
-    [jobsPorEpisodio]
-  );
+  // `snapshotId` (hooks/useStatusDeCapturaIlha.js): só as 4 rotas que usam
+  // esse hook precisam dele — as outras (`Player`, `RotaDebugFonte`) nem o
+  // recebem.
+  const { jobsPorEpisodio, snapshotId } = useEventosDeJobs();
 
   return (
     <>
-      <IndicadorDeAtencao jobs={jobsPrecisandoAtencao} />
-      <Toasts jobsPorEpisodio={jobsPorEpisodio} />
+      <BarraDeRolagem />
       <Routes>
-        <Route path="/" element={<Inicio />} />
-        <Route path="/animes" element={<Galeria />} />
-        <Route path="/anime/:id" element={<PaginaDoAnime jobsPorEpisodio={jobsPorEpisodio} />} />
+        <Route
+          path="/"
+          element={<Inicio jobsPorEpisodio={jobsPorEpisodio} snapshotId={snapshotId} />}
+        />
+        <Route
+          path="/animes"
+          element={<Galeria jobsPorEpisodio={jobsPorEpisodio} snapshotId={snapshotId} />}
+        />
+        <Route
+          path="/descobrir"
+          element={<Descobrir jobsPorEpisodio={jobsPorEpisodio} snapshotId={snapshotId} />}
+        />
+        <Route
+          path="/anime/:id"
+          element={<PaginaDoAnime jobsPorEpisodio={jobsPorEpisodio} snapshotId={snapshotId} />}
+        />
         <Route path="/assistir/:episodioId" element={<PaginaDoPlayer />} />
+        <Route path="/assistir-local/:slug" element={<PaginaDoPlayerLocal />} />
         <Route path="/debug/fonte" element={<RotaDebugFonte />} />
       </Routes>
     </>

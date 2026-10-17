@@ -2,9 +2,9 @@
 
 import pytest
 
-from extractors.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
-from extractors.cliente import ClienteDeSite
-from extractors.registro import EXTRATORES
+from fontes.adaptadores.base import EpisodioRemoto, ExtratorDeSite, LinkDeMidia, ResultadoBusca
+from fontes.adaptadores.registro import EXTRATORES
+from fontes.rede.cliente import ClienteDeSite
 
 
 class _ExtratorFalso(ExtratorDeSite):

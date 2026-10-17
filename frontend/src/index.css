@@ -4,20 +4,41 @@
   --color-hud-bright: #9f9;
   --color-hud-dim: #6a6;
   --color-border-chrome: #333;
+  --animate-ilha-conteudo: ilha-conteudo-entra 260ms cubic-bezier(0.4, 0, 0.2, 1) 90ms both;
 
   /* Tokens da Fase 4 (galeria/página do anime) — linguagem visual portada
      de Slime_Shell_Web/AnimeCard.jsx (ver comentário em
-     components/AnimeCard.jsx), valores próprios pra combinar com a paleta
-     verde do HUD acima. */
+     components/AnimeCard.jsx). Accent principal em azul (#2080f0),
+     independente da paleta verde do HUD acima. */
   --color-surface: #14161b;
   --color-surface-hover: #1b1e25;
-  --color-neon: #6ee7c7;
-  --color-neon-soft: #2a5c4c;
+  --color-neon: #2080f0;
+  --color-neon-soft: #1c3b5f;
+  --color-neon-claro: #93c5fd;
+  --color-on-neon: #000;
   --color-ink-muted: #9aa0a6;
 }
 
 :root {
   color-scheme: dark;
+}
+
+/* Temas de accent: o azul acima é o padrão (sem `data-tema`, ou `azul`). Cada
+   tema só escolhe o `neon`; `soft` (fundo escuro tingido) e `claro` (brilho do
+   mascote) derivam dele. `on-neon` é a cor do texto sobre `bg-neon` — o preto
+   padrão não passa em contraste sobre o roxo. O HUD do player (`hud-*`) e o
+   ambient glow ficam fora do tema de propósito. */
+:root[data-tema='roxo'],
+:root[data-tema='laranja'] {
+  --color-neon-soft: color-mix(in oklab, var(--color-neon) 35%, var(--color-surface));
+  --color-neon-claro: color-mix(in oklab, var(--color-neon) 40%, white);
+}
+:root[data-tema='roxo'] {
+  --color-neon: #b026ff;
+  --color-on-neon: #fff;
+}
+:root[data-tema='laranja'] {
+  --color-neon: #ff7518;
 }
 
 html,
@@ -37,4 +58,510 @@ body {
    já provado em teste/bench.html. */
 html {
   background: #000;
+}
+
+/* Barra de rolagem do sistema (regiões internas; a da página é a sobreposta de
+   components/BarraDeRolagem.jsx). Geometria copiada da do Gemini (medida no CSS
+   deles): faixa de 12px, polegar de 8px (borda transparente de 2px + 
+   `background-clip`), mínimo de 48px, sem trilho nem botões, invisível em
+   repouso e só aparece quando o mouse está sobre a região. Hover/arrasto no
+   polegar acende o neon do projeto (pedido do usuário). */
+::-webkit-scrollbar,
+::-webkit-scrollbar-corner {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  min-width: 48px;
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-color: transparent;
+  background-clip: content-box;
+}
+:hover::-webkit-scrollbar-thumb {
+  background-color: #2a2d35;
+}
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--color-neon);
+}
+::-webkit-scrollbar-button {
+  width: 0;
+  height: 0;
+}
+/* Posição do polegar da barra da página (components/BarraDeRolagem.jsx):
+   animação atrelada à rolagem do viewport, de 0 até o curso (--curso, em px,
+   definido pelo componente). Roda no compositor, então não trava com a thread
+   principal ocupada; `animation-timeline` vem DEPOIS do shorthand `animation`,
+   que o reseta. */
+@keyframes polegar-da-pagina {
+  to {
+    transform: translateY(var(--curso));
+  }
+}
+.polegar-da-pagina {
+  animation: polegar-da-pagina linear both;
+  animation-timeline: scroll(root block);
+}
+
+/* A barra da PÁGINA é a sobreposta de components/BarraDeRolagem.jsx — a nativa
+   ocupa uma coluna própria (faixa preta). As regiões internas seguem com a
+   nativa estilizada acima. */
+html {
+  scrollbar-width: none;
+}
+html::-webkit-scrollbar {
+  display: none;
+}
+/* Firefox não tem ::-webkit-scrollbar. No Chrome 121+ `scrollbar-color`
+   desativa os pseudo-elementos acima, por isso só entra onde eles não existem. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  :hover {
+    scrollbar-color: #2a2d35 transparent;
+  }
+}
+
+/* Preenchimento da bolinha ativa do carrossel hero (inicio/CarrosselDestaques.jsx)
+   — mostra quanto falta pro auto-avanço trocar de slide. Duração (10000ms) tem
+   que casar com `INTERVALO_MS` de lá; sem link automático entre os dois (CSS
+   não importa constante JS), então mudar um exige lembrar do outro.
+   `transform: scaleX` em vez de `width` (versão anterior, revertida
+   2026-09-20 — usuário reportou travamento visto na animação em si E em
+   tudo mais rodando ao mesmo tempo, incluindo a troca de slide por seta):
+   animar `width` força recálculo de LAYOUT a cada frame durante os 10s
+   inteiros, competindo pela thread principal com o crossfade do hero (que
+   já tem filtro de blur + imagens grandes por cima). `scaleX` só mexe em
+   compositing (GPU), sem custo de layout. */
+@keyframes preencher-progresso-dot {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Coverflow do Top 10 (inicio/CoverflowDeEmAlta.jsx), de ponta a ponta: os dez
+   pôsteres ficam em cena e os das pontas saem pela borda da tela (`overflow-x`
+   corta). `--passo` e `--folga` (espaço extra do pôster central) são frações de
+   `--w`, então o conjunto cobre a mesma proporção da tela em qualquer largura.
+   Cada pôster é dirigido por
+   três variáveis inline: `--o` (posição relativa ao foco, negativa à esquerda),
+   `--a` (|--o|) e `--s` (sinal). Só `transform`/`opacity`/`filter` mudam na
+   troca, então roda no compositor. `overflow-x: clip` (não `hidden`) corta o
+   que vaza dos lados sem tornar o eixo Y rolável, e o reflexo abaixo do pôster
+   (`-webkit-box-reflect`, ignorado pelo Firefox) cabe na altura do coverflow. */
+.coverflow-raiz {
+  container-type: inline-size;
+}
+/* Pôster do MESMO tamanho do card `pequeno` das fileiras (inicio/tamanhoDeCard.js):
+   `--por-pagina` vem das mesmas classes (aplicadas no JSX) e a largura repete
+   `FLEX_BASIS_SLOT_COM_RESPIRO` sobre a trilha (100cqw menos o gutter de 3.7% de
+   cada lado). `cqw` e não `%` porque a altura do coverflow também depende de `--w`. */
+.coverflow {
+  --w: round(down, calc((100cqw * 0.926 - (var(--por-pagina) - 1) * 1rem) / var(--por-pagina)), 1px);
+  --passo: calc(var(--w) * 0.7);
+  --folga: calc(var(--w) * 0.3);
+  height: calc(var(--w) * 1.5 + 2.5rem);
+  perspective: 1500px;
+  perspective-origin: 50% 40%;
+  overflow-x: clip;
+  touch-action: pan-y;
+}
+.coverflow-item {
+  position: absolute;
+  left: round(down, calc(50% - var(--w) / 2), 1px);
+  top: 1rem;
+  width: var(--w);
+  aspect-ratio: 2 / 3;
+  padding: 0;
+  border: 0;
+  background: none;
+  z-index: calc(10 - var(--a));
+  opacity: max(0.4, calc(1 - var(--a) * 0.13));
+  filter: brightness(max(0.55, calc(1 - var(--a) * 0.1)));
+  transform: translateX(calc(var(--o) * var(--passo) + var(--s) * var(--folga)))
+    translateZ(calc(var(--a) * -4.5rem)) rotateY(calc(var(--s) * -50deg));
+  transition:
+    transform 0.6s cubic-bezier(0.3, 0.7, 0.2, 1),
+    opacity 0.4s,
+    filter 0.4s;
+}
+.coverflow-item[data-fora] {
+  opacity: 0;
+  pointer-events: none;
+}
+.coverflow-capa {
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.7);
+  -webkit-box-reflect: below 4px linear-gradient(transparent 72%, rgb(255 255 255 / 0.16));
+}
+/* Glow do pôster em foco (mesma receita de components/BrilhoDaCapa.jsx): irmão
+   dos itens, `z-index: 0` pra ficar atrás de todos eles (o mais fundo tem 6). */
+.coverflow-brilho {
+  position: absolute;
+  left: round(down, calc(50% - var(--w) / 2), 1px);
+  top: 1rem;
+  width: var(--w);
+  aspect-ratio: 2 / 3;
+  z-index: 0;
+  border-radius: 1rem;
+  object-fit: cover;
+  pointer-events: none;
+  transform: translateY(3%) scale(1.12);
+  filter: blur(var(--blur-xl, 24px)) brightness(1.15) saturate(1.8);
+  animation: coverflow-brilho-entrada 0.6s ease-out;
+}
+@keyframes coverflow-brilho-entrada {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .coverflow-item {
+    transition: none;
+  }
+  .coverflow-brilho {
+    animation: none;
+  }
+}
+
+/* Entrada e olhar do slime pixelado da navbar (components/LogoSlimeStudio.jsx,
+   IconeSlime) — pedidos do usuário 2026-10-14; substituiu o "clap" da
+   claquete. Os quadros da entrada (repouso, agachado, esticado) são
+   cada um um <path> por cor que liga e desliga por `opacity`: `step-end` na
+   classe do componente segura cada valor até o próximo keyframe, sem
+   interpolar, igual à pixelização da troca nome ↔ ícone.
+   1) Entrada (800ms, 1% = 8ms): cai esticado de 7 células acima (7 → 6 → 4 → 0,
+   100ms por degrau), amassa ao bater (37,5%, 200ms) e pula DIRETO do amassado
+   (pedido do usuário: o pulo demorava): esticado a 2 células (62,5%) e a 1
+   (72,5%), amassa ao pousar (82,5%, 100ms) e assenta (95%, repouso). O repouso
+   é o estado base, então não precisa de keyframe no fim. `translateY` em px de
+   SVG = unidades do viewBox (1 célula = 2,5px na tela, ícone de 40px). O
+   `backwards` da classe aplica o 0% durante o atraso de entrada
+   (`animation-delay` = atraso da troca pixelada).
+   Os gestos dos olhos (olhar de lado, piscar...) não ficam aqui: são sorteados
+   em JS (`useOlhosVivos`) pra cada execução ser diferente, o que um keyframe
+   não faz. Replay da entrada controlado pelo componente (classe só entra
+   quando o ícone está montado). */
+@keyframes slime-repouso {
+  0% {
+    opacity: 0;
+  }
+  95% {
+    opacity: 1;
+  }
+}
+
+@keyframes slime-agachado {
+  0% {
+    opacity: 0;
+  }
+  37.5% {
+    opacity: 1;
+  }
+  62.5% {
+    opacity: 0;
+  }
+  82.5% {
+    opacity: 1;
+  }
+  95% {
+    opacity: 0;
+  }
+}
+
+@keyframes slime-esticado {
+  0% {
+    opacity: 1;
+    transform: translateY(-7px);
+  }
+  12.5% {
+    opacity: 1;
+    transform: translateY(-6px);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+  37.5% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  62.5% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+  72.5% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+  82.5% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+}
+
+/* Pulo em laço do MascoteSlime (pose `pulando`, 1000ms): repouso, agacha,
+   sobe esticado, desce, agacha de novo ao pousar e volta ao repouso. Mesma
+   técnica da entrada do logo (um quadro por animação, `step-end`, opacidade
+   alternando); o translateY é em células do SVG (1 = 1/16 do mascote). */
+@keyframes slime-pulo-repouso {
+  0% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0;
+  }
+  80% {
+    opacity: 1;
+  }
+}
+
+@keyframes slime-pulo-agachado {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  40% {
+    opacity: 0;
+  }
+  70% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0;
+  }
+}
+
+@keyframes slime-pulo-esticado {
+  0% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+  48% {
+    transform: translateY(-3px);
+  }
+  56% {
+    transform: translateY(-4px);
+  }
+  64% {
+    transform: translateY(-3px);
+  }
+  70% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+}
+
+/* Reação do logo ao hover/foco (LogoSlimeStudio.jsx), uma vez por entrada do
+   mouse. Rolado: o slime faz o pulo da pose `pulando` do MascoteSlime (agacha,
+   sobe esticado, desce e agacha ao pousar), reaproveitando os keyframes
+   `slime-pulo-*` acima. Os quadros do pulo são uma cópia (`.logo-pulo`) que
+   assume o lugar do desenho normal (`.logo-original`) por 900ms (a pose `pulando` do mascote, 1000ms, é lenta como reação de hover): mexer nas
+   animações dos quadros da entrada faria a queda recomeçar ao tirar o mouse.
+   Os dois grupos terminam em repouso, então a volta é sem salto. Topo, onde não
+   há mascote: o STUDIO não anima (só a dica "Trocar tema"). Só sem preferência de movimento reduzido. */
+@keyframes logo-esconde {
+  0% {
+    opacity: 0;
+  }
+}
+
+@keyframes logo-mostra {
+  0% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .logo-gatilho:is(:hover, :focus-visible) .logo-original {
+    animation: logo-esconde 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo {
+    animation: logo-mostra 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo-repouso {
+    animation: slime-pulo-repouso 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo-agachado {
+    animation: slime-pulo-agachado 900ms step-end 1;
+  }
+  .logo-gatilho:is(:hover, :focus-visible) .logo-pulo-esticado {
+    animation: slime-pulo-esticado 900ms step-end 1;
+  }
+}
+
+/* `claquete-fecha` (flourish de fechamento da lâmina na volta ícone→nome)
+   foi REMOVIDO (2026-09-26); a troca nome↔ícone hoje é a dissolução
+   pixelada de `LogoSlimeStudio.jsx`. Histórico: `git log -p` neste arquivo. */
+
+/* Conteúdo da ilha (BarraDeNavegacao.jsx) reentrando ao trocar filtro ↔
+   gerenciar ou de fase: o atraso deixa a largura da cápsula começar a
+   animar antes do texto aparecer. `both` segura o estado inicial invisível
+   durante o atraso. */
+@keyframes ilha-conteudo-entra {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Sinopse completa na ilha. Em tela larga é a PRÓPRIA cápsula da navbar virando
+   painel (hooks/useSinopseNaCapsula.js, estilos inline em BarraDeNavegacao.jsx;
+   só `.sinopse-ilha-cortina`, `.sinopse-ilha-conteudo` e as frases abaixo são
+   CSS daqui). Abaixo de `sm` a cápsula não existe e vale o <dialog>
+   (components/SinopseNaIlha.jsx): pílula 14rem x 2.5rem no topo-centro
+   (`--ilha-*` são só os valores de repouso) que cresce até o painel quando
+   `data-visivel` entra — posto em JS depois de um reflow, tirado antes do
+   `close()`. A altura anima pelo truque `grid-template-rows: 0fr -> 1fr`
+   (altura `auto` não transiciona; `min-height` segura a altura da pílula) e o
+   texto rola dentro de `.sinopse-ilha-conteudo`. `display` só liga com `[open]`:
+   display próprio num <dialog> fechado sobrescreveria o `display: none` do
+   navegador. Duração = PAINEL_MS no componente. Final centralizado em `%` (do
+   viewport, sem a barra de rolagem). */
+dialog.sinopse-ilha {
+  position: fixed;
+  inset: auto;
+  top: var(--ilha-topo, 1.25rem);
+  left: var(--ilha-esquerda, calc(50% - 7rem));
+  width: var(--ilha-largura, 14rem);
+  min-height: var(--ilha-altura, 2.5rem);
+  max-height: calc(100% - 1.5rem);
+  max-width: none;
+  margin: 0;
+  display: none;
+  grid-template-rows: 0fr;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--ilha-altura, 2.5rem) / 2);
+  overflow: hidden;
+  color: #fff;
+  background-color: rgb(10 12 16 / 0);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0),
+    0 24px 60px rgb(0 0 0 / 0);
+  transition-property:
+    top, left, width, grid-template-rows, border-radius, background-color, box-shadow;
+  transition-duration: 0.34s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+dialog.sinopse-ilha[open] {
+  display: grid;
+}
+
+dialog.sinopse-ilha[data-visivel] {
+  top: 0.75rem;
+  left: max(0.75rem, calc(50% - 22rem));
+  width: min(44rem, calc(100% - 1.5rem));
+  grid-template-rows: 1fr;
+  border-radius: 1.75rem;
+  background-color: rgb(10 12 16 / 0.94);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.08),
+    0 24px 60px rgb(0 0 0 / 0.55);
+}
+
+.sinopse-ilha-conteudo {
+  min-height: 0;
+  /* Só rola com `data-rolavel` (posto em JS depois do painel assentar, e só se o
+     texto não couber): `auto` direto, ou liberado no fim da transição, fazia a
+     barra de rolagem aparecer e sumir nos últimos quadros do crescimento. */
+  overflow-x: hidden;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+dialog.sinopse-ilha[data-visivel] .sinopse-ilha-conteudo,
+.sinopse-ilha-conteudo[data-visivel] {
+  opacity: 1;
+  transition-delay: 0.12s;
+}
+
+dialog.sinopse-ilha[data-rolavel] .sinopse-ilha-conteudo,
+.sinopse-ilha-conteudo[data-rolavel] {
+  overflow-y: auto;
+}
+
+/* Camada invisível da cápsula: sem desfoque nem escurecimento (pedido do
+   usuário) — existe só pra um clique fora do painel fechá-lo. Vive DENTRO do
+   <nav> (z-5, abaixo do <ul> da ilha, que sobe a z-10 enquanto o painel está
+   aberto); `fixed` relativo ao viewport só vale porque o <nav> das páginas que
+   passam `sinopse` é `transparente`, sem `backdrop-filter` (que viraria
+   containing block). */
+.sinopse-ilha-cortina {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+}
+
+/* `::backdrop` do dialog (fallback de tela estreita) sem desfoque nem
+   escurecimento, igual à cápsula; o clique nele já fecha (cai no <dialog>). */
+dialog.sinopse-ilha::backdrop {
+  background: transparent;
+}
+
+/* Frases entram uma a uma (`--i` é o índice da frase, definido inline).
+   `both` mantém a frase invisível durante o atraso. */
+.sinopse-ilha-frase {
+  animation: sinopse-ilha-frase 0.6s ease both;
+  animation-delay: calc(0.4s + var(--i) * 0.16s);
+}
+
+@keyframes sinopse-ilha-frase {
+  from {
+    opacity: 0;
+    filter: blur(7px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.sinopse-ilha,
+  .sinopse-ilha-conteudo {
+    transition: none;
+  }
+
+  .sinopse-ilha-frase {
+    animation: none;
+  }
+}
+
+/* Troca em crossfade (inicio/TrocaComCrossfade.jsx): a camada nova entra enquanto a
+   anterior sai, sem passar pelo preto. Duração = DURACAO_DO_CROSSFADE_MS. */
+.crossfade-entra {
+  animation: crossfade-entra 0.5s ease-in-out;
+}
+.crossfade-sai {
+  animation: crossfade-sai 0.5s ease-in-out forwards;
+}
+@keyframes crossfade-entra {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes crossfade-sai {
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crossfade-entra,
+  .crossfade-sai {
+    animation: none;
+  }
 }

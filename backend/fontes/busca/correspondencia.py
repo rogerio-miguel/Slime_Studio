@@ -1,0 +1,264 @@
+"""Correspondência entre os títulos de referência de um anime e o título de um
+card devolvido por busca em site de streaming (`fontes/busca/`).
+
+Domínio puro — zero I/O, zero dependência de rede/framework.
+`corresponde_a_alguma_referencia` valida se um card realmente corresponde a
+ALGUMA das referências de título passadas (o mesmo anime tem vários nomes —
+romaji, inglês, nativo, sinônimos de provedor — e o card do site pode estar
+grafado em qualquer um deles), em vez de só compartilhar um prefixo curto com
+outro anime (falso-positivo real de site com busca por prefixo);
+`e_nome_do_anime` diz se o TERMO de busca usado era, ele mesmo, um nome
+canônico do anime (sonda precisa) — o chamador usa isso pra decidir o destino
+de um card órfão que não bateu nenhuma referência;
+`proximidade_a_referencias` ordena os cards já aprovados, do mais próximo da
+referência mais parecida ao mais distante.
+"""
+
+import re
+import unicodedata
+
+from core.texto import slugificar
+from fontes.adaptadores.versao import remover_marcador_de_versao
+from fontes.busca.termos import remover_marcadores_temporada_parte
+
+# Vogal longa aparece grafada de duas formas conforme o site: par dobrado
+# ("Suuguu", romaji Hepburn "solto") ou reduzida a partir de macron pelo
+# `slugificar` via NFKD+ascii-ignore ("Sūgū" -> "sugu"). Colapsar o par pra
+# sua primeira letra faz as duas grafias caírem na mesma chave — sem isso
+# "suuguu" (chave com par dobrado) nunca bateria com "sugu" (chave já
+# reduzida do outro lado).
+_REGEX_VOGAL_LONGA = re.compile(r"ou|uu|oo|aa|ii|ee")
+
+# Numeral romano de temporada ("Overlord II", "オーバーロードⅣ") vira o arábico
+# ANTES do slug: sem isso a regra de vogal longa acima colapsa "ii" em "i"
+# ("overlordii" -> "overlordi", igual à S1) e o "Ⅱ" do título nativo vira a
+# chave "i", que por contenção de prefixo aceita qualquer card começando com
+# "i" (confirmado ao vivo: "In the Clear Moonlit Dusk" validava "Overlord II").
+# Só maiúsculas e sem "V"/"X" soltos — mesmo recorte de
+# `termos.py::_REGEX_MARCADOR_TEMPORADA_PARTE`. O lookaround é ASCII (não `\b`)
+# porque o numeral do título nativo vem colado ao katakana.
+_REGEX_NUMERAL_ROMANO = re.compile(r"(?<![A-Za-z])(II|III|IV|VI|VII|VIII|IX)(?![A-Za-z])")
+_NUMERAL_ROMANO_PARA_ARABICO = {
+    "II": "2", "III": "3", "IV": "4", "VI": "6", "VII": "7", "VIII": "8", "IX": "9",
+}
+
+# Contenção de prefixo só vale com chave de pelo menos este tamanho dos dois
+# lados: uma chave curta ("2", "iv", "ao") é prefixo de card sem relação.
+# Igualdade de chave escapa deste piso.
+_MINIMO_CHAVE_PARA_PREFIXO = 3
+
+
+def corresponde_a_alguma_referencia(referencias: list[str], titulo_candidato: str) -> bool:
+    """Valida se `titulo_candidato` (`titulo_exibicao` de um card devolvido por
+    busca em site de streaming) corresponde a QUALQUER uma das `referencias` —
+    os vários nomes do mesmo anime (título salvo/digitado, romaji, inglês,
+    nativo, sinônimos de provedor). Basta bater com uma: o anime pode estar
+    cadastrado em português enquanto o site indexa só o romaji, e o card
+    romaji ainda é o mesmo anime.
+
+    Cada referência é checada isoladamente por `_corresponde_a_uma_referencia`
+    (contenção de prefixo sobre chave normalizada + guard de card de uma
+    palavra — a docstring dela tem o PORQUÊ de cada regra); o veredito é o OR
+    entre todas. Um card que não bate com NENHUMA referência é falso-positivo
+    de busca por prefixo e é descartado pelo chamador
+    (`fontes/busca/servico.py`).
+
+    `referencias` vazia degrada para aceitar — mesmo veredito que uma
+    referência sem chave de comparação (título só em kanji) já produz por
+    dentro: sem nenhuma base pra rejeitar, não há como afirmar que o card está
+    errado (CLAUDE.md §4, erro nunca silencioso — a decisão de aceitar é
+    explícita, não um `if` que caiu no `else` por acaso). Quem monta a lista é
+    quem sabe se vir vazia é esperado (anime sem nenhum título alternativo) ou
+    sintoma de bug a montante.
+    """
+    if not referencias:
+        return True
+    return any(
+        _corresponde_a_uma_referencia(referencia, titulo_candidato)
+        for referencia in referencias
+    )
+
+
+def _corresponde_a_uma_referencia(referencia: str, titulo_candidato: str) -> bool:
+    """Regra de correspondência de UMA referência — primitiva de
+    `corresponde_a_alguma_referencia`. Valida se `titulo_candidato`
+    (`titulo_exibicao` de um card devolvido por busca em site de streaming)
+    realmente corresponde a `referencia`, em vez de só compartilhar um prefixo
+    curto com outro anime — falso-positivo real de sites com busca por prefixo
+    (ver `fontes/busca/termos.py::_prefixos_crescentes`): um prefixo de
+    2-3 palavras casa por texto com o card de um anime completamente diferente
+    que começa igual.
+
+    Comparação por contenção de prefixo sobre uma chave normalizada (slug
+    sem hífen, vogal longa colapsada) em vez de distância de edição ou
+    token-set: token-set quebra em contrações romaji ("de wa" vs "dewa" viram
+    conjuntos de token diferentes) e Levenshtein não separa bem um card
+    verdadeiro truncado (ex. site corta antes do subtítulo) de um
+    falso-positivo que só compartilha o começo.
+
+    Trade-off aceito: um card de UMA palavra nunca valida uma `referencia` de
+    duas ou mais palavras (contagem no texto original, antes da normalização).
+    A escada de prefixos crescentes faz os sites devolverem muitos cards de
+    uma palavra ("One" numa busca por "One Piece") e a contenção de prefixo
+    sozinha os aceitaria. Se algum site genuinamente cadastrar um anime de
+    título composto com uma única palavra, esse card passa a ser rejeitado —
+    sinal fraco demais pra auto-aceitar quando o mesmo veredito decide qual
+    episódio baixar. Chaves normalizadas idênticas escapam do guard (grafia
+    colada vs. separada entre sites: "DogulWang" vs "Dogul Wang").
+    """
+    ref = _chave_de_comparacao(referencia)
+    if not ref:
+        return True  # sem base pra validar (ex. título só em kanji): degrada pra aceitar
+    cand = _chave_de_comparacao(titulo_candidato)
+    if not cand:
+        return False
+    # Igualdade de chave vem antes do check de contagem: casa grafia colada/separada (DogulWang).
+    if ref == cand:
+        return True
+    # Card da franquia: o nome da referência sem o marcador de temporada/parte
+    # ("Overlord" para "Overlord II"). Site que cataloga a franquia num card só
+    # (MeusAnimes, AnimeFire) o chama pelo nome base, e o recorte por temporada
+    # acontece em `listar_episodios`. Vem antes do guard de uma palavra, que
+    # rejeitaria exatamente este card.
+    if _e_card_da_franquia(referencia, titulo_candidato):
+        return True
+    if len(titulo_candidato.split()) == 1 and len(referencia.split()) > 1:
+        return False
+    if min(len(ref), len(cand)) < _MINIMO_CHAVE_PARA_PREFIXO:
+        return False
+    return ref.startswith(cand) or cand.startswith(ref)
+
+
+def _chave_de_comparacao(texto: str) -> str:
+    """Chave de comparação de `texto`: slug (via `slugificar`) sem hífen, com
+    vogal longa colapsada.
+
+    Slugificar primeiro dá a fronteira de token que a remoção de hífen
+    depois precisa — sem passar por slug antes, um marcador de versão como
+    "(Dublado)" coladinho ao texto viraria ruído misturado à palavra
+    anterior em vez de virar um separador (que a remoção de hífen então
+    apaga de propósito, pra "de-wa" e "dewa" caírem na mesma chave "dewa").
+    Vogal longa colapsa por último, depois que separadores já sumiram, senão
+    um par vogal-vogal formado só pela junção de duas palavras vizinhas (que
+    o hífen removido deixou coladas) escaparia da normalização.
+    """
+    normalizado = unicodedata.normalize("NFKC", texto)
+    normalizado = _REGEX_NUMERAL_ROMANO.sub(
+        lambda m: _NUMERAL_ROMANO_PARA_ARABICO[m.group(1)], normalizado
+    )
+    slug = slugificar(normalizado)
+    sem_hifen = slug.replace("-", "")
+    return _REGEX_VOGAL_LONGA.sub(lambda correspondencia: correspondencia.group(0)[0], sem_hifen)
+
+
+def _e_card_da_franquia(referencia: str, titulo_candidato: str) -> bool:
+    """`titulo_candidato` é o card da franquia de `referencia`. O marcador de
+    versão do card ("Overlord Dublado") não conta: dublado é outra entrada de
+    catálogo da mesma franquia (`fontes/adaptadores/versao.py`), e o diálogo a agrupa
+    com a legendada."""
+    franquia = _chave_da_franquia(referencia)
+    sem_versao = remover_marcador_de_versao(titulo_candidato)
+    return bool(franquia) and _chave_de_comparacao(sem_versao) == franquia
+
+
+def _chave_da_franquia(referencia: str) -> str:
+    """Chave de `referencia` sem o marcador de temporada/parte, ou `""` quando
+    não há marcador a tirar ou o nome base é curto demais pra identificar uma
+    franquia (`_MINIMO_CHAVE_PARA_PREFIXO`)."""
+    base = remover_marcadores_temporada_parte(unicodedata.normalize("NFKC", referencia))
+    if base == referencia.strip():
+        return ""
+    chave = _chave_de_comparacao(base)
+    return chave if len(chave) >= _MINIMO_CHAVE_PARA_PREFIXO else ""
+
+
+def e_nome_do_anime(variante: str, referencias: list[str]) -> bool:
+    """`True` quando `variante` — o termo de busca que o site efetivamente
+    recebeu — É, ela mesma, um dos nomes canônicos do anime: o slug
+    (`core/texto.py::slugificar`, o mesmo normalizador que `_chave_de_comparacao`
+    usa por dentro) de `variante` está no conjunto dos slugs de `referencias`.
+
+    Checagem de "sonda precisa", consumida por
+    `fontes/busca/servico.py::buscar_em_com_variantes` para decidir o
+    destino de um card ÓRFÃO (não bateu `corresponde_a_alguma_referencia` com
+    referência nenhuma): quando o termo buscado era um nome canônico COMPLETO —
+    não um prefixo curto da escada de recall de `fontes/busca/termos.py`,
+    que é a origem real dos falsos-positivos — o card órfão vira
+    "correspondência incerta" (o site pode indexar o anime só sob um título que
+    o provedor de metadados não conhece, ex. só em PT-BR) em vez de ser
+    descartado. Prefixo curto nunca satisfaz esta checagem, então nunca
+    contribui para os incertos. `referencias` vazia ou `variante` que slugifica
+    pra vazio (kanji) → `False`: sem base pra afirmar "sonda precisa".
+    """
+    slug_variante = slugificar(variante)
+    return bool(slug_variante) and slug_variante in {
+        slugificar(referencia) for referencia in referencias
+    }
+
+
+def proximidade_a_referencias(
+    referencias: list[str], titulo_candidato: str
+) -> tuple[int, int]:
+    """Chave de ordenação para candidatos JÁ aprovados por
+    `corresponde_a_alguma_referencia`, do mais próximo à referência mais
+    parecida ao mais distante — consumida por
+    `fontes/busca/servico.py::buscar_em_com_variantes` via `list.sort`.
+
+    Existe por causa da sonda larga: o bloco de recall de
+    `fontes/busca/termos.py::variantes_de_busca` busca pela 1ª palavra,
+    então uma única variante volta com vários cards legítimos ("Naruto" e
+    "Naruto Shippuden" numa busca por "Naruto") e o primeiro da lista é o que
+    a UI mostra e o que a captura tende a baixar. Sem ordenar, esse primeiro é
+    só quem o site listou antes.
+
+    Com várias referências (os vários nomes do anime), o candidato pontua pela
+    SUA MELHOR referência — a menor (mais próxima) tupla de
+    `_proximidade_a_uma_referencia` entre todas. Um card que bate exatamente o
+    título inglês não pode ser rebaixado só porque diverge do romaji: a
+    referência que mais o aproxima é a que conta.
+
+    Cada tupla de `_proximidade_a_uma_referencia` tem dois critérios, nesta
+    ordem:
+
+    1. Chave normalizada idêntica à da referência (`_chave_de_comparacao`, a
+       mesma de `_corresponde_a_uma_referencia`) pontua 0; match que só passou
+       por contenção de prefixo pontua 1; card da franquia (nome sem o
+       marcador de temporada) pontua 2. O card cujo título bate exatamente
+       vem antes do que apenas começa igual, e este antes do card da
+       franquia. Referência sem chave (só kanji, string vazia) nunca pontua 0 —
+       o `ref and` impede que dois candidatos de chave vazia empatem em 0 e
+       "ganhem" de um match real.
+    2. Desempate: menor diferença de comprimento entre a chave do candidato e
+       a da referência. Aproxima o card truncado antes do subtítulo ("Nome"
+       por "Nome: Subtítulo") e afasta uma continuação bem mais longa.
+
+    `referencias` vazia usa a tupla de uma referência sem chave (`""`) — mesmo
+    caso de borda que `corresponde_a_alguma_referencia` já aceitou; o card
+    aprovado sem base de comparação fica no fim da ordenação, nunca à frente
+    de um match real.
+
+    Sem terceiro critério de propósito: o `list.sort` do chamador é estável,
+    então candidatos de tupla igual mantêm a ordem em que o site os devolveu —
+    sinal fraco, mas preferível a uma reordenação arbitrária.
+    """
+    if not referencias:
+        return _proximidade_a_uma_referencia("", titulo_candidato)
+    return min(
+        _proximidade_a_uma_referencia(referencia, titulo_candidato)
+        for referencia in referencias
+    )
+
+
+def _proximidade_a_uma_referencia(referencia: str, titulo_candidato: str) -> tuple[int, int]:
+    """Tupla `(criterio_exato, diferenca_de_comprimento)` de uma referência —
+    primitiva de `proximidade_a_referencias`, que documenta o significado de
+    cada critério e como a ordenação a consome."""
+    ref = _chave_de_comparacao(referencia)
+    cand = _chave_de_comparacao(titulo_candidato)
+    if ref and ref == cand:
+        return (0, 0)
+    # Card da franquia vem depois dos que casam por prefixo: numa fonte que
+    # separa temporada por card, o card da temporada certa tem que ganhar dele.
+    if _e_card_da_franquia(referencia, titulo_candidato):
+        return (2, abs(len(cand) - len(ref)))
+    return (1, abs(len(cand) - len(ref)))

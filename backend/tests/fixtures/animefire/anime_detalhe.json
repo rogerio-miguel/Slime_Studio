@@ -1,0 +1,46 @@
+{
+  "data": {
+    "seasons": [
+      {"title": null, "number": 1, "first_episode_number": 1},
+      {"title": null, "number": 2, "first_episode_number": 13}
+    ],
+    "episodes": [
+      {
+        "id": "ep-s1-1",
+        "title": "Episodio 1",
+        "audio": "Legendado",
+        "season": 1,
+        "number": 1,
+        "still_src": "https://image.tmdb.org/t/p/original/ep1.jpg",
+        "synopsis": "Sinopse do episodio 1"
+      },
+      {
+        "id": "ep-s1-1",
+        "title": "Episodio 1",
+        "audio": "Legendado",
+        "season": 1,
+        "number": 1,
+        "still_src": "https://image.tmdb.org/t/p/original/ep1.jpg",
+        "synopsis": "Sinopse do episodio 1"
+      },
+      {
+        "id": "ep-s1-2",
+        "title": "Episodio 2",
+        "audio": "Dublado &amp; Legendado",
+        "season": 1,
+        "number": 2,
+        "still_src": "https://image.tmdb.org/t/p/original/ep2.jpg",
+        "synopsis": "Sinopse do episodio 2"
+      },
+      {
+        "id": "ep-s2-1",
+        "title": "Episodio 13",
+        "audio": "Legendado",
+        "season": 2,
+        "number": 1,
+        "still_src": "https://image.tmdb.org/t/p/original/ep13.jpg",
+        "synopsis": "Sinopse do episodio 13"
+      }
+    ]
+  }
+}

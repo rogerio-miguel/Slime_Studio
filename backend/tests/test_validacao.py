@@ -60,3 +60,24 @@ def test_duracao_esperada_none_pula_checagem():
     plano = decidir_plano(_sondagem(duracao_s=1.0), duracao_esperada_s=None)
 
     assert plano.exige_recodificacao is False
+
+
+def test_av1_main_yuv420p_copia_video_com_segmentos_fmp4():
+    plano = decidir_plano(_sondagem(codec_video="av1", perfil_video="Main"))
+
+    assert plano.video is EstrategiaFluxo.COPIA
+    assert plano.segmentos_fmp4 is True
+    assert plano.exige_recodificacao is False
+
+
+def test_av1_10bit_forca_recodificacao():
+    plano = decidir_plano(
+        _sondagem(codec_video="av1", perfil_video="Main", pix_fmt="yuv420p10le")
+    )
+
+    assert plano.video is EstrategiaFluxo.RECODIFICA
+    assert plano.segmentos_fmp4 is False
+
+
+def test_h264_copiado_continua_em_mpegts():
+    assert decidir_plano(_sondagem()).segmentos_fmp4 is False

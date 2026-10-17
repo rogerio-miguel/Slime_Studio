@@ -9,6 +9,7 @@ sem WebSocket real — via um `_WebSocketFalso` stub e chamada direta a
 
 import asyncio
 import itertools
+import time
 from pathlib import Path
 
 import pytest
@@ -193,11 +194,27 @@ def _preparar_config(tmp_path: Path) -> Config:
     return config
 
 
+def _esperar(condicao, *, timeout_s: float = 2.0) -> None:
+    limite = time.monotonic() + timeout_s
+    while not condicao():
+        assert time.monotonic() < limite, "condição não atendida a tempo"
+        time.sleep(0.005)
+
+
 def test_ws_admin_recebe_snapshot(tmp_path: Path):
     app = criar_app(_preparar_config(tmp_path))
 
+    # `Host: localhost` explícito: o `TrustedHostMiddleware` rejeita o `testserver`, e
+    # `websocket_connect` monta a URL com `ws://testserver` fixo (ignora o `base_url`).
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/admin") as websocket:
+        with client.websocket_connect("/ws/admin", headers={"host": "localhost"}) as websocket:
             mensagem = websocket.receive_json()
+            # Sair do `with` com o handler ainda vivo faz o TestClient cancelar o app
+            # durante o `finally` do handler e estourar `CancelledError` em ~10% das
+            # rodadas (já ocorria antes da busca de fontes mudar). Fechar aqui e
+            # esperar o handler terminar sozinho deixa o cancelamento final inofensivo.
+            _esperar(lambda: app.state.assinantes.total_assinantes() == 1)
+            websocket.close()
+            _esperar(lambda: app.state.monitor._task is None)
 
     assert mensagem == {"tipo": "snapshot", "jobs": []}

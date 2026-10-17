@@ -5,16 +5,25 @@ routers e handlers de exceção. Sem app global: testes injetam `Config` de test
 carregá-la sozinho).
 """
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.eventos import Assinantes, MonitorDeFila
-from api.rotas import animes, episodios, jobs, saude, sites, ws
+from api.rotas import animes, episodios, jobs, saude, sites, thumb, ws
+from api.seguranca import CabecalhosDeSeguranca, LimitesDeTaxa, ProtecaoDeOrigem
+from api.servicos import cache_de_feeds
+from api.servicos.zelador import Zelador
 from core.config import Config
 from core.erros import (
     EpisodioJaExiste,
@@ -26,8 +35,11 @@ from core.erros import (
     FonteNaoEncontrada,
     JobEmExecucao,
     SiteEmCooldown,
+    VersaoIndisponivelError,
 )
 from db.engine import criar_engine, criar_sessionmaker
+from integrations import servico as servico_metadados
+from integrations.registro import instalar_provedores_de_arte
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +48,26 @@ logger = logging.getLogger(__name__)
 # `crossOrigin='anonymous'` (D1 de sessão anterior) exige que a origem esteja
 # na allowlist de CORS para o browser completar o request cross-origin.
 _ORIGENS_PERMITIDAS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+# `Host` sem porta (o `TrustedHostMiddleware` a descarta). Com o proxy do Vite sem
+# `changeOrigin`, o `Host` que chega aqui é o do navegador (`localhost:5173`).
+_HOSTS_PERMITIDOS = ["localhost", "127.0.0.1"]
+
+
+async def _ligar_persistencia_de_feeds(sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+    """Feeds da Home sobrevivem a reinício: o último resultado bom volta como cache
+    "velho" (servido na hora, revalidado em segundo plano) em vez de a 1ª abertura
+    esperar a busca AniList + TMDB inteira. Falha aqui nunca impede a API de subir."""
+    servico_metadados.instalar_persistencia_de_feeds(
+        partial(cache_de_feeds.gravar_feed, sessionmaker)
+    )
+    try:
+        feeds = await cache_de_feeds.carregar_feeds_persistidos(sessionmaker)
+    except SQLAlchemyError as excecao:
+        logger.warning(
+            "cache de feeds não restaurado (rode `uv run alembic upgrade head`?): %s", excecao
+        )
+        return
+    servico_metadados.restaurar_feeds_persistidos(feeds)
 
 
 def criar_app(config: Config) -> FastAPI:
@@ -45,27 +77,47 @@ def criar_app(config: Config) -> FastAPI:
         sessionmaker = criar_sessionmaker(engine)
         assinantes = Assinantes()
         monitor = MonitorDeFila(sessionmaker, assinantes)
+        instalar_provedores_de_arte(config.tmdb_token)
+        await _ligar_persistencia_de_feeds(sessionmaker)
 
         app.state.config = config
         app.state.sessionmaker = sessionmaker
         app.state.assinantes = assinantes
+        app.state.limites = LimitesDeTaxa()
         app.state.monitor = monitor
+
+        tarefa_do_zelador = None
+        if config.zelador_ativo:
+            tarefa_do_zelador = asyncio.create_task(
+                Zelador(sessionmaker).rodar(), name="zelador-de-fontes"
+            )
 
         try:
             yield
         finally:
+            if tarefa_do_zelador is not None:
+                tarefa_do_zelador.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await tarefa_do_zelador
             await monitor.parar()
             await engine.dispose()
 
     app = FastAPI(title="Slime Studio API", lifespan=lifespan)
 
+    # Ordem de `add_middleware`: o último adicionado é o mais externo. `Host` é
+    # checado primeiro (DNS rebinding), depois o CORS, depois a origem das escritas.
+    app.add_middleware(ProtecaoDeOrigem, origens_permitidas=_ORIGENS_PERMITIDAS)
+    app.add_middleware(CabecalhosDeSeguranca)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_ORIGENS_PERMITIDAS,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        # Sem cookie nem auth (o front usa `credentials: 'same-origin'`); `Range` é do
+        # `hls.js` cross-origin, `Content-Type` do JSON das escritas.
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "Range"],
     )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_HOSTS_PERMITIDOS)
 
     app.include_router(saude.router_publico)
     app.include_router(saude.router_admin)
@@ -74,6 +126,7 @@ def criar_app(config: Config) -> FastAPI:
     app.include_router(animes.router_publico)
     app.include_router(episodios.router)
     app.include_router(episodios.router_admin)
+    app.include_router(thumb.router)
     app.include_router(sites.router)
     app.include_router(ws.router)
 
@@ -113,6 +166,15 @@ def _registrar_handlers_de_excecao(app: FastAPI) -> None:
             },
         )
 
+    @app.exception_handler(VersaoIndisponivelError)
+    async def _versao_indisponivel(
+        request: Request, excecao: VersaoIndisponivelError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": {"motivo": "versao_indisponivel", "versao": excecao.versao.value}},
+        )
+
     @app.exception_handler(EpisodioJaExiste)
     async def _episodio_ja_existe(request: Request, excecao: EpisodioJaExiste) -> JSONResponse:
         return JSONResponse(
@@ -131,11 +193,19 @@ def _registrar_handlers_de_excecao(app: FastAPI) -> None:
 
     @app.exception_handler(FalhaDeExtracao)
     async def _falha_de_extracao(request: Request, excecao: FalhaDeExtracao) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(excecao)})
+        # A mensagem crua traz URL, caminho temporário e cauda de stderr: fica no log.
+        logger.warning("falha de extração na API: %s", excecao, exc_info=excecao)
+        onde = f" em {excecao.dominio}" if excecao.dominio else ""
+        return JSONResponse(
+            status_code=502, content={"detail": f"falha ao extrair de fonte externa{onde}"}
+        )
 
     @app.exception_handler(FalhaDeMetadados)
     async def _falha_de_metadados(request: Request, excecao: FalhaDeMetadados) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(excecao)})
+        logger.warning("falha de metadados na API: %s", excecao, exc_info=excecao)
+        return JSONResponse(
+            status_code=502, content={"detail": "falha ao consultar provedores de metadados"}
+        )
 
     @app.exception_handler(ErroSlimeStudio)
     async def _erro_generico(request: Request, excecao: ErroSlimeStudio) -> JSONResponse:

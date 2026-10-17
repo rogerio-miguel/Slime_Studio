@@ -5,12 +5,21 @@ passa por aqui em vez de reimplementar `asyncio.create_subprocess_exec` por etap
 """
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
+
+from yt_dlp.version import __version__ as _VERSAO_DO_YTDLP
 
 from core.erros import FalhaDeFerramenta
 
+logger = logging.getLogger(__name__)
+
 _TAMANHO_CAUDA_STDERR = 4000
+# Sites de streaming mudam toda semana e o yt-dlp já teve advisories de execução de código
+# (github.com/yt-dlp/yt-dlp/security): passado isto, o worker avisa no start.
+_IDADE_MAXIMA_YTDLP_DIAS = 90
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,3 +74,25 @@ async def executar(
         )
 
     return ResultadoProcesso(codigo=processo.returncode, stdout=stdout, stderr=stderr)
+
+
+def registrar_versao_do_ytdlp(*, versao: str = _VERSAO_DO_YTDLP, hoje: date | None = None) -> None:
+    """Loga a versão do yt-dlp (`AAAA.MM.DD[.hhmmss]`) e avisa se passou de
+    `_IDADE_MAXIMA_YTDLP_DIAS`. Formato inesperado também vira aviso, nunca silêncio."""
+    hoje = hoje or date.today()
+    try:
+        ano, mes, dia = (int(parte) for parte in versao.split(".")[:3])
+        idade_dias = (hoje - date(ano, mes, dia)).days
+    except ValueError:
+        logger.warning("yt-dlp: versão em formato inesperado (%r), idade não verificada", versao)
+        return
+    if idade_dias > _IDADE_MAXIMA_YTDLP_DIAS:
+        logger.warning(
+            "yt-dlp %s tem %d dias (limite %d): atualize com `uv lock --upgrade-package yt-dlp`"
+            " e `uv sync`",
+            versao,
+            idade_dias,
+            _IDADE_MAXIMA_YTDLP_DIAS,
+        )
+    else:
+        logger.info("yt-dlp %s (%d dias)", versao, idade_dias)

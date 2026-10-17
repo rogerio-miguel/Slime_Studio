@@ -1,7 +1,7 @@
 {
   "name": "slime-studio-frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,9 +12,10 @@
   "dependencies": {
     "anime4k-webgpu": "^1.0.0",
     "hls.js": "^1.5.0",
+    "lucide-react": "^1.45.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^6.30.4"
+    "react-router-dom": "^6.30.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

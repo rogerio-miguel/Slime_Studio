@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { nomeDaFonte } from '../fontes.js';
 
 // `<dialog>` nativo: foco preso, backdrop e fechar com Esc de graça, sem lib
 // de modal — a única dependência de UI do projeto continua sendo Tailwind
@@ -21,10 +22,10 @@ export default function DialogoDeFonteAmbigua({ aberto, dominio, candidatos, aoE
       onClose={aoFechar}
       onCancel={aoFechar}
       aria-labelledby="titulo-fonte-ambigua"
-      className="rounded-xl border border-neon-soft bg-surface p-6 text-white backdrop:bg-black/70"
+      className="m-auto rounded-xl border border-neon-soft bg-surface p-6 text-white backdrop:bg-black/70"
     >
       <h2 id="titulo-fonte-ambigua" className="mb-2 text-base font-semibold">
-        Mais de um resultado em {dominio}
+        Mais de um resultado em {nomeDaFonte(dominio)}
       </h2>
       <p className="mb-4 text-sm text-ink-muted">
         Não foi possível decidir sozinho — escolha o título correto:
@@ -35,9 +36,14 @@ export default function DialogoDeFonteAmbigua({ aberto, dominio, candidatos, aoE
             <button
               type="button"
               onClick={() => aoEscolher(candidato)}
-              className="w-full rounded-lg border border-border-chrome px-4 py-2 text-left text-sm outline-none transition-colors hover:border-neon focus-visible:ring-2 focus-visible:ring-neon"
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-border-chrome px-4 py-2 text-left text-sm outline-none transition-colors hover:border-neon"
             >
-              {candidato.titulo_exibicao}
+              <span className="truncate">{candidato.titulo_exibicao}</span>
+              {candidato.versao != null && (
+                <span className="flex-none rounded-md border border-border-chrome px-2 py-0.5 text-xs text-ink-muted">
+                  {candidato.versao === 'dublado' ? 'Dublado' : 'Legendado'}
+                </span>
+              )}
             </button>
           </li>
         ))}
@@ -45,7 +51,7 @@ export default function DialogoDeFonteAmbigua({ aberto, dominio, candidatos, aoE
       <button
         type="button"
         onClick={aoFechar}
-        className="mt-4 text-xs text-ink-muted underline outline-none focus-visible:ring-2 focus-visible:ring-neon"
+        className="mt-4 text-xs text-ink-muted underline outline-none"
       >
         Cancelar
       </button>
