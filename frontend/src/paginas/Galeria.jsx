@@ -49,6 +49,8 @@ const ROTULOS_STATUS_LANCAMENTO = {
 // ser sempre visível (era um apêndice fixo embaixo da grade) e passou a só
 // aparecer quando este valor está selecionado.
 const VALOR_FILTRO_VIDEOS_LOCAIS = 'videos-locais';
+// Referência estável: um `new Set()` por render invalidaria o `useMemo` da grade.
+const SEM_GENEROS = new Set();
 const CHAVE_DA_ORDEM = 'slime.galeria.ordem';
 const CHAVE_DO_FILTRO = 'slime.galeria.filtro';
 const CHAVE_DA_ORDEM_AVULSA = 'slime.galeria.ordemAvulsa';
@@ -273,6 +275,14 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
 
   const emVideosLocais = filtroSelecionado === VALOR_FILTRO_VIDEOS_LOCAIS;
   const emOrdemFixa = temOrdemFixa(filtroSelecionado);
+  // Com termo digitado a busca varre o catálogo inteiro: filtro, gêneros e
+  // ordem fixa do painel ficam de lado (guardados, voltam ao limpar a busca) e
+  // a grade segue a ordem de "Todos". Sem isso, um anime fora do filtro ativo
+  // parecia não existir no catálogo.
+  const buscando = termoBuscaNormalizado !== '';
+  const filtroDaGrade = buscando ? '' : filtroSelecionado;
+  const generosDaGrade = buscando ? SEM_GENEROS : generosAtivos;
+  const mostraVideosLocais = emVideosLocais && !buscando;
   const ordemEfetiva =
     filtroSelecionado === '' ? ordemEmTodos : (ordemAvulsa ?? ORDEM_PADRAO);
   const selecaoAtiva = filtroSelecionado !== '' || generosAtivos.size > 0;
@@ -368,13 +378,13 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
       ordenarFranquias(
         filtrarFranquias(franquias, {
           termo: termoBuscaNormalizado,
-          filtro: filtroSelecionado,
-          generos: generosAtivos,
+          filtro: filtroDaGrade,
+          generos: generosDaGrade,
         }),
-        ordemEfetiva,
-        filtroSelecionado,
+        buscando ? ordemEmTodos : ordemEfetiva,
+        filtroDaGrade,
       ),
-    [franquias, termoBuscaNormalizado, filtroSelecionado, generosAtivos, ordemEfetiva],
+    [franquias, termoBuscaNormalizado, filtroDaGrade, generosDaGrade, buscando, ordemEmTodos, ordemEfetiva],
   );
 
   // Filtros de ordem fixa ("Em lançamento": dia do próximo episódio; "Próximas
@@ -383,16 +393,16 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   // `ultimo` dizem a posição dele dentro do dia. Os grupos saem de
   // `animesExibidos`, já na ordem do próximo ep.
   const posicaoNoDia = useMemo(() => {
-    if (!emOrdemFixa) return null;
+    if (!temOrdemFixa(filtroDaGrade)) return null;
     return new Map(
-      agruparPorDiaDoFiltro(animesExibidos, filtroSelecionado).flatMap((grupo) =>
+      agruparPorDiaDoFiltro(animesExibidos, filtroDaGrade).flatMap((grupo) =>
         grupo.itens.map((franquia, indice) => [
           franquia.id,
           { data: grupo.data, primeiro: indice === 0, ultimo: indice === grupo.itens.length - 1 },
         ]),
       ),
     );
-  }, [emOrdemFixa, animesExibidos, filtroSelecionado]);
+  }, [filtroDaGrade, animesExibidos]);
 
   // Painel de filtros da ilha (ilha/RegiaoDoPainelDeFiltros.jsx). Em "Vídeos
   // locais" não há ordem nem gênero (a grade é de arquivos, não do catálogo) e em
@@ -400,14 +410,14 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
   // O gênero mostra quantos animes sobrariam ao marcá-lo; contagem 0 apaga o botão.
   const contagemPorGenero = useMemo(
     () =>
-      emVideosLocais
+      mostraVideosLocais || buscando
         ? null
         : contarPorGenero(
             franquias,
             { termo: termoBuscaNormalizado, filtro: filtroSelecionado, generos: generosAtivos },
             listaDeGeneros,
           ),
-    [emVideosLocais, franquias, termoBuscaNormalizado, filtroSelecionado, generosAtivos, listaDeGeneros],
+    [mostraVideosLocais, buscando, franquias, termoBuscaNormalizado, filtroSelecionado, generosAtivos, listaDeGeneros],
   );
   const opcoesGeneros = useMemo(
     () =>
@@ -421,6 +431,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
     [listaDeGeneros, contagemPorGenero],
   );
   const resumoDoPainel = useMemo(() => {
+    if (buscando) return 'Busca em todo o catálogo';
     const rotuloDoFiltro = opcoesFiltro.find((opcao) => opcao.valor === filtroSelecionado)?.rotulo;
     const partes = [rotuloDoFiltro ?? 'Todos'];
     if (!emVideosLocais && !emOrdemFixa) {
@@ -430,9 +441,9 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
       partes.push(generosAtivos.size === 1 ? '1 gênero' : `${generosAtivos.size} gêneros`);
     }
     return partes.join(' · ');
-  }, [opcoesFiltro, filtroSelecionado, emVideosLocais, emOrdemFixa, ordemEfetiva, generosAtivos]);
-  const totalNoPainel = emVideosLocais ? VIDEOS_LOCAIS.length : animesExibidos.length;
-  const rotuloDoTotal = emVideosLocais
+  }, [buscando, opcoesFiltro, filtroSelecionado, emVideosLocais, emOrdemFixa, ordemEfetiva, generosAtivos]);
+  const totalNoPainel = mostraVideosLocais ? VIDEOS_LOCAIS.length : animesExibidos.length;
+  const rotuloDoTotal = mostraVideosLocais
     ? totalNoPainel === 1 ? 'vídeo' : 'vídeos'
     : totalNoPainel === 1 ? 'anime' : 'animes';
 
@@ -589,10 +600,10 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
                 aoRemover: () => setFase('selecionando'),
                 total: `${totalNoPainel} ${rotuloDoTotal}`,
                 ordenacao:
-                  emVideosLocais || emOrdemFixa
+                  mostraVideosLocais || emOrdemFixa || buscando
                     ? null
                     : { opcoes: OPCOES_DE_ORDEM, valor: ordemEfetiva, aoMudar: mudarOrdem },
-                generos: emVideosLocais
+                generos: mostraVideosLocais || buscando
                   ? null
                   : {
                       opcoes: opcoesGeneros,
@@ -635,7 +646,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
         <h1 ref={focoTitulo} tabIndex={-1} id={idMeuCatalogo} className="sr-only">
           Meu Catálogo
         </h1>
-        {filtroSelecionado !== VALOR_FILTRO_VIDEOS_LOCAIS && (
+        {!mostraVideosLocais && (
           <section aria-labelledby={idMeuCatalogo}>
             {/* Título "Meu Catálogo" e o filtro (SeletorEmMenu) removidos da
                 tela (pedido do usuário, 2026-09-27): a ilha dinâmica da navbar
@@ -724,7 +735,7 @@ export default function Galeria({ jobsPorEpisodio, snapshotId }) {
             filtro "Vídeos locais" (pedido do usuário, 2026-09-28) — guard
             de `filtroSelecionado` além do `length > 0` (sem vídeo local
             nenhum, a opção nem existe no dropdown pra selecionar). */}
-        {VIDEOS_LOCAIS.length > 0 && filtroSelecionado === VALOR_FILTRO_VIDEOS_LOCAIS && (
+        {VIDEOS_LOCAIS.length > 0 && mostraVideosLocais && (
           <section aria-labelledby={idVideosLocais} className="mt-10">
             <h2
               id={idVideosLocais}
