@@ -528,7 +528,12 @@ export default function BarraDeNavegacao({
           {linksNaOrdem}
         </ul>
         {aoMudarBusca && (
-          <CampoDeBusca termo={termoBusca} aoMudar={aoMudarBusca} aoSubmeter={aoSubmeterBusca} />
+          <CampoDeBusca
+            termo={termoBusca}
+            aoMudar={aoMudarBusca}
+            aoSubmeter={aoSubmeterBusca}
+            focarAoDigitar
+          />
         )}
       </nav>
       {/* Fallback abaixo de `sm`, onde o <ul> da cápsula some. Fora do <nav> para
