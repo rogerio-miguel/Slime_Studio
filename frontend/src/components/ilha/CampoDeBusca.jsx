@@ -1,5 +1,6 @@
 import { Search, X } from 'lucide-react';
 import { useId, useRef } from 'react';
+import { useFocarAoDigitar } from '../../hooks/useFocarAoDigitar.js';
 import { FUNDO_DA_ILHA } from '../painelFlutuante.js';
 
 // Busca da navbar: pílula sempre aberta, borda neon. Filtro local ao vivo
@@ -16,6 +17,8 @@ import { FUNDO_DA_ILHA } from '../painelFlutuante.js';
 // Reaproveitado pelo seletor de fonte (`components/SeletorDeFonte.jsx`): lá
 // `rotulo` troca o texto do campo, `larguraTotal` ocupa a coluna do painel em
 // vez dos 21.5rem da navbar e `focarAoMontar` põe o foco ao abrir o painel.
+// `focarAoDigitar` (só a navbar liga) foca o campo ao digitar em qualquer ponto
+// da página; desligado por padrão para não capturar teclas em usos novos.
 export default function CampoDeBusca({
   termo,
   aoMudar,
@@ -23,9 +26,11 @@ export default function CampoDeBusca({
   rotulo = 'Buscar animes',
   larguraTotal = false,
   focarAoMontar = false,
+  focarAoDigitar = false,
 }) {
   const id = useId();
   const inputRef = useRef(null);
+  useFocarAoDigitar(focarAoDigitar, inputRef);
   return (
     <form
       onSubmit={(evento) => {
