@@ -130,6 +130,15 @@ _PASSOS_APOS_EPISODIO = (
 # `proximo_ep_em` vem da AniList e pode estar desatualizado: nunca dormir mais
 # que isto esperando um episódio que talvez já tenha saído.
 _ESPERA_MAXIMA_ANTES_DO_EPISODIO = timedelta(hours=24)
+# Fonte atrasada: o episódio já foi ao ar no Japão e o fansub ainda não subiu.
+# A AniList só informa o PRÓXIMO episódio, então o horário do atrasado é
+# `proximo_ep_em` menos o período semanal. Degraus (idade do episódio, espera):
+# hora a hora no primeiro meio dia, depois espaça; passado o último, o padrão.
+_PERIODO_SEMANAL = timedelta(days=7)
+_DEGRAUS_FONTE_ATRASADA = (
+    (timedelta(hours=12), timedelta(hours=1)),
+    (timedelta(hours=48), timedelta(hours=3)),
+)
 _ESPERA_SITE_INDISPONIVEL = timedelta(minutes=15)  # o breaker do site manda; aqui é só folga
 _ESPERA_PRECISA_SESSAO = timedelta(hours=3)
 _ESPERA_AMBIGUO = timedelta(days=7)  # só o usuário desfaz; nada a ganhar retentando
@@ -142,6 +151,15 @@ CONTA_COMO_FALHA_DO_ANIME = frozenset(ResultadoDeVerificacao) - {
     ResultadoDeVerificacao.OK,
     ResultadoDeVerificacao.SITE_INDISPONIVEL,
 }
+
+
+def _espera_fonte_atrasada(no_ar_em: datetime, agora: datetime) -> timedelta:
+    idade = agora - no_ar_em
+    if idade >= timedelta(0):
+        for limite, espera in _DEGRAUS_FONTE_ATRASADA:
+            if idade < limite:
+                return espera
+    return INTERVALO_APOS_SUCESSO
 
 
 def proxima_sondagem_apos_sucesso(
@@ -157,9 +175,17 @@ def proxima_sondagem_apos_sucesso(
     `fonte_em_dia`: a fonte já tem os episódios anteriores ao próximo. Se estiver
     atrasada (faltam episódios que já foram ao ar) a âncora não ajuda — o atraso é
     do fansub, não do relógio — e vale o intervalo padrão. Sem `proximo_ep_em`
-    (fase pós-fim, status desconhecido), idem."""
-    if proximo_ep_em is None or not fonte_em_dia:
+    (fase pós-fim, status desconhecido), idem.
+
+    Fonte atrasada com âncora: o episódio faltante saiu em `proximo_ep_em - 7d`
+    e o fansub costuma subir em horas, então a espera segue
+    `_DEGRAUS_FONTE_ATRASADA` em vez do intervalo fixo (caso real 2026-10-18: o
+    episódio subiu 1 h depois da sondagem e só apareceu 6 h depois dela). Âncora
+    no futuro (quinzenal, pausa) não diz nada sobre o atrasado: intervalo padrão."""
+    if proximo_ep_em is None:
         return agora + INTERVALO_APOS_SUCESSO
+    if not fonte_em_dia:
+        return agora + _espera_fonte_atrasada(proximo_ep_em - _PERIODO_SEMANAL, agora)
     if proximo_ep_em > agora:
         limite = agora + _ESPERA_MAXIMA_ANTES_DO_EPISODIO
         return min(proximo_ep_em + _PASSOS_APOS_EPISODIO[0], limite)

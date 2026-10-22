@@ -121,8 +121,17 @@ _AGORA = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 @pytest.mark.parametrize(
     ("proximo_ep_em", "em_dia", "esperado"),
     [
-        # sem âncora, ou fonte atrasada: intervalo padrão
+        # sem âncora: intervalo padrão
         (None, True, timedelta(hours=6)),
+        (None, False, timedelta(hours=6)),
+        # fonte atrasada: o faltante saiu em proximo_ep_em - 7d; degraus por idade
+        (_AGORA + timedelta(days=7, hours=-5), False, timedelta(hours=1)),  # saiu há 5 h
+        (_AGORA + timedelta(days=7, hours=-11), False, timedelta(hours=1)),
+        (_AGORA + timedelta(days=7, hours=-13), False, timedelta(hours=3)),  # saiu há 13 h
+        (_AGORA + timedelta(days=7, hours=-47), False, timedelta(hours=3)),
+        (_AGORA + timedelta(days=7, hours=-49), False, timedelta(hours=6)),  # passou dos degraus
+        # âncora a menos/mais de uma semana do faltante (quinzenal, pausa): padrão
+        (_AGORA + timedelta(days=8), False, timedelta(hours=6)),
         (_AGORA + timedelta(hours=3), False, timedelta(hours=6)),
         # episódio previsto para daqui a 3 h: dorme até +2h depois dele
         (_AGORA + timedelta(hours=3), True, timedelta(hours=5)),
